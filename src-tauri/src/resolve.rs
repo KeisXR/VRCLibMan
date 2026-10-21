@@ -200,6 +200,24 @@ fn name_keys(avatar: &Avatar) -> Vec<String> {
         .collect()
 }
 
+pub fn known_name_in(text: &str, avatars: &[Avatar]) -> Option<String> {
+    let haystack = crate::normalize::nfkc(text).to_lowercase();
+    let mut best: Option<(usize, String)> = None;
+    for avatar in avatars {
+        for form in name_forms(avatar) {
+            let needle = crate::normalize::nfkc(&form).to_lowercase();
+            let len = needle.chars().count();
+            if len < 2 || !find_bounded(&haystack, &needle) {
+                continue;
+            }
+            if best.as_ref().is_none_or(|(current, _)| len > *current) {
+                best = Some((len, avatar.display_name.clone()));
+            }
+        }
+    }
+    best.map(|(_, name)| name)
+}
+
 fn find_bounded(haystack: &str, needle: &str) -> bool {
     let haystack: Vec<char> = haystack.chars().collect();
     let needle: Vec<char> = needle.chars().collect();

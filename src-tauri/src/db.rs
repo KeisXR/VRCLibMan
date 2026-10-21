@@ -217,14 +217,27 @@ pub(crate) fn import_products(
     let mut inserted = 0;
     let mut updated = 0;
     let mut unchanged = 0;
+    let mut touched = Vec::new();
     for product in &parsed.products {
         match upsert(&tx, product)? {
-            Upsert::Inserted => inserted += 1,
-            Upsert::Updated => updated += 1,
-            Upsert::Unchanged => unchanged += 1,
+            Upsert::Inserted => {
+                inserted += 1;
+                touched.push(product.booth_id.clone());
+            }
+            Upsert::Updated => {
+                updated += 1;
+                touched.push(product.booth_id.clone());
+            }
+            Upsert::Unchanged => {
+                unchanged += 1;
+                touched.push(product.booth_id.clone());
+            }
         }
     }
     tx.commit().sql()?;
+    for booth_id in touched {
+        apply_listed_compatibility(connection, &booth_id)?;
+    }
     Ok(ImportReport {
         inserted,
         updated,
@@ -355,6 +368,35 @@ fn upsert(connection: &Connection, incoming: &IncomingProduct) -> Result<Upsert,
     Ok(Upsert::Inserted)
 }
 
+fn apply_listed_compatibility(connection: &mut Connection, booth_id: &str) -> Result<(), String> {
+    let existing = require_product(connection, booth_id)?;
+    if existing.links_locked {
+        return Ok(());
+    }
+    let avatars = load_avatars(connection)?;
+    let listed = crate::compat::listed_avatar_names(&existing.description_snippet, &avatars);
+    if listed.is_empty() {
+        return Ok(());
+    }
+    let category = if existing.category_locked {
+        existing.category.unwrap_or(Category::Outfit)
+    } else {
+        crate::compat::category_for_listed_product(&existing.title)
+    };
+    let threshold = settings(connection)?.confidence_threshold;
+    apply_extraction(
+        connection,
+        booth_id,
+        &Extraction {
+            category,
+            compatible_avatars: listed,
+            is_generic: false,
+            confidence: 0.9,
+        },
+        threshold,
+    )
+}
+
 pub(crate) fn apply_extraction(
     connection: &mut Connection,
     booth_id: &str,
@@ -363,17 +405,26 @@ pub(crate) fn apply_extraction(
 ) -> Result<(), String> {
     let existing = require_product(connection, booth_id)?;
     let avatars = load_avatars(connection)?;
-    let category = if existing.category_locked {
+    let listed = crate::compat::listed_avatar_names(&existing.description_snippet, &avatars);
+    let names = if listed.is_empty() {
+        extraction.compatible_avatars.clone()
+    } else {
+        listed.clone()
+    };
+    let mut category = if existing.category_locked {
         existing.category
     } else {
         Some(extraction.category)
     };
+    if !existing.category_locked && !listed.is_empty() && category == Some(Category::Avatar) {
+        category = Some(crate::compat::category_for_listed_product(&existing.title));
+    }
     let output = resolve_product(
         &ResolveInput {
             booth_id: existing.booth_id.as_str(),
             title: existing.title.as_str(),
             category,
-            raw_names: &extraction.compatible_avatars,
+            raw_names: &names,
             is_generic: extraction.is_generic,
             confidence: Some(extraction.confidence),
             user_confirmed: false,
@@ -408,7 +459,7 @@ pub(crate) fn apply_extraction(
          extracted_at = ?7, updated_at = ?8 WHERE booth_id = ?9",
         params![
             category_text,
-            to_json(&extraction.compatible_avatars)?,
+            to_json(&names)?,
             to_json(&unresolved)?,
             extraction.is_generic,
             extraction.confidence,
@@ -1576,6 +1627,39 @@ mod tests {
                 .iter()
                 .any(|name| name == "架空ちゃん")
         );
+    }
+
+    #[test]
+    fn many_compatible_names_come_from_the_description_list() {
+        let mut connection = open_memory().unwrap();
+        let json = r#"{
+            "products": [{
+                "boothId": "8550001",
+                "title": "部屋着(3アバター対応)",
+                "description": "対応アバター\n\"サンプル工房 ライム_ver1.00 https://booth.pm/ja/items/1001\" \"プラム_ver1.01 https://booth.pm/ja/items/1002\" \"あまとうさぎ ショコラ_ver1.02 https://booth.pm/ja/items/1003\"\n基本仕様\n布です。"
+            }]
+        }"#;
+        import_products(&mut connection, &parse_export(json).unwrap()).unwrap();
+        let snapshot = load_snapshot(&mut connection).unwrap();
+        let product = snapshot
+            .products
+            .iter()
+            .find(|product| product.booth_id == "8550001")
+            .unwrap();
+        assert_eq!(product.category, Some(Category::Outfit));
+        assert!(!product
+            .compatible_avatars
+            .iter()
+            .any(|name| name.contains("アバター対応")));
+        let mut ids: Vec<_> = snapshot
+            .links
+            .iter()
+            .filter(|link| link.product_id == "8550001")
+            .map(|link| link.avatar_id.as_str())
+            .collect();
+        ids.sort_unstable();
+        assert_eq!(ids, vec!["chocolat", "lime", "plum"]);
+        assert!(avatar_cards(&snapshot).iter().all(|card| !card.id.starts_with("owned-")));
     }
 
     fn section_items(detail: &crate::view::AvatarDetail, category: &str) -> Vec<(String, bool)> {

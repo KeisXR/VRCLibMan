@@ -73,7 +73,7 @@ VRCLibMan を変更するときは、このファイルを先に読む。元の�
 
 - 今開いているページだけを読む。ホストは `booth.pm` と `*.booth.pm`。
 - 商品ページの説明は `section.shop__text` にある。`.json` や JSON-LD の description は導入文だけで、素体の記述が落ちる。
-- 商品ページ内の関連 `.item-card` は書き出さない。ライブラリは `img.l-library-item-thumbnail` を起点にし、ページ上の全リンクは拾わない。入口は `https://accounts.booth.pm/library`。ホスト権限の `*.booth.pm` に含まれる。
+- 商品ページ内の関連 `.item-card` は書き出さない。ライブラリは `img.l-library-item-thumbnail` を起点にし、ページ上の全リンクは拾わない。サムネイルのリンクには商品名が無いので、同じカード内で同じ商品IDを指す文字のあるリンク、または `.text-text-default` をタイトルにする。入口は `https://accounts.booth.pm/library`。ホスト権限の `*.booth.pm` に含まれる。
 - 説明が短いカードは、公開 HTML を `credentials: "omit"` で 1 件ずつ補う。間隔は約 250ms、上限 40 件。セッションは送らない。
 - 説明は 8000 字まで。超えるときは「利用規約」を落とし、対応・素体・衣装・髪・ギミック・アバター・モデル・同梱を含む塊を優先する。
 - 書き出し形式は `vrclibman.booth-export` version 1。取り込みはラッパー、配列、単一オブジェクトを受ける。ID は 4〜12 桁。説明の別名は `description` も可。
@@ -85,6 +85,7 @@ VRCLibMan を変更するときは、このファイルを先に読む。元の�
 - Ollama は `http` かつ `127.0.0.1` / `localhost` / `::1` だけ。ユーザー情報付き URL は拒否する。
 - `POST /api/chat` に JSON schema を渡し、`think: false`。HTTP 400 のときは `think` を外して 1 回だけ再送する。
 - プロンプトは、文中にある名前とカテゴリだけを抜く。書かれていないアバター名を足させない。
+- タイトルの「Nアバター対応」は人数であり、対応先の名前ではない。名前は説明の「対応アバター」欄から取る。欄があるときは、その名前をモデルの出力より優先し、取り込み時にも結ぶ。
 - サムネイルは https かつ `pximg.net` / `booth.pm` だけ。`Referer: https://booth.pm/` を付け、pximg は `/c/150x150/` に書き換える。`360x360` と素の `300x300` は 403 になる。4MB まで。
 - スキャンはドライブ直下、`Windows`、`Program Files` を拒否する。深さ 8、2 万件、シンボリックリンクは追わない。上限で打ち切ったときは、見えていないパスを削除しない。
 

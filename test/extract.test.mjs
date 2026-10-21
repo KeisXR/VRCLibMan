@@ -34,19 +34,26 @@ const ITEM_HTML = `<!doctype html>
 
 const LIBRARY_HTML = `<!doctype html>
 <html><body>
-  <div class="bg-white">
-    <a href="https://booth.pm/ja/items/5058077">
-      <img class="l-library-item-thumbnail" alt="" src="https://booth.pximg.net/c/72x72/manuka.jpg" />
-      オリジナル3Dモデル「マヌカ」
-    </a>
-    <span class="text-text-gray600">STUDIO JINGO</span>
-  </div>
-  <div class="bg-white">
-    <a href="/ja/items/6106863">
-      <img class="l-library-item-thumbnail" alt="" src="https://booth.pximg.net/c/72x72/shinano.jpg" />
-      しなの
-    </a>
-    <a class="item-card__shop-name-anchor" href="/shops/1">ポンデロニウム研究所</a>
+  <div id="list">
+    <div class="bg-white">
+      <a href="https://booth.pm/ja/items/5058077">
+        <img class="l-library-item-thumbnail" alt="" src="https://booth.pximg.net/c/72x72/manuka.jpg" />
+      </a>
+      <a class="text-text-default" href="https://booth.pm/items/5058077">オリジナル3Dモデル「マヌカ」</a>
+      <span class="text-text-gray600">STUDIO JINGO</span>
+      <a href="https://booth.pm/downloads/5058077/file">manuka.zip</a>
+    </div>
+    <div class="bg-white">
+      <img class="l-library-item-thumbnail" alt="しなの" src="https://booth.pximg.net/c/72x72/shinano.jpg" />
+      <a href="/ja/items/6106863">しなの</a>
+      <a class="item-card__shop-name-anchor" href="/shops/1">ポンデロニウム研究所</a>
+    </div>
+    <div class="bg-white">
+      <a href="/ja/items/4876459">
+        <img class="l-library-item-thumbnail" alt="" src="https://booth.pximg.net/c/72x72/lime.jpg" />
+        ライム
+      </a>
+    </div>
   </div>
   <a href="/ja/items/1111111">おすすめに紛れたリンク</a>
 </body></html>`;
@@ -66,7 +73,8 @@ test("item page returns only the main product and keeps the body note", () => {
 test("library page uses item thumbnails and ignores stray links", () => {
   const { document } = parseHTML(LIBRARY_HTML);
   const products = extractPage(document, "https://booth.pm/library");
-  assert.deepEqual(products.map((product) => product.boothId), ["5058077", "6106863"]);
+  assert.deepEqual(products.map((product) => product.boothId), ["5058077", "6106863", "4876459"]);
+  assert.equal(products[0].title, "オリジナル3Dモデル「マヌカ」");
   assert.equal(products[0].shop, "STUDIO JINGO");
   assert.equal(products[1].shop, "ポンデロニウム研究所");
 });

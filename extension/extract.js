@@ -161,16 +161,43 @@
     });
   }
 
+  function cardRoot(image) {
+    let best = image.parentElement;
+    let node = image.parentElement;
+    const body = image.ownerDocument && image.ownerDocument.body;
+    while (node && node !== body) {
+      const thumbs = node.querySelectorAll("img.l-library-item-thumbnail").length;
+      if (thumbs > 1) break;
+      best = node;
+      node = node.parentElement;
+    }
+    return best;
+  }
+
+  function libraryTitle(scope, boothId, baseHref) {
+    const links = scope.querySelectorAll ? scope.querySelectorAll("a[href*='/items/']") : [];
+    for (const link of links) {
+      const href = absoluteUrl(link.getAttribute("href") || link.href || "", baseHref);
+      const text = clean(link.textContent);
+      if (text && idFromUrl(href) === boothId) return text;
+    }
+    const titled = scope.querySelector && scope.querySelector(".text-text-default");
+    return clean(titled && titled.textContent);
+  }
+
   function cardFrom(anchor, root, baseHref) {
     const href = absoluteUrl(anchor.getAttribute("href") || anchor.href || "", baseHref);
     const boothId = idFromUrl(href);
     if (!validId(boothId)) return null;
-    const title = clean(anchor.textContent) || clean(anchor.getAttribute("title"));
+    const scope = root || anchor;
+    const title = libraryTitle(scope, boothId, baseHref)
+      || clean(anchor.getAttribute("title"))
+      || clean(anchor.textContent);
     if (!title) return null;
-    const shopNode = root && root.querySelector(
+    const shopNode = scope.querySelector && scope.querySelector(
       ".text-text-gray600, .item-card__shop-name-anchor, .item-card__shop-name",
     );
-    const imageNode = root && root.querySelector("img");
+    const imageNode = scope.querySelector && scope.querySelector("img");
     const image = imageNode ? imageNode.getAttribute("src") || imageNode.src || "" : "";
     return makeProduct({
       boothId,
@@ -179,6 +206,29 @@
       description: "",
       url: href,
       image,
+    });
+  }
+
+  function libraryProduct(image, baseHref) {
+    const card = cardRoot(image) || image.parentElement;
+    const imageAnchor = image.closest && image.closest("a[href*='/items/']");
+    const anchor = imageAnchor || (card && card.querySelector("a[href*='/items/']"));
+    if (!anchor) return null;
+    const href = absoluteUrl(anchor.getAttribute("href") || anchor.href || "", baseHref);
+    const boothId = idFromUrl(href);
+    if (!validId(boothId)) return null;
+    const title = libraryTitle(card, boothId, baseHref) || clean(image.getAttribute("alt"));
+    if (!title) return null;
+    const shopNode = card.querySelector(
+      ".text-text-gray600, .item-card__shop-name-anchor, .item-card__shop-name",
+    );
+    return makeProduct({
+      boothId,
+      title: title.slice(0, 300),
+      shop: clean(shopNode && shopNode.textContent).slice(0, 120),
+      description: "",
+      url: href,
+      image: image.getAttribute("src") || image.src || "",
     });
   }
 
@@ -191,10 +241,7 @@
       products.push(product);
     }
     for (const image of document.querySelectorAll("img.l-library-item-thumbnail")) {
-      const anchor = image.closest && image.closest("a[href*='/items/']");
-      if (!anchor) continue;
-      const card = (image.closest && image.closest(".bg-white, .item-card, li, article")) || anchor.parentElement;
-      push(cardFrom(anchor, card, href));
+      push(libraryProduct(image, href));
     }
     let libraryPath = false;
     try {
@@ -202,8 +249,13 @@
     } catch {
       libraryPath = false;
     }
-    if (libraryPath) {
-      for (const card of document.querySelectorAll(".item-card")) {
+    if (libraryPath && products.length === 0) {
+      for (const card of document.querySelectorAll(".bg-white, .item-card, li, article")) {
+        const image = card.querySelector("img");
+        if (image) {
+          push(libraryProduct(image, href));
+          continue;
+        }
         const anchor = card.querySelector("a[href*='/items/']");
         if (anchor) push(cardFrom(anchor, card, href));
       }
