@@ -239,7 +239,15 @@ mod tests {
 
     #[test]
     fn rejects_drive_root() {
-        let error = validate_scan_root(Path::new("C:\\")).unwrap_err();
-        assert!(error.contains("ドライブ直下"));
+        let root = if cfg!(windows) {
+            Path::new(r"C:\")
+        } else {
+            Path::new("/")
+        };
+        let error = validate_scan_root(root).unwrap_err();
+        assert!(
+            error.contains("ドライブ直下"),
+            "expected the drive-root message, got {error}"
+        );
     }
 }

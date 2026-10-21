@@ -8,13 +8,25 @@ import { Thumb, errorText } from "../ui";
 
 type Kind = "unextracted" | "review" | "files";
 
+function queueCount(page: QueueData, kind: Kind): number {
+  if (kind === "unextracted") return page.unextracted;
+  if (kind === "files") return page.unlinkedFiles;
+  return page.needsReview;
+}
+
 export function QueuePage() {
   const { revision, refresh, notify, fail } = useShell();
-  const [kind, setKind] = useState<Kind>("review");
+  const [kind, setKind] = useState<Kind>("unextracted");
+  const [choseTab, setChoseTab] = useState(false);
   const [page, setPage] = useState<QueueData | null>(null);
   const [loadedKind, setLoadedKind] = useState<Kind | null>(null);
   const [knowledge, setKnowledge] = useState<Knowledge | null>(null);
   const [options, setOptions] = useState<ProductOption[]>([]);
+
+  function choose(next: Kind) {
+    setChoseTab(true);
+    setKind(next);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -35,6 +47,13 @@ export function QueuePage() {
     };
   }, [kind, revision, fail]);
 
+  useEffect(() => {
+    if (!page || choseTab || loadedKind !== kind) return;
+    if (queueCount(page, kind) > 0) return;
+    const next = (["unextracted", "review", "files"] as Kind[]).find((item) => queueCount(page, item) > 0);
+    if (next && next !== kind) setKind(next);
+  }, [page, choseTab, kind, loadedKind]);
+
   const visible = loadedKind === kind ? page : null;
 
   return (
@@ -46,13 +65,13 @@ export function QueuePage() {
         </div>
       </div>
       <div className="tabs">
-        <button className={kind === "unextracted" ? "tab active" : "tab"} type="button" onClick={() => setKind("unextracted")}>
+        <button className={kind === "unextracted" ? "tab active" : "tab"} type="button" onClick={() => choose("unextracted")}>
           未抽出 {page ? page.unextracted : "–"}
         </button>
-        <button className={kind === "review" ? "tab active" : "tab"} type="button" onClick={() => setKind("review")}>
+        <button className={kind === "review" ? "tab active" : "tab"} type="button" onClick={() => choose("review")}>
           要確認 {page ? page.needsReview : "–"}
         </button>
-        <button className={kind === "files" ? "tab active" : "tab"} type="button" onClick={() => setKind("files")}>
+        <button className={kind === "files" ? "tab active" : "tab"} type="button" onClick={() => choose("files")}>
           未突合 {page ? page.unlinkedFiles : "–"}
         </button>
       </div>

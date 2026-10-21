@@ -6,6 +6,8 @@
   root.VrcLibManExtract = api;
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   const PREFERRED = /対応|素体|衣装|髪|ギミック|アバター|モデル|同梱/;
+  // 360x360 と素の 300x300 は pximg が 403 を返す。150x150 は jpeg も png も返る。
+  const CARD_PXIMG_SIZE = "150x150";
 
   function clean(value) {
     return String(value || "").replace(/\s+/g, " ").trim();
@@ -76,9 +78,9 @@
     if (url.pathname.startsWith("/c/")) {
       const rest = url.pathname.slice(3);
       const slash = rest.indexOf("/");
-      if (slash >= 0) url.pathname = `/c/360x360${rest.slice(slash)}`;
+      if (slash >= 0) url.pathname = `/c/${CARD_PXIMG_SIZE}${rest.slice(slash)}`;
     } else {
-      url.pathname = `/c/360x360${url.pathname}`;
+      url.pathname = `/c/${CARD_PXIMG_SIZE}${url.pathname}`;
     }
     return url.toString();
   }

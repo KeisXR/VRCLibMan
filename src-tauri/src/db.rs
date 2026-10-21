@@ -1297,7 +1297,7 @@ struct SeedAvatar {
 mod tests {
     use super::*;
     use crate::import_data::parse_export;
-    use crate::view::{avatar_cards, avatar_detail};
+    use crate::view::{avatar_cards, avatar_detail, queue_page};
 
     const SAMPLE: &str = r#"{
         "products": [
@@ -1408,5 +1408,187 @@ mod tests {
         assert!(product.category.is_none() || product.category_locked);
         assert!(product.extracted_at.is_none());
         assert!(product.description_snippet.contains("更新"));
+    }
+
+    #[test]
+    fn sample_export_on_file_database_reaches_list_and_detail() {
+        struct Temp(std::path::PathBuf);
+        impl Drop for Temp {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let dir = Temp(std::env::temp_dir().join(format!(
+            "vrclibman-sample-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        )));
+        std::fs::create_dir_all(&dir.0).unwrap();
+        let json = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../examples/sample-booth-export.json"),
+        )
+        .unwrap();
+        let parsed = parse_export(&json).unwrap();
+        assert_eq!(parsed.products.len(), 7);
+
+        let db_path = dir.0.join("library.sqlite");
+        let mut connection = open(&db_path).unwrap();
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 1);
+        let report = import_products(&mut connection, &parsed).unwrap();
+        assert_eq!(report.inserted, 7);
+        assert_eq!(report.skipped, 0);
+        let before = load_snapshot(&mut connection).unwrap();
+        assert!(avatar_cards(&before).is_empty());
+        assert_eq!(queue_page(&before, "unextracted", 0, 20).unextracted, 7);
+        assert!(
+            before
+                .products
+                .iter()
+                .any(|product| product.booth_id == "4876459"
+                    && product.description_snippet.contains("共通素体"))
+        );
+
+        // サンプルの説明文に書いてある名前だけを、抽出結果として渡す。
+        let facts = [
+            (
+                "4876459",
+                extraction(
+                    Category::Avatar,
+                    &["ライム", "プラム", "シフォン", "ショコラ"],
+                    false,
+                    0.93,
+                ),
+            ),
+            (
+                "7770415",
+                extraction(Category::Avatar, &["プラム", "ライム"], false, 0.9),
+            ),
+            (
+                "5058077",
+                extraction(Category::Avatar, &["マヌカ"], false, 0.9),
+            ),
+            (
+                "8800101",
+                extraction(
+                    Category::Outfit,
+                    &["しなの", "ライム", "マヌカ"],
+                    false,
+                    0.88,
+                ),
+            ),
+            (
+                "8800102",
+                extraction(Category::Hair, &["マヌカ"], false, 0.86),
+            ),
+            ("8800103", extraction(Category::Gimmick, &[], true, 0.84)),
+            (
+                "8800104",
+                extraction(Category::Outfit, &["架空ちゃん"], false, 0.9),
+            ),
+        ];
+        for (booth_id, extraction) in facts {
+            apply_extraction(&mut connection, booth_id, &extraction, 0.6).unwrap();
+        }
+
+        drop(connection);
+        let mut connection = open(&db_path).unwrap();
+        let again = import_products(&mut connection, &parsed).unwrap();
+        assert_eq!(again.unchanged, 7);
+        let snapshot = load_snapshot(&mut connection).unwrap();
+        let mut ids: Vec<_> = avatar_cards(&snapshot)
+            .into_iter()
+            .map(|card| card.id)
+            .collect();
+        ids.sort_unstable();
+        assert_eq!(
+            ids,
+            vec!["lime".to_string(), "manuka".to_string(), "plum".to_string()]
+        );
+        assert!(snapshot.avatars.iter().any(|avatar| avatar.id == "shinano"));
+        assert!(
+            snapshot
+                .avatars
+                .iter()
+                .all(|avatar| avatar.id != "owned-8800104")
+        );
+
+        let lime = avatar_detail(&snapshot, "lime").unwrap();
+        assert!(
+            lime.owned_products
+                .iter()
+                .any(|item| item.booth_id == "4876459")
+        );
+        assert!(lime.siblings.iter().any(|sibling| sibling.id == "plum"));
+        assert!(lime.siblings.iter().all(|sibling| sibling.id != "manuka"));
+        let lime_outfits = section_items(&lime, "outfit");
+        assert_eq!(lime_outfits, vec![("8800101".to_string(), false)]);
+        assert!(section_items(&lime, "hair").is_empty());
+        assert!(
+            lime.generic_items
+                .iter()
+                .any(|item| item.booth_id == "8800103")
+        );
+
+        let plum = avatar_detail(&snapshot, "plum").unwrap();
+        assert_eq!(
+            section_items(&plum, "outfit"),
+            vec![("8800101".to_string(), true)]
+        );
+        assert!(
+            plum.generic_items
+                .iter()
+                .any(|item| item.booth_id == "8800103")
+        );
+
+        let manuka = avatar_detail(&snapshot, "manuka").unwrap();
+        assert_eq!(
+            section_items(&manuka, "outfit"),
+            vec![("8800101".to_string(), false)]
+        );
+        assert_eq!(
+            section_items(&manuka, "hair"),
+            vec![("8800102".to_string(), false)]
+        );
+        assert!(
+            manuka
+                .generic_items
+                .iter()
+                .any(|item| item.booth_id == "8800103")
+        );
+        assert!(manuka.siblings.is_empty());
+
+        let review = queue_page(&snapshot, "review", 0, 20);
+        assert_eq!(review.unextracted, 0);
+        assert_eq!(review.needs_review, 1);
+        assert_eq!(review.products.len(), 1);
+        assert_eq!(review.products[0].booth_id, "8800104");
+        assert!(
+            review.products[0]
+                .unresolved_names
+                .iter()
+                .any(|name| name == "架空ちゃん")
+        );
+    }
+
+    fn section_items(detail: &crate::view::AvatarDetail, category: &str) -> Vec<(String, bool)> {
+        detail
+            .sections
+            .iter()
+            .filter(|section| section.category == category)
+            .flat_map(|section| {
+                section
+                    .items
+                    .iter()
+                    .map(|item| (item.booth_id.clone(), item.via_base_body))
+            })
+            .collect()
     }
 }
