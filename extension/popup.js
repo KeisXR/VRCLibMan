@@ -15,7 +15,7 @@ async function readTab() {
     if (response?.error) throw new Error(response.error);
     if (Array.isArray(response?.products)) return response.products;
   } catch {
-    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["extract.cjs"] });
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["extract.js"] });
     const [result] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: () => globalThis.VrcLibManExtract.extractPage(document, location.href),
