@@ -99,8 +99,11 @@ async function enrich(products) {
   for (let index = 0; index < targets.length; index += 1) {
     const product = targets[index];
     setStatus(`説明文を補完しています ${index + 1}/${targets.length} 件`);
+    let htmlStatus = 0;
+    let jsonStatus = 0;
     try {
       const response = await fetchWithBackoff(product.url, { credentials: "omit" });
+      htmlStatus = response.status;
       if (response.ok) {
         const { products: parsed } = parseHtml(await response.text(), product.url);
         api().mergeDetail(product, parsed[0]);
@@ -114,6 +117,7 @@ async function enrich(products) {
           credentials: "omit",
           headers: { Accept: "application/json" },
         });
+        jsonStatus = response.status;
         if (response.ok) {
           const detail = api().detailFromItemJson(await response.json(), product.boothId);
           api().mergeDetail(product, detail);
@@ -122,6 +126,7 @@ async function enrich(products) {
         if (error instanceof Error && error.message.includes("止めました")) throw error;
       }
     }
+    api().noteIfUnpublished(product, htmlStatus, jsonStatus);
     await sleep(250);
   }
 }
@@ -150,9 +155,15 @@ async function download(products, source) {
 }
 
 function finishMessage(products, scope) {
-  const missing = products.filter((product) => !(product.descriptionSnippet || "").trim() || !product.shop).length;
-  const base = `${products.length} 件を書き出しました（${scope}）`;
-  return missing > 0 ? `${base}。ショップまたは説明が空の商品が ${missing} 件あります` : base;
+  const unavailable = api().UNAVAILABLE_TEXT;
+  const unpublished = products.filter((product) => product.descriptionSnippet === unavailable);
+  const missing = products.filter(
+    (product) => product.descriptionSnippet !== unavailable && (!(product.descriptionSnippet || "").trim() || !product.shop),
+  );
+  const parts = [`${products.length} 件を書き出しました（${scope}）`];
+  if (unpublished.length > 0) parts.push(`公開終了（取得できず）が ${unpublished.length} 件あります`);
+  if (missing.length > 0) parts.push(`ショップまたは説明が空の商品が ${missing.length} 件あります`);
+  return parts.join("。");
 }
 
 button.addEventListener("click", async () => {

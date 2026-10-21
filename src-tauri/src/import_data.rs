@@ -196,6 +196,19 @@ mod tests {
         assert_eq!(parsed.products[0].description_snippet, "説明A");
         assert_eq!(parsed.products[1].title, "服B");
         assert!(parsed.products[1].thumbnail_url.is_none());
+
+        let unpublished = r#"{
+            "format": "vrclibman.booth-export",
+            "version": 1,
+            "source": "library",
+            "products": [
+                {"boothId":"6874323","title":"消えた商品","shop":"mokemoke-dy","descriptionSnippet":"公開終了（取得できず）","url":"https://booth.pm/ja/items/6874323","unavailable":"not-found"}
+            ]
+        }"#;
+        let parsed = parse_export(unpublished).unwrap();
+        assert_eq!(parsed.products.len(), 1);
+        assert_eq!(parsed.products[0].description_snippet, "公開終了（取得できず）");
+        assert_eq!(parsed.products[0].shop, "mokemoke-dy");
     }
 
     #[test]

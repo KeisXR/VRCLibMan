@@ -251,6 +251,12 @@ pub async fn extract_products(
         }
         let label: String = job.title.chars().take(40).collect();
         emit_progress(&app, "extract", index as u32, total, format!("抽出中: {label}"));
+        if job.description == "公開終了（取得できず）" {
+            let mut connection = db(&state)?;
+            db::mark_description_seen(&mut connection, &job.booth_id)?;
+            processed += 1;
+            continue;
+        }
         match ollama::extract_product(
             &client,
             &settings.ollama_base_url,

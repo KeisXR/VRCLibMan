@@ -15,6 +15,8 @@ const {
   dedupeProducts,
   isLibraryUrl,
   quietHtml,
+  noteIfUnpublished,
+  UNAVAILABLE_TEXT,
 } = require("../extension/extract.js");
 
 const ITEM_HTML = `<!doctype html>
@@ -151,6 +153,17 @@ test("library pager reports the last page and drops ids already seen", () => {
   ]);
   assert.deepEqual(unique.map((product) => product.title), ["先", "次"]);
   assert.equal(quietHtml('<link rel="preload" as="script" href="https://example.test/a.js"><script src="https://example.test/a.js"></script><p>本文</p>').includes("script"), false);
+});
+
+test("a product missing from both the page and json is marked unpublished", () => {
+  const product = { boothId: "1001", title: "消えた商品", shop: "工房", descriptionSnippet: "" };
+  noteIfUnpublished(product, 404, 404);
+  assert.equal(product.descriptionSnippet, UNAVAILABLE_TEXT);
+  assert.equal(product.unavailable, "not-found");
+  const kept = { boothId: "1002", title: "残っている", shop: "工房", descriptionSnippet: "説明があります" };
+  noteIfUnpublished(kept, 404, 404);
+  assert.equal(kept.descriptionSnippet, "説明があります");
+  assert.equal(kept.unavailable, undefined);
 });
 
 test("other booth pages export nothing", () => {

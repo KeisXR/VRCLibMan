@@ -374,6 +374,18 @@
     return max;
   }
 
+  const UNAVAILABLE_TEXT = "公開終了（取得できず）";
+
+  function noteIfUnpublished(product, htmlStatus, jsonStatus) {
+    if (!product) return product;
+    const hasDescription = (product.descriptionSnippet || "").trim().length > 0;
+    if (!hasDescription && htmlStatus === 404 && jsonStatus === 404) {
+      product.descriptionSnippet = UNAVAILABLE_TEXT;
+      product.unavailable = "not-found";
+    }
+    return product;
+  }
+
   function dedupeProducts(products) {
     const seen = new Set();
     const unique = [];
@@ -397,5 +409,7 @@
     libraryPageUrl,
     libraryLastPage,
     dedupeProducts,
+    noteIfUnpublished,
+    UNAVAILABLE_TEXT,
   };
 });

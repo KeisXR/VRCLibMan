@@ -738,6 +738,16 @@ pub(crate) fn apply_scan(
     })
 }
 
+pub(crate) fn mark_description_seen(connection: &Connection, booth_id: &str) -> Result<(), String> {
+    connection
+        .execute(
+            "UPDATE products SET extracted_at = ?1 WHERE booth_id = ?2 AND extracted_at IS NULL",
+            params![now_iso(), booth_id],
+        )
+        .sql()?;
+    Ok(())
+}
+
 pub(crate) fn products_for_extract(
     connection: &Connection,
     force: bool,
