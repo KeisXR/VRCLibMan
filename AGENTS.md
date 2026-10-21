@@ -2,7 +2,7 @@
 
 VRCLibMan を変更するときは、このファイルを先に読む。元の設計は `C:\Users\Kei\Downloads\vrchat-asset-organizer-design.md` にあるが、リポジトリには入っていない。実装済みの振る舞いとこのファイルが、設計書の例示より優先する。
 
-非公開リポジトリは https://github.com/KeisXR/VRCLibMan 。このファイルを書いた時点では、そのリモートにはまだ含まれていない。
+非公開リポジトリは https://github.com/KeisXR/VRCLibMan 。
 
 ## プロダクト
 
@@ -33,17 +33,21 @@ VRCLibMan を変更するときは、このファイルを先に読む。元の�
 
 検証済み:
 
-- `cargo test --manifest-path src-tauri/Cargo.toml` は 22 件成功
+- `cargo test --manifest-path src-tauri/Cargo.toml` は 23 件成功。ファイルに保存した SQLite へ `examples/sample-booth-export.json` を入れ、説明文に書いてある名前を抽出結果として渡すと、一覧はライム・プラム・マヌカになり、プラムの詳細には共通素体経由の衣装が出て、架空ちゃんは確認に残る
 - `npm test` は拡張のページ解析 5 件成功
 - `npm run build` と `cargo build` は成功
 - `npm run dev`（http://localhost:1420）で、見本データの一覧、素体共有の詳細、確認、ファイル結び付け、設定、JSON ドロップを操作した
+- 公開商品ページ `4876459`（ライム）、`7770415`（プラム）、`5058077`（マヌカ）では、拡張が商品 1 件を返し、`section.shop__text` に素体の記述が残る。ページ全文はリポジトリに置いていない
+- pximg の `360x360` は 403 になる。`Referer: https://booth.pm/` を付けた `150x150` は jpeg も png も返る
+- 未ログインの `https://accounts.booth.pm/library` はサインインページになり、拡張は 0 件を返す。`https://booth.pm/library` は 404
+- Linux の `npm run tauri dev` でウィンドウが開いた。サンプル JSON を入れると 7 件追加され、アバター一覧は 0 のまま、確認を開くと未抽出 7 件が出る。アプリデータの `library.sqlite` に商品 7 件と初期アバター 10 件が入った。Ollama は止めてあるので抽出はしていない
 
 まだ実機で確認していない:
 
-- `npm run tauri dev` でウィンドウを開き、本物の SQLite にサンプル JSON を入れて一覧まで進むこと
-- ログイン済みの Booth ライブラリ実ページ。拡張のテスト HTML は構造を模した短い原文であり、現行 DOM そのものではない
+- Ollama で分類したあとの一覧と詳細を、ウィンドウで見ること
+- ログイン済みライブラリの現行 DOM。拡張のテスト HTML は構造を模した短い原文である
 - Ollama（`qwen3:4b`）の抽出品質
-- サムネイルの実ダウンロードと asset プロトコル経由の表示
+- 保存したサムネイルを asset プロトコル経由で表示すること
 - macOS と、インストーラにした配布物
 
 見本データの画面が動いても、名前解決や突合が正しい証明にはならない。その証明は Rust のテストが持つ。
@@ -62,13 +66,14 @@ VRCLibMan を変更するときは、このファイルを先に読む。元の�
 - Tauri のコマンド引数は Rust のパラメータ名と一致させる。複数語は camelCase（`productId`、`fromId`、`intoId`）。構造体は `rename_all = "camelCase"`。
 - `tauri` の feature に `protocol-asset` が必要。`tauri.conf.json` の asset scope は `$APPDATA/**`。
 - 画面遷移はハッシュ（`#/` `#/avatar/{id}` `#/queue` `#/import` `#/settings`）。ルータライブラリは無い。
+- 確認を開いたとき、今のタブが空で別のタブに件数があるなら、未抽出、要確認、未突合の順で最初に件数があるタブを出す。ユーザーがタブを押したあとは動かさない。
 - `npm run dev` は Tauri の外で動く。`__TAURI_INTERNALS__` が無いときは `src/preview/api.ts` の見本に落ちる。見本は分類ロジックの複製であり、Rust を直しても自動では追従しない。
 
 ### 拡張
 
 - 今開いているページだけを読む。ホストは `booth.pm` と `*.booth.pm`。
 - 商品ページの説明は `section.shop__text` にある。`.json` や JSON-LD の description は導入文だけで、素体の記述が落ちる。
-- 商品ページ内の関連 `.item-card` は書き出さない。ライブラリは `img.l-library-item-thumbnail` を起点にし、ページ上の全リンクは拾わない。
+- 商品ページ内の関連 `.item-card` は書き出さない。ライブラリは `img.l-library-item-thumbnail` を起点にし、ページ上の全リンクは拾わない。入口は `https://accounts.booth.pm/library`。ホスト権限の `*.booth.pm` に含まれる。
 - 説明が短いカードは、公開 HTML を `credentials: "omit"` で 1 件ずつ補う。間隔は約 250ms、上限 40 件。セッションは送らない。
 - 説明は 8000 字まで。超えるときは「利用規約」を落とし、対応・素体・衣装・髪・ギミック・アバター・モデル・同梱を含む塊を優先する。
 - 書き出し形式は `vrclibman.booth-export` version 1。取り込みはラッパー、配列、単一オブジェクトを受ける。ID は 4〜12 桁。説明の別名は `description` も可。
@@ -80,7 +85,7 @@ VRCLibMan を変更するときは、このファイルを先に読む。元の�
 - Ollama は `http` かつ `127.0.0.1` / `localhost` / `::1` だけ。ユーザー情報付き URL は拒否する。
 - `POST /api/chat` に JSON schema を渡し、`think: false`。HTTP 400 のときは `think` を外して 1 回だけ再送する。
 - プロンプトは、文中にある名前とカテゴリだけを抜く。書かれていないアバター名を足させない。
-- サムネイルは https かつ `pximg.net` / `booth.pm` だけ。`Referer: https://booth.pm/` を付け、pximg は `/c/360x360/` に書き換える。4MB まで。
+- サムネイルは https かつ `pximg.net` / `booth.pm` だけ。`Referer: https://booth.pm/` を付け、pximg は `/c/150x150/` に書き換える。`360x360` と素の `300x300` は 403 になる。4MB まで。
 - スキャンはドライブ直下、`Windows`、`Program Files` を拒否する。深さ 8、2 万件、シンボリックリンクは追わない。上限で打ち切ったときは、見えていないパスを削除しない。
 
 ### 知識と名前解決
@@ -122,11 +127,11 @@ VRCLibMan を変更するときは、このファイルを先に読む。元の�
 
 ## これからの実装方針
 
-次に触るときは、機能を増やす前に実データの経路を閉じる。
+機能を増やす前に、まだ画面とログインが要る経路を閉じる。
 
-1. `npm run tauri dev` で、`examples/sample-booth-export.json` を取り込み、一覧と詳細が出ることを見る。Ollama が起動しているときだけ抽出まで進む。
-2. ログイン済みのライブラリ 1 ページと商品 1 ページで拡張を実行し、件数がページの商品数と一致するか見る。DOM が違えば `extension/extract.cjs` と `test/extract.test.mjs` を、短い構造フィクスチャのまま直す。
-3. サムネイルが 403 になるホストや、スキャンが消しすぎるパスがあれば、その回帰テストを Rust に足してから直す。
+1. Ollama（`qwen3:4b`）を起動し、取り込んだサンプルを分類する。一覧がライム・プラム・マヌカになり、架空ちゃんが確認に残るか、ウィンドウで見る。分類前は一覧が空で、未抽出が確認に出ることは見ている。
+2. ログイン済みの `https://accounts.booth.pm/library` で拡張を実行し、件数がそのページの商品数と一致するか見る。DOM が違えば `extension/extract.cjs` と `test/extract.test.mjs` を、短い構造フィクスチャのまま直す。公開商品ページ 3 件は、現行の `section.shop__text` のままで 1 件ずつ取れる。
+3. 保存したサムネイルが WebView の asset プロトコルで表示されるか見る。取得先の 403 は `150x150` で避けている。
 4. 素体の追加はユーザーの対応表編集で足りる。シードを増やすのは一次情報の引用を note に書けるときに限る。
 5. 名前解決、突合、詳細の出し分けを変えるときは、先に `src-tauri/src` のテストを更新する。見本の `src/preview/api.ts` は画面用なので、同じ変更が必要なら別途合わせる。
 6. スキーマを変えるときは `user_version` を上げた移行を足す。既存の `library.sqlite` を暗黙に作り直さない。

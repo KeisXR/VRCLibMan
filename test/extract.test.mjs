@@ -60,7 +60,7 @@ test("item page returns only the main product and keeps the body note", () => {
   assert.equal(products[0].shop, "こまど");
   assert.match(products[0].descriptionSnippet, /共通素体/);
   assert.equal(products[0].descriptionSnippet.includes("おすすめの別商品"), false);
-  assert.match(products[0].thumbnailUrl, /\/c\/360x360\//);
+  assert.match(products[0].thumbnailUrl, /\/c\/150x150\//);
 });
 
 test("library page uses item thumbnails and ignores stray links", () => {
@@ -85,9 +85,13 @@ test("long descriptions keep compatibility notes and drop terms", () => {
   assert.equal(trimmed.includes("利用規約"), false);
 });
 
-test("card images are rewritten to 360px", () => {
+test("card images use a pximg size the CDN serves", () => {
   assert.equal(
     cardImage("https://booth.pximg.net/abcdef/i/4876459/base.jpg"),
-    "https://booth.pximg.net/c/360x360/abcdef/i/4876459/base.jpg",
+    "https://booth.pximg.net/c/150x150/abcdef/i/4876459/base.jpg",
+  );
+  assert.equal(
+    cardImage("https://booth.pximg.net/c/72x72_a2_g5/abcdef/i/4876459/base.jpg"),
+    "https://booth.pximg.net/c/150x150/abcdef/i/4876459/base.jpg",
   );
 });

@@ -100,13 +100,14 @@ fn is_pximg(url: &Url) -> bool {
 
 fn resize_pximg(url: &Url) -> Url {
     let path = url.path();
+    // 360x360 と素の 300x300 は pximg が 403 を返す。150x150 は jpeg も png も返る。
     let resized = if let Some(rest) = path.strip_prefix("/c/") {
         match rest.find('/') {
-            Some(index) => format!("/c/360x360{}", &rest[index..]),
+            Some(index) => format!("/c/150x150{}", &rest[index..]),
             None => path.to_string(),
         }
     } else {
-        format!("/c/360x360{path}")
+        format!("/c/150x150{path}")
     };
     let mut updated = url.clone();
     updated.set_path(&resized);
@@ -143,19 +144,17 @@ mod tests {
 
     #[test]
     fn rewrites_pximg_to_card_size_and_rejects_other_hosts() {
-        let rewritten = card_image_url(
-            "https://booth.pximg.net/61a3b2d7/i/4876459/image_base_resized.jpg",
-        )
-        .unwrap();
+        let rewritten =
+            card_image_url("https://booth.pximg.net/61a3b2d7/i/4876459/image_base_resized.jpg")
+                .unwrap();
         assert_eq!(
             rewritten.path(),
-            "/c/360x360/61a3b2d7/i/4876459/image_base_resized.jpg"
+            "/c/150x150/61a3b2d7/i/4876459/image_base_resized.jpg"
         );
-        let already = card_image_url(
-            "https://booth.pximg.net/c/72x72_a2_g5/61a3b2d7/i/4876459/image.jpg",
-        )
-        .unwrap();
-        assert!(already.path().starts_with("/c/360x360/"));
+        let already =
+            card_image_url("https://booth.pximg.net/c/72x72_a2_g5/61a3b2d7/i/4876459/image.jpg")
+                .unwrap();
+        assert_eq!(already.path(), "/c/150x150/61a3b2d7/i/4876459/image.jpg");
         assert!(card_image_url("https://example.com/image.jpg").is_err());
         assert!(card_image_url("http://booth.pximg.net/a.jpg").is_err());
     }
