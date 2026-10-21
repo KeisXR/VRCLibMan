@@ -1,0 +1,313 @@
+import { useEffect, useState } from "react";
+import { api } from "../api";
+import { useShell } from "../App";
+import type { AvatarRecord, BaseBody, Knowledge, Settings } from "../types";
+import { errorText } from "../ui";
+
+const emptyAvatar = {
+  id: "",
+  displayName: "",
+  baseBody: "",
+  aliases: "",
+  notes: "",
+  builtin: false,
+};
+
+export function SettingsPage() {
+  const { revision, refresh, notify, fail } = useShell();
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const [knowledge, setKnowledge] = useState<Knowledge | null>(null);
+  const [avatar, setAvatar] = useState(emptyAvatar);
+  const [body, setBody] = useState({ id: "", displayName: "", note: "" });
+  const [filter, setFilter] = useState("");
+  const [status, setStatus] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([api.settings(), api.knowledge()]).then(
+      ([nextSettings, nextKnowledge]) => {
+        if (cancelled) return;
+        setSettings(nextSettings);
+        setKnowledge(nextKnowledge);
+      },
+      (err: unknown) => {
+        if (!cancelled) fail(errorText(err));
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [revision, fail]);
+
+  async function saveSettings() {
+    if (!settings) return;
+    try {
+      await api.saveSettings(settings);
+      notify("設定を保存しました");
+      refresh();
+    } catch (err) {
+      fail(errorText(err));
+    }
+  }
+
+  async function testOllama() {
+    try {
+      const result = await api.testOllama();
+      setStatus(
+        result.modelReady
+          ? `接続できました。設定中のモデルがあります（${result.models.length} 件）`
+          : `接続できましたが、設定中のモデルが見つかりません。導入済み: ${result.models.join(", ") || "なし"}`,
+      );
+    } catch (err) {
+      setStatus(errorText(err));
+    }
+  }
+
+  function selectAvatar(record: AvatarRecord) {
+    setAvatar({
+      id: record.id,
+      displayName: record.displayName,
+      baseBody: record.baseBody ?? "",
+      aliases: record.aliases.join(", "),
+      notes: record.notes,
+      builtin: record.isBuiltin,
+    });
+  }
+
+  async function saveAvatar() {
+    try {
+      const aliases = avatar.aliases
+        .split(/[,、\n]/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+      await api.saveAvatar({
+        id: avatar.id || null,
+        displayName: avatar.displayName,
+        baseBody: avatar.baseBody || null,
+        aliases,
+        notes: avatar.notes,
+      });
+      notify("対応表を保存し、紐づけを再計算しました");
+      refresh();
+    } catch (err) {
+      fail(errorText(err));
+    }
+  }
+
+  async function removeAvatar() {
+    if (!avatar.id || avatar.builtin) return;
+    try {
+      await api.deleteAvatar(avatar.id);
+      setAvatar(emptyAvatar);
+      notify("アバターを削除し、紐づけを再計算しました");
+      refresh();
+    } catch (err) {
+      fail(errorText(err));
+    }
+  }
+
+  async function saveBody() {
+    try {
+      await api.saveBaseBody({
+        id: body.id || null,
+        displayName: body.displayName,
+        note: body.note,
+      });
+      notify("素体を保存しました");
+      refresh();
+    } catch (err) {
+      fail(errorText(err));
+    }
+  }
+
+  async function removeBody() {
+    if (!body.id) return;
+    try {
+      await api.deleteBaseBody(body.id);
+      setBody({ id: "", displayName: "", note: "" });
+      notify("素体を削除しました");
+      refresh();
+    } catch (err) {
+      fail(errorText(err));
+    }
+  }
+
+  async function restore() {
+    try {
+      const added = await api.restoreSeed();
+      notify(`初期データの不足分を ${added} 件追加しました`);
+      refresh();
+    } catch (err) {
+      fail(errorText(err));
+    }
+  }
+
+  async function reresolve() {
+    try {
+      const changed = await api.reresolve();
+      notify(`${changed} 件の紐づけを再計算しました`);
+      refresh();
+    } catch (err) {
+      fail(errorText(err));
+    }
+  }
+
+  const avatars = (knowledge?.avatars ?? []).filter((record) => {
+    const needle = filter.trim().toLowerCase();
+    if (!needle) return true;
+    return [record.displayName, ...record.aliases].join(" ").toLowerCase().includes(needle);
+  });
+
+  return (
+    <section>
+      <div className="page-head">
+        <div>
+          <h1>設定</h1>
+          <p>分類は手元の Ollama だけに頼み、素体の関係はここにある対応表で決めます。</p>
+        </div>
+      </div>
+      {settings && (
+        <div className="panel" style={{ padding: 16, marginBottom: 16 }}>
+          <div className="form-grid">
+            <label className="field">
+              <span>Ollama の URL</span>
+              <input
+                value={settings.ollamaBaseUrl}
+                onChange={(event) => setSettings({ ...settings, ollamaBaseUrl: event.target.value })}
+              />
+            </label>
+            <label className="field">
+              <span>モデル名</span>
+              <input
+                value={settings.ollamaModel}
+                onChange={(event) => setSettings({ ...settings, ollamaModel: event.target.value })}
+              />
+            </label>
+            <label className="field">
+              <span>確信度のしきい値</span>
+              <input
+                type="number"
+                min={0}
+                max={1}
+                step={0.05}
+                value={settings.confidenceThreshold}
+                onChange={(event) =>
+                  setSettings({ ...settings, confidenceThreshold: Number(event.target.value) })
+                }
+              />
+            </label>
+            <label className="field">
+              <span>最後に調べたフォルダ</span>
+              <input value={settings.libraryFolder} readOnly />
+            </label>
+          </div>
+          <div className="row-actions">
+            <button className="button primary" type="button" onClick={() => void saveSettings()}>
+              設定を保存
+            </button>
+            <button className="button" type="button" onClick={() => void testOllama()}>
+              接続を試す
+            </button>
+          </div>
+          {status && <p className="meta">{status}</p>}
+          <p className="meta">Ollama は http://127.0.0.1 または localhost だけを受け付けます。温度は 0.1 固定です。</p>
+        </div>
+      )}
+      <div className="row-actions" style={{ marginBottom: 16 }}>
+        <button className="button" type="button" onClick={() => void restore()}>
+          初期データを追加
+        </button>
+        <button className="button" type="button" onClick={() => void reresolve()}>
+          対応表を再適用
+        </button>
+      </div>
+      <div className="knowledge">
+        <div>
+          <input className="search" value={filter} placeholder="対応表を検索" onChange={(event) => setFilter(event.target.value)} />
+          <div className="list">
+            {avatars.map((record) => (
+              <button
+                key={record.id}
+                className={record.id === avatar.id ? "selected" : ""}
+                type="button"
+                onClick={() => selectAvatar(record)}
+              >
+                {record.displayName}
+                {record.isBuiltin ? " ・初期" : ""}
+              </button>
+            ))}
+          </div>
+          <h2>素体</h2>
+          <div className="list">
+            {(knowledge?.baseBodies ?? []).map((record) => (
+              <button key={record.id} type="button" onClick={() => setBody(record)}>
+                {record.displayName}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="stack">
+          <div className="panel" style={{ padding: 16 }}>
+            <h2 style={{ marginTop: 0 }}>{avatar.id ? "アバターを編集" : "アバターを追加"}</h2>
+            <label className="field">
+              <span>表示名</span>
+              <input value={avatar.displayName} onChange={(event) => setAvatar({ ...avatar, displayName: event.target.value })} />
+            </label>
+            <label className="field">
+              <span>別名（カンマ区切り）</span>
+              <input value={avatar.aliases} onChange={(event) => setAvatar({ ...avatar, aliases: event.target.value })} />
+            </label>
+            <label className="field">
+              <span>素体</span>
+              <select value={avatar.baseBody} onChange={(event) => setAvatar({ ...avatar, baseBody: event.target.value })}>
+                <option value="">なし</option>
+                {(knowledge?.baseBodies ?? []).map((record: BaseBody) => (
+                  <option key={record.id} value={record.id}>
+                    {record.displayName}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span>メモ</span>
+              <textarea value={avatar.notes} onChange={(event) => setAvatar({ ...avatar, notes: event.target.value })} />
+            </label>
+            <div className="row-actions">
+              <button className="button primary" type="button" onClick={() => void saveAvatar()}>
+                保存
+              </button>
+              <button className="button" type="button" onClick={() => setAvatar(emptyAvatar)}>
+                新規
+              </button>
+              <button className="button danger" type="button" disabled={!avatar.id || avatar.builtin} onClick={() => void removeAvatar()}>
+                削除
+              </button>
+            </div>
+          </div>
+          <div className="panel" style={{ padding: 16 }}>
+            <h2 style={{ marginTop: 0 }}>{body.id ? "素体を編集" : "素体を追加"}</h2>
+            <label className="field">
+              <span>表示名</span>
+              <input value={body.displayName} onChange={(event) => setBody({ ...body, displayName: event.target.value })} />
+            </label>
+            <label className="field">
+              <span>根拠のメモ</span>
+              <textarea value={body.note} onChange={(event) => setBody({ ...body, note: event.target.value })} />
+            </label>
+            <div className="row-actions">
+              <button className="button primary" type="button" onClick={() => void saveBody()}>
+                保存
+              </button>
+              <button className="button" type="button" onClick={() => setBody({ id: "", displayName: "", note: "" })}>
+                新規
+              </button>
+              <button className="button danger" type="button" disabled={!body.id} onClick={() => void removeBody()}>
+                削除
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}

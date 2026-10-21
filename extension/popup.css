@@ -1,0 +1,20 @@
+body {
+  width: 280px;
+  margin: 0;
+  padding: 14px;
+  font: 13px/1.5 "Segoe UI", "Yu Gothic UI", sans-serif;
+  background: #1c1713;
+  color: #f6efe6;
+}
+h1 { margin: 0 0 6px; font-size: 16px; }
+p { margin: 0 0 12px; color: #b5a496; }
+button {
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #e8a15a;
+  color: #2b1708;
+  font-weight: 650;
+}
+#status { min-height: 2.5em; }

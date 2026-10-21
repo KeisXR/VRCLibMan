@@ -1,0 +1,71 @@
+{
+  "baseBodies": [
+    {
+      "id": "komado",
+      "displayName": "あまとうさぎ共通素体",
+      "note": "作者こまど氏の商品説明で、ライム・プラム・シフォン・ショコラは共通素体で、衣装を着せ替えできると書かれている。"
+    }
+  ],
+  "avatars": [
+    {
+      "id": "lime",
+      "displayName": "ライム",
+      "baseBody": "komado",
+      "aliases": ["Lime"]
+    },
+    {
+      "id": "plum",
+      "displayName": "プラム",
+      "baseBody": "komado",
+      "aliases": ["Plum"]
+    },
+    {
+      "id": "chiffon",
+      "displayName": "シフォン",
+      "baseBody": "komado",
+      "aliases": ["Chiffon"]
+    },
+    {
+      "id": "chocolat",
+      "displayName": "ショコラ",
+      "baseBody": "komado",
+      "aliases": ["Chocolat"]
+    },
+    {
+      "id": "manuka",
+      "displayName": "マヌカ",
+      "baseBody": null,
+      "aliases": ["Manuka", "MANUKA", "마누카"]
+    },
+    {
+      "id": "shinano",
+      "displayName": "しなの",
+      "baseBody": null,
+      "aliases": ["Shinano"]
+    },
+    {
+      "id": "celestia",
+      "displayName": "セレスティア",
+      "baseBody": null,
+      "aliases": ["Celestia"]
+    },
+    {
+      "id": "milltina",
+      "displayName": "ミルティナ",
+      "baseBody": null,
+      "aliases": ["Milltina"]
+    },
+    {
+      "id": "kikyo",
+      "displayName": "桔梗",
+      "baseBody": null,
+      "aliases": []
+    },
+    {
+      "id": "rurune",
+      "displayName": "ルルネ",
+      "baseBody": null,
+      "aliases": ["rurune", "Rurune"]
+    }
+  ]
+}
