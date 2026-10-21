@@ -77,7 +77,7 @@ VRCLibMan を変更するときは、このファイルを先に読む。元の�
 - 説明が短いカードは、公開 HTML を `credentials: "omit"` で 1 件ずつ補う。間隔は約 250ms、上限 40 件。セッションは送らない。
 - 説明は 8000 字まで。超えるときは「利用規約」を落とし、対応・素体・衣装・髪・ギミック・アバター・モデル・同梱を含む塊を優先する。
 - 書き出し形式は `vrclibman.booth-export` version 1。取り込みはラッパー、配列、単一オブジェクトを受ける。ID は 4〜12 桁。説明の別名は `description` も可。
-- 拡張のスクリプトは classic script。`extract.cjs` は IIFE で、Node テストは `createRequire` で読む。テスト用 HTML に Booth の商品文を丸ごと入れない。
+- 拡張のスクリプトは classic script。ファイル名は `extract.js`。Chrome のコンテンツスクリプトは `.cjs` を読めない。中身は IIFE で、Node テストは `createRequire` で読む。テスト用 HTML に Booth の商品文を丸ごと入れない。
 
 ### 抽出と安全境界
 
@@ -130,7 +130,7 @@ VRCLibMan を変更するときは、このファイルを先に読む。元の�
 機能を増やす前に、まだ画面とログインが要る経路を閉じる。
 
 1. Ollama（`qwen3:4b`）を起動し、取り込んだサンプルを分類する。一覧がライム・プラム・マヌカになり、架空ちゃんが確認に残るか、ウィンドウで見る。分類前は一覧が空で、未抽出が確認に出ることは見ている。
-2. ログイン済みの `https://accounts.booth.pm/library` で拡張を実行し、件数がそのページの商品数と一致するか見る。DOM が違えば `extension/extract.cjs` と `test/extract.test.mjs` を、短い構造フィクスチャのまま直す。公開商品ページ 3 件は、現行の `section.shop__text` のままで 1 件ずつ取れる。
+2. ログイン済みの `https://accounts.booth.pm/library` で拡張を実行し、件数がそのページの商品数と一致するか見る。DOM が違えば `extension/extract.js` と `test/extract.test.mjs` を、短い構造フィクスチャのまま直す。公開商品ページ 3 件は、現行の `section.shop__text` のままで 1 件ずつ取れる。
 3. 保存したサムネイルが WebView の asset プロトコルで表示されるか見る。取得先の 403 は `150x150` で避けている。
 4. 素体の追加はユーザーの対応表編集で足りる。シードを増やすのは一次情報の引用を note に書けるときに限る。
 5. 名前解決、突合、詳細の出し分けを変えるときは、先に `src-tauri/src` のテストを更新する。見本の `src/preview/api.ts` は画面用なので、同じ変更が必要なら別途合わせる。

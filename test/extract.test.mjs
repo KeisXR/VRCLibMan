@@ -4,7 +4,7 @@ import test from "node:test";
 import { parseHTML } from "linkedom";
 
 const require = createRequire(import.meta.url);
-const { extractPage, trimDescription, cardImage } = require("../extension/extract.cjs");
+const { extractPage, trimDescription, cardImage } = require("../extension/extract.js");
 
 const ITEM_HTML = `<!doctype html>
 <html lang="ja"><head>
