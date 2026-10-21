@@ -159,7 +159,16 @@ fn strip_shop(label: &str) -> String {
     while start + 1 < tokens.len() && is_shop_token(tokens[start]) {
         start += 1;
     }
-    tokens[start..].join(" ")
+    let rest = &tokens[start..];
+    if rest.len() <= 1 {
+        return rest.join(" ");
+    }
+    // The version marker sits on the avatar name, so the last word is that name.
+    // An earlier word stays only when の/ノ ties it into the name (量産型のらきゃっと ぷらす).
+    if let Some(bound) = rest.iter().position(|token| token.contains('の') || token.contains('ノ')) {
+        return rest[bound..].join(" ");
+    }
+    rest[rest.len() - 1].to_string()
 }
 
 fn is_shop_token(token: &str) -> bool {
@@ -222,6 +231,31 @@ mod tests {
         assert_eq!(listed_avatar_names(text, &[]), vec!["瑞希".to_string()]);
         let reading = "対応アバター\n\"Sharu(シャル) ミリアム_v1.8 https://booth.pm/ja/items/8\"\n基本仕様\n";
         assert_eq!(listed_avatar_names(reading, &[]), vec!["ミリアム".to_string()]);
+    }
+
+    #[test]
+    fn shop_prefix_is_removed_but_a_name_joined_by_no_stays() {
+        let text = "\
+対応アバター
+\"こここや リリエ_ver2.2 https://booth.pm/ja/items/1\"
+\"ソラハ_ver1.4 https://booth.pm/ja/items/2\"
+\"ぷらすわん 真冬_v1.0.7 https://booth.pm/ja/items/3\"
+\"ミルフィ_v1.5.0 https://booth.pm/ja/items/4\"
+\"アバターショップ コトブキヤ 旅枕ヨカ__0.9.1 https://booth.pm/ja/items/5\"
+\"IMR義体工廠 量産型のらきゃっと ぷらす_ver1.02 https://booth.pm/ja/items/6\"
+基本仕様
+";
+        assert_eq!(
+            listed_avatar_names(text, &[]),
+            vec![
+                "リリエ".to_string(),
+                "ソラハ".to_string(),
+                "真冬".to_string(),
+                "ミルフィ".to_string(),
+                "旅枕ヨカ".to_string(),
+                "量産型のらきゃっと ぷらす".to_string(),
+            ]
+        );
     }
 
     #[test]
