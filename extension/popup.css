@@ -17,4 +17,11 @@ button {
   color: #2b1708;
   font-weight: 650;
 }
+button.secondary {
+  margin-top: 8px;
+  background: transparent;
+  color: #f6efe6;
+  border: 1px solid #6a5848;
+}
+button:disabled { opacity: 0.55; }
 #status { min-height: 2.5em; }

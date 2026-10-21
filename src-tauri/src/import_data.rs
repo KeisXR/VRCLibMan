@@ -179,6 +179,26 @@ mod tests {
     }
 
     #[test]
+    fn full_library_export_shape_imports() {
+        let json = r#"{
+            "format": "vrclibman.booth-export",
+            "version": 1,
+            "exportedAt": "2026-10-21T00:00:00.000Z",
+            "source": "library",
+            "products": [
+                {"boothId":"100001","title":"服A","shop":"工房","descriptionSnippet":"説明A","url":"https://booth.pm/ja/items/100001","thumbnailUrl":"https://booth.pximg.net/c/150x150/a.jpg"},
+                {"boothId":"100002","title":"服B","shop":"工房","descriptionSnippet":"説明B","url":"https://booth.pm/ja/items/100002","thumbnailUrl":null}
+            ]
+        }"#;
+        let parsed = parse_export(json).unwrap();
+        assert_eq!(parsed.products.len(), 2);
+        assert_eq!(parsed.skipped, 0);
+        assert_eq!(parsed.products[0].description_snippet, "説明A");
+        assert_eq!(parsed.products[1].title, "服B");
+        assert!(parsed.products[1].thumbnail_url.is_none());
+    }
+
+    #[test]
     fn caps_long_descriptions() {
         let description = "あ".repeat(9000);
         let json = format!(r#"[{{"boothId":"10001","title":"服","description":"{description}"}}]"#);

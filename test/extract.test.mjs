@@ -4,7 +4,18 @@ import test from "node:test";
 import { parseHTML } from "linkedom";
 
 const require = createRequire(import.meta.url);
-const { extractPage, trimDescription, cardImage, detailFromItemJson, mergeDetail } = require("../extension/extract.js");
+const {
+  extractPage,
+  trimDescription,
+  cardImage,
+  detailFromItemJson,
+  mergeDetail,
+  libraryLastPage,
+  libraryPageUrl,
+  dedupeProducts,
+  isLibraryUrl,
+  quietHtml,
+} = require("../extension/extract.js");
 
 const ITEM_HTML = `<!doctype html>
 <html lang="ja"><head>
@@ -117,6 +128,29 @@ test("item json fills an empty shop and description without replacing the title"
   assert.equal(product.shop, "サンプル工房");
   assert.match(product.descriptionSnippet, /ライム_ver1\.00/);
   assert.equal(product.thumbnailUrl, "https://booth.pximg.net/c/150x150/sample.jpg");
+});
+
+test("library pager reports the last page and drops ids already seen", () => {
+  const html = `<!doctype html><body>
+    <a href="?page=2">2</a>
+    <a href="/library?page=3">3</a>
+    <a class="last-page" href="https://accounts.booth.pm/library?page=12">最後</a>
+  </body>`;
+  const { document } = parseHTML(html);
+  assert.equal(libraryLastPage(document, "https://accounts.booth.pm/library"), 12);
+  assert.equal(
+    libraryPageUrl("https://accounts.booth.pm/library?page=4", 1),
+    "https://accounts.booth.pm/library?page=1",
+  );
+  assert.equal(isLibraryUrl("https://accounts.booth.pm/library?page=2"), true);
+  assert.equal(isLibraryUrl("https://booth.pm/ja/items/1001"), false);
+  const unique = dedupeProducts([
+    { boothId: "1001", title: "先" },
+    { boothId: "1001", title: "後" },
+    { boothId: "1002", title: "次" },
+  ]);
+  assert.deepEqual(unique.map((product) => product.title), ["先", "次"]);
+  assert.equal(quietHtml('<link rel="preload" as="script" href="https://example.test/a.js"><script src="https://example.test/a.js"></script><p>本文</p>').includes("script"), false);
 });
 
 test("other booth pages export nothing", () => {

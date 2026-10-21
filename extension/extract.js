@@ -337,5 +337,65 @@
     return [];
   }
 
-  return { extractPage, extractItem, trimDescription, cardImage, detailFromItemJson, mergeDetail };
+  function quietHtml(html) {
+    return String(html || "")
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
+      .replace(/<link\b[^>]*\brel=(["']?)preload\1[^>]*>/gi, "");
+  }
+
+  function isLibraryUrl(href) {
+    try {
+      const url = new URL(href);
+      return /(^|\.)booth\.pm$/.test(url.hostname) && url.pathname.includes("/library");
+    } catch {
+      return false;
+    }
+  }
+
+  function libraryPageUrl(href, page) {
+    const url = new URL(href);
+    url.searchParams.set("page", String(page));
+    url.hash = "";
+    return url.toString();
+  }
+
+  function libraryLastPage(document, baseHref) {
+    let max = 1;
+    const links = document.querySelectorAll("a[href*='page=']");
+    for (const link of links) {
+      try {
+        const url = new URL(link.getAttribute("href") || "", baseHref || "https://accounts.booth.pm/library");
+        const page = Number(url.searchParams.get("page"));
+        if (Number.isInteger(page) && page > max && page <= 200) max = page;
+      } catch {
+        // 壊れたリンクはページ数に数えない。
+      }
+    }
+    return max;
+  }
+
+  function dedupeProducts(products) {
+    const seen = new Set();
+    const unique = [];
+    for (const product of products || []) {
+      if (!product || !product.boothId || seen.has(product.boothId)) continue;
+      seen.add(product.boothId);
+      unique.push(product);
+    }
+    return unique;
+  }
+
+  return {
+    extractPage,
+    extractItem,
+    trimDescription,
+    cardImage,
+    detailFromItemJson,
+    mergeDetail,
+    quietHtml,
+    isLibraryUrl,
+    libraryPageUrl,
+    libraryLastPage,
+    dedupeProducts,
+  };
 });
