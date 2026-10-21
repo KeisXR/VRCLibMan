@@ -74,7 +74,9 @@ VRCLibMan を変更するときは、このファイルを先に読む。元の�
 - 今開いているページだけを読む。ホストは `booth.pm` と `*.booth.pm`。
 - 商品ページの説明は `section.shop__text` にある。`.json` や JSON-LD の description は導入文だけで、素体の記述が落ちる。
 - 商品ページ内の関連 `.item-card` は書き出さない。ライブラリは `img.l-library-item-thumbnail` を起点にし、ページ上の全リンクは拾わない。サムネイルのリンクには商品名が無いので、同じカード内で同じ商品IDを指す文字のあるリンク、または `.text-text-default` をタイトルにする。入口は `https://accounts.booth.pm/library`。ホスト権限の `*.booth.pm` に含まれる。
-- 説明が短いカードは、公開 HTML を `credentials: "omit"` で 1 件ずつ補う。間隔は約 250ms、上限 40 件。セッションは送らない。
+- 説明が短いカードは、公開 HTML を `credentials: "omit"` で 1 件ずつ補う。年齢確認の壁で説明が取れないときは、同じ条件で `https://booth.pm/ja/items/{id}.json` を読む。間隔は約 250ms、上限 40 件。ログインセッションも `adult` クッキーも送らない。
+- ライブラリの書き出しは今開いている 1 ページだけ。複数ページはページごとに書き出す。巡回はしない。
+- 年齢制限のある商品の本文は、テストや画面記録に残さない。構造だけの短いフィクスチャを使う。
 - 説明は 8000 字まで。超えるときは「利用規約」を落とし、対応・素体・衣装・髪・ギミック・アバター・モデル・同梱を含む塊を優先する。
 - 書き出し形式は `vrclibman.booth-export` version 1。取り込みはラッパー、配列、単一オブジェクトを受ける。ID は 4〜12 桁。説明の別名は `description` も可。
 - 拡張のスクリプトは classic script。ファイル名は `extract.js`。Chrome のコンテンツスクリプトは `.cjs` を読めない。中身は IIFE で、Node テストは `createRequire` で読む。テスト用 HTML に Booth の商品文を丸ごと入れない。

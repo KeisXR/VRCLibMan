@@ -112,6 +112,29 @@
     return blocks;
   }
 
+  function detailBlocks(document) {
+    const root = document.querySelector(".js-market-item-detail-description");
+    if (!root) return [];
+    const nodes = root.querySelectorAll("h2, h3, p");
+    const source = nodes.length > 0 ? nodes : [root];
+    const lines = [];
+    for (const node of source) {
+      const text = clean(node.textContent);
+      if (text) lines.push(text);
+    }
+    return lines.length > 0 ? [lines.join("\n")] : [];
+  }
+
+  function mainShop(document) {
+    const nodes = document.querySelectorAll(".shop-name");
+    for (const node of nodes) {
+      if (node.closest && node.closest(".item-card, footer, .footer__menu")) continue;
+      const text = clean(node.textContent);
+      if (text) return text.slice(0, 120);
+    }
+    return "";
+  }
+
   function trimDescription(text) {
     const normalized = String(text || "").replace(/\r\n/g, "\n").trim();
     if (normalized.length <= 8000) return normalized;
@@ -148,17 +171,43 @@
     const title = itemTitle(document, linked);
     if (!title) return null;
     const blocks = sectionBlocks(document);
-    const description = blocks.length > 0 ? blocks.join("\n\n") : clean(linked && linked.description);
+    const detail = blocks.length > 0 ? blocks : detailBlocks(document);
+    const description = detail.length > 0 ? detail.join("\n\n") : clean(linked && linked.description);
     const og = document.querySelector('meta[property="og:image"]');
     const image = imageUrl(linked && linked.image) || (og && og.getAttribute("content")) || "";
     return makeProduct({
       boothId,
       title,
-      shop: brandName(linked),
+      shop: brandName(linked) || mainShop(document),
       description,
       url: absoluteUrl(href, "https://booth.pm"),
       image,
     });
+  }
+
+  function detailFromItemJson(data, boothId) {
+    if (!data || typeof data !== "object") return null;
+    const id = String(data.id || boothId || "");
+    if (!validId(id)) return null;
+    const shop = data.shop && typeof data.shop === "object" ? data.shop.name : "";
+    return makeProduct({
+      boothId: id,
+      title: clean(data.name) || `item ${id}`,
+      shop: clean(shop),
+      description: typeof data.description === "string" ? data.description : "",
+      url: clean(data.url) || `https://booth.pm/ja/items/${id}`,
+      image: "",
+    });
+  }
+
+  function mergeDetail(product, detail) {
+    if (!product || !detail) return product;
+    if ((detail.descriptionSnippet || "").length > (product.descriptionSnippet || "").length) {
+      product.descriptionSnippet = detail.descriptionSnippet;
+    }
+    if (!product.shop && detail.shop) product.shop = detail.shop;
+    if (!product.thumbnailUrl && detail.thumbnailUrl) product.thumbnailUrl = detail.thumbnailUrl;
+    return product;
   }
 
   function cardRoot(image) {
@@ -288,5 +337,5 @@
     return [];
   }
 
-  return { extractPage, extractItem, trimDescription, cardImage };
+  return { extractPage, extractItem, trimDescription, cardImage, detailFromItemJson, mergeDetail };
 });

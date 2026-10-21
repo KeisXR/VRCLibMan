@@ -4,7 +4,7 @@ import test from "node:test";
 import { parseHTML } from "linkedom";
 
 const require = createRequire(import.meta.url);
-const { extractPage, trimDescription, cardImage } = require("../extension/extract.js");
+const { extractPage, trimDescription, cardImage, detailFromItemJson, mergeDetail } = require("../extension/extract.js");
 
 const ITEM_HTML = `<!doctype html>
 <html lang="ja"><head>
@@ -77,6 +77,46 @@ test("library page uses item thumbnails and ignores stray links", () => {
   assert.equal(products[0].title, "オリジナル3Dモデル「マヌカ」");
   assert.equal(products[0].shop, "STUDIO JINGO");
   assert.equal(products[1].shop, "ポンデロニウム研究所");
+});
+
+test("item page without shop sections still reads the description and shop", () => {
+  const html = `<!doctype html><body>
+    <h2>部屋着サンプル</h2>
+    <div class="shop-name">サンプル工房</div>
+    <div class="js-market-item-detail-description description"><p>ライム対応の衣装です。</p></div>
+    <div class="item-card"><span class="shop-name">別の店</span><a href="/ja/items/9990001">別商品</a></div>
+  </body>`;
+  const { document } = parseHTML(html);
+  const products = extractPage(document, "https://booth.pm/ja/items/1001");
+  assert.equal(products.length, 1);
+  assert.equal(products[0].shop, "サンプル工房");
+  assert.match(products[0].descriptionSnippet, /ライム対応/);
+  assert.equal(products[0].descriptionSnippet.includes("別商品"), false);
+});
+
+test("item json fills an empty shop and description without replacing the title", () => {
+  const product = {
+    boothId: "1001",
+    title: "部屋着サンプル (Full set)",
+    shop: "",
+    descriptionSnippet: "",
+    thumbnailUrl: "https://booth.pximg.net/c/150x150/sample.jpg",
+  };
+  const detail = detailFromItemJson(
+    {
+      id: 1001,
+      name: "部屋着サンプル",
+      description: "対応アバター\nライム_ver1.00",
+      shop: { name: "サンプル工房" },
+      url: "https://booth.pm/ja/items/1001",
+    },
+    "1001",
+  );
+  mergeDetail(product, detail);
+  assert.equal(product.title, "部屋着サンプル (Full set)");
+  assert.equal(product.shop, "サンプル工房");
+  assert.match(product.descriptionSnippet, /ライム_ver1\.00/);
+  assert.equal(product.thumbnailUrl, "https://booth.pximg.net/c/150x150/sample.jpg");
 });
 
 test("other booth pages export nothing", () => {
