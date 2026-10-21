@@ -381,7 +381,7 @@ fn apply_listed_compatibility(connection: &mut Connection, booth_id: &str) -> Re
     let category = if existing.category_locked {
         existing.category.unwrap_or(Category::Outfit)
     } else {
-        crate::compat::category_for_listed_product(&existing.title)
+        crate::compat::category_for_listed_product(&existing.title, &existing.description_snippet)
     };
     let threshold = settings(connection)?.confidence_threshold;
     apply_extraction(
@@ -417,7 +417,10 @@ pub(crate) fn apply_extraction(
         Some(extraction.category)
     };
     if !existing.category_locked && !listed.is_empty() && category == Some(Category::Avatar) {
-        category = Some(crate::compat::category_for_listed_product(&existing.title));
+        category = Some(crate::compat::category_for_listed_product(
+            &existing.title,
+            &existing.description_snippet,
+        ));
     }
     let output = resolve_product(
         &ResolveInput {

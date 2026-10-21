@@ -299,7 +299,7 @@ function classify(avatar: AvatarRecord): {
     }
   }
   const sections: Section[] = [];
-  for (const key of ["outfit", "hair", "gimmick", "world", "other", "uncategorized"]) {
+  for (const key of ["outfit", "hair", "accessory", "texture", "gimmick", "world", "other", "uncategorized"]) {
     const items = specific.filter((row) => row.key === key).map((row) => row.item);
     if (items.length > 0) sections.push({ category: key, items });
   }

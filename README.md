@@ -25,6 +25,8 @@ npm install
 npm run tauri dev
 ```
 
+`npm run dev` でポート 1420 を開いたまま `npm run tauri dev` を実行すると、Vite が二重に起動して失敗します。先に `npm run dev` を止めてから実行してください。
+
 画面だけの確認は `npm run dev` で http://localhost:1420 を開きます。このとき出るのは見本データで、抽出・フォルダ調査・Ollama は動きません。
 
 ## Booth から書き出す

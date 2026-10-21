@@ -1,16 +1,18 @@
-export type Category = "avatar" | "outfit" | "hair" | "gimmick" | "world" | "other";
+export type Category = "avatar" | "outfit" | "hair" | "accessory" | "texture" | "gimmick" | "world" | "other";
 
 export const CATEGORY_LABEL: Record<string, string> = {
   avatar: "アバター",
   outfit: "衣装",
   hair: "髪",
+  accessory: "アクセサリ",
+  texture: "テクスチャ",
   gimmick: "ギミック",
   world: "ワールド",
   other: "その他",
   uncategorized: "未分類",
 };
 
-export const CATEGORIES: Category[] = ["avatar", "outfit", "hair", "gimmick", "world", "other"];
+export const CATEGORIES: Category[] = ["avatar", "outfit", "hair", "accessory", "texture", "gimmick", "world", "other"];
 
 export interface AvatarCard {
   id: string;

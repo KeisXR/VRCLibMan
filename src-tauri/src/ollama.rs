@@ -12,8 +12,10 @@ const SYSTEM_PROMPT: &str = "\
 
 category は次のどれか一つです。
 - avatar: アバター本体、または素体そのもの
-- outfit: 衣装、服、靴、アクセサリ
-- hair: 髪、ヘア、ウィッグ
+- outfit: 衣装、服、靴、部屋着、パーカー
+- hair: 髪、ヘア、ウィッグ、ポニーテール
+- accessory: メガネ、ピアス、イヤリング、ネックレス、帽子、バッグ、ヘイロー
+- texture: 瞳テクスチャ、メイクテクスチャ、目のテクスチャ
 - gimmick: ギミック、シェーダー、ツール、小物機能
 - world: ワールド
 - other: どれにも当てはまらない
@@ -237,7 +239,7 @@ fn extraction_schema() -> Value {
         "properties": {
             "category": {
                 "type": "string",
-                "enum": ["avatar", "outfit", "hair", "gimmick", "world", "other"]
+                "enum": ["avatar", "outfit", "hair", "accessory", "texture", "gimmick", "world", "other"]
             },
             "compatible_avatars": {
                 "type": "array",
