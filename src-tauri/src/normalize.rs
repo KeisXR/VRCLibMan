@@ -340,6 +340,7 @@ pub fn is_blocked_avatar_label(name: &str) -> bool {
         "osc",
         "vr",
         "セーブ",
+        "physbone",
     ];
     tokens.iter().any(|token| DENY.contains(&token.as_str()))
 }

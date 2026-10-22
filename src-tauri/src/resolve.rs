@@ -323,7 +323,8 @@ fn usable_names(raw_names: &[String]) -> Vec<String> {
     let mut names = Vec::new();
     for name in raw_names {
         let trimmed = name.trim();
-        if trimmed.is_empty() || is_blocked_avatar_label(trimmed) {
+        let single_cjk = trimmed.chars().count() == 1 && trimmed.chars().all(is_cjk);
+        if trimmed.is_empty() || (is_blocked_avatar_label(trimmed) && !single_cjk) {
             continue;
         }
         if !names.iter().any(|existing: &String| existing == trimmed) {

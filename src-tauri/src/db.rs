@@ -9,7 +9,7 @@ use crate::resolve::{ResolveInput, resolve_product};
 use crate::scan::ScanOutcome;
 use crate::view::Snapshot;
 use rusqlite::{Connection, OptionalExtension, params};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 const SCHEMA: &str = "
@@ -418,6 +418,7 @@ pub(crate) fn apply_extraction(
         &avatars,
     );
     let category = decide_category(&existing, extraction.category);
+    let is_generic = generic_without_avatars(category, &names, extraction.is_generic);
     let output = resolve_product(
         &ResolveInput {
             booth_id: existing.booth_id.as_str(),
@@ -425,7 +426,7 @@ pub(crate) fn apply_extraction(
             description: existing.description_snippet.as_str(),
             category,
             raw_names: &names,
-            is_generic: extraction.is_generic,
+            is_generic,
             confidence: Some(extraction.confidence),
             user_confirmed: false,
             threshold,
@@ -438,6 +439,7 @@ pub(crate) fn apply_extraction(
     } else {
         output.avatar_ids.clone()
     };
+    let established = established_avatar_sources(connection, threshold)?;
     let needs_review = if existing.links_locked {
         review_from_product(
             connection,
@@ -448,7 +450,19 @@ pub(crate) fn apply_extraction(
             threshold,
         )?
     } else {
-        output.needs_review
+        review_with_established_placeholders(
+            &output,
+            &existing.booth_id,
+            category,
+            is_generic,
+            extraction.confidence,
+            threshold,
+            false,
+            &existing.title,
+            &existing.description_snippet,
+            &avatars,
+            &established,
+        )
     };
     let unresolved = if existing.links_locked && category == Some(Category::Avatar) {
         Vec::new()
@@ -472,7 +486,7 @@ pub(crate) fn apply_extraction(
             category_text,
             to_json(&names)?,
             to_json(&unresolved)?,
-            extraction.is_generic,
+            is_generic,
             extraction.confidence,
             needs_review,
             now,
@@ -488,6 +502,147 @@ pub(crate) fn apply_extraction(
     Ok(())
 }
 
+fn generic_without_avatars(
+    category: Option<Category>,
+    names: &[String],
+    model_generic: bool,
+) -> bool {
+    if category == Some(Category::Accessory)
+        && names
+            .iter()
+            .all(|name| crate::normalize::is_blocked_avatar_label(name))
+    {
+        return true;
+    }
+    model_generic
+}
+
+fn jp_readings(products: &[Product]) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    for product in products {
+        for name in &product.compatible_avatars {
+            let pieces = crate::normalize::paren_pieces(name);
+            if pieces.len() != 2 {
+                continue;
+            }
+            let Some(jp) = pieces
+                .iter()
+                .find(|piece| piece.chars().any(crate::normalize::is_cjk))
+            else {
+                continue;
+            };
+            let Some(latin) = pieces.iter().find(|piece| {
+                piece.chars().any(|ch| ch.is_ascii_alphabetic())
+                    && !piece.chars().any(crate::normalize::is_cjk)
+            }) else {
+                continue;
+            };
+            map.insert(crate::normalize::normalize_label(latin), jp.clone());
+        }
+    }
+    map
+}
+
+fn fold_romaji_names(names: &[String], readings: &HashMap<String, String>) -> Vec<String> {
+    let mut folded = Vec::new();
+    for name in names {
+        let next = if name.chars().any(crate::normalize::is_cjk) {
+            name.clone()
+        } else {
+            readings
+                .get(&crate::normalize::normalize_label(name))
+                .cloned()
+                .unwrap_or_else(|| name.clone())
+        };
+        if !folded.iter().any(|existing| existing == &next) {
+            folded.push(next);
+        }
+    }
+    folded
+}
+
+fn established_avatar_sources(
+    connection: &Connection,
+    threshold: f64,
+) -> Result<HashSet<String>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT booth_id, confidence, user_confirmed FROM products WHERE category = 'avatar'",
+        )
+        .sql()?;
+    let rows = statement
+        .query_map([], |row| {
+            let confidence: Option<f64> = row.get(1)?;
+            let confirmed: i64 = row.get(2)?;
+            Ok((row.get::<_, String>(0)?, confidence, confirmed != 0))
+        })
+        .sql()?;
+    let mut ids = HashSet::new();
+    for row in rows {
+        let (id, confidence, confirmed) = row.sql()?;
+        if confirmed || confidence.unwrap_or(0.0) >= threshold {
+            ids.insert(id);
+        }
+    }
+    Ok(ids)
+}
+
+fn review_with_established_placeholders(
+    output: &crate::resolve::ResolveOutput,
+    booth_id: &str,
+    category: Option<Category>,
+    is_generic: bool,
+    confidence: f64,
+    threshold: f64,
+    user_confirmed: bool,
+    title: &str,
+    description: &str,
+    avatars: &[crate::model::Avatar],
+    established: &HashSet<String>,
+) -> bool {
+    let blocking = output.avatar_ids.iter().any(|id| {
+        let Some(source) = id.strip_prefix("owned-") else {
+            return false;
+        };
+        let self_ok =
+            source == booth_id && category == Some(Category::Avatar) && confidence >= threshold;
+        !(self_ok || established.contains(source))
+    });
+    crate::resolve::product_needs_review(&crate::resolve::ReviewFacts {
+        category,
+        placeholder: blocking,
+        link_count: output.avatar_ids.len(),
+        unresolved: &output.unresolved,
+        is_generic,
+        grounded: created_names_are_grounded(output, avatars, title, description),
+        user_confirmed,
+        threshold,
+    })
+}
+
+fn created_names_are_grounded(
+    output: &crate::resolve::ResolveOutput,
+    avatars: &[crate::model::Avatar],
+    title: &str,
+    description: &str,
+) -> bool {
+    if output.avatar_ids.is_empty() {
+        return false;
+    }
+    let haystack = crate::normalize::nfkc(&format!("{title}\n{description}")).to_lowercase();
+    output.avatar_ids.iter().all(|id| {
+        if let Some(draft) = output.created_avatars.iter().find(|draft| &draft.id == id) {
+            return std::iter::once(&draft.display_name)
+                .chain(draft.aliases.iter())
+                .any(|form| {
+                    let needle = crate::normalize::nfkc(form).to_lowercase();
+                    needle.chars().count() >= 1 && haystack.contains(&needle)
+                });
+        }
+        crate::resolve::links_grounded(std::slice::from_ref(id), avatars, title, description)
+    })
+}
+
 pub(crate) fn reresolve_all(connection: &mut Connection) -> Result<u32, String> {
     let threshold = settings(connection)?.confidence_threshold;
     let tx = connection.transaction().sql()?;
@@ -495,6 +650,7 @@ pub(crate) fn reresolve_all(connection: &mut Connection) -> Result<u32, String> 
     // A second pass picks up readings learned from 名前(読み) pairs in the first pass.
     for _pass in 0..2 {
         let products = load_products(&tx)?;
+        let readings = jp_readings(&products);
         processed = 0;
         for product in products {
             if product.links_locked
@@ -503,20 +659,50 @@ pub(crate) fn reresolve_all(connection: &mut Connection) -> Result<u32, String> 
                 continue;
             }
             let avatars = load_avatars(&tx)?;
+            let mut names = fold_romaji_names(&product.compatible_avatars, &readings);
+            let mut hinted = false;
+            for hint in crate::compat::title_avatar_hints(&product.title, &avatars) {
+                if crate::resolve::resolve_name(&hint, &avatars).is_none() {
+                    continue;
+                }
+                hinted = true;
+                if !names.iter().any(|name| name == &hint) {
+                    names.push(hint);
+                }
+            }
+            let is_generic = if hinted {
+                false
+            } else {
+                generic_without_avatars(product.category, &names, product.is_generic)
+            };
             let mut output = resolve_product(
                 &ResolveInput {
                     booth_id: product.booth_id.as_str(),
                     title: product.title.as_str(),
                     description: product.description_snippet.as_str(),
                     category: product.category,
-                    raw_names: &product.compatible_avatars,
-                    is_generic: product.is_generic,
+                    raw_names: &names,
+                    is_generic,
                     confidence: product.confidence,
                     user_confirmed: product.user_confirmed,
                     threshold,
                     allow_create: true,
                 },
                 &avatars,
+            );
+            let established = established_avatar_sources(&tx, threshold)?;
+            output.needs_review = review_with_established_placeholders(
+                &output,
+                &product.booth_id,
+                product.category,
+                is_generic,
+                product.confidence.unwrap_or(0.0),
+                threshold,
+                product.user_confirmed,
+                &product.title,
+                &product.description_snippet,
+                &avatars,
+                &established,
             );
             let reopen =
                 output.unresolved != product.unresolved_names && !output.unresolved.is_empty();
@@ -533,16 +719,19 @@ pub(crate) fn reresolve_all(connection: &mut Connection) -> Result<u32, String> 
                 product.user_confirmed
             };
             tx.execute(
-            "UPDATE products SET unresolved_names_json = ?1, needs_review = ?2, user_confirmed = ?3, updated_at = ?4 WHERE booth_id = ?5",
-            params![
-                to_json(&output.unresolved)?,
-                output.needs_review,
-                confirmed,
-                now_iso(),
-                product.booth_id
-            ],
-        )
-        .sql()?;
+                "UPDATE products SET unresolved_names_json = ?1, needs_review = ?2, user_confirmed = ?3,
+                 is_generic = ?4, compatible_avatars_json = ?5, updated_at = ?6 WHERE booth_id = ?7",
+                params![
+                    to_json(&output.unresolved)?,
+                    output.needs_review,
+                    confirmed,
+                    is_generic,
+                    to_json(&names)?,
+                    now_iso(),
+                    product.booth_id
+                ],
+            )
+            .sql()?;
             replace_links(&tx, &product.booth_id, &output.avatar_ids, "extracted")?;
             processed += 1;
         }
@@ -2223,6 +2412,155 @@ mod tests {
                 == eku_id
         );
         assert!(crate::resolve::resolve_name("PC版", &after.avatars).is_none());
+    }
+
+    #[test]
+    fn kipfel_title_links_after_the_avatar_product_exists() {
+        let mut connection = open_memory().unwrap();
+        let json = r#"{
+            "products": [
+                {"boothId":"8835445","title":"【Kipfel】ねこネコパーカー【MA対応】","shop":"s","description":"パーカーです。"},
+                {"boothId":"5813187","title":"キプフェル Kipfel / オリジナル3Dモデル","shop":"s","description":"キプフェルのオリジナル3Dモデルです。"}
+            ]
+        }"#;
+        import_products(&mut connection, &parse_export(json).unwrap()).unwrap();
+        apply_extraction(
+            &mut connection,
+            "8835445",
+            &extraction(Category::Outfit, &[], true, 0.9),
+            0.6,
+        )
+        .unwrap();
+        let early = load_snapshot(&mut connection).unwrap();
+        assert!(early.links.iter().all(|link| link.product_id != "8835445"));
+        apply_extraction(
+            &mut connection,
+            "5813187",
+            &extraction(Category::Avatar, &["Kipfel"], false, 1.0),
+            0.6,
+        )
+        .unwrap();
+        let avatar = load_snapshot(&mut connection)
+            .unwrap()
+            .products
+            .into_iter()
+            .find(|product| product.booth_id == "5813187")
+            .unwrap();
+        assert!(!avatar.needs_review);
+        reresolve_all(&mut connection).unwrap();
+        let snapshot = load_snapshot(&mut connection).unwrap();
+        let hoodie = snapshot
+            .products
+            .iter()
+            .find(|product| product.booth_id == "8835445")
+            .unwrap();
+        assert!(!hoodie.is_generic);
+        assert!(!hoodie.needs_review);
+        assert!(
+            snapshot
+                .links
+                .iter()
+                .any(|link| { link.product_id == "8835445" && link.avatar_id == "owned-5813187" })
+        );
+    }
+
+    #[test]
+    fn accessories_without_avatar_names_are_generic() {
+        let mut connection = open_memory().unwrap();
+        let json = r#"{
+            "products": [
+                {"boothId":"6409298","title":"Neon Halo","shop":"s","description":"光る輪です。"},
+                {"boothId":"3318785","title":"ピアス【PB対応】","shop":"s","description":"耳飾りです。"}
+            ]
+        }"#;
+        import_products(&mut connection, &parse_export(json).unwrap()).unwrap();
+        apply_extraction(
+            &mut connection,
+            "6409298",
+            &extraction(Category::Accessory, &[], false, 1.0),
+            0.6,
+        )
+        .unwrap();
+        apply_extraction(
+            &mut connection,
+            "3318785",
+            &extraction(Category::Accessory, &["PB"], false, 1.0),
+            0.6,
+        )
+        .unwrap();
+        let snapshot = load_snapshot(&mut connection).unwrap();
+        for id in ["6409298", "3318785"] {
+            let product = snapshot
+                .products
+                .iter()
+                .find(|product| product.booth_id == id)
+                .unwrap();
+            assert!(product.is_generic, "{id}");
+            assert!(
+                product.unresolved_names.is_empty(),
+                "{id} {:?}",
+                product.unresolved_names
+            );
+            assert!(!product.needs_review, "{id}");
+            assert!(snapshot.links.iter().all(|link| link.product_id != id));
+        }
+    }
+
+    #[test]
+    fn a_seen_reading_pair_folds_a_later_romaji_name() {
+        let mut connection = open_memory().unwrap();
+        let json = r#"{
+            "products": [
+                {"boothId":"5420885","title":"Dreamy Step","shop":"s","description":"衣装です。"},
+                {"boothId":"6980080","title":"Calm Loop Hair","shop":"s","description":"髪です。"}
+            ]
+        }"#;
+        import_products(&mut connection, &parse_export(json).unwrap()).unwrap();
+        apply_extraction(
+            &mut connection,
+            "5420885",
+            &extraction(Category::Outfit, &["萌(Moe)"], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        apply_extraction(
+            &mut connection,
+            "6980080",
+            &extraction(Category::Hair, &["Moe"], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        reresolve_all(&mut connection).unwrap();
+        let snapshot = load_snapshot(&mut connection).unwrap();
+        for id in ["5420885", "6980080"] {
+            let product = snapshot
+                .products
+                .iter()
+                .find(|product| product.booth_id == id)
+                .unwrap();
+            assert_eq!(product.unresolved_names, vec!["萌".to_string()], "{id}");
+        }
+    }
+
+    #[test]
+    fn a_low_confidence_placeholder_stays_in_review() {
+        let mut connection = open_memory().unwrap();
+        let json = r#"{"products":[{"boothId":"3001","title":"オリジナル3Dモデル「架空ちゃん」","shop":"s","description":"架空ちゃんです。"}]}"#;
+        import_products(&mut connection, &parse_export(json).unwrap()).unwrap();
+        apply_extraction(
+            &mut connection,
+            "3001",
+            &extraction(Category::Avatar, &[], false, 0.4),
+            0.6,
+        )
+        .unwrap();
+        let snapshot = load_snapshot(&mut connection).unwrap();
+        let product = snapshot
+            .products
+            .iter()
+            .find(|product| product.booth_id == "3001")
+            .unwrap();
+        assert!(product.needs_review);
     }
 
     fn section_items(detail: &crate::view::AvatarDetail, category: &str) -> Vec<(String, bool)> {
