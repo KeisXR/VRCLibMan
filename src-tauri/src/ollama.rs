@@ -11,25 +11,34 @@ const SYSTEM_PROMPT: &str = "\
 書かれていないアバター名を推測で足してはいけません。
 
 category は次のどれか一つです。
-- avatar: アバター本体、または素体そのもの
+- avatar: アバター本体。タイトルか説明に「オリジナル3Dモデル」とある商品。単なる「3Dモデル」や小物は含めない
 - outfit: 衣装、服、靴、部屋着、パーカー
 - hair: 髪、ヘア、ウィッグ、ポニーテール
 - accessory: メガネ、ピアス、イヤリング、ネックレス、帽子、バッグ、ヘイロー
-- texture: 瞳テクスチャ、メイクテクスチャ、目のテクスチャ
-- gimmick: ギミック、シェーダー、ツール、小物機能
-- world: ワールド
+- texture: 瞳・目・メイクのテクスチャ。衣装やギミックにしない
+- gimmick: ギミック、表情アニメ、シェーダー、ツール、こたつ、毛布、布団、磁気ディスクなどの小物
+- world: ワールド。ワールド用の小物は gimmick
 - other: どれにも当てはまらない
 
 compatible_avatars:
-- 対応先の名前は、説明文の「対応アバター」の欄から取る。タイトルの「25アバター対応」のような文言は人数だけで、アバター名ではない
-- 欄の1行が1体。ショップ名、ver、URL、括弧内のシェイプキーは入れない
-- 商品自身がアバター本体のときは、そのアバター名を1件入れる。説明に並ぶ兄弟の名前は入れない
-- ショップ名や作者名は入れない
-- 重複は入れない
+- 対応先は「対応アバター」「対応モデル」の欄から取る。タイトルの「25アバター対応」は人数であり、名前ではない
+- 【半額セール中】【新作】【オリジナル3Dモデル】のような宣伝や種別の括弧は名前ではない
+- 【プラム専用】のように専用・対応の括弧の中にある名前は入れる
+- 欄の1行が1体。ショップ名、ver、URL、括弧内のシェイプキー、作者名（様で終わるクレジット）は入れない
+- 商品自身がアバター本体のときは、そのアバター名を1件だけ入れる。説明に並ぶ兄弟の名前は入れない
+- Modular Avatar、QvPen、lilToon、Avatar、シェーダー名はアバターではない
 - 名前が一つも書かれていなければ空配列にする
 
-is_generic は、汎用、どのアバターでも、素体を問わない、と書かれているときだけ true。\
-特定アバター対応と併記されていても、汎用と明記されていれば true。
+is_generic は、汎用、どのアバターでも、素体を問わない、と書かれているときだけ true。
+
+例:
+- 「ライム -Lime- / オリジナル3Dモデル」「ライムのオリジナル3Dモデルです」→ avatar, [\"ライム\"], false
+- 「【プラム専用】Hairグラデーション」→ hair, [\"プラム\"], false
+- 「Noctilume EyeTexture」→ texture, [], false
+- 「ネオンヘイロー」→ accessory, [], false
+- 「こたつ」「表情アニメーション」→ gimmick, [], false
+- 「どのアバターでも使えるペンライト」→ gimmick, [], true
+- 「【半額セール中】真冬 Mafuyu / オリジナル3Dモデル」→ avatar, [\"真冬\"], false
 
 confidence は 0 から 1。対応アバターかカテゴリが文中ではっきり分かるとき 0.8 以上。\
 推測が混ざるとき 0.5 以下。情報がほとんど無いとき 0.2 以下。";
@@ -85,8 +94,8 @@ pub async fn list_models(client: &reqwest::Client, base: &str) -> Result<Vec<Str
     if !status.is_success() {
         return Err(format!("Ollamaのモデル一覧を取得できません: {status}"));
     }
-    let parsed: TagsResponse = serde_json::from_str(&text)
-        .map_err(|_| "Ollamaの応答を解釈できません".to_string())?;
+    let parsed: TagsResponse =
+        serde_json::from_str(&text).map_err(|_| "Ollamaの応答を解釈できません".to_string())?;
     let mut names = Vec::new();
     for model in parsed.models.unwrap_or_default() {
         if let Some(name) = model.name {
@@ -106,18 +115,14 @@ pub async fn extract_product(
 ) -> Result<Extraction, String> {
     let base = validate_base_url(base)?;
     let model = validate_model_name(model)?;
-    let description: String = if description.trim().is_empty() {
-        "（説明文なし）".into()
-    } else {
-        description.chars().take(6000).collect()
-    };
+    let description = clip_for_model(&description);
     let user = format!("タイトル: {title}\n説明文:\n{description}");
     let mut payload = serde_json::json!({
         "model": model,
         "stream": false,
         "think": false,
         "format": extraction_schema(),
-        "options": {"temperature": 0.1},
+        "options": {"temperature": 0.1, "num_ctx": 8192},
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user}
@@ -125,10 +130,11 @@ pub async fn extract_product(
     });
     let first = post_chat(client, &base, &payload).await?;
     let text = if first.status == 400 {
-        payload
-            .as_object_mut()
-            .expect("payload object")
-            .remove("think");
+        let object = payload.as_object_mut().expect("payload object");
+        object.remove("think");
+        if let Some(options) = object.get_mut("options").and_then(Value::as_object_mut) {
+            options.remove("num_ctx");
+        }
         let second = post_chat(client, &base, &payload).await?;
         if !second.status.is_success() {
             return Err(ollama_status_error(second.status, &second.body));
@@ -146,8 +152,8 @@ pub async fn extract_product(
 pub fn parse_extraction(raw: &str) -> Result<Extraction, String> {
     let without_think = strip_think(raw);
     let json = json_object(&without_think).ok_or("抽出結果のJSONが見つかりません")?;
-    let value: Value = serde_json::from_str(json)
-        .map_err(|err| format!("抽出結果のJSONが壊れています: {err}"))?;
+    let value: Value =
+        serde_json::from_str(json).map_err(|err| format!("抽出結果のJSONが壊れています: {err}"))?;
     let category = value
         .get("category")
         .and_then(Value::as_str)
@@ -209,7 +215,11 @@ struct ChatBody {
     body: String,
 }
 
-async fn post_chat(client: &reqwest::Client, base: &str, payload: &Value) -> Result<ChatBody, String> {
+async fn post_chat(
+    client: &reqwest::Client,
+    base: &str,
+    payload: &Value,
+) -> Result<ChatBody, String> {
     let response = client
         .post(format!("{base}/api/chat"))
         .json(payload)
@@ -222,8 +232,8 @@ async fn post_chat(client: &reqwest::Client, base: &str, payload: &Value) -> Res
 }
 
 fn chat_content(body: &str) -> Result<String, String> {
-    let value: Value = serde_json::from_str(body)
-        .map_err(|_| "Ollamaの応答を解釈できません".to_string())?;
+    let value: Value =
+        serde_json::from_str(body).map_err(|_| "Ollamaの応答を解釈できません".to_string())?;
     value
         .pointer("/message/content")
         .and_then(Value::as_str)
@@ -252,6 +262,10 @@ fn extraction_schema() -> Value {
     })
 }
 
+fn clip_for_model(description: &str) -> String {
+    crate::compat::clip_description(description, 4000)
+}
+
 fn strip_think(input: &str) -> String {
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| Regex::new(r"(?s)<think>.*?</think>").unwrap());
@@ -269,7 +283,7 @@ fn json_object(input: &str) -> Option<&str> {
 
 fn connection_error(err: reqwest::Error) -> String {
     if err.is_connect() {
-        "Ollamaに接続できません。Ollamaを起動し、モデルを取得してください（例: ollama pull qwen3:4b）。"
+        "Ollamaに接続できません。Ollamaを起動し、モデルを取得してください（例: ollama pull gemma4:12b）。"
             .into()
     } else if err.is_timeout() {
         "Ollamaの応答がタイムアウトしました".into()
@@ -312,7 +326,8 @@ mod tests {
 
     #[test]
     fn rejects_unknown_category() {
-        let raw = r#"{"category":"shoes","compatible_avatars":[],"is_generic":false,"confidence":0.4}"#;
+        let raw =
+            r#"{"category":"shoes","compatible_avatars":[],"is_generic":false,"confidence":0.4}"#;
         assert!(parse_extraction(raw).is_err());
     }
 

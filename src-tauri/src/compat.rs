@@ -1,6 +1,6 @@
 use crate::model::{Avatar, Category};
-use crate::normalize::is_punct;
-use crate::resolve::known_name_in;
+use crate::normalize::{is_blocked_avatar_label, is_punct, nfkc, peel_product_words};
+use crate::resolve::{known_name_in, known_names_in};
 use regex::Regex;
 use std::sync::OnceLock;
 
@@ -31,8 +31,118 @@ pub fn category_for_listed_product(title: &str, description: &str) -> Category {
     if from_title != Category::Other {
         return from_title;
     }
-    let head: String = description.chars().take(40).collect();
-    classify_text(&head, false)
+    let head: String = description.chars().take(160).collect();
+    let folded = nfkc(&head).to_lowercase();
+    if folded.contains("オリジナル3dモデル") {
+        return Category::Avatar;
+    }
+    let short: String = description.chars().take(40).collect();
+    classify_text(&short, false)
+}
+
+pub fn title_avatar_hints(title: &str, avatars: &[Avatar]) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut push = |name: String| {
+        let cleaned = name
+            .trim()
+            .trim_matches(|ch: char| ch.is_whitespace() || is_punct(ch));
+        if cleaned.chars().count() < 2
+            || is_blocked_avatar_label(cleaned)
+            || is_product_noun(cleaned)
+        {
+            return;
+        }
+        if !names.iter().any(|existing: &String| existing == cleaned) {
+            names.push(cleaned.to_string());
+        }
+    };
+    for inner in bracket_inners(title) {
+        if let Some(name) = crate::normalize::dedication_inside(&inner) {
+            push(name);
+        }
+    }
+    let stripped = crate::normalize::strip_tag_brackets(title);
+    for segment in crate::normalize::quoted_segments(&stripped) {
+        push(segment);
+    }
+    let parts = split_title_parts(&stripped);
+    let mut related = Vec::new();
+    let mut plain = Vec::new();
+    for part in &parts {
+        if let Some(name) = relation_name(part) {
+            related.push(name);
+        } else {
+            plain.push(part.clone());
+        }
+    }
+    if !related.is_empty() {
+        for name in related {
+            push(name);
+        }
+        for part in plain {
+            push(peel_product_words(&part));
+        }
+    }
+    for name in known_names_in(&stripped, avatars) {
+        push(name);
+    }
+    names
+}
+
+pub fn names_for_extraction(
+    title: &str,
+    description: &str,
+    llm_names: &[String],
+    avatars: &[Avatar],
+) -> Vec<String> {
+    let listed = listed_avatar_names(description, avatars);
+    let hints = title_avatar_hints(title, avatars);
+    let mut names = Vec::new();
+    let mut push = |name: &str| {
+        let trimmed = name.trim();
+        if trimmed.is_empty() || is_blocked_avatar_label(trimmed) {
+            return;
+        }
+        if !names.iter().any(|existing: &String| existing == trimmed) {
+            names.push(trimmed.to_string());
+        }
+    };
+    for name in &listed {
+        push(name);
+    }
+    for name in &hints {
+        push(name);
+    }
+    if listed.is_empty() {
+        for name in llm_names {
+            push(name);
+        }
+    }
+    names
+}
+
+pub fn clip_description(description: &str, budget: usize) -> String {
+    if description.chars().count() <= budget {
+        return description.to_string();
+    }
+    let Some(section) = compatibility_section(description) else {
+        return description.chars().take(budget).collect();
+    };
+    let section: String = section.chars().take(budget / 2).collect();
+    if let Some(first) = section
+        .lines()
+        .find(|line| line.trim().chars().count() >= 4)
+    {
+        let head: String = description.chars().take(budget).collect();
+        if head.contains(first.trim()) {
+            return head;
+        }
+    }
+    let head_budget = budget.saturating_sub(section.chars().count() + 5);
+    let mut clipped: String = description.chars().take(head_budget).collect();
+    clipped.push_str("\n...\n");
+    clipped.push_str(&section);
+    clipped
 }
 
 fn compatibility_section(description: &str) -> Option<String> {
@@ -61,7 +171,13 @@ fn compatibility_section(description: &str) -> Option<String> {
 }
 
 fn line_has_marker(line: &str) -> bool {
-    const MARKERS: &[&str] = &["対応アバター", "対応モデル", "対応一覧", "対応キャラ", "対応素体"];
+    const MARKERS: &[&str] = &[
+        "対応アバター",
+        "対応モデル",
+        "対応一覧",
+        "対応キャラ",
+        "対応素体",
+    ];
     MARKERS.iter().any(|marker| line.contains(marker))
 }
 
@@ -109,7 +225,8 @@ fn entries(section: &str) -> Vec<String> {
     if section.contains("booth.pm") {
         parts.extend(split_on_item_urls(section));
     }
-    if parts.is_empty() && (section.contains('"') || section.contains('“') || section.contains('”')) {
+    if parts.is_empty() && (section.contains('"') || section.contains('“') || section.contains('”'))
+    {
         for part in section.split(['"', '“', '”']) {
             let trimmed = part.trim();
             if looks_like_entry(trimmed) {
@@ -119,13 +236,18 @@ fn entries(section: &str) -> Vec<String> {
     }
     if parts.is_empty() {
         for line in section.lines() {
-            let trimmed = line.trim().trim_matches(|ch| ch == '"' || ch == '“' || ch == '”');
+            let trimmed = line
+                .trim()
+                .trim_matches(|ch| ch == '"' || ch == '“' || ch == '”');
             if looks_like_entry(trimmed) {
                 parts.push(trimmed.to_string());
             }
         }
     }
-    parts.into_iter().filter(|part| acceptable_entry(part)).collect()
+    parts
+        .into_iter()
+        .filter(|part| acceptable_entry(part))
+        .collect()
 }
 
 fn split_on_item_urls(section: &str) -> Vec<String> {
@@ -160,7 +282,10 @@ fn acceptable_entry(text: &str) -> bool {
         return false;
     }
     let chars = text.chars().count();
-    if chars > 160 && text.to_lowercase().matches("_v").count() == 0 && text.matches("booth.pm").count() < 2 {
+    if chars > 160
+        && text.to_lowercase().matches("_v").count() == 0
+        && text.matches("booth.pm").count() < 2
+    {
         return false;
     }
     looks_like_entry(text)
@@ -171,7 +296,10 @@ fn looks_like_entry(text: &str) -> bool {
         return false;
     }
     let lower = text.to_lowercase();
-    lower.contains("booth.pm") || lower.contains("_ver") || lower.contains("_v") || lower.contains("__")
+    lower.contains("booth.pm")
+        || lower.contains("_ver")
+        || lower.contains("_v")
+        || lower.contains("__")
 }
 
 fn label_from_entry(entry: &str) -> String {
@@ -183,7 +311,10 @@ fn label_from_entry(entry: &str) -> String {
     let without_url = url_re.replace_all(entry, " ");
     let without_paren = strip_parentheticals(&without_url);
     let without_version = version_re.replace_all(&without_paren, " ");
-    without_version.split_whitespace().collect::<Vec<_>>().join(" ")
+    without_version
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn strip_parentheticals(input: &str) -> String {
@@ -215,7 +346,10 @@ fn strip_parentheticals(input: &str) -> String {
 }
 
 fn strip_shop(label: &str) -> String {
-    let tokens: Vec<&str> = label.split_whitespace().filter(|token| !token.is_empty()).collect();
+    let tokens: Vec<&str> = label
+        .split_whitespace()
+        .filter(|token| !token.is_empty())
+        .collect();
     if tokens.len() <= 1 {
         return label.trim().to_string();
     }
@@ -229,7 +363,10 @@ fn strip_shop(label: &str) -> String {
     }
     // The version marker sits on the avatar name, so the last word is that name.
     // An earlier word stays only when の/ノ ties it into the name (量産型のらきゃっと ぷらす).
-    if let Some(bound) = rest.iter().position(|token| token.contains('の') || token.contains('ノ')) {
+    if let Some(bound) = rest
+        .iter()
+        .position(|token| token.contains('の') || token.contains('ノ'))
+    {
         return rest[bound..].join(" ");
     }
     rest[rest.len() - 1].to_string()
@@ -238,10 +375,13 @@ fn strip_shop(label: &str) -> String {
 fn choose_name(label: &str, avatars: &[Avatar]) -> Option<String> {
     let candidate = if let Some(known) = known_name_in(label, avatars) {
         known
-    } else if let Some(quoted) = crate::normalize::quoted_segments(label).into_iter().find_map(|segment| {
-        let cleaned = tidy_name(&strip_shop(segment.trim()));
-        plausible_avatar_name(&cleaned).then_some(cleaned)
-    }) {
+    } else if let Some(quoted) = crate::normalize::quoted_segments(label)
+        .into_iter()
+        .find_map(|segment| {
+            let cleaned = tidy_name(&strip_shop(segment.trim()));
+            plausible_avatar_name(&cleaned).then_some(cleaned)
+        })
+    {
         quoted
     } else {
         tidy_name(&strip_shop(label))
@@ -255,46 +395,165 @@ fn tidy_name(name: &str) -> String {
 }
 
 fn plausible_avatar_name(name: &str) -> bool {
-    let count = name.chars().count();
-    if !(2..=24).contains(&count) || name.starts_with('の') || name.starts_with('ノ') {
+    if is_blocked_avatar_label(name) || name.starts_with('の') || name.starts_with('ノ') {
         return false;
     }
-    if name.contains('。')
-        || name.contains('@')
-        || name.contains('#')
-        || name.contains('【')
-        || name.contains('】')
-        || name.contains('「')
-        || name.contains('」')
-        || name.contains("ます")
-        || name.contains("ください")
-        || name.contains("オリジナル")
-        || name.contains("3D")
-        || name.contains("３D")
-        || name.contains("モデル")
-        || name.contains("対応")
-        || name.to_lowercase().contains("ver")
-    {
-        return false;
-    }
-    const DENY: &[&str] = &[
-        "avatar", "liltoon", "unity", "fbx", "psd", "vrchat", "shader", "udon", "prefab", "png", "jpg",
-        "clip", "blender", "vrm", "modular",
-    ];
-    let lower = name.to_lowercase();
-    if DENY.iter().any(|word| lower == *word) {
+    if name.contains("対応") || name.to_lowercase().contains("ver") {
         return false;
     }
     name.split_whitespace().count() <= 4
 }
 
+fn bracket_inners(title: &str) -> Vec<String> {
+    let chars: Vec<char> = title.chars().collect();
+    let mut inners = Vec::new();
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index] == '【' {
+            if let Some(end) = chars[index + 1..].iter().position(|ch| *ch == '】') {
+                let inner: String = chars[index + 1..index + 1 + end].iter().collect();
+                inners.push(inner);
+                index += end + 2;
+                continue;
+            }
+        }
+        index += 1;
+    }
+    inners
+}
+
+fn split_title_parts(title: &str) -> Vec<String> {
+    let mut parts = vec![title.to_string()];
+    for separator in [
+        "・", "、", ",", "/", "／", " / ", " - ", " – ", " — ", "&", "＆",
+    ] {
+        let mut next = Vec::new();
+        for part in parts {
+            if part.contains(separator) {
+                next.extend(part.split(separator).map(str::to_string));
+            } else {
+                next.push(part);
+            }
+        }
+        parts = next;
+    }
+    let mut expanded = Vec::new();
+    for part in parts {
+        let (outer, inners) = split_title_parens(&part);
+        if outer.trim().chars().count() >= 2 {
+            expanded.push(outer.trim().to_string());
+        }
+        expanded.extend(inners);
+        for token in part.split_whitespace() {
+            if token.trim().chars().count() >= 2 {
+                expanded.push(token.trim().to_string());
+            }
+        }
+    }
+    expanded
+}
+
+fn split_title_parens(input: &str) -> (String, Vec<String>) {
+    let chars: Vec<char> = input.chars().collect();
+    let mut outer = String::new();
+    let mut inners = Vec::new();
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index] == '(' || chars[index] == '（' {
+            let mut depth = 1;
+            let mut cursor = index + 1;
+            let start = cursor;
+            while cursor < chars.len() && depth > 0 {
+                if chars[cursor] == '(' || chars[cursor] == '（' {
+                    depth += 1;
+                } else if chars[cursor] == ')' || chars[cursor] == '）' {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                cursor += 1;
+            }
+            if depth == 0 {
+                let inner: String = chars[start..cursor].iter().collect();
+                if inner.trim().chars().count() >= 2 {
+                    inners.push(inner.trim().to_string());
+                }
+                outer.push(' ');
+                index = cursor + 1;
+                continue;
+            }
+        }
+        outer.push(chars[index]);
+        index += 1;
+    }
+    (outer, inners)
+}
+
+fn relation_name(part: &str) -> Option<String> {
+    let peeled = peel_product_words(part);
+    if peeled == part.trim() {
+        return None;
+    }
+    let name = peeled
+        .trim()
+        .trim_matches(|ch: char| ch.is_whitespace() || is_punct(ch));
+    if name.chars().count() < 2 || is_blocked_avatar_label(name) || is_product_noun(name) {
+        None
+    } else {
+        Some(name.to_string())
+    }
+}
+
+fn is_product_noun(name: &str) -> bool {
+    const NOUNS: &[&str] = &[
+        "ワンピース",
+        "部屋着",
+        "パーカー",
+        "スカート",
+        "ドレス",
+        "シャツ",
+        "衣装",
+        "ヘア",
+        "髪",
+        "ウィッグ",
+        "テクスチャ",
+        "ギミック",
+        "ワールド",
+        "セット",
+        "パック",
+        "glasses",
+        "texture",
+        "hair",
+        "outfit",
+        "world",
+        "gimmick",
+        "アクセサリ",
+        "メガネ",
+        "眼鏡",
+        "ペンライト",
+        "グラデーション",
+    ];
+    let lower = name.trim().to_lowercase();
+    NOUNS.iter().any(|noun| lower == noun.to_lowercase())
+}
+
 fn classify_text(text: &str, allow_broad: bool) -> Category {
-    let lower = text.to_lowercase();
+    let lower = nfkc(text).to_lowercase();
     let has = |words: &[&str]| words.iter().any(|word| lower.contains(word));
     if has(&["テクスチャ", "texture", "eyetexture", "eye texture", "瞳"]) {
         return Category::Texture;
     }
-    if has(&["ヘア", "髪", "ウィッグ", "ポニーテール", "お団子", "前髪", "みつあみ", "hair"]) {
+    if has(&[
+        "ヘア",
+        "髪",
+        "ウィッグ",
+        "ポニーテール",
+        "お団子",
+        "前髪",
+        "みつあみ",
+        "hair",
+    ]) {
         return Category::Hair;
     }
     if has(&[
@@ -313,6 +572,23 @@ fn classify_text(text: &str, allow_broad: bool) -> Category {
     }
     if !allow_broad {
         return Category::Other;
+    }
+    if has(&["オリジナル3dモデル"]) {
+        return Category::Avatar;
+    }
+    if has(&[
+        "こたつ",
+        "毛布",
+        "布団",
+        "huton",
+        "磁気ディスク",
+        "表情",
+        "アニメーション",
+        "animation",
+        "ボディ",
+    ]) || has_body_word(&lower)
+    {
+        return Category::Gimmick;
     }
     if has(&["ギミック", "シェーダー", "shader", "ツール"]) {
         return Category::Gimmick;
@@ -335,6 +611,12 @@ fn classify_text(text: &str, allow_broad: bool) -> Category {
         return Category::Outfit;
     }
     Category::Other
+}
+
+fn has_body_word(lower: &str) -> bool {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r"(?:^|[^a-z])body(?:[^a-z]|$)").unwrap());
+    re.is_match(lower)
 }
 
 fn is_shop_token(token: &str) -> bool {
@@ -388,15 +670,23 @@ mod tests {
         let names = listed_avatar_names(LIST, &sample_avatars());
         assert_eq!(names, vec!["ライム", "プラム", "ショコラ", "しなの"]);
         assert!(!names.iter().any(|name| name.contains("アバター対応")));
-        assert!(!names.iter().any(|name| name.contains("工房") || name.contains("通り")));
+        assert!(
+            !names
+                .iter()
+                .any(|name| name.contains("工房") || name.contains("通り"))
+        );
     }
 
     #[test]
     fn nested_parentheses_do_not_swallow_the_avatar_name() {
         let text = "対応アバター\n\"IKUSIA 瑞希_ver2.02(Breast_big(limit) 0~100) https://booth.pm/ja/items/9\"\n基本仕様\n";
         assert_eq!(listed_avatar_names(text, &[]), vec!["瑞希".to_string()]);
-        let reading = "対応アバター\n\"Sharu(シャル) ミリアム_v1.8 https://booth.pm/ja/items/8\"\n基本仕様\n";
-        assert_eq!(listed_avatar_names(reading, &[]), vec!["ミリアム".to_string()]);
+        let reading =
+            "対応アバター\n\"Sharu(シャル) ミリアム_v1.8 https://booth.pm/ja/items/8\"\n基本仕様\n";
+        assert_eq!(
+            listed_avatar_names(reading, &[]),
+            vec!["ミリアム".to_string()]
+        );
     }
 
     #[test]
@@ -432,7 +722,10 @@ mod tests {
 着せ替え方法
 はみ出たメッシュの削除方法 1. アバターの体のメッシュを選択します。
 ";
-        assert_eq!(listed_avatar_names(instructions, &sample_avatars()), vec!["ライム".to_string()]);
+        assert_eq!(
+            listed_avatar_names(instructions, &sample_avatars()),
+            vec!["ライム".to_string()]
+        );
 
         let credits = "\
 対応アバター
@@ -464,21 +757,99 @@ Avatar
 ";
         let names = listed_avatar_names(shader, &sample_avatars());
         assert_eq!(names, vec!["プラム".to_string()]);
-        assert!(names.iter().all(|name| name != "lilToon" && name != "Avatar"));
+        assert!(
+            names
+                .iter()
+                .all(|name| name != "lilToon" && name != "Avatar")
+        );
     }
 
     #[test]
     fn listed_products_are_not_all_outfits() {
-        assert_eq!(category_for_listed_product("お団子ポニーテール", ""), Category::Hair);
-        assert_eq!(category_for_listed_product("Boston Glasses", ""), Category::Accessory);
-        assert_eq!(category_for_listed_product("Noctilume EyeTexture", ""), Category::Texture);
-        assert_eq!(category_for_listed_product("部屋着15", "対応アバター"), Category::Outfit);
-        assert_eq!(category_for_listed_product("40アバター対応", "対応アバター"), Category::Other);
+        assert_eq!(
+            category_for_listed_product("お団子ポニーテール", ""),
+            Category::Hair
+        );
+        assert_eq!(
+            category_for_listed_product("Boston Glasses", ""),
+            Category::Accessory
+        );
+        assert_eq!(
+            category_for_listed_product("Noctilume EyeTexture", ""),
+            Category::Texture
+        );
+        assert_eq!(
+            category_for_listed_product("部屋着15", "対応アバター"),
+            Category::Outfit
+        );
+        assert_eq!(
+            category_for_listed_product("40アバター対応", "対応アバター"),
+            Category::Other
+        );
+        assert_eq!(
+            category_for_listed_product("Noctilume EyeTexture", ""),
+            Category::Texture
+        );
+        assert_eq!(category_for_listed_product("こたつ", ""), Category::Gimmick);
+        assert_eq!(category_for_listed_product("毛布", ""), Category::Gimmick);
+        assert_eq!(
+            category_for_listed_product("磁気ディスク", ""),
+            Category::Gimmick
+        );
+        assert_eq!(
+            category_for_listed_product("ネオンヘイロー", ""),
+            Category::Accessory
+        );
+        assert_eq!(
+            category_for_listed_product("まめひなた表情アニメーション", ""),
+            Category::Gimmick
+        );
+        assert_eq!(category_for_listed_product("huton", ""), Category::Gimmick);
+        assert_eq!(
+            category_for_listed_product("まめひなた body", ""),
+            Category::Gimmick
+        );
+        assert_eq!(
+            category_for_listed_product("VRChat向け3Dモデル", ""),
+            Category::Other
+        );
+        assert_eq!(
+            category_for_listed_product("ライム -Lime-", "ライムのオリジナル3Dモデルです。"),
+            Category::Avatar
+        );
+    }
+
+    #[test]
+    fn title_dedication_is_a_name_and_sale_brackets_are_not() {
+        let hints = title_avatar_hints("【プラム専用】Hairグラデーション", &sample_avatars());
+        assert_eq!(hints, vec!["プラム".to_string()]);
+        let sale = title_avatar_hints("【半額セール中】真冬 Mafuyu / オリジナル3Dモデル", &[]);
+        assert!(sale.iter().all(|name| name != "半額セール中"));
+        assert_eq!(
+            title_avatar_hints("架空ちゃん対応パーカー", &[]),
+            vec!["架空ちゃん".to_string()]
+        );
+        let outfit = title_avatar_hints("しなの・ライム・マヌカ対応 ワンピース", &sample_avatars());
+        assert!(outfit.contains(&"しなの".to_string()));
+        assert!(outfit.contains(&"ライム".to_string()));
+        assert!(outfit.iter().all(|name| name != "ワンピース"));
+    }
+
+    #[test]
+    fn clip_keeps_a_compatibility_section_past_the_head() {
+        let mut description = "導入文です。\n".repeat(400);
+        description.push_str(
+            "対応アバター\nライム_ver1.00 https://booth.pm/ja/items/1001\n基本仕様\n布です。\n",
+        );
+        let clipped = clip_description(&description, 500);
+        assert!(clipped.contains("ライム_ver1.00"));
+        assert!(clipped.chars().count() < description.chars().count());
     }
 
     #[test]
     fn sibling_prose_is_not_a_compatibility_list() {
-        let text = "素体について\nライム、プラム、ショコラは共通素体です。衣装を着せ替えできます。\n";
+        let text =
+            "素体について\nライム、プラム、ショコラは共通素体です。衣装を着せ替えできます。\n";
         assert!(listed_avatar_names(text, &sample_avatars()).is_empty());
     }
 }

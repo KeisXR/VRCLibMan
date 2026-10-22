@@ -16,7 +16,8 @@ Booth のパスワードやクッキーは持ちません。ブラウザ拡張�
 - Node.js
 - Rust（rustup）と Visual Studio 2022 Build Tools の C++ ワークロード
 - WebView2（Windows 11 には入っています）
-- [Ollama](https://ollama.com/)。分類に使うなら `ollama pull qwen3:4b`
+- [Ollama](https://ollama.com/)。分類の初期モデルは `gemma4:12b`（目安 8GB の VRAM）です。`ollama pull gemma4:12b`
+- 軽い代替は `ollama pull qwen3:4b`。設定のモデル名で、導入済みのモデルを選べます。すでに保存したモデル名は、更新しても上書きしません。
 
 ## 起動
 
@@ -40,7 +41,7 @@ npm run tauri dev
 
 説明文の補完は、拡張が商品の公開ページを `credentials: "omit"` で1件ずつ取ります。年齢確認で本文が落ちるときは、同じ条件で商品の JSON を読みます。ログイン中のセッションは、説明の補完には送りません。ライブラリ全ページの読み取りだけ、すでにブラウザで開いているログインを使います。
 
-Ollama の接続先は `http://127.0.0.1` か `localhost` だけです。温度は 0.1 固定です。
+Ollama の接続先は `http://127.0.0.1` か `localhost` だけです。温度は 0.1 固定です。初期モデルは `gemma4:12b` で、目安として 8GB の VRAM を使います。`qwen3:4b` は軽い代替で、設定から導入済みのモデルを選べます。
 
 ## 初期データ
 

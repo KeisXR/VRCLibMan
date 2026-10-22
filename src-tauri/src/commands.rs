@@ -1,3 +1,4 @@
+use crate::AppState;
 use crate::db::{self, ExtractJob};
 use crate::model::{
     AvatarInput, BaseBodyInput, ExtractReport, ImportReport, JobProgress, Knowledge, LibraryStats,
@@ -6,10 +7,9 @@ use crate::model::{
 use crate::ollama::{self, model_ready};
 use crate::scan;
 use crate::view::{self, AvatarCard, AvatarDetail, ProductOption, QueuePage};
-use crate::AppState;
+use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, MutexGuard};
-use std::path::Path;
 use tauri::{AppHandle, Emitter, State};
 
 struct ClearRunning(Arc<std::sync::atomic::AtomicBool>);
@@ -213,7 +213,10 @@ pub async fn scan_library(
         "scan",
         report.indexed,
         report.indexed,
-        format!("{} 件を調べ、{} 件を商品と紐づけました", report.indexed, report.linked),
+        format!(
+            "{} 件を調べ、{} 件を商品と紐づけました",
+            report.indexed, report.linked
+        ),
     );
     Ok(report)
 }
@@ -250,8 +253,14 @@ pub async fn extract_products(
             break;
         }
         let label: String = job.title.chars().take(40).collect();
-        emit_progress(&app, "extract", index as u32, total, format!("抽出中: {label}"));
-        if job.description == "公開終了（取得できず）" {
+        emit_progress(
+            &app,
+            "extract",
+            index as u32,
+            total,
+            format!("抽出中: {label}"),
+        );
+        if job.description == crate::model::UNAVAILABLE_DESCRIPTION {
             let mut connection = db(&state)?;
             db::mark_description_seen(&mut connection, &job.booth_id)?;
             processed += 1;
@@ -359,6 +368,12 @@ pub async fn cache_thumbnails(app: AppHandle, state: State<'_, AppState>) -> Res
             saved += 1;
         }
     }
-    emit_progress(&app, "thumbs", total, total, format!("{saved} 件のサムネイルを保存しました"));
+    emit_progress(
+        &app,
+        "thumbs",
+        total,
+        total,
+        format!("{saved} 件のサムネイルを保存しました"),
+    );
     Ok(saved)
 }

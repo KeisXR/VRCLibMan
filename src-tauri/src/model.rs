@@ -1,5 +1,11 @@
 use serde::{Deserialize, Serialize};
 
+/// Fresh databases only. `INSERT OR IGNORE` leaves a model the user already saved.
+pub const DEFAULT_OLLAMA_MODEL: &str = "gemma4:12b";
+
+/// Booth page and item JSON were both missing. Not a failed extraction.
+pub const UNAVAILABLE_DESCRIPTION: &str = "公開終了（取得できず）";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Category {

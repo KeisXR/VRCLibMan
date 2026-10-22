@@ -81,7 +81,7 @@ function product(partial: Partial<Product> & Pick<Product, "boothId" | "title" |
 const store: Store = {
   settings: {
     ollamaBaseUrl: "http://127.0.0.1:11434",
-    ollamaModel: "qwen3:4b",
+    ollamaModel: "gemma4:12b",
     confidenceThreshold: 0.6,
     libraryFolder: "",
   },
@@ -99,7 +99,7 @@ const store: Store = {
     { id: "chocolat", displayName: "ショコラ", baseBody: "komado", aliases: ["Chocolat"], isBuiltin: true, notes: "" },
     { id: "manuka", displayName: "マヌカ", baseBody: null, aliases: ["Manuka", "MANUKA", "마누카"], isBuiltin: true, notes: "" },
     { id: "shinano", displayName: "しなの", baseBody: null, aliases: ["Shinano"], isBuiltin: true, notes: "" },
-    { id: "celestia", displayName: "セレスティア", baseBody: null, aliases: ["Celestia"], isBuiltin: true, notes: "" },
+    { id: "celestia", displayName: "セレスティア", baseBody: null, aliases: ["Celestia", "Selestia"], isBuiltin: true, notes: "" },
     { id: "milltina", displayName: "ミルティナ", baseBody: null, aliases: ["Milltina"], isBuiltin: true, notes: "" },
     { id: "kikyo", displayName: "桔梗", baseBody: null, aliases: [], isBuiltin: true, notes: "" },
     { id: "rurune", displayName: "ルルネ", baseBody: null, aliases: ["rurune", "Rurune"], isBuiltin: true, notes: "" },
@@ -429,9 +429,26 @@ function stats(): LibraryStats {
 function needsReview(item: Product, linkCount: number): boolean {
   if (item.userConfirmed) return false;
   if (item.category == null) return true;
-  if (item.confidence != null && item.confidence < store.settings.confidenceThreshold) return true;
-  if (item.category !== "avatar" && item.unresolvedNames.length > 0) return true;
-  return item.category !== "avatar" && !item.isGeneric && linkCount === 0;
+  const unresolved = item.unresolvedNames.filter((name) => !isIgnorableName(name));
+  if (unresolved.length > 0) return true;
+  const placeholder = linksOf(item.boothId).some((id) => id.startsWith("owned-"));
+  if (placeholder) return true;
+  if (item.category === "world" || item.category === "gimmick" || item.category === "other") return false;
+  if (item.category === "avatar") return linkCount === 0;
+  return !item.isGeneric && linkCount === 0;
+}
+
+function isIgnorableName(name: string): boolean {
+  const lower = name.toLowerCase();
+  return (
+    name.endsWith("様") ||
+    lower.includes("modular avatar") ||
+    lower.includes("qvpen") ||
+    lower.includes("liltoon") ||
+    lower === "avatar" ||
+    name.includes("セール") ||
+    name.includes("アバター対応")
+  );
 }
 
 function updateProduct(update: ProductUpdate) {
