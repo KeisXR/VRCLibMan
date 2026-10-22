@@ -176,6 +176,7 @@ pub struct Settings {
     pub ollama_model: String,
     pub confidence_threshold: f64,
     pub library_folder: String,
+    pub builtin_browser: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -185,6 +186,8 @@ pub struct SettingsInput {
     pub ollama_model: String,
     pub confidence_threshold: f64,
     pub library_folder: String,
+    #[serde(default)]
+    pub builtin_browser: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

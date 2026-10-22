@@ -1,3 +1,4 @@
+mod browser;
 mod commands;
 mod compat;
 mod db;
@@ -118,6 +119,12 @@ pub fn run() {
             commands::cancel_extract,
             commands::test_ollama,
             commands::cache_thumbnails,
+            commands::open_booth_browser,
+            commands::show_booth_library,
+            commands::browse_booth_history,
+            commands::import_booth_page,
+            commands::clear_booth_session,
+            commands::close_booth_browser,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

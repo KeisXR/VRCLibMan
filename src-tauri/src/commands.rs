@@ -153,8 +153,41 @@ pub fn save_settings(state: State<'_, AppState>, settings: SettingsInput) -> Res
             ollama_model: model,
             confidence_threshold: settings.confidence_threshold,
             library_folder: settings.library_folder,
+            builtin_browser: settings.builtin_browser,
         },
     )
+}
+
+#[tauri::command]
+pub fn open_booth_browser(app: tauri::AppHandle) -> Result<(), String> {
+    crate::browser::open_browser(&app)
+}
+
+#[tauri::command]
+pub fn show_booth_library(app: tauri::AppHandle) -> Result<(), String> {
+    crate::browser::show_library(&app)
+}
+
+#[tauri::command]
+pub fn browse_booth_history(app: tauri::AppHandle, forward: bool) -> Result<(), String> {
+    crate::browser::browse_history(&app, forward)
+}
+
+#[tauri::command]
+pub async fn import_booth_page(app: tauri::AppHandle) -> Result<ImportReport, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::browser::import_current_page(&app))
+        .await
+        .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
+pub fn clear_booth_session(app: tauri::AppHandle) -> Result<(), String> {
+    crate::browser::clear_session(&app)
+}
+
+#[tauri::command]
+pub fn close_booth_browser(app: tauri::AppHandle) -> Result<(), String> {
+    crate::browser::close_browser(&app)
 }
 
 #[tauri::command]

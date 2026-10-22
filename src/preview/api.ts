@@ -92,6 +92,7 @@ const store: Store = {
     ollamaModel: "gemma4:12b",
     confidenceThreshold: 0.6,
     libraryFolder: "",
+    builtinBrowser: false,
   },
   baseBodies: [
     {
@@ -734,6 +735,12 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     case "scan_library":
     case "extract_products":
     case "test_ollama":
+    case "open_booth_browser":
+    case "show_booth_library":
+    case "browse_booth_history":
+    case "import_booth_page":
+    case "close_booth_browser":
+    case "clear_booth_session":
     case "cache_thumbnails":
       desktopOnly();
     default:

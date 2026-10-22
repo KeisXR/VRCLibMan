@@ -95,6 +95,10 @@ VRCVideoCacher の拡張が手元のアプリへ POST するのと同じ運び�
 - NSIS の `currentUser` は `vrclibman` スキームを `HKCU\Software\Classes\vrclibman` に書き、アンインストール時に、そのコマンドがこのインストールを指していれば消す。`windows/hooks.nsh` はインストール先の `HKCU\Software\VRCLibMan` だけを消し、スキームもアプリデータも消さない。
 - `npm run tauri dev` は Windows のデバッグビルドで `register_all` を呼び、スキームを開発用の実行ファイルへ付け替える。配布版を試すときはインストールし直す。
 
+### 内蔵ブラウザ
+
+既定は拡張機能のまま。設定で内蔵ブラウザを有効にしたときだけ、別ウィンドウで `https://accounts.booth.pm/library` を開く。ログインとページ移動はユーザーが行う。今見えているライブラリのページだけを `extension/extract.js` の `extractPage` で読み、ファイル取り込みと同じ `import_export_json` に渡す。他のページへは自動で進まない。年齢確認の URL は取り込みを拒否し、確認を自動で通過させない。セッションはアプリのローカルデータ配下の `booth-browser` だけに置き、クッキーは読まない。ログアウトはそのフォルダを消す。`library.sqlite` は消さない。
+
 ### 抽出と安全境界
 
 細かい分類規則は次節。ここは境界だけを書く。
