@@ -277,6 +277,9 @@ pub fn is_blocked_avatar_label(name: &str) -> bool {
         || trimmed.contains("モデル")
         || trimmed.contains("動画")
         || trimmed.contains("セットアップ")
+        || trimmed.contains("心拍")
+        || trimmed.contains("VRモード")
+        || trimmed.contains("vrモード")
     {
         return true;
     }
@@ -333,6 +336,10 @@ pub fn is_blocked_avatar_label(name: &str) -> bool {
         "ma",
         "pc",
         "quest",
+        "re",
+        "osc",
+        "vr",
+        "セーブ",
     ];
     tokens.iter().any(|token| DENY.contains(&token.as_str()))
 }
@@ -483,6 +490,120 @@ fn is_noise_token(token: &str) -> bool {
         "オリジナル",
     ];
     NOISE.contains(&lower.as_str())
+}
+
+/// The other-script name sitting next to `anchor`, ignoring spaces, punctuation, and の.
+/// `しお（Sio）` yields しお when the anchor is Sio, and Sio when the anchor is しお.
+pub fn adjacent_reading(anchor: &str, text: &str) -> Option<String> {
+    let folded = nfkc(text);
+    let want_cjk = !anchor.chars().any(is_cjk);
+    let needle: Vec<char> = nfkc(anchor).to_lowercase().chars().collect();
+    if needle.is_empty() || (needle.len() < 2 && want_cjk) {
+        return None;
+    }
+    let original: Vec<char> = folded.chars().collect();
+    let haystack: Vec<char> = folded.to_lowercase().chars().collect();
+    if haystack.len() < needle.len() {
+        return None;
+    }
+    let mut found = Vec::new();
+    for index in 0..=haystack.len() - needle.len() {
+        if haystack[index..index + needle.len()] != needle[..] {
+            continue;
+        }
+        let end = index + needle.len();
+        if !reading_edge(&original, index, end, want_cjk) {
+            continue;
+        }
+        if let Some(name) = reading_beside(&original, index, end, want_cjk) {
+            if !found.iter().any(|existing: &String| existing == &name) {
+                found.push(name);
+            }
+        }
+    }
+    if found.len() == 1 { found.pop() } else { None }
+}
+
+fn reading_edge(chars: &[char], start: usize, end: usize, anchor_is_latin: bool) -> bool {
+    let continues = |ch: char| {
+        if anchor_is_latin {
+            ch.is_ascii_alphabetic()
+        } else {
+            is_cjk(ch)
+        }
+    };
+    (start == 0 || !continues(chars[start - 1])) && (end >= chars.len() || !continues(chars[end]))
+}
+
+fn reading_beside(chars: &[char], start: usize, end: usize, want_cjk: bool) -> Option<String> {
+    reading_run(chars, start, true, want_cjk).or_else(|| reading_run(chars, end, false, want_cjk))
+}
+
+fn reading_run(chars: &[char], edge: usize, look_left: bool, want_cjk: bool) -> Option<String> {
+    let script = |ch: char| {
+        if want_cjk {
+            is_cjk(ch)
+        } else {
+            ch.is_ascii_alphabetic()
+        }
+    };
+    if look_left {
+        let mut index = edge;
+        while index > 0 && reading_gap(chars[index - 1]) {
+            index -= 1;
+        }
+        if index == 0 || !script(chars[index - 1]) {
+            return None;
+        }
+        let mut begin = index;
+        while begin > 0 && script(chars[begin - 1]) {
+            begin -= 1;
+        }
+        accept_reading(&chars[begin..index])
+    } else {
+        let mut index = edge;
+        while index < chars.len() && reading_gap(chars[index]) {
+            index += 1;
+        }
+        if index >= chars.len() || !script(chars[index]) {
+            return None;
+        }
+        let begin = index;
+        while index < chars.len() && script(chars[index]) {
+            index += 1;
+        }
+        accept_reading(&chars[begin..index])
+    }
+}
+
+fn reading_gap(ch: char) -> bool {
+    ch.is_whitespace() || is_punct(ch) || ch == 'の' || ch == 'ノ'
+}
+
+fn accept_reading(chars: &[char]) -> Option<String> {
+    let name: String = chars.iter().collect();
+    if name.contains("対応") || name.contains("専用") || name.contains("向け") {
+        return None;
+    }
+    let count = name.chars().count();
+    if name.chars().any(is_cjk) {
+        if !(1..=8).contains(&count) {
+            return None;
+        }
+        const PARTICLES: &str = "のをにはがでと版式";
+        if count == 1 && PARTICLES.contains(chars[0]) {
+            return None;
+        }
+        if count > 1 && is_blocked_avatar_label(&name) {
+            return None;
+        }
+        return Some(name);
+    }
+    if (2..=16).contains(&count) && is_name_alias(&name) {
+        Some(name)
+    } else {
+        None
+    }
 }
 
 pub fn paren_pieces(raw: &str) -> Vec<String> {
@@ -741,6 +862,10 @@ mod tests {
             "Full",
             "Eye",
             "Pack",
+            "Re",
+            "セーブ",
+            "VRモード",
+            "OSC心拍計",
         ] {
             assert!(is_blocked_avatar_label(name), "{name}");
         }
@@ -749,5 +874,13 @@ mod tests {
         assert!(!is_name_alias(".vroid"));
         assert!(is_name_alias("Eku"));
         assert!(is_name_alias("ナユ"));
+        assert_eq!(
+            adjacent_reading("Sio", "しお（Sio）のモデル").as_deref(),
+            Some("しお")
+        );
+        assert_eq!(
+            adjacent_reading("エク", "エク - Eku").as_deref(),
+            Some("Eku")
+        );
     }
 }

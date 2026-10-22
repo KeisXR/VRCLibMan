@@ -462,6 +462,7 @@ pub(crate) fn apply_extraction(
         for draft in &output.created_avatars {
             insert_placeholder(&tx, &draft.id, &draft.display_name, &draft.aliases)?;
         }
+        remember_readings(&tx, &output.readings)?;
     }
     tx.execute(
         "UPDATE products SET category = ?1, compatible_avatars_json = ?2, unresolved_names_json = ?3,
@@ -489,42 +490,49 @@ pub(crate) fn apply_extraction(
 
 pub(crate) fn reresolve_all(connection: &mut Connection) -> Result<u32, String> {
     let threshold = settings(connection)?.confidence_threshold;
-    let products = load_products(connection)?;
     let tx = connection.transaction().sql()?;
     let mut processed = 0;
-    for product in products {
-        if product.links_locked || (product.category.is_none() && product.extracted_at.is_none()) {
-            continue;
-        }
-        let avatars = load_avatars(&tx)?;
-        let mut output = resolve_product(
-            &ResolveInput {
-                booth_id: product.booth_id.as_str(),
-                title: product.title.as_str(),
-                description: product.description_snippet.as_str(),
-                category: product.category,
-                raw_names: &product.compatible_avatars,
-                is_generic: product.is_generic,
-                confidence: product.confidence,
-                user_confirmed: product.user_confirmed,
-                threshold,
-                allow_create: true,
-            },
-            &avatars,
-        );
-        let reopen = output.unresolved != product.unresolved_names && !output.unresolved.is_empty();
-        if reopen {
-            output.needs_review = true;
-        }
-        for draft in &output.created_avatars {
-            insert_placeholder(&tx, &draft.id, &draft.display_name, &draft.aliases)?;
-        }
-        let confirmed = if reopen {
-            false
-        } else {
-            product.user_confirmed
-        };
-        tx.execute(
+    // A second pass picks up readings learned from 名前(読み) pairs in the first pass.
+    for _pass in 0..2 {
+        let products = load_products(&tx)?;
+        processed = 0;
+        for product in products {
+            if product.links_locked
+                || (product.category.is_none() && product.extracted_at.is_none())
+            {
+                continue;
+            }
+            let avatars = load_avatars(&tx)?;
+            let mut output = resolve_product(
+                &ResolveInput {
+                    booth_id: product.booth_id.as_str(),
+                    title: product.title.as_str(),
+                    description: product.description_snippet.as_str(),
+                    category: product.category,
+                    raw_names: &product.compatible_avatars,
+                    is_generic: product.is_generic,
+                    confidence: product.confidence,
+                    user_confirmed: product.user_confirmed,
+                    threshold,
+                    allow_create: true,
+                },
+                &avatars,
+            );
+            let reopen =
+                output.unresolved != product.unresolved_names && !output.unresolved.is_empty();
+            if reopen {
+                output.needs_review = true;
+            }
+            for draft in &output.created_avatars {
+                insert_placeholder(&tx, &draft.id, &draft.display_name, &draft.aliases)?;
+            }
+            remember_readings(&tx, &output.readings)?;
+            let confirmed = if reopen {
+                false
+            } else {
+                product.user_confirmed
+            };
+            tx.execute(
             "UPDATE products SET unresolved_names_json = ?1, needs_review = ?2, user_confirmed = ?3, updated_at = ?4 WHERE booth_id = ?5",
             params![
                 to_json(&output.unresolved)?,
@@ -535,8 +543,9 @@ pub(crate) fn reresolve_all(connection: &mut Connection) -> Result<u32, String> 
             ],
         )
         .sql()?;
-        replace_links(&tx, &product.booth_id, &output.avatar_ids, "extracted")?;
-        processed += 1;
+            replace_links(&tx, &product.booth_id, &output.avatar_ids, "extracted")?;
+            processed += 1;
+        }
     }
     tx.execute(
         "DELETE FROM avatars WHERE id LIKE 'owned-%' AND id NOT IN (SELECT avatar_id FROM product_avatars)",
@@ -1170,6 +1179,42 @@ fn link_ids(connection: &Connection, product_id: &str) -> Result<Vec<String>, St
         .collect::<Result<Vec<_>, _>>()
         .sql()?;
     Ok(ids)
+}
+
+fn remember_readings(connection: &Connection, readings: &[(String, String)]) -> Result<(), String> {
+    for (avatar_id, alias) in readings {
+        if !crate::normalize::is_name_alias(alias) {
+            continue;
+        }
+        let avatars = load_avatars(connection)?;
+        if let Some(existing) = crate::resolve::resolve_name(alias, &avatars) {
+            if existing.id != *avatar_id {
+                continue;
+            }
+            continue;
+        }
+        let current: String = connection
+            .query_row(
+                "SELECT aliases_json FROM avatars WHERE id = ?1",
+                params![avatar_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .sql()?
+            .unwrap_or_else(|| "[]".into());
+        let mut aliases = parse_list(&current);
+        if aliases.iter().any(|existing| existing == alias) {
+            continue;
+        }
+        aliases.push(alias.clone());
+        connection
+            .execute(
+                "UPDATE avatars SET aliases_json = ?1 WHERE id = ?2",
+                params![to_json(&aliases)?, avatar_id],
+            )
+            .sql()?;
+    }
+    Ok(())
 }
 
 fn insert_placeholder(
@@ -2069,6 +2114,7 @@ mod tests {
                 {"boothId":"7825066","title":"【プラム Plum】Eye Textures Pack (Full Pack)","shop":"s","description":"瞳のテクスチャです。"},
                 {"boothId":"4511962","title":"むにゅりっぷ LipSync【プラム対応】","shop":"s","description":"プラムのオリジナル3Dモデル向けの口ギミックです。"},
                 {"boothId":"2000","title":"エク対応ギミック","shop":"s","description":"エク用です。"},
+                {"boothId":"7592511","title":"ミルキーチル","shop":"s","description":"Eku対応の衣装です。"},
                 {"boothId":"2001","title":"エク - Eku","shop":"s","description":"エクのオリジナル3Dモデルです。"}
             ]
         }"#;
@@ -2091,6 +2137,13 @@ mod tests {
             &mut connection,
             "2000",
             &extraction(Category::Gimmick, &["エク"], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        apply_extraction(
+            &mut connection,
+            "7592511",
+            &extraction(Category::Outfit, &["Eku"], false, 0.9),
             0.6,
         )
         .unwrap();
@@ -2149,6 +2202,12 @@ mod tests {
                 .links
                 .iter()
                 .any(|link| link.product_id == "2000" && link.avatar_id == eku_id)
+        );
+        assert!(
+            after
+                .links
+                .iter()
+                .any(|link| link.product_id == "7592511" && link.avatar_id == eku_id)
         );
         let eku = after
             .avatars

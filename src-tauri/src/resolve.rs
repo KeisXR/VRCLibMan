@@ -1,8 +1,8 @@
 use crate::model::{Avatar, Category};
 use crate::normalize::{
-    is_blocked_avatar_label, is_boundary_char, is_cjk, is_name_alias, is_promo_name,
-    label_variants, nfkc, normalize_label, paren_pieces, preferred_display_name, quoted_segments,
-    strip_tag_brackets, strip_title_noise, suggested_display_name,
+    adjacent_reading, is_blocked_avatar_label, is_boundary_char, is_cjk, is_name_alias,
+    is_promo_name, label_variants, nfkc, normalize_label, paren_pieces, preferred_display_name,
+    quoted_segments, strip_tag_brackets, strip_title_noise, suggested_display_name,
 };
 
 pub struct ResolveInput<'a> {
@@ -41,6 +41,7 @@ pub struct ResolveOutput {
     pub avatar_ids: Vec<String>,
     pub unresolved: Vec<String>,
     pub created_avatars: Vec<AvatarDraft>,
+    pub readings: Vec<(String, String)>,
     pub needs_review: bool,
 }
 
@@ -66,7 +67,7 @@ pub fn resolve_name<'a>(raw: &str, avatars: &'a [Avatar]) -> Option<&'a Avatar> 
 }
 
 fn consider_key<'a>(key: &str, avatars: &'a [Avatar], hits: &mut Vec<&'a Avatar>) {
-    if key.chars().count() < 2 {
+    if key.chars().count() < 2 && !key.chars().any(is_cjk) {
         return;
     }
     for avatar in avatars {
@@ -137,6 +138,7 @@ pub fn resolve_product(input: &ResolveInput<'_>, avatars: &[Avatar]) -> ResolveO
     let mut created = Vec::new();
     let mut unresolved = Vec::new();
     let mut ids = Vec::new();
+    let mut readings = Vec::new();
     let usable = usable_names(input.raw_names);
 
     if input.category == Some(Category::Avatar) {
@@ -164,31 +166,7 @@ pub fn resolve_product(input: &ResolveInput<'_>, avatars: &[Avatar]) -> ResolveO
         }
     } else {
         for raw in &usable {
-            let pieces = paren_pieces(raw);
-            let parts: Vec<String> = if pieces.len() > 1 {
-                pieces
-            } else {
-                vec![raw.clone()]
-            };
-            for part in parts {
-                let single_cjk = part.chars().count() == 1 && part.chars().all(is_cjk);
-                if is_blocked_avatar_label(&part) && !single_cjk {
-                    continue;
-                }
-                if let Some(avatar) = resolve_name(&part, avatars) {
-                    if !ids.contains(&avatar.id) {
-                        ids.push(avatar.id.clone());
-                    }
-                } else if keep_unresolved(&part, avatars) {
-                    let label = unresolved_label(&part);
-                    if !unresolved
-                        .iter()
-                        .any(|existing: &String| existing == &label)
-                    {
-                        unresolved.push(label);
-                    }
-                }
-            }
+            consider_compatible_name(raw, avatars, &mut ids, &mut unresolved, &mut readings);
         }
     }
 
@@ -209,8 +187,93 @@ pub fn resolve_product(input: &ResolveInput<'_>, avatars: &[Avatar]) -> ResolveO
         avatar_ids: ids,
         unresolved,
         created_avatars: created,
+        readings,
         needs_review,
     }
+}
+
+fn consider_compatible_name(
+    raw: &str,
+    avatars: &[Avatar],
+    ids: &mut Vec<String>,
+    unresolved: &mut Vec<String>,
+    readings: &mut Vec<(String, String)>,
+) {
+    let pieces = paren_pieces(raw);
+    if is_reading_pair(&pieces) {
+        let mut hits = Vec::new();
+        for piece in &pieces {
+            if let Some(avatar) = resolve_piece(piece, avatars) {
+                if !hits.iter().any(|id: &String| id == &avatar.id) {
+                    hits.push(avatar.id.clone());
+                }
+            }
+        }
+        if hits.len() == 1 {
+            if !ids.contains(&hits[0]) {
+                ids.push(hits[0].clone());
+            }
+            for piece in &pieces {
+                if resolve_piece(piece, avatars).is_none() && is_name_alias(piece) {
+                    readings.push((hits[0].clone(), piece.clone()));
+                }
+            }
+            return;
+        }
+        if hits.len() > 1 {
+            for id in hits {
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+            }
+            return;
+        }
+        if let Some(label) = pieces.iter().find(|piece| piece.chars().any(is_cjk)) {
+            push_unresolved(unresolved, label);
+        }
+        return;
+    }
+    let single_cjk = raw.chars().count() == 1 && raw.chars().all(is_cjk);
+    if is_blocked_avatar_label(raw) && !single_cjk {
+        return;
+    }
+    if let Some(avatar) = resolve_piece(raw, avatars) {
+        if !ids.contains(&avatar.id) {
+            ids.push(avatar.id.clone());
+        }
+    } else if keep_unresolved(raw, avatars) {
+        push_unresolved(unresolved, &unresolved_label(raw));
+    }
+}
+
+fn is_reading_pair(pieces: &[String]) -> bool {
+    pieces.len() == 2
+        && pieces.iter().any(|piece| piece.chars().any(is_cjk))
+        && pieces
+            .iter()
+            .any(|piece| piece.chars().any(|ch| ch.is_ascii_alphabetic()))
+}
+
+fn resolve_piece<'a>(piece: &str, avatars: &'a [Avatar]) -> Option<&'a Avatar> {
+    let single_cjk = piece.chars().count() == 1 && piece.chars().all(is_cjk);
+    if is_blocked_avatar_label(piece) && !single_cjk {
+        return None;
+    }
+    resolve_name(piece, avatars).or_else(|| {
+        if !single_cjk {
+            return None;
+        }
+        avatars.iter().find(|avatar| {
+            avatar_matchable(avatar) && name_keys(avatar).iter().any(|key| key == piece)
+        })
+    })
+}
+
+fn push_unresolved(unresolved: &mut Vec<String>, label: &str) {
+    if label.is_empty() || unresolved.iter().any(|existing| existing == label) {
+        return;
+    }
+    unresolved.push(label.to_string());
 }
 
 pub fn product_needs_review(facts: &ReviewFacts<'_>) -> bool {
@@ -310,7 +373,7 @@ fn create_placeholder(
     if !input.allow_create {
         return None;
     }
-    let display = japanese_display(&label, input.title);
+    let display = japanese_display(&label, input.title, input.description);
     if is_blocked_avatar_label(&display) || display == "名称未設定" {
         return None;
     }
@@ -318,17 +381,56 @@ fn create_placeholder(
     created.push(AvatarDraft {
         id: id.clone(),
         display_name: display.clone(),
-        aliases: draft_aliases(&display, raw_names, input.title),
+        aliases: draft_aliases(&display, raw_names, input.title, input.description),
     });
     Some(id)
 }
 
-fn japanese_display(label: &str, title: &str) -> String {
+fn japanese_display(label: &str, title: &str, description: &str) -> String {
     let preferred = preferred_display_name(label).unwrap_or_else(|| label.to_string());
-    if is_cjk_name(&preferred) {
+    if preferred.chars().any(is_cjk) && !preferred.chars().any(|ch| ch.is_ascii_alphabetic()) {
         return preferred;
     }
-    cjk_partner(&preferred, title).unwrap_or(preferred)
+    adjacent_reading(&preferred, title)
+        .filter(|name| name.chars().any(is_cjk))
+        .or_else(|| {
+            adjacent_reading(&preferred, description).filter(|name| name.chars().any(is_cjk))
+        })
+        .or_else(|| sole_title_cjk(title))
+        .unwrap_or(preferred)
+}
+
+fn sole_title_cjk(title: &str) -> Option<String> {
+    let folded = nfkc(&strip_tag_brackets(title));
+    let chars: Vec<char> = folded.chars().collect();
+    let mut runs = Vec::new();
+    let mut index = 0;
+    while index < chars.len() {
+        if !is_cjk(chars[index]) {
+            index += 1;
+            continue;
+        }
+        let begin = index;
+        while index < chars.len() && is_cjk(chars[index]) {
+            index += 1;
+        }
+        let name: String = chars[begin..index].iter().collect();
+        let count = name.chars().count();
+        const SKIP: &str = "のをにはがでと版式";
+        if count == 1 && SKIP.contains(chars[begin]) {
+            continue;
+        }
+        if name.contains("対応") || name.contains("専用") || name.contains("向け") {
+            continue;
+        }
+        if count > 1 && is_blocked_avatar_label(&name) {
+            continue;
+        }
+        if (1..=6).contains(&count) && !runs.iter().any(|existing: &String| existing == &name) {
+            runs.push(name);
+        }
+    }
+    if runs.len() == 1 { runs.pop() } else { None }
 }
 
 fn is_cjk_name(text: &str) -> bool {
@@ -338,43 +440,12 @@ fn is_cjk_name(text: &str) -> bool {
         && text.chars().all(|ch| is_cjk(ch) || ch.is_whitespace())
 }
 
-fn cjk_partner(romaji: &str, title: &str) -> Option<String> {
-    let needle = normalize_label(romaji);
-    if needle.is_empty() {
-        return None;
-    }
-    let mut chunks = vec![strip_title_noise(&strip_tag_brackets(title))];
-    for separator in [" / ", "・", "、", "/", "／"] {
-        let mut next = Vec::new();
-        for chunk in chunks {
-            if chunk.contains(separator) {
-                next.extend(chunk.split(separator).map(str::to_string));
-            } else {
-                next.push(chunk);
-            }
-        }
-        chunks = next;
-    }
-    for chunk in chunks {
-        let variants = label_variants(&chunk);
-        if !variants
-            .iter()
-            .any(|variant| normalize_label(variant) == needle)
-        {
-            continue;
-        }
-        let cjks: Vec<String> = variants
-            .into_iter()
-            .filter(|variant| is_cjk_name(variant) && !is_blocked_avatar_label(variant))
-            .collect();
-        if cjks.len() == 1 {
-            return Some(cjks[0].clone());
-        }
-    }
-    None
-}
-
-fn draft_aliases(display: &str, raw_names: &[String], title: &str) -> Vec<String> {
+fn draft_aliases(
+    display: &str,
+    raw_names: &[String],
+    title: &str,
+    description: &str,
+) -> Vec<String> {
     let mut aliases = Vec::new();
     let display_key = normalize_label(display);
     let mut push = |variant: &str| {
@@ -391,6 +462,11 @@ fn draft_aliases(display: &str, raw_names: &[String], title: &str) -> Vec<String
     for raw in raw_names {
         for variant in label_variants(raw) {
             push(&variant);
+        }
+    }
+    for text in [title, description] {
+        if let Some(reading) = adjacent_reading(display, text) {
+            push(&reading);
         }
     }
     if let Some(partner) = script_partner(display, title) {
@@ -922,11 +998,10 @@ mod tests {
             },
             &sample(),
         );
-        assert!(output.unresolved.iter().any(|name| name == "エルキュナ2"));
-        assert!(output.unresolved.iter().any(|name| name == "Eruqyuna2"));
-        assert!(output.unresolved.iter().any(|name| name == "萌"));
-        assert!(output.unresolved.iter().any(|name| name == "Moe"));
-        assert!(output.unresolved.iter().all(|name| !name.contains('(')));
+        assert_eq!(
+            output.unresolved,
+            vec!["エルキュナ2".to_string(), "萌".to_string()]
+        );
 
         let eku = resolve_product(
             &ResolveInput {
@@ -963,5 +1038,53 @@ mod tests {
         );
         assert_eq!(sio.created_avatars[0].display_name, "しお");
         assert_eq!(sio.created_avatars[0].aliases, vec!["Sio".to_string()]);
+
+        let described = resolve_product(
+            &ResolveInput {
+                booth_id: "7224250",
+                title: "Sio",
+                description: "しお（Sio）のオリジナル3Dモデルです。",
+                category: Some(Category::Avatar),
+                raw_names: &["Sio".into()],
+                is_generic: false,
+                confidence: Some(0.9),
+                user_confirmed: false,
+                threshold: 0.6,
+                allow_create: true,
+            },
+            &sample(),
+        );
+        assert_eq!(described.created_avatars[0].display_name, "しお");
+        assert!(
+            described.created_avatars[0]
+                .aliases
+                .iter()
+                .any(|alias| alias == "Sio")
+        );
+
+        let known = vec![avatar("anomea", "あのめあ", &[], None)];
+        let paired = resolve_product(
+            &ResolveInput {
+                booth_id: "30",
+                title: "Dreamy Step",
+                description: "",
+                category: Some(Category::Outfit),
+                raw_names: &["あのめあ(Anomeoa)".into(), "ヌーヴェル(Nouvelle)".into()],
+                is_generic: false,
+                confidence: Some(0.9),
+                user_confirmed: false,
+                threshold: 0.6,
+                allow_create: true,
+            },
+            &known,
+        );
+        assert_eq!(paired.avatar_ids, vec!["anomea".to_string()]);
+        assert_eq!(paired.unresolved, vec!["ヌーヴェル".to_string()]);
+        assert!(
+            paired
+                .readings
+                .iter()
+                .any(|(id, alias)| id == "anomea" && alias == "Anomeoa")
+        );
     }
 }

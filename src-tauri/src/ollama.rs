@@ -122,7 +122,7 @@ pub async fn extract_product(
         "stream": false,
         "think": false,
         "format": extraction_schema(),
-        "options": request_options(&description),
+        "options": {"temperature": 0.1, "num_ctx": 8192},
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user}
@@ -266,14 +266,6 @@ fn clip_for_model(description: &str) -> String {
     crate::compat::clip_description(description, 4000)
 }
 
-fn request_options(description: &str) -> Value {
-    if description.chars().count() > 2000 {
-        serde_json::json!({"temperature": 0.1, "num_ctx": 8192})
-    } else {
-        serde_json::json!({"temperature": 0.1})
-    }
-}
-
 fn strip_think(input: &str) -> String {
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| Regex::new(r"(?s)<think>.*?</think>").unwrap());
@@ -337,13 +329,6 @@ mod tests {
         let raw =
             r#"{"category":"shoes","compatible_avatars":[],"is_generic":false,"confidence":0.4}"#;
         assert!(parse_extraction(raw).is_err());
-    }
-
-    #[test]
-    fn long_descriptions_request_a_larger_context() {
-        assert!(request_options("短い説明").get("num_ctx").is_none());
-        let long = "あ".repeat(2001);
-        assert_eq!(request_options(&long)["num_ctx"], 8192);
     }
 
     #[test]

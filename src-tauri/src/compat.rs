@@ -66,6 +66,10 @@ pub fn title_avatar_hints(title: &str, avatars: &[Avatar]) -> Vec<String> {
     };
     // 【X専用】/【X対応】 is an explicit name even when the library does not know it yet.
     for inner in bracket_inners(title) {
+        if let Some(avatar) = crate::resolve::resolve_name(inner.trim(), avatars) {
+            push(&avatar.display_name);
+            continue;
+        }
         if let Some(name) = crate::normalize::dedication_inside(&inner) {
             let pieces = crate::normalize::paren_pieces(&name);
             if pieces.len() > 1 {
@@ -108,25 +112,15 @@ pub fn names_for_extraction(
             names.push(trimmed.to_string());
         }
     };
-    let mut push_expanded = |name: &str| {
-        let pieces = crate::normalize::paren_pieces(name);
-        if pieces.len() > 1 {
-            for piece in pieces {
-                push(&piece);
-            }
-        } else {
-            push(name);
-        }
-    };
     for name in &listed {
-        push_expanded(name);
+        push(name);
     }
     for name in &hints {
-        push_expanded(name);
+        push(name);
     }
     if listed.is_empty() {
         for name in llm_names {
-            push_expanded(name);
+            push(name);
         }
     }
     names
@@ -726,6 +720,19 @@ Avatar
             vec!["架空ちゃん".to_string()]
         );
         assert!(title_avatar_hints("【MA対応】ペン", &sample_avatars()).is_empty());
+        let mut kipfel = sample_avatars();
+        kipfel.push(Avatar {
+            id: "kipfel".into(),
+            display_name: "キプフェル".into(),
+            base_body: None,
+            aliases: vec!["Kipfel".into()],
+            is_builtin: false,
+            notes: String::new(),
+        });
+        assert_eq!(
+            title_avatar_hints("【Kipfel】ねこネコパーカー", &kipfel),
+            vec!["キプフェル".to_string()]
+        );
         let eye = title_avatar_hints(
             "【プラム Plum】Eye Textures Pack (Full Pack)",
             &sample_avatars(),
