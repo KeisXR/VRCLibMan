@@ -1,8 +1,9 @@
 use crate::model::{Avatar, Category};
 use crate::normalize::{
     adjacent_reading, is_blocked_avatar_label, is_boundary_char, is_cjk, is_name_alias,
-    is_promo_name, label_variants, nfkc, normalize_label, paren_pieces, preferred_display_name,
-    quoted_segments, strip_tag_brackets, strip_title_noise, suggested_display_name,
+    is_promo_name, is_script_boundary, label_variants, nfkc, normalize_label, paren_pieces,
+    preferred_display_name, quoted_segments, strip_tag_brackets, strip_title_noise,
+    suggested_display_name,
 };
 
 pub struct ResolveInput<'a> {
@@ -647,11 +648,14 @@ fn find_bounded(haystack: &str, needle: &str) -> bool {
         if haystack[index..index + needle.len()] != needle[..] {
             continue;
         }
-        let left_ok = index == 0 || is_boundary_char(haystack[index - 1]);
+        let left_ok = index == 0
+            || is_boundary_char(haystack[index - 1])
+            || is_script_boundary(haystack[index - 1], needle[0]);
         let right = index + needle.len();
         let right_ok = right == haystack.len()
             || is_boundary_char(haystack[right])
-            || allowed_trailer(&haystack[right..]);
+            || allowed_trailer(&haystack[right..])
+            || is_script_boundary(needle[needle.len() - 1], haystack[right]);
         if left_ok && right_ok {
             return true;
         }
@@ -717,6 +721,21 @@ mod tests {
                 .id,
             "lime"
         );
+    }
+
+    #[test]
+    fn hiragana_or_kanji_into_katakana_bounds_a_name() {
+        let mame = vec![avatar("mame", "まめひなた", &["Mamehinata"], None)];
+        assert_eq!(
+            known_name_in("まめひなたフェイスアニメーションセット", &mame).as_deref(),
+            Some("まめひなた")
+        );
+        assert!(known_name_in("まめひなたんの衣装", &mame).is_none());
+        assert_eq!(
+            known_name_in("真冬フェイス", &catalog()).as_deref(),
+            Some("真冬")
+        );
+        assert!(known_name_in("ショコラミントの衣装", &catalog()).is_none());
     }
 
     #[test]

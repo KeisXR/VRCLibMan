@@ -45,6 +45,24 @@ pub fn is_boundary_char(ch: char) -> bool {
     ch.is_whitespace() || is_punct(ch) || ch.is_ascii_digit()
 }
 
+/// Hiragana or kanji followed by katakana splits a name: まめひなたフェイス.
+/// The same script running on does not, so まめひなたん and ショコラミント stay one word.
+pub fn is_script_boundary(before: char, after: char) -> bool {
+    (is_hiragana(before) || is_kanji(before)) && is_katakana(after)
+}
+
+fn is_hiragana(ch: char) -> bool {
+    ('\u{3040}'..='\u{309f}').contains(&ch)
+}
+
+fn is_katakana(ch: char) -> bool {
+    ('\u{30a0}'..='\u{30ff}').contains(&ch)
+}
+
+fn is_kanji(ch: char) -> bool {
+    ('\u{3400}'..='\u{9fff}').contains(&ch)
+}
+
 pub fn is_cjk(ch: char) -> bool {
     ('\u{3040}'..='\u{30ff}').contains(&ch)
         || ('\u{3400}'..='\u{9fff}').contains(&ch)

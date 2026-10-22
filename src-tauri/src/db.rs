@@ -2563,6 +2563,47 @@ mod tests {
         assert!(product.needs_review);
     }
 
+    #[test]
+    fn mamehinata_face_animation_is_grounded_on_the_established_placeholder() {
+        let mut connection = open_memory().unwrap();
+        let json = r#"{
+            "products": [
+                {"boothId":"6436480","title":"まめひなたフェイスアニメーションセット","shop":"s","description":"表情のアニメーションです。"},
+                {"boothId":"4340548","title":"まめひなた Mamehinata / オリジナル3Dモデル","shop":"s","description":"まめひなたのオリジナル3Dモデルです。"}
+            ]
+        }"#;
+        import_products(&mut connection, &parse_export(json).unwrap()).unwrap();
+        apply_extraction(
+            &mut connection,
+            "6436480",
+            &extraction(Category::Gimmick, &["まめひなた"], false, 1.0),
+            0.6,
+        )
+        .unwrap();
+        apply_extraction(
+            &mut connection,
+            "4340548",
+            &extraction(Category::Avatar, &["まめひなた"], false, 1.0),
+            0.6,
+        )
+        .unwrap();
+        reresolve_all(&mut connection).unwrap();
+        let snapshot = load_snapshot(&mut connection).unwrap();
+        let face = snapshot
+            .products
+            .iter()
+            .find(|product| product.booth_id == "6436480")
+            .unwrap();
+        assert!(face.unresolved_names.is_empty());
+        assert!(!face.needs_review);
+        assert!(
+            snapshot
+                .links
+                .iter()
+                .any(|link| { link.product_id == "6436480" && link.avatar_id == "owned-4340548" })
+        );
+    }
+
     fn section_items(detail: &crate::view::AvatarDetail, category: &str) -> Vec<(String, bool)> {
         detail
             .sections
