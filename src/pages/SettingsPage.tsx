@@ -21,9 +21,18 @@ export function SettingsPage() {
   const [body, setBody] = useState({ id: "", displayName: "", note: "" });
   const [filter, setFilter] = useState("");
   const [status, setStatus] = useState("");
+  const [models, setModels] = useState<string[]>([]);
 
   useEffect(() => {
     let cancelled = false;
+    api.testOllama().then(
+      (result) => {
+        if (!cancelled) setModels(result.models);
+      },
+      () => {
+        if (!cancelled) setModels([]);
+      },
+    );
     Promise.all([api.settings(), api.knowledge()]).then(
       ([nextSettings, nextKnowledge]) => {
         if (cancelled) return;
@@ -45,6 +54,12 @@ export function SettingsPage() {
       await api.saveSettings(settings);
       notify("設定を保存しました");
       refresh();
+      try {
+        const result = await api.testOllama();
+        setModels(result.models);
+      } catch {
+        setModels([]);
+      }
     } catch (err) {
       fail(errorText(err));
     }
@@ -179,9 +194,15 @@ export function SettingsPage() {
             <label className="field">
               <span>モデル名</span>
               <input
+                list="ollama-models"
                 value={settings.ollamaModel}
                 onChange={(event) => setSettings({ ...settings, ollamaModel: event.target.value })}
               />
+              <datalist id="ollama-models">
+                {models.map((model) => (
+                  <option key={model} value={model} />
+                ))}
+              </datalist>
             </label>
             <label className="field">
               <span>確信度のしきい値</span>
@@ -210,7 +231,15 @@ export function SettingsPage() {
             </button>
           </div>
           {status && <p className="meta">{status}</p>}
-          <p className="meta">Ollama は http://127.0.0.1 または localhost だけを受け付けます。温度は 0.1 固定です。</p>
+          <p className="meta">
+            初期モデルは gemma4:12b です（目安 8GB の VRAM）。軽い代替は qwen3:4b。
+            {models.length > 0
+              ? ` 導入済み: ${models.join("、")}。上の欄で選べます。`
+              : " 「接続を試す」で導入済みのモデルを候補に出します。"}
+          </p>
+          <p className="meta">
+            Ollama は http://127.0.0.1 または localhost だけを受け付けます。温度は 0.1 固定です。要確認は、モデルが自分で付けた数値ではなく、名前が商品文と対応表に結び付いたかで決めます。
+          </p>
         </div>
       )}
       <div className="row-actions" style={{ marginBottom: 16 }}>

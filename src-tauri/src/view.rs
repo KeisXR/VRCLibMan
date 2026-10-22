@@ -407,7 +407,7 @@ fn classify(snapshot: &Snapshot, avatar: &Avatar) -> Classified {
     let thumbnail_path = owned.iter().find_map(|body| body.thumbnail_path.clone());
     let thumbnail_url = owned.iter().find_map(|body| body.thumbnail_url.clone());
     let mut sections = Vec::new();
-    for key in ["outfit", "hair", "gimmick", "world", "other", "uncategorized"] {
+    for key in ["outfit", "hair", "accessory", "texture", "gimmick", "world", "other", "uncategorized"] {
         let items: Vec<ItemView> = specific
             .iter()
             .filter(|(category, _)| category == key)

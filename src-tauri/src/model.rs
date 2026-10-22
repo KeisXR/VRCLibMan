@@ -1,11 +1,19 @@
 use serde::{Deserialize, Serialize};
 
+/// Fresh databases only. `INSERT OR IGNORE` leaves a model the user already saved.
+pub const DEFAULT_OLLAMA_MODEL: &str = "gemma4:12b";
+
+/// Booth page and item JSON were both missing. Not a failed extraction.
+pub const UNAVAILABLE_DESCRIPTION: &str = "公開終了（取得できず）";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Category {
     Avatar,
     Outfit,
     Hair,
+    Accessory,
+    Texture,
     Gimmick,
     World,
     Other,
@@ -17,6 +25,8 @@ impl Category {
             "avatar" => Some(Self::Avatar),
             "outfit" => Some(Self::Outfit),
             "hair" => Some(Self::Hair),
+            "accessory" => Some(Self::Accessory),
+            "texture" => Some(Self::Texture),
             "gimmick" => Some(Self::Gimmick),
             "world" => Some(Self::World),
             "other" => Some(Self::Other),
@@ -29,6 +39,8 @@ impl Category {
             Self::Avatar => "avatar",
             Self::Outfit => "outfit",
             Self::Hair => "hair",
+            Self::Accessory => "accessory",
+            Self::Texture => "texture",
             Self::Gimmick => "gimmick",
             Self::World => "world",
             Self::Other => "other",

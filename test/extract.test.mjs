@@ -4,7 +4,20 @@ import test from "node:test";
 import { parseHTML } from "linkedom";
 
 const require = createRequire(import.meta.url);
-const { extractPage, trimDescription, cardImage } = require("../extension/extract.cjs");
+const {
+  extractPage,
+  trimDescription,
+  cardImage,
+  detailFromItemJson,
+  mergeDetail,
+  libraryLastPage,
+  libraryPageUrl,
+  dedupeProducts,
+  isLibraryUrl,
+  quietHtml,
+  noteIfUnpublished,
+  UNAVAILABLE_TEXT,
+} = require("../extension/extract.js");
 
 const ITEM_HTML = `<!doctype html>
 <html lang="ja"><head>
@@ -34,19 +47,26 @@ const ITEM_HTML = `<!doctype html>
 
 const LIBRARY_HTML = `<!doctype html>
 <html><body>
-  <div class="bg-white">
-    <a href="https://booth.pm/ja/items/5058077">
-      <img class="l-library-item-thumbnail" alt="" src="https://booth.pximg.net/c/72x72/manuka.jpg" />
-      オリジナル3Dモデル「マヌカ」
-    </a>
-    <span class="text-text-gray600">STUDIO JINGO</span>
-  </div>
-  <div class="bg-white">
-    <a href="/ja/items/6106863">
-      <img class="l-library-item-thumbnail" alt="" src="https://booth.pximg.net/c/72x72/shinano.jpg" />
-      しなの
-    </a>
-    <a class="item-card__shop-name-anchor" href="/shops/1">ポンデロニウム研究所</a>
+  <div id="list">
+    <div class="bg-white">
+      <a href="https://booth.pm/ja/items/5058077">
+        <img class="l-library-item-thumbnail" alt="" src="https://booth.pximg.net/c/72x72/manuka.jpg" />
+      </a>
+      <a class="text-text-default" href="https://booth.pm/items/5058077">オリジナル3Dモデル「マヌカ」</a>
+      <span class="text-text-gray600">STUDIO JINGO</span>
+      <a href="https://booth.pm/downloads/5058077/file">manuka.zip</a>
+    </div>
+    <div class="bg-white">
+      <img class="l-library-item-thumbnail" alt="しなの" src="https://booth.pximg.net/c/72x72/shinano.jpg" />
+      <a href="/ja/items/6106863">しなの</a>
+      <a class="item-card__shop-name-anchor" href="/shops/1">ポンデロニウム研究所</a>
+    </div>
+    <div class="bg-white">
+      <a href="/ja/items/4876459">
+        <img class="l-library-item-thumbnail" alt="" src="https://booth.pximg.net/c/72x72/lime.jpg" />
+        ライム
+      </a>
+    </div>
   </div>
   <a href="/ja/items/1111111">おすすめに紛れたリンク</a>
 </body></html>`;
@@ -66,9 +86,84 @@ test("item page returns only the main product and keeps the body note", () => {
 test("library page uses item thumbnails and ignores stray links", () => {
   const { document } = parseHTML(LIBRARY_HTML);
   const products = extractPage(document, "https://booth.pm/library");
-  assert.deepEqual(products.map((product) => product.boothId), ["5058077", "6106863"]);
+  assert.deepEqual(products.map((product) => product.boothId), ["5058077", "6106863", "4876459"]);
+  assert.equal(products[0].title, "オリジナル3Dモデル「マヌカ」");
   assert.equal(products[0].shop, "STUDIO JINGO");
   assert.equal(products[1].shop, "ポンデロニウム研究所");
+});
+
+test("item page without shop sections still reads the description and shop", () => {
+  const html = `<!doctype html><body>
+    <h2>部屋着サンプル</h2>
+    <div class="shop-name">サンプル工房</div>
+    <div class="js-market-item-detail-description description"><p>ライム対応の衣装です。</p></div>
+    <div class="item-card"><span class="shop-name">別の店</span><a href="/ja/items/9990001">別商品</a></div>
+  </body>`;
+  const { document } = parseHTML(html);
+  const products = extractPage(document, "https://booth.pm/ja/items/1001");
+  assert.equal(products.length, 1);
+  assert.equal(products[0].shop, "サンプル工房");
+  assert.match(products[0].descriptionSnippet, /ライム対応/);
+  assert.equal(products[0].descriptionSnippet.includes("別商品"), false);
+});
+
+test("item json fills an empty shop and description without replacing the title", () => {
+  const product = {
+    boothId: "1001",
+    title: "部屋着サンプル (Full set)",
+    shop: "",
+    descriptionSnippet: "",
+    thumbnailUrl: "https://booth.pximg.net/c/150x150/sample.jpg",
+  };
+  const detail = detailFromItemJson(
+    {
+      id: 1001,
+      name: "部屋着サンプル",
+      description: "対応アバター\nライム_ver1.00",
+      shop: { name: "サンプル工房" },
+      url: "https://booth.pm/ja/items/1001",
+    },
+    "1001",
+  );
+  mergeDetail(product, detail);
+  assert.equal(product.title, "部屋着サンプル (Full set)");
+  assert.equal(product.shop, "サンプル工房");
+  assert.match(product.descriptionSnippet, /ライム_ver1\.00/);
+  assert.equal(product.thumbnailUrl, "https://booth.pximg.net/c/150x150/sample.jpg");
+});
+
+test("library pager reports the last page and drops ids already seen", () => {
+  const html = `<!doctype html><body>
+    <a href="?page=2">2</a>
+    <a href="/library?page=3">3</a>
+    <a class="last-page" href="https://accounts.booth.pm/library?page=12">最後</a>
+  </body>`;
+  const { document } = parseHTML(html);
+  assert.equal(libraryLastPage(document, "https://accounts.booth.pm/library"), 12);
+  assert.equal(
+    libraryPageUrl("https://accounts.booth.pm/library?page=4", 1),
+    "https://accounts.booth.pm/library?page=1",
+  );
+  assert.equal(isLibraryUrl("https://accounts.booth.pm/library?page=2"), true);
+  assert.equal(isLibraryUrl("https://booth.pm/ja/items/1001"), false);
+  const unique = dedupeProducts([
+    { boothId: "1001", title: "先" },
+    { boothId: "1001", title: "後" },
+    { boothId: "1002", title: "次" },
+  ]);
+  assert.deepEqual(unique.map((product) => product.title), ["先", "次"]);
+  assert.equal(quietHtml('<link rel="preload" as="script" href="https://example.test/a.js"><script src="https://example.test/a.js"></script><p>本文</p>').includes("script"), false);
+});
+
+test("a product missing from both the page and json is marked unpublished", () => {
+  const product = { boothId: "1001", title: "消えた商品", shop: "工房", descriptionSnippet: "" };
+  noteIfUnpublished(product, 404, 404);
+  assert.equal(product.descriptionSnippet, UNAVAILABLE_TEXT);
+  assert.equal(product.unavailable, "not-found");
+  const kept = { boothId: "1002", title: "残っている", shop: "工房", descriptionSnippet: "説明があります" };
+  noteIfUnpublished(kept, 404, 404);
+  assert.equal(kept.descriptionSnippet, "説明があります");
+  assert.equal(kept.unavailable, undefined);
 });
 
 test("other booth pages export nothing", () => {

@@ -1,4 +1,5 @@
 mod commands;
+mod compat;
 mod db;
 mod import_data;
 mod matching;

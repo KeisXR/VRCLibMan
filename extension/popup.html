@@ -7,10 +7,11 @@
   </head>
   <body>
     <h1>VRCLibMan</h1>
-    <p>今開いている Booth のページだけを JSON にします。ログイン情報は送りません。</p>
+    <p>このページだけを書き出すか、ライブラリの全ページを1つのJSONにまとめます。説明の補完にログイン情報は使いません。</p>
     <button id="export" type="button">このページを書き出す</button>
+    <button id="export-all" class="secondary" type="button">ライブラリをすべて書き出す</button>
     <p id="status"></p>
-    <script src="extract.cjs"></script>
+    <script src="extract.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>
