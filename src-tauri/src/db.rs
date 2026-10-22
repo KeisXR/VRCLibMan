@@ -1061,10 +1061,8 @@ fn decide_category(existing: &Product, llm: Category) -> Option<Category> {
     if existing.category_locked {
         return existing.category;
     }
-    let rule =
-        crate::compat::category_for_listed_product(&existing.title, &existing.description_snippet);
-    if rule != Category::Other {
-        return Some(rule);
+    if let Some(category) = crate::compat::strong_category_override(&existing.title) {
+        return Some(category);
     }
     if llm == Category::Avatar && crate::normalize::is_avatar_count_title(&existing.title) {
         return Some(Category::Other);
@@ -2012,16 +2010,15 @@ mod tests {
         assert_eq!(nayu.len(), 1);
         assert_ne!(mafuyu[0], nayu[0]);
         assert_eq!(name_of(&mafuyu[0]), "真冬");
-        assert_eq!(name_of(&nayu[0]), "Nayu");
-        assert!(
+        assert_eq!(name_of(&nayu[0]), "ナユ");
+        assert_eq!(
             snapshot
                 .avatars
                 .iter()
                 .find(|avatar| avatar.id == nayu[0])
                 .unwrap()
-                .aliases
-                .iter()
-                .any(|alias| alias == "ナユ")
+                .aliases,
+            vec!["Nayu".to_string()]
         );
 
         let lime = snapshot
@@ -2038,7 +2035,7 @@ mod tests {
             .iter()
             .find(|product| product.booth_id == "1011")
             .unwrap();
-        assert_eq!(hair.category, Some(Category::Hair));
+        assert_eq!(hair.category, Some(Category::Outfit));
         assert_eq!(linked("1011"), vec!["plum".to_string()]);
         assert!(!hair.needs_review);
 
@@ -2062,6 +2059,111 @@ mod tests {
                 linked(id)
             );
         }
+    }
+
+    #[test]
+    fn title_fragments_and_weak_keywords_do_not_override_the_model() {
+        let mut connection = open_memory().unwrap();
+        let json = r#"{
+            "products": [
+                {"boothId":"7825066","title":"【プラム Plum】Eye Textures Pack (Full Pack)","shop":"s","description":"瞳のテクスチャです。"},
+                {"boothId":"4511962","title":"むにゅりっぷ LipSync【プラム対応】","shop":"s","description":"プラムのオリジナル3Dモデル向けの口ギミックです。"},
+                {"boothId":"2000","title":"エク対応ギミック","shop":"s","description":"エク用です。"},
+                {"boothId":"2001","title":"エク - Eku","shop":"s","description":"エクのオリジナル3Dモデルです。"}
+            ]
+        }"#;
+        import_products(&mut connection, &parse_export(json).unwrap()).unwrap();
+        apply_extraction(
+            &mut connection,
+            "7825066",
+            &extraction(Category::Texture, &["プラム"], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        apply_extraction(
+            &mut connection,
+            "4511962",
+            &extraction(Category::Gimmick, &["プラム"], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        apply_extraction(
+            &mut connection,
+            "2000",
+            &extraction(Category::Gimmick, &["エク"], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        let before = load_snapshot(&mut connection).unwrap();
+        let eye = before
+            .products
+            .iter()
+            .find(|product| product.booth_id == "7825066")
+            .unwrap();
+        assert!(
+            eye.unresolved_names.is_empty(),
+            "{:?}",
+            eye.unresolved_names
+        );
+        assert!(eye.compatible_avatars.iter().all(|name| name == "プラム"));
+        assert!(!eye.needs_review);
+        let lips = before
+            .products
+            .iter()
+            .find(|product| product.booth_id == "4511962")
+            .unwrap();
+        assert_eq!(lips.category, Some(Category::Gimmick));
+        assert!(
+            before
+                .links
+                .iter()
+                .any(|link| link.product_id == "4511962" && link.avatar_id == "plum")
+        );
+        assert!(
+            before
+                .links
+                .iter()
+                .filter(|link| link.product_id == "2000")
+                .count()
+                == 0
+        );
+
+        apply_extraction(
+            &mut connection,
+            "2001",
+            &extraction(Category::Avatar, &["エク"], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        reresolve_all(&mut connection).unwrap();
+        let after = load_snapshot(&mut connection).unwrap();
+        let eku_id = after
+            .links
+            .iter()
+            .find(|link| link.product_id == "2001")
+            .unwrap()
+            .avatar_id
+            .clone();
+        assert!(
+            after
+                .links
+                .iter()
+                .any(|link| link.product_id == "2000" && link.avatar_id == eku_id)
+        );
+        let eku = after
+            .avatars
+            .iter()
+            .find(|avatar| avatar.id == eku_id)
+            .unwrap();
+        assert_eq!(eku.display_name, "エク");
+        assert_eq!(eku.aliases, vec!["Eku".to_string()]);
+        assert!(
+            crate::resolve::resolve_name("Eku", &after.avatars)
+                .unwrap()
+                .id
+                == eku_id
+        );
+        assert!(crate::resolve::resolve_name("PC版", &after.avatars).is_none());
     }
 
     fn section_items(detail: &crate::view::AvatarDetail, category: &str) -> Vec<(String, bool)> {

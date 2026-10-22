@@ -1,5 +1,5 @@
 use crate::model::{Avatar, Category};
-use crate::normalize::{is_blocked_avatar_label, is_punct, nfkc, peel_product_words};
+use crate::normalize::{is_blocked_avatar_label, is_punct, nfkc};
 use crate::resolve::{known_name_in, known_names_in};
 use regex::Regex;
 use std::sync::OnceLock;
@@ -26,6 +26,17 @@ pub fn listed_avatar_names(description: &str, avatars: &[Avatar]) -> Vec<String>
     names
 }
 
+/// Only a title that says the product itself is an original avatar overrides the model.
+/// A 【対応】/【専用】 bracket never makes the product an avatar.
+pub fn strong_category_override(title: &str) -> Option<Category> {
+    let folded = nfkc(title).to_lowercase();
+    if folded.contains("オリジナル3dモデル") {
+        Some(Category::Avatar)
+    } else {
+        None
+    }
+}
+
 pub fn category_for_listed_product(title: &str, description: &str) -> Category {
     let from_title = classify_text(title, true);
     if from_title != Category::Other {
@@ -42,49 +53,39 @@ pub fn category_for_listed_product(title: &str, description: &str) -> Category {
 
 pub fn title_avatar_hints(title: &str, avatars: &[Avatar]) -> Vec<String> {
     let mut names = Vec::new();
-    let mut push = |name: String| {
+    let mut push = |name: &str| {
         let cleaned = name
             .trim()
             .trim_matches(|ch: char| ch.is_whitespace() || is_punct(ch));
-        if cleaned.chars().count() < 2
-            || is_blocked_avatar_label(cleaned)
-            || is_product_noun(cleaned)
-        {
+        if cleaned.chars().count() < 2 || is_blocked_avatar_label(cleaned) {
             return;
         }
         if !names.iter().any(|existing: &String| existing == cleaned) {
             names.push(cleaned.to_string());
         }
     };
+    // 【X専用】/【X対応】 is an explicit name even when the library does not know it yet.
     for inner in bracket_inners(title) {
         if let Some(name) = crate::normalize::dedication_inside(&inner) {
-            push(name);
+            let pieces = crate::normalize::paren_pieces(&name);
+            if pieces.len() > 1 {
+                for piece in pieces {
+                    push(&piece);
+                }
+            } else {
+                for variant in crate::normalize::label_variants(&name) {
+                    if !variant.contains('(') {
+                        push(&variant);
+                    }
+                }
+            }
         }
     }
-    let stripped = crate::normalize::strip_tag_brackets(title);
-    for segment in crate::normalize::quoted_segments(&stripped) {
-        push(segment);
-    }
-    let parts = split_title_parts(&stripped);
-    let mut related = Vec::new();
-    let mut plain = Vec::new();
-    for part in &parts {
-        if let Some(name) = relation_name(part) {
-            related.push(name);
-        } else {
-            plain.push(part.clone());
-        }
-    }
-    if !related.is_empty() {
-        for name in related {
-            push(name);
-        }
-        for part in plain {
-            push(peel_product_words(&part));
-        }
-    }
-    for name in known_names_in(&stripped, avatars) {
-        push(name);
+    // Search the original title. Stripping 【プラム Plum】 would delete the name
+    // along with the brackets. Promo text still cannot become a name unless it
+    // is already an avatar, and those promo avatars are not matchable.
+    for name in known_names_in(title, avatars) {
+        push(&name);
     }
     names
 }
@@ -107,15 +108,25 @@ pub fn names_for_extraction(
             names.push(trimmed.to_string());
         }
     };
+    let mut push_expanded = |name: &str| {
+        let pieces = crate::normalize::paren_pieces(name);
+        if pieces.len() > 1 {
+            for piece in pieces {
+                push(&piece);
+            }
+        } else {
+            push(name);
+        }
+    };
     for name in &listed {
-        push(name);
+        push_expanded(name);
     }
     for name in &hints {
-        push(name);
+        push_expanded(name);
     }
     if listed.is_empty() {
         for name in llm_names {
-            push(name);
+            push_expanded(name);
         }
     }
     names
@@ -422,122 +433,6 @@ fn bracket_inners(title: &str) -> Vec<String> {
     inners
 }
 
-fn split_title_parts(title: &str) -> Vec<String> {
-    let mut parts = vec![title.to_string()];
-    for separator in [
-        "・", "、", ",", "/", "／", " / ", " - ", " – ", " — ", "&", "＆",
-    ] {
-        let mut next = Vec::new();
-        for part in parts {
-            if part.contains(separator) {
-                next.extend(part.split(separator).map(str::to_string));
-            } else {
-                next.push(part);
-            }
-        }
-        parts = next;
-    }
-    let mut expanded = Vec::new();
-    for part in parts {
-        let (outer, inners) = split_title_parens(&part);
-        if outer.trim().chars().count() >= 2 {
-            expanded.push(outer.trim().to_string());
-        }
-        expanded.extend(inners);
-        for token in part.split_whitespace() {
-            if token.trim().chars().count() >= 2 {
-                expanded.push(token.trim().to_string());
-            }
-        }
-    }
-    expanded
-}
-
-fn split_title_parens(input: &str) -> (String, Vec<String>) {
-    let chars: Vec<char> = input.chars().collect();
-    let mut outer = String::new();
-    let mut inners = Vec::new();
-    let mut index = 0;
-    while index < chars.len() {
-        if chars[index] == '(' || chars[index] == '（' {
-            let mut depth = 1;
-            let mut cursor = index + 1;
-            let start = cursor;
-            while cursor < chars.len() && depth > 0 {
-                if chars[cursor] == '(' || chars[cursor] == '（' {
-                    depth += 1;
-                } else if chars[cursor] == ')' || chars[cursor] == '）' {
-                    depth -= 1;
-                    if depth == 0 {
-                        break;
-                    }
-                }
-                cursor += 1;
-            }
-            if depth == 0 {
-                let inner: String = chars[start..cursor].iter().collect();
-                if inner.trim().chars().count() >= 2 {
-                    inners.push(inner.trim().to_string());
-                }
-                outer.push(' ');
-                index = cursor + 1;
-                continue;
-            }
-        }
-        outer.push(chars[index]);
-        index += 1;
-    }
-    (outer, inners)
-}
-
-fn relation_name(part: &str) -> Option<String> {
-    let peeled = peel_product_words(part);
-    if peeled == part.trim() {
-        return None;
-    }
-    let name = peeled
-        .trim()
-        .trim_matches(|ch: char| ch.is_whitespace() || is_punct(ch));
-    if name.chars().count() < 2 || is_blocked_avatar_label(name) || is_product_noun(name) {
-        None
-    } else {
-        Some(name.to_string())
-    }
-}
-
-fn is_product_noun(name: &str) -> bool {
-    const NOUNS: &[&str] = &[
-        "ワンピース",
-        "部屋着",
-        "パーカー",
-        "スカート",
-        "ドレス",
-        "シャツ",
-        "衣装",
-        "ヘア",
-        "髪",
-        "ウィッグ",
-        "テクスチャ",
-        "ギミック",
-        "ワールド",
-        "セット",
-        "パック",
-        "glasses",
-        "texture",
-        "hair",
-        "outfit",
-        "world",
-        "gimmick",
-        "アクセサリ",
-        "メガネ",
-        "眼鏡",
-        "ペンライト",
-        "グラデーション",
-    ];
-    let lower = name.trim().to_lowercase();
-    NOUNS.iter().any(|noun| lower == noun.to_lowercase())
-}
-
 fn classify_text(text: &str, allow_broad: bool) -> Category {
     let lower = nfkc(text).to_lowercase();
     let has = |words: &[&str]| words.iter().any(|word| lower.contains(word));
@@ -825,10 +720,17 @@ Avatar
         assert_eq!(hints, vec!["プラム".to_string()]);
         let sale = title_avatar_hints("【半額セール中】真冬 Mafuyu / オリジナル3Dモデル", &[]);
         assert!(sale.iter().all(|name| name != "半額セール中"));
+        assert!(title_avatar_hints("架空ちゃん対応パーカー", &[]).is_empty());
         assert_eq!(
-            title_avatar_hints("架空ちゃん対応パーカー", &[]),
+            title_avatar_hints("【架空ちゃん専用】パーカー", &[]),
             vec!["架空ちゃん".to_string()]
         );
+        assert!(title_avatar_hints("【MA対応】ペン", &sample_avatars()).is_empty());
+        let eye = title_avatar_hints(
+            "【プラム Plum】Eye Textures Pack (Full Pack)",
+            &sample_avatars(),
+        );
+        assert_eq!(eye, vec!["プラム".to_string()]);
         let outfit = title_avatar_hints("しなの・ライム・マヌカ対応 ワンピース", &sample_avatars());
         assert!(outfit.contains(&"しなの".to_string()));
         assert!(outfit.contains(&"ライム".to_string()));

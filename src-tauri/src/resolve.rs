@@ -1,8 +1,8 @@
 use crate::model::{Avatar, Category};
 use crate::normalize::{
-    is_blocked_avatar_label, is_boundary_char, is_promo_name, label_variants, nfkc,
-    normalize_label, preferred_display_name, quoted_segments, strip_tag_brackets,
-    suggested_display_name,
+    is_blocked_avatar_label, is_boundary_char, is_cjk, is_name_alias, is_promo_name,
+    label_variants, nfkc, normalize_label, paren_pieces, preferred_display_name, quoted_segments,
+    strip_tag_brackets, strip_title_noise, suggested_display_name,
 };
 
 pub struct ResolveInput<'a> {
@@ -164,17 +164,29 @@ pub fn resolve_product(input: &ResolveInput<'_>, avatars: &[Avatar]) -> ResolveO
         }
     } else {
         for raw in &usable {
-            if let Some(avatar) = resolve_name(raw, avatars) {
-                if !ids.contains(&avatar.id) {
-                    ids.push(avatar.id.clone());
+            let pieces = paren_pieces(raw);
+            let parts: Vec<String> = if pieces.len() > 1 {
+                pieces
+            } else {
+                vec![raw.clone()]
+            };
+            for part in parts {
+                let single_cjk = part.chars().count() == 1 && part.chars().all(is_cjk);
+                if is_blocked_avatar_label(&part) && !single_cjk {
+                    continue;
                 }
-            } else if keep_unresolved(raw, avatars) {
-                let label = unresolved_label(raw);
-                if !unresolved
-                    .iter()
-                    .any(|existing: &String| existing == &label)
-                {
-                    unresolved.push(label);
+                if let Some(avatar) = resolve_name(&part, avatars) {
+                    if !ids.contains(&avatar.id) {
+                        ids.push(avatar.id.clone());
+                    }
+                } else if keep_unresolved(&part, avatars) {
+                    let label = unresolved_label(&part);
+                    if !unresolved
+                        .iter()
+                        .any(|existing: &String| existing == &label)
+                    {
+                        unresolved.push(label);
+                    }
                 }
             }
         }
@@ -298,7 +310,7 @@ fn create_placeholder(
     if !input.allow_create {
         return None;
     }
-    let display = preferred_display_name(&label).unwrap_or(label);
+    let display = japanese_display(&label, input.title);
     if is_blocked_avatar_label(&display) || display == "名称未設定" {
         return None;
     }
@@ -311,28 +323,122 @@ fn create_placeholder(
     Some(id)
 }
 
+fn japanese_display(label: &str, title: &str) -> String {
+    let preferred = preferred_display_name(label).unwrap_or_else(|| label.to_string());
+    if is_cjk_name(&preferred) {
+        return preferred;
+    }
+    cjk_partner(&preferred, title).unwrap_or(preferred)
+}
+
+fn is_cjk_name(text: &str) -> bool {
+    let count = text.chars().count();
+    (2..=16).contains(&count)
+        && text.chars().any(is_cjk)
+        && text.chars().all(|ch| is_cjk(ch) || ch.is_whitespace())
+}
+
+fn cjk_partner(romaji: &str, title: &str) -> Option<String> {
+    let needle = normalize_label(romaji);
+    if needle.is_empty() {
+        return None;
+    }
+    let mut chunks = vec![strip_title_noise(&strip_tag_brackets(title))];
+    for separator in [" / ", "・", "、", "/", "／"] {
+        let mut next = Vec::new();
+        for chunk in chunks {
+            if chunk.contains(separator) {
+                next.extend(chunk.split(separator).map(str::to_string));
+            } else {
+                next.push(chunk);
+            }
+        }
+        chunks = next;
+    }
+    for chunk in chunks {
+        let variants = label_variants(&chunk);
+        if !variants
+            .iter()
+            .any(|variant| normalize_label(variant) == needle)
+        {
+            continue;
+        }
+        let cjks: Vec<String> = variants
+            .into_iter()
+            .filter(|variant| is_cjk_name(variant) && !is_blocked_avatar_label(variant))
+            .collect();
+        if cjks.len() == 1 {
+            return Some(cjks[0].clone());
+        }
+    }
+    None
+}
+
 fn draft_aliases(display: &str, raw_names: &[String], title: &str) -> Vec<String> {
     let mut aliases = Vec::new();
     let display_key = normalize_label(display);
-    for source in raw_names
-        .iter()
-        .map(String::as_str)
-        .chain(std::iter::once(title))
-    {
-        for variant in label_variants(&strip_tag_brackets(source)) {
-            if variant == display || is_blocked_avatar_label(&variant) || is_promo_name(&variant) {
-                continue;
-            }
-            if normalize_label(&variant) == display_key || variant.chars().count() > 32 {
-                continue;
-            }
-            if !aliases.iter().any(|existing: &String| existing == &variant) {
-                aliases.push(variant);
-            }
+    let mut push = |variant: &str| {
+        if !is_name_alias(variant) || is_promo_name(variant) {
+            return;
+        }
+        if variant == display || normalize_label(variant) == display_key {
+            return;
+        }
+        if !aliases.iter().any(|existing: &String| existing == variant) {
+            aliases.push(variant.to_string());
+        }
+    };
+    for raw in raw_names {
+        for variant in label_variants(raw) {
+            push(&variant);
         }
     }
-    aliases.truncate(8);
+    if let Some(partner) = script_partner(display, title) {
+        push(&partner);
+    }
+    aliases.truncate(4);
     aliases
+}
+
+fn script_partner(display: &str, title: &str) -> Option<String> {
+    let display_cjk = is_cjk_name(display);
+    let needle = normalize_label(display);
+    if needle.is_empty() {
+        return None;
+    }
+    let mut chunks = vec![strip_title_noise(&strip_tag_brackets(title))];
+    for separator in [" / ", "・", "、", "/", "／"] {
+        let mut next = Vec::new();
+        for chunk in chunks {
+            if chunk.contains(separator) {
+                next.extend(chunk.split(separator).map(str::to_string));
+            } else {
+                next.push(chunk);
+            }
+        }
+        chunks = next;
+    }
+    for chunk in chunks {
+        let variants = label_variants(&chunk);
+        if !variants
+            .iter()
+            .any(|variant| normalize_label(variant) == needle)
+        {
+            continue;
+        }
+        let partners: Vec<String> = variants
+            .into_iter()
+            .filter(|variant| {
+                is_name_alias(variant)
+                    && normalize_label(variant) != needle
+                    && is_cjk_name(variant) != display_cjk
+            })
+            .collect();
+        if partners.len() == 1 {
+            return Some(partners[0].clone());
+        }
+    }
+    None
 }
 
 fn keep_unresolved(raw: &str, avatars: &[Avatar]) -> bool {
@@ -680,13 +786,8 @@ mod tests {
             &library,
         );
         assert_eq!(nayu.created_avatars.len(), 1);
-        assert_eq!(nayu.created_avatars[0].display_name, "Nayu");
-        assert!(
-            nayu.created_avatars[0]
-                .aliases
-                .iter()
-                .any(|alias| alias == "ナユ")
-        );
+        assert_eq!(nayu.created_avatars[0].display_name, "ナユ");
+        assert_eq!(nayu.created_avatars[0].aliases, vec!["Nayu".to_string()]);
         assert_ne!(nayu.avatar_ids[0], "sale");
         assert_ne!(nayu.avatar_ids[0], "mafuyu");
     }
@@ -802,5 +903,65 @@ mod tests {
         assert!(mashed.avatar_ids.is_empty());
         assert!(mashed.unresolved.is_empty());
         assert!(!mashed.needs_review);
+    }
+
+    #[test]
+    fn unclosed_parentheses_split_and_aliases_stay_name_like() {
+        let output = resolve_product(
+            &ResolveInput {
+                booth_id: "9",
+                title: "Dreamy Step",
+                description: "",
+                category: Some(Category::Outfit),
+                raw_names: &["エルキュナ２(Eruqyuna2".into(), "萌(Moe".into()],
+                is_generic: false,
+                confidence: Some(0.9),
+                user_confirmed: false,
+                threshold: 0.6,
+                allow_create: true,
+            },
+            &sample(),
+        );
+        assert!(output.unresolved.iter().any(|name| name == "エルキュナ2"));
+        assert!(output.unresolved.iter().any(|name| name == "Eruqyuna2"));
+        assert!(output.unresolved.iter().any(|name| name == "萌"));
+        assert!(output.unresolved.iter().any(|name| name == "Moe"));
+        assert!(output.unresolved.iter().all(|name| !name.contains('(')));
+
+        let eku = resolve_product(
+            &ResolveInput {
+                booth_id: "7524041",
+                title: "エク - Eku PC版 ver.2.5",
+                description: "",
+                category: Some(Category::Avatar),
+                raw_names: &["エク".into()],
+                is_generic: false,
+                confidence: Some(0.9),
+                user_confirmed: false,
+                threshold: 0.6,
+                allow_create: true,
+            },
+            &sample(),
+        );
+        assert_eq!(eku.created_avatars[0].display_name, "エク");
+        assert_eq!(eku.created_avatars[0].aliases, vec!["Eku".to_string()]);
+
+        let sio = resolve_product(
+            &ResolveInput {
+                booth_id: "8",
+                title: "しお - Sio ver.2.5",
+                description: "",
+                category: Some(Category::Avatar),
+                raw_names: &["Sio".into()],
+                is_generic: false,
+                confidence: Some(0.9),
+                user_confirmed: false,
+                threshold: 0.6,
+                allow_create: true,
+            },
+            &sample(),
+        );
+        assert_eq!(sio.created_avatars[0].display_name, "しお");
+        assert_eq!(sio.created_avatars[0].aliases, vec!["Sio".to_string()]);
     }
 }

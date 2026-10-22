@@ -141,7 +141,7 @@ pub fn label_variants(raw: &str) -> Vec<String> {
             out.push(trimmed.to_string());
         }
     };
-    let source = strip_tag_brackets(raw);
+    let source = nfkc(&strip_tag_brackets(raw));
     push(&source);
     let mut parts = vec![source];
     for separator in [
@@ -196,21 +196,19 @@ pub fn strip_tag_brackets(title: &str) -> String {
 }
 
 pub fn dedication_inside(inner: &str) -> Option<String> {
-    let trimmed = inner
-        .trim()
-        .trim_end_matches("専用")
-        .trim_end_matches("対応")
-        .trim();
-    if trimmed.chars().count() < 2
-        || bracket_is_tag(trimmed)
-        || bracket_is_tag(inner) && trimmed == inner.trim()
-    {
+    let original = inner.trim();
+    let Some(stem) = original
+        .strip_suffix("専用")
+        .or_else(|| original.strip_suffix("対応"))
+    else {
+        return None;
+    };
+    let stem = stem.trim();
+    // 【MA対応】や【オリジナル3Dモデル】は種別であって、対応先の名前ではない。
+    if stem.chars().count() < 2 || bracket_is_tag(original) || is_blocked_avatar_label(stem) {
         return None;
     }
-    if bracket_is_tag(trimmed) {
-        return None;
-    }
-    Some(trimmed.to_string())
+    Some(stem.to_string())
 }
 
 pub fn bracket_is_tag(inner: &str) -> bool {
@@ -255,6 +253,9 @@ pub fn is_blocked_avatar_label(name: &str) -> bool {
     if is_promo_name(trimmed) || matches!(trimmed, "対応" | "専用" | "向け" | "用") {
         return true;
     }
+    if is_platform_label(trimmed) {
+        return true;
+    }
     if trimmed.contains('。')
         || trimmed.contains('！')
         || trimmed.contains('？')
@@ -274,10 +275,18 @@ pub fn is_blocked_avatar_label(name: &str) -> bool {
         || trimmed.contains("3D")
         || trimmed.contains("３D")
         || trimmed.contains("モデル")
+        || trimmed.contains("動画")
+        || trimmed.contains("セットアップ")
     {
         return true;
     }
     let lower = nfkc(trimmed).to_lowercase();
+    if lower.chars().any(|ch| ch.is_ascii_digit())
+        && lower.contains('種')
+        && lower.chars().count() <= 6
+    {
+        return true;
+    }
     const PHRASES: &[&str] = &[
         "modular avatar",
         "qvpen",
@@ -291,11 +300,75 @@ pub fn is_blocked_avatar_label(name: &str) -> bool {
     }
     let tokens = label_tokens(&lower);
     const DENY: &[&str] = &[
-        "avatar", "unity", "fbx", "psd", "vrchat", "udon", "prefab", "png", "jpg", "jpeg", "clip",
-        "blender", "vrm", "modular", "texture", "textures", "hair", "outfit", "world", "gimmick",
-        "liltoon", "qvpen", "shader",
+        "avatar",
+        "unity",
+        "fbx",
+        "psd",
+        "vrchat",
+        "udon",
+        "prefab",
+        "png",
+        "jpg",
+        "jpeg",
+        "clip",
+        "blender",
+        "vrm",
+        "modular",
+        "texture",
+        "textures",
+        "hair",
+        "outfit",
+        "world",
+        "gimmick",
+        "liltoon",
+        "qvpen",
+        "shader",
+        "full",
+        "pack",
+        "eye",
+        "eyes",
+        "face",
+        "animation",
+        "pb",
+        "ma",
+        "pc",
+        "quest",
     ];
     tokens.iter().any(|token| DENY.contains(&token.as_str()))
+}
+
+pub fn is_name_alias(text: &str) -> bool {
+    let trimmed = text
+        .trim()
+        .trim_matches(|ch: char| ch.is_whitespace() || is_punct(ch));
+    let count = trimmed.chars().count();
+    if !(2..=16).contains(&count) || is_blocked_avatar_label(trimmed) {
+        return false;
+    }
+    let lower = nfkc(trimmed).to_lowercase();
+    if lower.contains("ver")
+        || lower.contains("vroid")
+        || lower.contains("プロファイル")
+        || lower.contains("profile")
+        || lower.contains('版')
+        || lower.contains('.')
+    {
+        return false;
+    }
+    trimmed
+        .chars()
+        .all(|ch| is_cjk(ch) || ch.is_ascii_alphabetic())
+}
+
+fn is_platform_label(name: &str) -> bool {
+    let lower = nfkc(name).trim().to_lowercase();
+    if matches!(
+        lower.as_str(),
+        "ma" | "pb" | "pc" | "quest" | "steam" | "android" | "ios"
+    ) {
+        return true;
+    }
+    lower.ends_with('版') && lower.chars().count() <= 8
 }
 
 pub fn is_avatar_count_title(title: &str) -> bool {
@@ -412,6 +485,35 @@ fn is_noise_token(token: &str) -> bool {
     NOISE.contains(&lower.as_str())
 }
 
+pub fn paren_pieces(raw: &str) -> Vec<String> {
+    let folded = nfkc(raw);
+    if !folded.contains('(') {
+        return Vec::new();
+    }
+    let (outer, inners) = split_parens(&folded);
+    let mut pieces = Vec::new();
+    let mut push = |text: &str| {
+        let trimmed = text
+            .trim()
+            .trim_matches(|ch: char| ch.is_whitespace() || is_punct(ch));
+        let count = trimmed.chars().count();
+        let single_cjk = count == 1 && trimmed.chars().all(is_cjk);
+        if (count >= 2 || single_cjk) && !pieces.iter().any(|existing: &String| existing == trimmed)
+        {
+            pieces.push(trimmed.to_string());
+        }
+    };
+    push(&outer);
+    for inner in &inners {
+        push(inner);
+    }
+    if pieces.len() >= 2 {
+        pieces
+    } else {
+        Vec::new()
+    }
+}
+
 fn split_parens(input: &str) -> (String, Vec<String>) {
     let chars: Vec<char> = input.chars().collect();
     let mut outer = String::new();
@@ -433,15 +535,20 @@ fn split_parens(input: &str) -> (String, Vec<String>) {
                 }
                 cursor += 1;
             }
-            if depth == 0 {
+            if depth == 0 && cursor < chars.len() {
                 let inner: String = chars[start..cursor].iter().collect();
-                if inner.trim().chars().count() >= 2 {
+                if inner.trim().chars().count() >= 1 {
                     inners.push(inner.trim().to_string());
                 }
                 outer.push(' ');
                 index = cursor + 1;
                 continue;
             }
+            let inner: String = chars[index + 1..].iter().collect();
+            if inner.trim().chars().count() >= 1 {
+                inners.push(inner.trim().to_string());
+            }
+            break;
         }
         outer.push(chars[index]);
         index += 1;
@@ -606,5 +713,41 @@ mod tests {
             preferred_display_name("エク - Eku").as_deref(),
             Some("エク")
         );
+    }
+
+    #[test]
+    fn unclosed_and_fullwidth_parentheses_split_before_matching() {
+        let eru = paren_pieces("エルキュナ２(Eruqyuna2");
+        assert!(eru.iter().any(|part| part == "エルキュナ2"), "{eru:?}");
+        assert!(eru.iter().any(|part| part == "Eruqyuna2"), "{eru:?}");
+        assert!(eru.iter().all(|part| !part.contains('(')));
+        let moe = paren_pieces("萌（Moe");
+        assert!(moe.iter().any(|part| part == "萌"), "{moe:?}");
+        assert!(moe.iter().any(|part| part == "Moe"), "{moe:?}");
+        let closed = label_variants("シフォン(Chiffon)");
+        assert!(closed.iter().any(|part| part == "シフォン"));
+        assert!(closed.iter().any(|part| part == "Chiffon"));
+    }
+
+    #[test]
+    fn platforms_and_editions_are_not_avatar_names() {
+        for name in [
+            "MA",
+            "PB",
+            "PC版",
+            "Quest版",
+            "支援版",
+            "24種",
+            "Full",
+            "Eye",
+            "Pack",
+        ] {
+            assert!(is_blocked_avatar_label(name), "{name}");
+        }
+        assert!(!is_name_alias("PC版"));
+        assert!(!is_name_alias("ver.2.5"));
+        assert!(!is_name_alias(".vroid"));
+        assert!(is_name_alias("Eku"));
+        assert!(is_name_alias("ナユ"));
     }
 }

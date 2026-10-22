@@ -297,6 +297,11 @@ pub async fn extract_products(
             }
         }
     }
+    if processed > 0 {
+        emit_progress(&app, "extract", total, total, "結び付きを再計算しています");
+        let mut connection = db(&state)?;
+        db::reresolve_all(&mut connection)?;
+    }
     emit_progress(
         &app,
         "extract",
