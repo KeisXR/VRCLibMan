@@ -214,9 +214,27 @@ pub(crate) fn extension_token(connection: &Connection) -> Result<String, String>
     Ok(token)
 }
 
+pub(crate) fn extension_origin(connection: &Connection) -> Result<Option<String>, String> {
+    let Some(value) = setting(connection, "extension_origin")? else {
+        return Ok(None);
+    };
+    if crate::local_import::is_extension_origin(&value) {
+        Ok(Some(value))
+    } else {
+        Ok(None)
+    }
+}
+
+pub(crate) fn set_extension_origin(connection: &Connection, origin: &str) -> Result<(), String> {
+    set_setting(connection, "extension_origin", origin)
+}
+
 pub(crate) fn regenerate_extension_token(connection: &Connection) -> Result<String, String> {
     let token = crate::local_import::generate_token();
     set_setting(connection, "extension_token", &token)?;
+    connection
+        .execute("DELETE FROM settings WHERE key = 'extension_origin'", [])
+        .sql()?;
     Ok(token)
 }
 

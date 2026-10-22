@@ -60,6 +60,9 @@ pub fn regenerate_extension_token(
     let connection = db(&state)?;
     let token = db::regenerate_extension_token(&connection)?;
     drop(connection);
+    if let Ok(mut guard) = state.import_guard.lock() {
+        guard.clear();
+    }
     Ok(extension_link_view(&state, &token))
 }
 

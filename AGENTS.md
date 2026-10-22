@@ -86,8 +86,8 @@ VRCLibMan を変更するときは、このファイルを先に読む。元の�
 VRCVideoCacher の拡張が手元のアプリへ POST するのと同じ運び方である。違いは、Booth のクッキーを読まないことと、アプリが Booth を取りに行かないこと。ページを読むのは拡張のままで、変わるのは JSON ファイルの代わりにローカル HTTP で渡すことだけ。
 
 - 受信は `127.0.0.1:17321` だけ。`0.0.0.0` や `localhost`（`::1` になり得る）では待たない。Vite の 1420 と VRCVideoCacher の 9696 は使わない。
-- 初回起動で 8 文字のペアリングコードを作り、設定に `XXXX-XXXX` で出す。保存先は `settings.extension_token`。拡張は `chrome.storage.local` に一度貼った値を置き、`Authorization: Bearer` で毎回送る。コードが無い、または違うリクエストは 401。
-- `Origin` は `chrome-extension://` に続く 32 文字（`a`–`p`）だけを受ける。ウェブページの Origin は、コードが合っていても 403。ブラウザが Origin を偽装できないことが、ウェブページを止める境界である。
+- 初回起動で 8 文字のペアリングコードを作り、設定に `XXXX-XXXX` で出す。保存先は `settings.extension_token`。拡張は `chrome.storage.local` に一度貼った値を置き、`Authorization: Bearer` で毎回送る。コードが無い、または違うリクエストは 401。同じ Origin で 401 が 5 回続くと 30 秒 429 にする。
+- `Origin` は `chrome-extension://` に続く 32 文字（`a`–`p`）だけを受ける。ウェブページの Origin は、コードが合っていても 403。コードが合って最初に届いた Origin を `settings.extension_origin` に固定し、別の拡張は 403。コードを作り直すとその固定を外す。ブラウザが Origin を偽装できないことが、ウェブページを止める境界である。
 - CORS のプリフライト（`OPTIONS`）だけはコードを持たない。Origin が拡張のときだけ 204 と `Access-Control-Allow-Private-Network: true` を返す。GET と POST はコードが必要。
 - `POST /import` の本文は、ファイル取り込みと同じ `import_export_json` に渡す。確認に残す規則はそこから変わらない。`GET /health` は到達確認だけ。
 - 届かないときは拡張が `vrclibman://import` を開き、8 秒送り直す。それでも届かなければ、これまでどおり JSON を保存する。

@@ -22,6 +22,7 @@ pub struct AppState {
     pub extract_running: Arc<AtomicBool>,
     pub thumbs_dir: std::path::PathBuf,
     pub receiver_error: Mutex<Option<String>>,
+    pub import_guard: Mutex<local_import::ImportGuard>,
 }
 
 fn focus_main(app: &AppHandle) {
@@ -59,6 +60,7 @@ pub fn run() {
                 extract_running: Arc::new(AtomicBool::new(false)),
                 thumbs_dir: thumbs,
                 receiver_error: Mutex::new(None),
+                import_guard: Mutex::new(local_import::ImportGuard::default()),
             });
             if let Some(state) = app.try_state::<AppState>() {
                 if let Ok(connection) = state.db.lock() {

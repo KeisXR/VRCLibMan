@@ -51,7 +51,7 @@ export function SettingsPage() {
   }, [revision, fail]);
 
   async function regenerateToken() {
-    if (!window.confirm("コードを作り直すと、拡張に貼ってあるコードは使えなくなります。")) return;
+    if (!window.confirm("コードを作り直すと、貼ってあるコードは使えなくなり、結び付いた拡張も外れます。")) return;
     try {
       setLink(await api.regenerateExtensionToken());
       notify("ペアリングコードを作り直しました");
@@ -199,6 +199,8 @@ export function SettingsPage() {
           <p className="meta">
             拡張は今開いている Booth のページだけを読み、この PC の 127.0.0.1:{link.port} に送ります。
             アプリは Booth を取りに行きません。下のコードを拡張のポップアップに一度貼ってください。
+            最初に届いた拡張だけを覚えます。コードを作り直すと、その結び付きも外れます。
+            違うコードが続くと、しばらく受け付けません。
           </p>
           <label className="field">
             <span>ペアリングコード</span>

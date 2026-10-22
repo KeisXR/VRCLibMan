@@ -1,12 +1,15 @@
 use crate::AppState;
 use crate::db;
 use crate::model::ImportReport;
+use std::collections::HashMap;
 use std::io::Read;
 use tauri::{AppHandle, Emitter, Manager};
 use tiny_http::{Header, Request, Response, StatusCode};
 
 /// Fixed loopback port. Vite uses 1420, and VRCVideoCacher uses 9696.
 pub const LOCAL_IMPORT_PORT: u16 = 17321;
+pub const AUTH_FAIL_LIMIT: u32 = 5;
+pub const AUTH_LOCK_SECS: u64 = 30;
 const MAX_BODY: usize = 16 * 1024 * 1024;
 const TOKEN_ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -82,10 +85,13 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
         return response_for(origin.as_deref(), Gate::Preflight, None);
     }
     let state = app.state::<AppState>();
-    let expected = match state.db.lock() {
-        Ok(connection) => match db::extension_token(&connection) {
-            Ok(token) => token,
-            Err(err) => {
+    let (expected, pinned) = match state.db.lock() {
+        Ok(connection) => match (
+            db::extension_token(&connection),
+            db::extension_origin(&connection),
+        ) {
+            (Ok(token), Ok(pinned)) => (token, pinned),
+            (Err(err), _) | (_, Err(err)) => {
                 discard_body(request);
                 return response_for(
                     origin.as_deref(),
@@ -107,7 +113,36 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
             );
         }
     };
-    let gate = classify(view, &expected);
+    let origin_key = origin.clone().unwrap_or_default();
+    let now = now_ms();
+    let locked = state
+        .import_guard
+        .lock()
+        .map(|mut guard| guard.is_locked(&origin_key, now))
+        .unwrap_or(false);
+    let gate = classify(
+        view,
+        Access {
+            token: &expected,
+            pinned: pinned.as_deref(),
+            locked,
+        },
+    );
+    if matches!(gate, Gate::Reject { status: 401, .. }) {
+        if let Ok(mut guard) = state.import_guard.lock() {
+            guard.record_failure(&origin_key, now);
+        }
+    }
+    if matches!(gate, Gate::Health | Gate::Import) {
+        if let Ok(mut guard) = state.import_guard.lock() {
+            guard.record_success(&origin_key);
+        }
+        if pinned.is_none() {
+            if let Ok(connection) = state.db.lock() {
+                let _ = db::set_extension_origin(&connection, &origin_key);
+            }
+        }
+    }
     if !matches!(gate, Gate::Import) {
         discard_body(request);
         return response_for(origin.as_deref(), gate, None);
@@ -197,14 +232,26 @@ impl Gate {
     }
 }
 
-fn classify(request: RequestView<'_>, expected: &str) -> Gate {
-    if !request.origin.is_some_and(is_extension_origin) {
+struct Access<'a> {
+    token: &'a str,
+    pinned: Option<&'a str>,
+    locked: bool,
+}
+
+fn classify(request: RequestView<'_>, access: Access<'_>) -> Gate {
+    let Some(origin) = request.origin.filter(|origin| is_extension_origin(origin)) else {
         return Gate::reject(403, "このオリジンからは受け付けません");
+    };
+    if access.pinned.is_some_and(|pinned| pinned != origin) {
+        return Gate::reject(403, "別の拡張からは受け付けません");
     }
     if request.method.eq_ignore_ascii_case("OPTIONS") {
         return Gate::Preflight;
     }
-    if !token_ok(request.authorization, expected) {
+    if access.locked {
+        return Gate::reject(429, "試行が多すぎます。少し待ってからもう一度");
+    }
+    if !token_ok(request.authorization, access.token) {
         return Gate::reject(401, "ペアリングコードが違います");
     }
     let path = request.path.split('?').next().unwrap_or("");
@@ -249,6 +296,13 @@ fn response_for(
         }
     };
     let mut response = Response::from_string(body).with_status_code(StatusCode(status));
+    if status == 429 {
+        if let Ok(header) =
+            Header::from_bytes(b"Retry-After", AUTH_LOCK_SECS.to_string().as_bytes())
+        {
+            response = response.with_header(header);
+        }
+    }
     if origin.is_some_and(is_extension_origin) {
         if let Some(origin) = origin {
             response = add_cors(response, origin);
@@ -336,6 +390,60 @@ fn normalize_token(value: &str) -> String {
         .collect()
 }
 
+#[derive(Debug, Default)]
+pub struct ImportGuard {
+    failures: HashMap<String, OriginFailures>,
+}
+
+#[derive(Debug, Default)]
+struct OriginFailures {
+    count: u32,
+    locked_until_ms: Option<u64>,
+}
+
+impl ImportGuard {
+    pub fn clear(&mut self) {
+        self.failures.clear();
+    }
+
+    pub fn is_locked(&mut self, origin: &str, now_ms: u64) -> bool {
+        let Some(entry) = self.failures.get_mut(origin) else {
+            return false;
+        };
+        match entry.locked_until_ms {
+            Some(until) if now_ms < until => true,
+            Some(_) => {
+                entry.count = 0;
+                entry.locked_until_ms = None;
+                false
+            }
+            None => false,
+        }
+    }
+
+    pub fn record_failure(&mut self, origin: &str, now_ms: u64) {
+        if self.is_locked(origin, now_ms) {
+            return;
+        }
+        let entry = self.failures.entry(origin.to_string()).or_default();
+        entry.count += 1;
+        if entry.count >= AUTH_FAIL_LIMIT {
+            entry.locked_until_ms = Some(now_ms.saturating_add(AUTH_LOCK_SECS * 1000));
+        }
+    }
+
+    pub fn record_success(&mut self, origin: &str) {
+        self.failures.remove(origin);
+    }
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or(0)
+}
+
 fn tokens_match(provided: &str, expected: &str) -> bool {
     let provided = normalize_token(provided);
     let expected = normalize_token(expected);
@@ -389,7 +497,14 @@ mod tests {
     fn token_and_origin_gates() {
         let expected = "ABCD2345";
         let gate = |method, path, origin, authorization| {
-            classify(view(method, path, origin, authorization), expected)
+            classify(
+                view(method, path, origin, authorization),
+                Access {
+                    token: expected,
+                    pinned: None,
+                    locked: false,
+                },
+            )
         };
         assert!(matches!(
             gate("GET", "/health", None, Some("Bearer ABCD2345")),
@@ -462,6 +577,65 @@ mod tests {
     }
 
     #[test]
+    fn first_successful_origin_is_pinned_until_the_code_changes() {
+        const OTHER: &str = "chrome-extension://pppppppppppppppppppppppppppppppp";
+        let allow = |origin: &str, pinned: Option<&str>, locked: bool| {
+            classify(
+                view("GET", "/health", Some(origin), Some("Bearer ABCD-2345")),
+                Access {
+                    token: "ABCD2345",
+                    pinned,
+                    locked,
+                },
+            )
+        };
+        assert!(matches!(allow(EXTENSION, None, false), Gate::Health));
+        assert!(matches!(allow(OTHER, None, false), Gate::Health));
+        assert!(matches!(
+            allow(OTHER, Some(EXTENSION), false),
+            Gate::Reject { status: 403, .. }
+        ));
+        assert!(matches!(
+            allow(EXTENSION, Some(EXTENSION), false),
+            Gate::Health
+        ));
+        assert!(matches!(
+            allow(EXTENSION, Some(EXTENSION), true),
+            Gate::Reject { status: 429, .. }
+        ));
+
+        let connection = temp_db();
+        assert!(db::extension_origin(&connection).unwrap().is_none());
+        db::set_extension_origin(&connection, EXTENSION).unwrap();
+        assert_eq!(
+            db::extension_origin(&connection).unwrap().as_deref(),
+            Some(EXTENSION)
+        );
+        db::regenerate_extension_token(&connection).unwrap();
+        assert!(db::extension_origin(&connection).unwrap().is_none());
+    }
+
+    #[test]
+    fn repeated_401s_lock_that_origin_for_a_short_time() {
+        let mut guard = ImportGuard::default();
+        let now = 1_000_000_u64;
+        assert!(!guard.is_locked(EXTENSION, now));
+        for _ in 0..AUTH_FAIL_LIMIT - 1 {
+            guard.record_failure(EXTENSION, now);
+            assert!(!guard.is_locked(EXTENSION, now));
+        }
+        guard.record_failure(EXTENSION, now);
+        assert!(guard.is_locked(EXTENSION, now));
+        assert!(guard.is_locked(EXTENSION, now + AUTH_LOCK_SECS * 1000 - 1));
+        assert!(!guard.is_locked(EXTENSION, now + AUTH_LOCK_SECS * 1000));
+        guard.record_success(EXTENSION);
+        assert!(!guard.is_locked(EXTENSION, now));
+        guard.record_failure(EXTENSION, now);
+        guard.clear();
+        assert!(!guard.is_locked(EXTENSION, now));
+    }
+
+    #[test]
     fn payload_import_matches_file_import() {
         let json = r#"{
             "format": "vrclibman.booth-export",
@@ -493,9 +667,13 @@ mod tests {
         let imported = Arc::new(Mutex::new(Vec::<String>::new()));
         let imported_thread = imported.clone();
         let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        // Windows builds of tiny_http only have ListenAddr::IP, so the binding is irrefutable there.
+        #[cfg(not(unix))]
+        let tiny_http::ListenAddr::IP(addr) = server.server_addr();
+        #[cfg(unix)]
         let addr = match server.server_addr() {
             tiny_http::ListenAddr::IP(addr) => addr,
-            other => panic!("expected an ip listener, {other:?}"),
+            tiny_http::ListenAddr::Unix(_) => panic!("expected an ip listener"),
         };
         let expected = token.clone();
         std::thread::spawn(move || {
@@ -511,7 +689,11 @@ mod tests {
                         origin: origin.as_deref(),
                         authorization: authorization.as_deref(),
                     },
-                    &expected,
+                    Access {
+                        token: &expected,
+                        pinned: None,
+                        locked: false,
+                    },
                 );
                 let response = if matches!(gate, Gate::Import) {
                     let mut body = String::new();
