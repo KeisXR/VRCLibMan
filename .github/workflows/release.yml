@@ -1,0 +1,111 @@
+name: release
+
+# Windows NSIS only. macOS is not built.
+# To add it later, append matrix rows (Rust targets below already follow the runner):
+#   - platform: macos-latest # Apple silicon
+#     args: --target aarch64-apple-darwin
+#   - platform: macos-latest # Intel
+#     args: --target x86_64-apple-darwin
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: ""
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: install frontend dependencies
+        run: npm ci
+
+      - name: require the tag to match the app version
+        shell: bash
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: |
+          node --input-type=module <<'EOF'
+          import { readFileSync } from "node:fs";
+          const pkg = JSON.parse(readFileSync("package.json", "utf8")).version;
+          const tauri = JSON.parse(readFileSync("src-tauri/tauri.conf.json", "utf8")).version;
+          const cargo = readFileSync("src-tauri/Cargo.toml", "utf8").match(/^version = "([^"]+)"/m)?.[1];
+          const tag = process.env.GITHUB_REF_NAME;
+          if (pkg !== tauri || pkg !== cargo) {
+            console.error(`versions differ: package.json ${pkg}, tauri.conf.json ${tauri}, Cargo.toml ${cargo}`);
+            process.exit(1);
+          }
+          if (tag !== `v${pkg}`) {
+            console.error(`tag ${tag} must be v${pkg}`);
+            process.exit(1);
+          }
+          EOF
+
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: VRCLibMan v__VERSION__
+          releaseBody: |
+            Windows 用の未署名 NSIS インストーラです。SmartScreen が「Windows によって PC が保護されました」と出すことがあります。
+            「詳細情報」から「実行」を選んでください。
+            拡張は vrclibman-booth-export-*.zip です。展開したフォルダ（直下に manifest.json）を、Chrome の「パッケージ化されていない拡張機能」として読み込みます。
+          releaseDraft: true
+          prerelease: false
+          uploadUpdaterJson: false
+          args: ${{ matrix.args }}
+
+      - name: package the Chrome extension
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = (Get-Content extension/manifest.json -Raw | ConvertFrom-Json).version
+          $stage = Join-Path $env:RUNNER_TEMP "vrclibman-booth-export"
+          if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          Copy-Item @(
+            "extension/manifest.json",
+            "extension/extract.js",
+            "extension/content.js",
+            "extension/popup.js",
+            "extension/popup.html",
+            "extension/popup.css"
+          ) $stage
+          New-Item -ItemType Directory -Force dist-artifacts | Out-Null
+          $dest = Join-Path (Get-Location) "dist-artifacts/vrclibman-booth-export-$version.zip"
+          if (Test-Path $dest) { Remove-Item $dest }
+          Push-Location $stage
+          try {
+            Compress-Archive -Path * -DestinationPath $dest
+          } finally {
+            Pop-Location
+          }
+
+      - name: upload the extension zip
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.ref_name }}" dist-artifacts/*.zip --clobber

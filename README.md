@@ -19,7 +19,21 @@ Booth のパスワードやクッキーは持ちません。ブラウザ拡張�
 - [Ollama](https://ollama.com/)。分類の初期モデルは `gemma4:12b`（目安 8GB の VRAM）です。`ollama pull gemma4:12b`
 - 軽い代替は `ollama pull qwen3:4b`。設定のモデル名で、導入済みのモデルを選べます。すでに保存したモデル名は、更新しても上書きしません。
 
+## インストール（Windows）
+
+公開された GitHub Release から、`VRCLibMan_*_x64-setup.exe` を実行します。これは NSIS のインストーラで、署名は付いていません。SmartScreen が「Windows によって PC が保護されました」と出すことがあります。「詳細情報」から「実行」を選んで進めてください。
+
+現在のユーザーだけに入ります。管理者権限は要りません。WebView2 が無い Windows 10 では、インストーラが小さなブートストラッパをダウンロードして入れます。そのときだけネットが要ります。Windows 11 には WebView2 が入っています。
+
+同じ Release の `vrclibman-booth-export-*.zip` が Chrome 拡張です。展開すると直下に `manifest.json` があります。`chrome://extensions` の「パッケージ化されていない拡張機能を読み込む」で、そのフォルダを指定します。
+
+手元でインストーラを作る手順は、下の「開発」にあります。
+
+macOS 用のインストーラはまだ作りません。
+
 ## 起動
+
+開発中は次でウィンドウを開きます。
 
 ```powershell
 npm install
@@ -57,3 +71,12 @@ cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
 `npm test` は拡張のページ解析です。`cargo test` は取り込み、名前の解決、ファイル名の突合、画面用の集計です。
+
+Windows でインストーラを手元で作るときは、上の「必要なもの」に加えて NSIS を Tauri が初回に取ります。
+
+```powershell
+npm install
+npm run tauri build
+```
+
+できたファイルは `src-tauri\target\release\bundle\nsis\VRCLibMan_0.1.0_x64-setup.exe` です。ARM の Windows では `x64` が `arm64` になります。版は `package.json`、`src-tauri\tauri.conf.json`、`src-tauri\Cargo.toml` の `version` を同じにしてください。GitHub へ載せるときは、その版のタグ `v0.1.0` を push します。workflow が下書き Release に、未署名の setup.exe と拡張の zip を置きます。コード署名の秘密情報は入れていません。

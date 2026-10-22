@@ -29,13 +29,28 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis"],
+    "publisher": "VRCLibMan",
+    "category": "Utility",
+    "shortDescription": "手元の VRChat / Booth アセットを整理する",
+    "longDescription": "持っている VRChat / Booth のアバターと、同じ素体で着られる衣装・髪・ギミックを、手元の PC だけで整理します。",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["Japanese", "English"],
+        "displayLanguageSelector": false
+      }
+    }
   }
 }
