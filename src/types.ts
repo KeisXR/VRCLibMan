@@ -149,6 +149,13 @@ export interface Knowledge {
   baseBodies: BaseBody[];
 }
 
+export interface ExtensionLink {
+  token: string;
+  port: number;
+  listening: boolean;
+  error: string | null;
+}
+
 export interface Settings {
   ollamaBaseUrl: string;
   ollamaModel: string;

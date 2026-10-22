@@ -31,6 +31,8 @@ Booth のパスワードやクッキーは持ちません。ブラウザ拡張�
 
 同じ Release の `vrclibman-booth-export-*.zip` が Chrome 拡張です。展開すると直下に `manifest.json` があります。`chrome://extensions` の「パッケージ化されていない拡張機能を読み込む」で、そのフォルダを指定します。
 
+拡張とアプリのつなぎ方は次の「Booth から送る」にあります。アプリは `127.0.0.1:17321` だけを待ち、Booth 自身は取りに行きません。
+
 手元でインストーラを作る手順は、下の「開発」にあります。
 
 macOS 用のインストーラはまだ作りません。
@@ -48,14 +50,15 @@ npm run tauri dev
 
 画面だけの確認は `npm run dev` で http://localhost:1420 を開きます。このとき出るのは見本データで、抽出・フォルダ調査・Ollama は動きません。
 
-## Booth から書き出す
+## Booth から送る
 
 1. Chrome か Edge で `extension` フォルダを「パッケージ化されていない拡張機能」として読み込む
-2. Booth に自分でログインし、ライブラリか商品ページを開く
-3. 拡張の「このページを書き出す」を押す。ライブラリ全体は、ライブラリを開いて「ライブラリをすべて書き出す」
-4. VRCLibMan の「取り込み」へ JSON をドロップする
-5. 「未抽出を分類」で Ollama にカテゴリと、文中のアバター名だけを抜かせる
-6. アバターを開くと、その素体と共通素体の衣装が見える
+2. VRCLibMan の設定に出るペアリングコードを、拡張のポップアップに一度貼って「コードを保存」を押す
+3. Booth に自分でログインする。ポップアップの「ライブラリを開く」は `https://accounts.booth.pm/library` を開くだけで、自動では読みません
+4. 商品ページかライブラリを開いて「このページを送る」または「ライブラリをすべて送る」を押す
+5. アプリが閉じているときは、拡張が `vrclibman://import` で起動してから数秒送り直します。それでも届かなければ JSON を保存するので、アプリの「取り込み」へドロップします
+6. 「未抽出を分類」で Ollama にカテゴリと、文中のアバター名だけを抜かせる
+7. アバターを開くと、その素体と共通素体の衣装が見える
 
 説明文の補完は、拡張が商品の公開ページを `credentials: "omit"` で1件ずつ取ります。年齢確認で本文が落ちるときは、同じ条件で商品の JSON を読みます。ログイン中のセッションは、説明の補完には送りません。ライブラリ全ページの読み取りだけ、すでにブラウザで開いているログインを使います。
 
@@ -83,4 +86,4 @@ npm install
 npm run tauri build
 ```
 
-できたファイルは `src-tauri\target\release\bundle\nsis\VRCLibMan_0.1.0_x64-setup.exe` です。中の実行ファイルは `VRCLibMan.exe` です。ARM の Windows では `x64` が `arm64` になります。版は `package.json`、`src-tauri\tauri.conf.json`、`src-tauri\Cargo.toml` の `version` を同じにしてください。GitHub へ載せるときは、その版のタグ `v0.1.0` を push します。workflow が下書き Release に、未署名の setup.exe と拡張の zip を置きます。コード署名の秘密情報は入れていません。
+できたファイルは `src-tauri\target\release\bundle\nsis\VRCLibMan_0.1.1_x64-setup.exe` です。中の実行ファイルは `VRCLibMan.exe` です。ARM の Windows では `x64` が `arm64` になります。版は `package.json`、`src-tauri\tauri.conf.json`、`src-tauri\Cargo.toml` の `version` を同じにしてください。GitHub へ載せるときは、その版のタグ `v0.1.1` を push します。workflow が下書き Release に、未署名の setup.exe と拡張の zip を置きます。コード署名の秘密情報は入れていません。NSIS は現在のユーザー向けに `vrclibman://` を登録し、アンインストールでその登録を外します。`npm run tauri dev` は同じプロトコルを開発用の実行ファイルへ付け替えるので、配布版を試すときはインストールし直してください。

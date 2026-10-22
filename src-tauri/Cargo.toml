@@ -1,6 +1,6 @@
 [package]
 name = "tauri-app"
-version = "0.1.0"
+version = "0.1.1"
 description = "Local organizer for VRChat and Booth assets you already own"
 authors = ["VRCLibMan"]
 edition = "2024"
@@ -19,10 +19,16 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-deep-link = "2"
+tauri-plugin-dialog = "2.8.3"
 tauri-plugin-opener = "2"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tauri-plugin-dialog = "2.8.3"
+getrandom = "0.3"
+tiny_http = "0.12"
+# deep-link 2.6.2 builds a rust-ini 0.21 ParseOption literal. 0.21.3 added fields.
+rust-ini = "=0.21.1"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "native-tls"] }
 walkdir = "2.5.0"

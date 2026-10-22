@@ -1,5 +1,5 @@
 body {
-  width: 280px;
+  width: 320px;
   margin: 0;
   padding: 14px;
   font: 13px/1.5 "Segoe UI", "Yu Gothic UI", sans-serif;
@@ -24,4 +24,16 @@ button.secondary {
   border: 1px solid #6a5848;
 }
 button:disabled { opacity: 0.55; }
+label { display: block; margin-bottom: 8px; color: #b5a496; }
+input {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 4px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid #6a5848;
+  background: #2a231c;
+  color: #f6efe6;
+}
+#link-status { color: #f6efe6; }
 #status { min-height: 2.5em; }

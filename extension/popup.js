@@ -1,7 +1,16 @@
 const status = document.querySelector("#status");
+const linkStatus = document.querySelector("#link-status");
 const button = document.querySelector("#export");
 const allButton = document.querySelector("#export-all");
+const saveTokenButton = document.querySelector("#save-token");
+const openLibraryButton = document.querySelector("#open-library");
+const tokenInput = document.querySelector("#token");
 const api = () => globalThis.VrcLibManExtract;
+const LOCAL_PORT = 17321;
+const LOCAL_BASE = `http://127.0.0.1:${LOCAL_PORT}`;
+const LIBRARY_URL = "https://accounts.booth.pm/library";
+const WAKE_URL = "vrclibman://import";
+const WAKE_WAIT_MS = 8000;
 
 function setStatus(text) {
   status.textContent = text;
@@ -134,6 +143,123 @@ async function enrich(products) {
 function setBusy(busy) {
   button.disabled = busy;
   allButton.disabled = busy;
+  saveTokenButton.disabled = busy;
+}
+
+function isUnreachable(error) {
+  return Boolean(error && error.unreachable);
+}
+
+function unreachableError() {
+  const error = new TypeError("アプリに届きません");
+  error.unreachable = true;
+  return error;
+}
+
+async function savedToken() {
+  const stored = await chrome.storage.local.get("pairingToken");
+  return String(stored.pairingToken || "").trim();
+}
+
+async function probe(token) {
+  try {
+    const response = await fetch(`${LOCAL_BASE}/health`, {
+      method: "GET",
+      credentials: "omit",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function refreshLink() {
+  const token = await savedToken();
+  tokenInput.value = token;
+  if (!token) {
+    linkStatus.textContent = "未ペアリング。アプリの設定に出るコードを貼ってください";
+    return;
+  }
+  const reachable = await probe(token);
+  linkStatus.textContent = reachable
+    ? "ペアリング済み。アプリは起動しています"
+    : "ペアリング済み。アプリは起動していません";
+}
+
+async function postImport(token, payload) {
+  let response;
+  try {
+    response = await fetch(`${LOCAL_BASE}/import`, {
+      method: "POST",
+      credentials: "omit",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    throw unreachableError();
+  }
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || `アプリが受け付けませんでした (${response.status})`);
+  }
+  return data;
+}
+
+async function wakeApp() {
+  try {
+    const tab = await chrome.tabs.create({ url: WAKE_URL, active: false });
+    setTimeout(() => {
+      if (tab?.id != null) chrome.tabs.remove(tab.id).catch(() => {});
+    }, 1200);
+  } catch {
+    // プロトコルを開けないときは、再試行のあと案内する。
+  }
+}
+
+async function deliver(products, source) {
+  const token = await savedToken();
+  const payload = {
+    format: "vrclibman.booth-export",
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    source,
+    products,
+  };
+  if (!token) {
+    await download(products, source);
+    return "ペアリングコードが未入力なので、JSONを保存しました";
+  }
+  try {
+    return sentText(await postImport(token, payload), products);
+  } catch (error) {
+    if (!isUnreachable(error)) throw error;
+  }
+  setStatus("アプリを起動しています");
+  await wakeApp();
+  const started = Date.now();
+  while (Date.now() - started < WAKE_WAIT_MS) {
+    await sleep(400);
+    try {
+      return sentText(await postImport(token, payload), products);
+    } catch (error) {
+      if (!isUnreachable(error)) throw error;
+    }
+  }
+  await download(products, source);
+  return "アプリを起動できませんでした。JSONを保存したので、アプリの取り込みへドロップしてください";
+}
+
+function sentText(report, products) {
+  const parts = [
+    `${products.length} 件を送りました。新規 ${report.inserted ?? 0}、更新 ${report.updated ?? 0}、変更なし ${report.unchanged ?? 0}`,
+  ];
+  if (report.skipped) parts.push(`スキップ ${report.skipped}`);
+  if (Array.isArray(report.warnings) && report.warnings.length > 0) parts.push(report.warnings[0]);
+  return parts.join("。");
 }
 
 async function download(products, source) {
@@ -154,18 +280,6 @@ async function download(products, source) {
   });
 }
 
-function finishMessage(products, scope) {
-  const unavailable = api().UNAVAILABLE_TEXT;
-  const unpublished = products.filter((product) => product.descriptionSnippet === unavailable);
-  const missing = products.filter(
-    (product) => product.descriptionSnippet !== unavailable && (!(product.descriptionSnippet || "").trim() || !product.shop),
-  );
-  const parts = [`${products.length} 件を書き出しました（${scope}）`];
-  if (unpublished.length > 0) parts.push(`公開終了（取得できず）が ${unpublished.length} 件あります`);
-  if (missing.length > 0) parts.push(`ショップまたは説明が空の商品が ${missing.length} 件あります`);
-  return parts.join("。");
-}
-
 button.addEventListener("click", async () => {
   setBusy(true);
   try {
@@ -176,8 +290,8 @@ button.addEventListener("click", async () => {
       return;
     }
     await enrich(products);
-    await download(products, "current-page");
-    setStatus(finishMessage(products, "このページのみ"));
+    setStatus(await deliver(products, "current-page"));
+    await refreshLink();
   } catch (error) {
     setStatus(error instanceof Error ? error.message : String(error));
   } finally {
@@ -203,24 +317,23 @@ allButton.addEventListener("click", async () => {
     try {
       await enrich(products);
     } catch (error) {
-      await download(products, "library");
       const reason = error instanceof Error ? error.message : String(error);
-      setStatus(`${products.length} 件まで書き出しました。${reason}`);
+      setStatus(`${await deliver(products, "library")}。${reason}`);
+      await refreshLink();
       return;
     }
-    await download(products, "library");
-    setStatus(finishMessage(products, `${collected.lastPage} ページ分`));
+    setStatus(`${await deliver(products, "library")}（${collected.lastPage} ページ分）`);
+    await refreshLink();
   } catch (error) {
     const partial = error instanceof Error && Array.isArray(error.partialProducts) ? error.partialProducts : products;
     const reason = error instanceof Error ? error.message : String(error);
     if (partial.length > 0) {
       try {
-        await download(partial, "library");
-      } catch {
-        setStatus(reason);
-        return;
+        setStatus(`${await deliver(partial, "library")}。${reason}`);
+        await refreshLink();
+      } catch (sendError) {
+        setStatus(sendError instanceof Error ? sendError.message : reason);
       }
-      setStatus(`${partial.length} 件まで書き出しました。${reason}`);
       return;
     }
     setStatus(reason);
@@ -228,3 +341,14 @@ allButton.addEventListener("click", async () => {
     setBusy(false);
   }
 });
+
+saveTokenButton.addEventListener("click", async () => {
+  await chrome.storage.local.set({ pairingToken: tokenInput.value.trim() });
+  await refreshLink();
+});
+
+openLibraryButton.addEventListener("click", () => {
+  chrome.tabs.create({ url: LIBRARY_URL });
+});
+
+refreshLink();

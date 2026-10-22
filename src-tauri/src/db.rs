@@ -188,6 +188,38 @@ pub(crate) fn set_library_folder(connection: &Connection, path: &str) -> Result<
     set_setting(connection, "library_folder", path)
 }
 
+pub(crate) fn import_export_json(
+    connection: &mut Connection,
+    json: &str,
+) -> Result<ImportReport, String> {
+    let parsed = crate::import_data::parse_export(json)?;
+    if parsed.products.is_empty() {
+        return Err(parsed
+            .warnings
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "商品が1件もありません".into()));
+    }
+    import_products(connection, &parsed)
+}
+
+pub(crate) fn extension_token(connection: &Connection) -> Result<String, String> {
+    if let Some(existing) = setting(connection, "extension_token")? {
+        if crate::local_import::stored_token_ok(&existing) {
+            return Ok(existing);
+        }
+    }
+    let token = crate::local_import::generate_token();
+    set_setting(connection, "extension_token", &token)?;
+    Ok(token)
+}
+
+pub(crate) fn regenerate_extension_token(connection: &Connection) -> Result<String, String> {
+    let token = crate::local_import::generate_token();
+    set_setting(connection, "extension_token", &token)?;
+    Ok(token)
+}
+
 fn setting(connection: &Connection, key: &str) -> Result<Option<String>, String> {
     connection
         .query_row(

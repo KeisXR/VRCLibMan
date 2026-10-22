@@ -69,6 +69,25 @@ export default function App() {
   useEffect(() => onRefresh(refresh), [refresh]);
 
   useEffect(() => {
+    if (!isTauri()) return;
+    let stop = () => undefined as void;
+    let alive = true;
+    import("@tauri-apps/api/event")
+      .then(({ listen }) =>
+        listen("library-changed", () => {
+          if (alive) refresh();
+        }),
+      )
+      .then((unlisten) => {
+        stop = unlisten;
+      });
+    return () => {
+      alive = false;
+      stop();
+    };
+  }, [refresh]);
+
+  useEffect(() => {
     let cancelled = false;
     api.stats().then(
       (value) => {

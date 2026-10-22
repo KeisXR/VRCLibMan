@@ -41,16 +41,40 @@ fn emit_progress(app: &AppHandle, job: &str, current: u32, total: u32, message: 
 
 #[tauri::command]
 pub fn import_export(state: State<'_, AppState>, json: String) -> Result<ImportReport, String> {
-    let parsed = crate::import_data::parse_export(&json)?;
-    if parsed.products.is_empty() {
-        return Err(parsed
-            .warnings
-            .first()
-            .cloned()
-            .unwrap_or_else(|| "商品が1件もありません".into()));
-    }
     let mut connection = db(&state)?;
-    db::import_products(&mut connection, &parsed)
+    db::import_export_json(&mut connection, &json)
+}
+
+#[tauri::command]
+pub fn extension_link(state: State<'_, AppState>) -> Result<crate::model::ExtensionLink, String> {
+    let connection = db(&state)?;
+    let token = db::extension_token(&connection)?;
+    drop(connection);
+    Ok(extension_link_view(&state, &token))
+}
+
+#[tauri::command]
+pub fn regenerate_extension_token(
+    state: State<'_, AppState>,
+) -> Result<crate::model::ExtensionLink, String> {
+    let connection = db(&state)?;
+    let token = db::regenerate_extension_token(&connection)?;
+    drop(connection);
+    Ok(extension_link_view(&state, &token))
+}
+
+fn extension_link_view(state: &AppState, token: &str) -> crate::model::ExtensionLink {
+    let error = state
+        .receiver_error
+        .lock()
+        .ok()
+        .and_then(|slot| slot.clone());
+    crate::model::ExtensionLink {
+        token: crate::local_import::display_token(token),
+        port: crate::local_import::LOCAL_IMPORT_PORT,
+        listening: error.is_none(),
+        error,
+    }
 }
 
 #[tauri::command]

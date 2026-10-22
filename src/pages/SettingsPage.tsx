@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useShell } from "../App";
-import type { AvatarRecord, BaseBody, Knowledge, Settings } from "../types";
+import type { AvatarRecord, BaseBody, ExtensionLink, Knowledge, Settings } from "../types";
 import { errorText } from "../ui";
 
 const emptyAvatar = {
@@ -22,6 +22,7 @@ export function SettingsPage() {
   const [filter, setFilter] = useState("");
   const [status, setStatus] = useState("");
   const [models, setModels] = useState<string[]>([]);
+  const [link, setLink] = useState<ExtensionLink | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -33,11 +34,12 @@ export function SettingsPage() {
         if (!cancelled) setModels([]);
       },
     );
-    Promise.all([api.settings(), api.knowledge()]).then(
-      ([nextSettings, nextKnowledge]) => {
+    Promise.all([api.settings(), api.knowledge(), api.extensionLink()]).then(
+      ([nextSettings, nextKnowledge, nextLink]) => {
         if (cancelled) return;
         setSettings(nextSettings);
         setKnowledge(nextKnowledge);
+        setLink(nextLink);
       },
       (err: unknown) => {
         if (!cancelled) fail(errorText(err));
@@ -47,6 +49,16 @@ export function SettingsPage() {
       cancelled = true;
     };
   }, [revision, fail]);
+
+  async function regenerateToken() {
+    if (!window.confirm("コードを作り直すと、拡張に貼ってあるコードは使えなくなります。")) return;
+    try {
+      setLink(await api.regenerateExtensionToken());
+      notify("ペアリングコードを作り直しました");
+    } catch (err) {
+      fail(errorText(err));
+    }
+  }
 
   async function saveSettings() {
     if (!settings) return;
@@ -181,6 +193,30 @@ export function SettingsPage() {
           <p>分類は手元の Ollama だけに頼み、素体の関係はここにある対応表で決めます。</p>
         </div>
       </div>
+      {link && (
+        <div className="panel" style={{ padding: 16, marginBottom: 16 }}>
+          <h2>拡張との接続</h2>
+          <p className="meta">
+            拡張は今開いている Booth のページだけを読み、この PC の 127.0.0.1:{link.port} に送ります。
+            アプリは Booth を取りに行きません。下のコードを拡張のポップアップに一度貼ってください。
+          </p>
+          <label className="field">
+            <span>ペアリングコード</span>
+            <input readOnly value={link.token} />
+          </label>
+          <p className="meta">
+            {link.listening
+              ? `127.0.0.1:${link.port} で待っています。`
+              : link.error || "受信を開始できませんでした。"}
+            {` アプリが閉じているときは、拡張が vrclibman://import で起動します。`}
+          </p>
+          <div className="row-actions">
+            <button className="button" type="button" onClick={() => void regenerateToken()}>
+              コードを作り直す
+            </button>
+          </div>
+        </div>
+      )}
       {settings && (
         <div className="panel" style={{ padding: 16, marginBottom: 16 }}>
           <div className="form-grid">
