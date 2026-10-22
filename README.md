@@ -23,7 +23,11 @@ Booth のパスワードやクッキーは持ちません。ブラウザ拡張�
 
 公開された GitHub Release から、`VRCLibMan_*_x64-setup.exe` を実行します。これは NSIS のインストーラで、署名は付いていません。SmartScreen が「Windows によって PC が保護されました」と出すことがあります。「詳細情報」から「実行」を選んで進めてください。
 
-現在のユーザーだけに入ります。管理者権限は要りません。WebView2 が無い Windows 10 では、インストーラが小さなブートストラッパをダウンロードして入れます。そのときだけネットが要ります。Windows 11 には WebView2 が入っています。
+現在のユーザーだけに入ります。管理者権限は要りません。実行ファイルは `%LOCALAPPDATA%\VRCLibMan\VRCLibMan.exe` です。WebView2 が無い Windows 10 では、インストーラが小さなブートストラッパをダウンロードして入れます。そのときだけネットが要ります。Windows 11 には WebView2 が入っています。
+
+インストールしたアプリと `npm run tauri dev` は、どちらも識別子 `app.vrclibman.desktop` です。そのためライブラリ `%APPDATA%\app.vrclibman.desktop\library.sqlite`（サムネイルは同じ場所の `thumbs`）と、WebView2 のプロファイル `%LOCALAPPDATA%\app.vrclibman.desktop\EBWebView` を共有します。開発中のウィンドウは、入っているアプリと同じデータベースを開きます。`npm run dev` の見本データはこの場所を使いません。
+
+アンインストールはレジストリの `HKCU\Software\VRCLibMan` を消します。上のライブラリと WebView のフォルダは残します。
 
 同じ Release の `vrclibman-booth-export-*.zip` が Chrome 拡張です。展開すると直下に `manifest.json` があります。`chrome://extensions` の「パッケージ化されていない拡張機能を読み込む」で、そのフォルダを指定します。
 
@@ -40,7 +44,7 @@ npm install
 npm run tauri dev
 ```
 
-`npm run dev` でポート 1420 を開いたまま `npm run tauri dev` を実行すると、Vite が二重に起動して失敗します。先に `npm run dev` を止めてから実行してください。
+`npm run dev` でポート 1420 を開いたまま `npm run tauri dev` を実行すると、Vite が二重に起動して失敗します。先に `npm run dev` を止めてから実行してください。`npm run tauri dev` はインストール版と同じ識別子なので、上に書いた `%APPDATA%` のデータベースと WebView プロファイルを開きます。
 
 画面だけの確認は `npm run dev` で http://localhost:1420 を開きます。このとき出るのは見本データで、抽出・フォルダ調査・Ollama は動きません。
 
@@ -79,4 +83,4 @@ npm install
 npm run tauri build
 ```
 
-できたファイルは `src-tauri\target\release\bundle\nsis\VRCLibMan_0.1.0_x64-setup.exe` です。ARM の Windows では `x64` が `arm64` になります。版は `package.json`、`src-tauri\tauri.conf.json`、`src-tauri\Cargo.toml` の `version` を同じにしてください。GitHub へ載せるときは、その版のタグ `v0.1.0` を push します。workflow が下書き Release に、未署名の setup.exe と拡張の zip を置きます。コード署名の秘密情報は入れていません。
+できたファイルは `src-tauri\target\release\bundle\nsis\VRCLibMan_0.1.0_x64-setup.exe` です。中の実行ファイルは `VRCLibMan.exe` です。ARM の Windows では `x64` が `arm64` になります。版は `package.json`、`src-tauri\tauri.conf.json`、`src-tauri\Cargo.toml` の `version` を同じにしてください。GitHub へ載せるときは、その版のタグ `v0.1.0` を push します。workflow が下書き Release に、未署名の setup.exe と拡張の zip を置きます。コード署名の秘密情報は入れていません。

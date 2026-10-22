@@ -62,7 +62,26 @@ jobs:
           }
           EOF
 
-      - uses: tauri-apps/tauri-action@v1
+      - name: package the Chrome extension
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $stage = Join-Path $env:RUNNER_TEMP "vrclibman-booth-export"
+          node scripts/stage-extension.mjs --dest "$stage"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $version = (Get-Content extension/manifest.json -Raw | ConvertFrom-Json).version
+          New-Item -ItemType Directory -Force dist-artifacts | Out-Null
+          $dest = Join-Path (Get-Location) "dist-artifacts/vrclibman-booth-export-$version.zip"
+          if (Test-Path $dest) { Remove-Item $dest }
+          Push-Location $stage
+          try {
+            Compress-Archive -Path * -DestinationPath $dest
+          } finally {
+            Pop-Location
+          }
+
+      - id: tauri
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -77,35 +96,40 @@ jobs:
           uploadUpdaterJson: false
           args: ${{ matrix.args }}
 
-      - name: package the Chrome extension
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $version = (Get-Content extension/manifest.json -Raw | ConvertFrom-Json).version
-          $stage = Join-Path $env:RUNNER_TEMP "vrclibman-booth-export"
-          if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
-          New-Item -ItemType Directory -Force $stage | Out-Null
-          Copy-Item @(
-            "extension/manifest.json",
-            "extension/extract.js",
-            "extension/content.js",
-            "extension/popup.js",
-            "extension/popup.html",
-            "extension/popup.css"
-          ) $stage
-          New-Item -ItemType Directory -Force dist-artifacts | Out-Null
-          $dest = Join-Path (Get-Location) "dist-artifacts/vrclibman-booth-export-$version.zip"
-          if (Test-Path $dest) { Remove-Item $dest }
-          Push-Location $stage
-          try {
-            Compress-Archive -Path * -DestinationPath $dest
-          } finally {
-            Pop-Location
-          }
-
       - name: upload the extension zip
         if: runner.os == 'Windows'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ github.ref_name }}" dist-artifacts/*.zip --clobber
+          RELEASE_ID: ${{ steps.tauri.outputs.releaseId }}
+          RELEASE_UPLOAD_URL: ${{ steps.tauri.outputs.releaseUploadUrl }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RELEASE_ID}" ] || [ -z "${RELEASE_UPLOAD_URL}" ]; then
+            echo "tauri-action did not return a draft release id"
+            exit 1
+          fi
+          zip=$(echo dist-artifacts/*.zip)
+          if [ ! -f "${zip}" ]; then
+            echo "extension zip was not produced"
+            exit 1
+          fi
+          name=$(basename "${zip}")
+          existing=$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets" --jq ".[] | select(.name==\"${name}\") | .id")
+          while IFS= read -r asset_id; do
+            if [ -n "${asset_id}" ]; then
+              gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}"
+            fi
+          done <<< "${existing}"
+          upload="${RELEASE_UPLOAD_URL%%\{*}"
+          http=$(curl -sS -o /tmp/vrclibman-asset.json -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/zip" \
+            --data-binary @"${zip}" \
+            "${upload}?name=${name}")
+          if [ "${http}" -lt 200 ] || [ "${http}" -ge 300 ]; then
+            echo "extension upload failed with HTTP ${http}"
+            cat /tmp/vrclibman-asset.json
+            exit 1
+          fi

@@ -55,8 +55,9 @@ VRCLibMan を変更するときは、このファイルを先に読む。元の�
 
 - フロントは React + TypeScript。画面は `invoke` だけの薄い層。
 - 取り込み、正規化、突合、名前解決、抽出、SQLite は Rust。`rusqlite` の bundled を使い、`tauri-plugin-sql` は使わない。WebView なしでテストするため。
-- クレート名は雛形の `tauri-app` / `tauri_app_lib` のまま。`main.rs` が `tauri_app_lib::run()` を呼ぶ。
-- DB はアプリデータディレクトリの `library.sqlite`。サムネイルは同じ場所の `thumbs`。
+- クレート名は雛形の `tauri-app` / `tauri_app_lib` のまま。`main.rs` が `tauri_app_lib::run()` を呼ぶ。配布する実行ファイルは `mainBinaryName` の `VRCLibMan.exe`。NSIS のファイル名は productName から `VRCLibMan_<version>_x64-setup.exe`。
+- DB はアプリデータディレクトリの `library.sqlite`。サムネイルは同じ場所の `thumbs`。識別子 `app.vrclibman.desktop` は、インストールしたアプリと `tauri dev` で同じなので、Windows では `%APPDATA%\app.vrclibman.desktop` の DB と `%LOCALAPPDATA%\app.vrclibman.desktop\EBWebView` の WebView プロファイルを共有する。`npm run dev` の見本はこのディレクトリを使わない。
+- アンインストールの `src-tauri/windows/hooks.nsh` は `NSIS_HOOK_POSTUNINSTALL` で `HKCU\Software\VRCLibMan` だけを消す。アプリデータのディレクトリは消さない。
 - `user_version` が 0 のときだけ `SCHEMA` を流す。既存 DB の列を変えるときは、新しい版の移行を足す。`SCHEMA` 定数の書き換えだけでは入らない。
 - 変更系の関数は `&mut Connection`。`transaction()` が可変借用を要求するため。
 - DB の `MutexGuard` を `.await` の間に持たない。抽出の実行中フラグは `Arc<AtomicBool>`。
@@ -195,7 +196,7 @@ Windows の実ライブラリ（約 110 件、`gemma4:12b`、新しい一時 DB�
 5. 名前解決、突合、詳細の出し分けを変えるときは、先に `src-tauri/src` のテストを更新する。見本の `src/preview/api.ts` は画面用なので、同じ変更が必要なら別途合わせる。
 6. スキーマを変えるときは `user_version` を上げた移行を足す。既存の `library.sqlite` を暗黙に作り直さない。
 
-Windows の配布は未署名の NSIS（`.exe`）だけである。`v*` タグが `package.json`、`tauri.conf.json`、`Cargo.toml` の版と一致するとき、`.github/workflows/release.yml` が下書き Release にインストーラと拡張 zip を載せる。`num_ctx` やモデルの初期値は変えない。macOS の行は matrix にコメントで残し、ジョブは有効にしていない。コード署名の秘密情報は置かない。
+Windows の配布は未署名の NSIS（`.exe`）だけである。実行ファイルは `VRCLibMan.exe`。`v*` タグが `package.json`、`tauri.conf.json`、`Cargo.toml` の版と一致するとき、`.github/workflows/release.yml` が下書き Release にインストーラと拡張 zip を載せる。拡張 zip は `extension` から開発用の `package.json` を除いて作り、`manifest.json` と `popup.html` が参照するファイルが無いときは失敗する。zip は `tauri-action` が返した release id で下書きへ載せる。`num_ctx` やモデルの初期値は変えない。macOS の行は matrix にコメントで残し、ジョブは有効にしていない。コード署名の秘密情報は置かない。
 
 その後に残っている改善は、macOS のインストーラ、署名、実ページに合わせた拡張の追従である。Unity 連携や自動ダウンロードは、この方針の外にある。
 
