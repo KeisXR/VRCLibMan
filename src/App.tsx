@@ -1,5 +1,5 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { api, isTauri, listenProgress, onRefresh } from "./api";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { api, isTauri, listenBoothUsed, listenProgress, onRefresh } from "./api";
 import { AvatarsPage } from "./pages/AvatarsPage";
 import { AvatarDetailPage } from "./pages/AvatarDetailPage";
 import { ImportPage } from "./pages/ImportPage";
@@ -7,7 +7,7 @@ import { QueuePage } from "./pages/QueuePage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { BrowserPage } from "./pages/BrowserPage";
 import { SetupWizard } from "./pages/SetupWizard";
-import type { JobProgress, LibraryStats } from "./types";
+import type { BoothAccount, JobProgress, LibraryStats } from "./types";
 import { errorText } from "./ui";
 
 type Page = "avatars" | "avatar" | "queue" | "import" | "settings" | "browser";
@@ -24,6 +24,7 @@ interface ShellValue {
   notify: (message: string) => void;
   fail: (message: string) => void;
   builtinBrowser: boolean;
+  refreshAccount: () => void;
 }
 
 const ShellContext = createContext<ShellValue | null>(null);
@@ -57,6 +58,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const [builtinBrowser, setBuiltinBrowser] = useState(false);
+  const [account, setAccount] = useState<BoothAccount | null>(null);
+  const accountReload = useRef<() => void>(() => {});
   const [setupComplete, setSetupComplete] = useState<boolean | null>(null);
   const route = useMemo(() => parseRoute(hash), [hash]);
 
@@ -155,9 +158,49 @@ export default function App() {
     };
   }, []);
 
+  const refreshAccount = useCallback(() => {
+    accountReload.current();
+  }, []);
+
+  useEffect(() => {
+    if (!builtinBrowser) {
+      accountReload.current = () => {};
+      setAccount(null);
+      return;
+    }
+    let alive = true;
+    let pending = true;
+    const load = () => {
+      if (pending) setAccount(null);
+      pending = false;
+      void api.boothAccount().then(
+        (value) => {
+          if (alive) setAccount(value);
+        },
+        () => {
+          if (alive) setAccount({ loggedIn: false, displayName: "", pixivId: "", avatarUrl: "" });
+        },
+      );
+    };
+    accountReload.current = load;
+    load();
+    let stop = () => undefined as void;
+    void listenBoothUsed(() => {
+      if (alive) load();
+    }).then((unlisten) => {
+      if (!alive) unlisten();
+      else stop = unlisten;
+    });
+    return () => {
+      alive = false;
+      accountReload.current = () => {};
+      stop();
+    };
+  }, [builtinBrowser]);
+
   const shell = useMemo<ShellValue>(
-    () => ({ revision, refresh, notify, fail, builtinBrowser }),
-    [revision, refresh, notify, fail, builtinBrowser],
+    () => ({ revision, refresh, notify, fail, builtinBrowser, refreshAccount }),
+    [revision, refresh, notify, fail, builtinBrowser, refreshAccount],
   );
   const percent =
     progress && progress.total > 0 ? Math.min(100, (progress.current / progress.total) * 100) : 0;
@@ -199,9 +242,22 @@ export default function App() {
             )}
           </nav>
           <div className="rail-foot">
-            {stats ? `${stats.products} 商品` : "読み込み中"}
-            <br />
-            {isTauri() ? stats?.ollamaModel : "ブラウザ確認用"}
+            {builtinBrowser && (
+              <AccountPill
+                account={account}
+                onLogin={() => {
+                  void api.openBoothBrowser().then(
+                    () => refreshAccount(),
+                    (err: unknown) => fail(errorText(err)),
+                  );
+                }}
+              />
+            )}
+            <div className="rail-meta">
+              {stats ? `${stats.products} 商品` : "読み込み中"}
+              <br />
+              {isTauri() ? stats?.ollamaModel : "ブラウザ確認用"}
+            </div>
           </div>
         </aside>
         <div className="main">
@@ -230,5 +286,54 @@ export default function App() {
         </div>
       </div>
     </ShellContext.Provider>
+  );
+}
+
+function accountLabel(account: BoothAccount | null): string {
+  if (!account) return "確認しています";
+  if (!account.loggedIn) return "ログインしていません";
+  if (account.displayName.trim()) return account.displayName.trim();
+  if (account.pixivId.trim()) return account.pixivId.trim();
+  return "ログイン中";
+}
+
+function safeAvatar(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:" || parsed.search || parsed.hash || parsed.username) return "";
+    const host = parsed.hostname;
+    const allowed =
+      host === "booth.pm" ||
+      host.endsWith(".booth.pm") ||
+      host === "pximg.net" ||
+      host.endsWith(".pximg.net");
+    return allowed ? parsed.toString() : "";
+  } catch {
+    return "";
+  }
+}
+
+function AccountPill({ account, onLogin }: { account: BoothAccount | null; onLogin: () => void }) {
+  const [broken, setBroken] = useState(false);
+  const label = accountLabel(account);
+  const avatar = !broken && account?.loggedIn ? safeAvatar(account.avatarUrl) : "";
+  const face = avatar ? (
+    <img className="account-avatar" src={avatar} alt="" onError={() => setBroken(true)} />
+  ) : (
+    <span className="account-avatar" aria-hidden="true" />
+  );
+  if (!account || account.loggedIn) {
+    return (
+      <div className={account ? "account-pill" : "account-pill neutral"} title={label}>
+        {face}
+        <span className="account-name">{label}</span>
+      </div>
+    );
+  }
+  return (
+    <button className="account-pill neutral" type="button" onClick={onLogin} title={label}>
+      {face}
+      <span className="account-name">{label}</span>
+    </button>
   );
 }

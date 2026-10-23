@@ -1099,6 +1099,17 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       );
       return boothId as T;
     }
+    case "booth_account": {
+      if (!store.settings.builtinBrowser) {
+        return { loggedIn: false, displayName: "", pixivId: "", avatarUrl: "" } as T;
+      }
+      const loggedOut =
+        typeof location !== "undefined" && new URLSearchParams(location.search).get("account") === "out";
+      if (loggedOut) {
+        return { loggedIn: false, displayName: "", pixivId: "", avatarUrl: "" } as T;
+      }
+      return { loggedIn: true, displayName: "テスト利用者", pixivId: "424242", avatarUrl: "" } as T;
+    }
     case "download_booth_file": {
       if (!store.settings.builtinBrowser) {
         throw new Error("内蔵ブラウザはオフです。拡張のダウンロードを使ってください");

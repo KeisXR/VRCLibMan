@@ -208,6 +208,13 @@ export interface BrowserDiagnostic {
   text: string;
 }
 
+export interface BoothAccount {
+  loggedIn: boolean;
+  displayName: string;
+  pixivId: string;
+  avatarUrl: string;
+}
+
 export interface ImportReport {
   inserted: number;
   updated: number;

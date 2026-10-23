@@ -17,6 +17,9 @@ use url::Url;
 const LOG_NAME: &str = "booth-browser.log";
 
 pub const WINDOW_LABEL: &str = "booth";
+/// ログイン確認とセッション読み取りだけの隠した窓。ダウンロードでは見せない。
+const PROBE_LABEL: &str = "booth-probe";
+const BROWSER_USED_EVENT: &str = "booth-browser-used";
 pub const LIBRARY_URL: &str = "https://accounts.booth.pm/library";
 #[cfg(any(not(target_os = "macos"), test))]
 const SESSION_DIR_NAME: &str = "booth-browser";
@@ -287,6 +290,9 @@ pub fn open_browser(app: &AppHandle) -> Result<(), String> {
         browser_log(app, &format!("内蔵ブラウザは使えません: {err}"));
         return Err(err);
     }
+    if let Some(probe) = app.get_webview_window(PROBE_LABEL) {
+        let _ = probe.destroy();
+    }
     if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
         browser_log(app, "既にある窓を前面に出します");
         let _ = window.show();
@@ -312,6 +318,11 @@ pub fn open_browser(app: &AppHandle) -> Result<(), String> {
                 window.app_handle(),
                 &format!("{kind} {}", public_url(payload.url())),
             );
+            if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
+                && !library_walk_running()
+            {
+                let _ = window.emit(BROWSER_USED_EVENT, ());
+            }
         })
         .on_new_window(move |url, _features| {
             open_popup_in_same_window(&for_popup, url);
@@ -339,11 +350,20 @@ pub fn open_browser(app: &AppHandle) -> Result<(), String> {
         browser_log(app, "セッションは macOS のデータストアです");
     }
     browser_log(app, "窓を作っています");
-    if let Err(err) = builder.build() {
-        let message = format!("ブラウザを開けません: {err}");
-        browser_log(app, &message);
-        return Err(message);
-    }
+    let window = match builder.build() {
+        Ok(window) => window,
+        Err(err) => {
+            let message = format!("ブラウザを開けません: {err}");
+            browser_log(app, &message);
+            return Err(message);
+        }
+    };
+    let app_for_close = app.clone();
+    window.on_window_event(move |event| {
+        if let tauri::WindowEvent::Destroyed = event {
+            let _ = app_for_close.emit(BROWSER_USED_EVENT, ());
+        }
+    });
     browser_log(app, "窓を開きました");
     Ok(())
 }
@@ -507,8 +527,7 @@ async fn clear_macos_data_store(app: &AppHandle) -> Result<(), String> {
     Err("ログイン状態を消せませんでした。ブラウザを閉じてからもう一度押してください".into())
 }
 
-const DOWNLOAD_START_WAIT: Duration = Duration::from_secs(20);
-const DOWNLOAD_FINISH_WAIT: Duration = Duration::from_secs(20 * 60);
+static PROBE_BUSY: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -520,6 +539,7 @@ struct BoothFileStatus {
     message: String,
 }
 
+#[allow(dead_code)]
 enum DownloadSignal {
     Started {
         host: String,
@@ -757,30 +777,152 @@ fn emit_file_status(
     );
 }
 
-fn focus_browser(app: &AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
-        let _ = window.show();
-        let _ = window.unminimize();
-        let _ = window.set_focus();
-        return Ok(());
+struct ProbeTurn;
+
+impl ProbeTurn {
+    async fn acquire() -> Result<Self, ()> {
+        let started = std::time::Instant::now();
+        loop {
+            if !PROBE_BUSY.swap(true, Ordering::SeqCst) {
+                return Ok(Self);
+            }
+            if started.elapsed() > Duration::from_secs(20) {
+                return Err(());
+            }
+            let _ = tauri::async_runtime::spawn_blocking(|| {
+                std::thread::sleep(Duration::from_millis(40))
+            })
+            .await;
+        }
     }
-    open_browser(app)
 }
 
-fn existing_download(signaled: Option<PathBuf>, destination: &Path) -> Option<PathBuf> {
-    for _ in 0..15 {
-        if let Some(path) = signaled.as_ref().filter(|path| path.is_file()) {
-            return Some(path.clone());
-        }
-        if destination.is_file() {
-            return Some(destination.to_path_buf());
-        }
-        std::thread::sleep(Duration::from_millis(200));
+impl Drop for ProbeTurn {
+    fn drop(&mut self) {
+        PROBE_BUSY.store(false, Ordering::SeqCst);
     }
-    None
 }
 
-/// クッキーは読まない。押した1件の URL へ、その窓のセッションのまま移動して受け取る。
+/// 隠した窓。visible は false、タスクバーに出さない、フォーカスしない。
+fn open_profile_probe(app: &AppHandle, url: Url) -> Result<(), String> {
+    if app.get_webview_window(WINDOW_LABEL).is_some() {
+        return Err("表示中のブラウザがあるので、別の窓は作りません".into());
+    }
+    if let Some(window) = app.get_webview_window(PROBE_LABEL) {
+        let _ = window.destroy();
+    }
+    let mut builder = WebviewWindowBuilder::new(app, PROBE_LABEL, WebviewUrl::External(url))
+        .title("BOOTH")
+        .inner_size(16.0, 16.0)
+        .position(-20000.0, -20000.0)
+        .visible(false)
+        .focused(false)
+        .skip_taskbar(true)
+        .decorations(false)
+        .always_on_bottom(true)
+        .on_download(|_webview, event| handle_booth_download(event));
+    #[cfg(not(target_os = "macos"))]
+    {
+        let root = local_data_dir(app)?;
+        let dir = session_dir(&root);
+        if !session_dir_is_safe(&root, &dir) {
+            return Err("セッションの場所が不正です".into());
+        }
+        std::fs::create_dir_all(&dir).map_err(|_| "ログイン状態を確認できません".to_string())?;
+        builder = builder.data_directory(dir);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.data_store_identifier(BOOTH_DATA_STORE_ID);
+    }
+    let window = builder
+        .build()
+        .map_err(|_| "ログイン状態を確認できません".to_string())?;
+    let _ = window.hide();
+    Ok(())
+}
+
+async fn destroy_probe(app: &AppHandle) {
+    let app = app.clone();
+    let _ = dispatch_ui(app, |handle| {
+        if let Some(window) = handle.get_webview_window(PROBE_LABEL) {
+            let _ = window.destroy();
+        }
+        Ok(())
+    })
+    .await;
+    // 同じデータフォルダをすぐ開き直すと、WebView2 がまだロックしていることがある。
+    let _ = tauri::async_runtime::spawn_blocking(|| std::thread::sleep(Duration::from_millis(300)))
+        .await;
+}
+
+/// 見えている窓があればそれを使い、無ければ隠した窓を作ってすぐ捨てる。
+/// クッキーの読み取りは dispatch_ui の外、ワーカーで行う。
+async fn booth_cookie_header(
+    app: &AppHandle,
+    url: Url,
+) -> Result<String, crate::quiet::QuietError> {
+    let _turn = ProbeTurn::acquire()
+        .await
+        .map_err(|_| crate::quiet::QuietError::Failed)?;
+    let created = dispatch_ui(app.clone(), move |handle| {
+        if handle.get_webview_window(WINDOW_LABEL).is_some() {
+            return Ok(false);
+        }
+        let blank =
+            Url::parse("about:blank").map_err(|_| "ログイン状態を確認できません".to_string())?;
+        open_profile_probe(handle, blank)?;
+        Ok(true)
+    })
+    .await
+    .map_err(|_| crate::quiet::QuietError::Failed)?;
+    let app_for_cookies = app.clone();
+    let url_for_cookies = url.clone();
+    let header = tauri::async_runtime::spawn_blocking(move || {
+        let label = if created { PROBE_LABEL } else { WINDOW_LABEL };
+        let window = app_for_cookies
+            .get_webview_window(label)
+            .ok_or_else(|| "ログイン状態を確認できません".to_string())?;
+        crate::quiet::session_header(&window, &url_for_cookies)
+    })
+    .await;
+    if created {
+        destroy_probe(app).await;
+    }
+    header
+        .map_err(|_| crate::quiet::QuietError::Failed)?
+        .map_err(|_| crate::quiet::QuietError::Failed)
+}
+
+async fn receive_without_window(
+    app: &AppHandle,
+    download_url: Url,
+    dir: PathBuf,
+    row_filename: String,
+) -> Result<PathBuf, crate::quiet::QuietError> {
+    let header = booth_cookie_header(app, download_url.clone()).await?;
+    if header.is_empty() {
+        return Err(crate::quiet::QuietError::Login);
+    }
+    let fetched =
+        crate::quiet::fetch_staged_file(&header, &download_url, &dir, &row_filename).await?;
+    drop(header);
+    browser_log(app, &host_log(&fetched.host));
+    Ok(fetched.path)
+}
+
+fn login_message(err: crate::quiet::QuietError) -> String {
+    match err {
+        crate::quiet::QuietError::Login => db::BROWSER_LOGIN_MESSAGE.to_string(),
+        crate::quiet::QuietError::AgeGate => db::BROWSER_AGE_MESSAGE.to_string(),
+        crate::quiet::QuietError::Failed => db::BROWSER_DOWNLOAD_FAILED.to_string(),
+    }
+}
+
+/// 受け取りでは、見えている窓を開いたり前面に出したりしない。
+/// WebView2 は同じ data_directory の環境を二つ作るとロックするので、
+/// ファイル自体は隠した窓のダウンロードではなく、セッションを別スレッドで読んで保存する。
+/// ログインが必要なときだけ、既存のログイン窓を開く。
 pub async fn download_one_file(
     app: AppHandle,
     booth_id: String,
@@ -827,81 +969,36 @@ pub async fn download_one_file(
     if let Some(line) = receipt_log(&request.booth_id, &request.downloadable_id) {
         browser_log(&app, &line);
     }
-    let (sender, receiver) = std::sync::mpsc::sync_channel(8);
+    let (sender, _receiver) = std::sync::mpsc::sync_channel(8);
     let guard = arm_download(ArmedDownload {
         events: sender,
-        started: false,
-        dir,
+        started: true,
+        dir: dir.clone(),
         row_filename: request.filename.clone(),
     })?;
-    let navigated = dispatch_ui(app.clone(), move |handle| {
-        open_browser(handle)?;
-        let window = handle
-            .get_webview_window(WINDOW_LABEL)
-            .ok_or_else(|| "ブラウザを開けません".to_string())?;
-        window
-            .navigate(url)
-            .map_err(|_| "ファイルのページを開けません".to_string())
-    })
-    .await;
-    if let Err(err) = navigated {
-        drop(guard);
-        emit_file_status(
-            &app,
-            &request.booth_id,
-            &request.variation,
-            &request.filename,
-            "error",
-            &err,
-        );
-        browser_log(&app, "受け取りの移動に失敗しました");
-        return Err(err);
-    }
-    let app_for_wait = app.clone();
-    let waited =
-        tauri::async_runtime::spawn_blocking(move || wait_for_download(app_for_wait, receiver))
-            .await
-            .map_err(|err| format!("受け取りを待てません: {err}"))?;
+    let received = receive_without_window(&app, url, dir, request.filename.clone()).await;
     drop(guard);
-    let source = match waited {
-        Waited::File(path) => path,
-        Waited::Login => {
-            let _ = dispatch_ui(app.clone(), |handle| focus_browser(handle)).await;
+    let source = match received {
+        Ok(path) => path,
+        Err(err) => {
+            let message = login_message(err);
+            if err == crate::quiet::QuietError::Login {
+                let _ = dispatch_ui(app.clone(), |handle| open_browser(handle)).await;
+                browser_log(&app, "ログインが必要です");
+            } else if err == crate::quiet::QuietError::AgeGate {
+                browser_log(&app, "年齢確認は自動では通過しません");
+            } else {
+                browser_log(&app, "受け取りに失敗しました");
+            }
             emit_file_status(
                 &app,
                 &request.booth_id,
                 &request.variation,
                 &request.filename,
                 "error",
-                db::BROWSER_LOGIN_MESSAGE,
+                &message,
             );
-            browser_log(&app, "ログインが必要です");
-            return Err(db::BROWSER_LOGIN_MESSAGE.into());
-        }
-        Waited::AgeGate => {
-            emit_file_status(
-                &app,
-                &request.booth_id,
-                &request.variation,
-                &request.filename,
-                "error",
-                db::BROWSER_AGE_MESSAGE,
-            );
-            browser_log(&app, "年齢確認は自動では通過しません");
-            return Err(db::BROWSER_AGE_MESSAGE.into());
-        }
-        Waited::Failed => {
-            let _ = dispatch_ui(app.clone(), |handle| focus_browser(handle)).await;
-            emit_file_status(
-                &app,
-                &request.booth_id,
-                &request.variation,
-                &request.filename,
-                "error",
-                db::BROWSER_DOWNLOAD_FAILED,
-            );
-            browser_log(&app, "受け取りに失敗しました");
-            return Err(db::BROWSER_DOWNLOAD_FAILED.into());
+            return Err(message);
         }
     };
     emit_file_status(
@@ -939,7 +1036,7 @@ pub async fn download_one_file(
         }
         Err(err) => {
             if err == db::BROWSER_LOGIN_MESSAGE {
-                let _ = dispatch_ui(app.clone(), |handle| focus_browser(handle)).await;
+                let _ = dispatch_ui(app.clone(), |handle| open_browser(handle)).await;
                 browser_log(&app, "ログインが必要です");
             } else {
                 browser_log(&app, "受け取りに失敗しました");
@@ -947,45 +1044,6 @@ pub async fn download_one_file(
             emit_file_status(&app, &booth_id, &variation, &filename, "error", &err);
             Err(err)
         }
-    }
-}
-
-enum Waited {
-    File(PathBuf),
-    Login,
-    AgeGate,
-    Failed,
-}
-
-fn wait_for_download(
-    app: AppHandle,
-    receiver: std::sync::mpsc::Receiver<DownloadSignal>,
-) -> Waited {
-    let destination = match receiver.recv_timeout(DOWNLOAD_START_WAIT) {
-        Ok(DownloadSignal::Started { host, destination }) => {
-            browser_log(&app, &host_log(&host));
-            destination
-        }
-        Ok(DownloadSignal::Rejected { age_gate: true }) => return Waited::AgeGate,
-        Ok(DownloadSignal::Rejected { age_gate: false }) => return Waited::Failed,
-        Ok(DownloadSignal::Finished { success, path }) => {
-            if success {
-                if let Some(path) = existing_download(path, Path::new("")) {
-                    return Waited::File(path);
-                }
-            }
-            return Waited::Failed;
-        }
-        Err(_) => return Waited::Login,
-    };
-    match receiver.recv_timeout(DOWNLOAD_FINISH_WAIT) {
-        Ok(DownloadSignal::Finished {
-            success: true,
-            path,
-        }) => existing_download(path, &destination).map_or(Waited::Failed, Waited::File),
-        Ok(DownloadSignal::Rejected { age_gate: true }) => Waited::AgeGate,
-        Ok(DownloadSignal::Rejected { age_gate: false }) => Waited::Failed,
-        _ => Waited::Failed,
     }
 }
 
@@ -1125,10 +1183,15 @@ async fn pause_for(total: Duration) {
 }
 
 async fn eval_booth(app: &AppHandle, script: String) -> Result<String, String> {
+    eval_label(app, WINDOW_LABEL, script).await
+}
+
+async fn eval_label(app: &AppHandle, label: &str, script: String) -> Result<String, String> {
+    let label = label.to_string();
     let (sender, receiver) = std::sync::mpsc::channel();
     dispatch_ui(app.clone(), move |handle| {
         let window = handle
-            .get_webview_window(WINDOW_LABEL)
+            .get_webview_window(&label)
             .ok_or("ブラウザが開いていません")?;
         window
             .eval_with_callback(script, move |result| {
@@ -1144,6 +1207,66 @@ async fn eval_booth(app: &AppHandle, script: String) -> Result<String, String> {
     })
     .await
     .map_err(|err| format!("ページを読めません: {err}"))?
+}
+
+/// 見えている窓があればその場で読み、無ければ隠した窓でライブラリを開いて読む。
+/// 読み終わったら隠した窓は捨てる。クッキーは読まない。
+pub async fn read_booth_account(app: AppHandle) -> Result<crate::quiet::BoothAccount, String> {
+    browser_enabled(&app)?;
+    let _turn = ProbeTurn::acquire()
+        .await
+        .map_err(|_| "ログイン状態を確認できません".to_string())?;
+    let library = Url::parse(LIBRARY_URL).map_err(|_| "ページのURLを読めません".to_string())?;
+    let created = dispatch_ui(app.clone(), move |handle| {
+        if handle.get_webview_window(WINDOW_LABEL).is_some() {
+            return Ok(false);
+        }
+        open_profile_probe(handle, library)?;
+        Ok(true)
+    })
+    .await?;
+    let raw = if created {
+        wait_for_account_markup(&app).await
+    } else {
+        eval_label(
+            &app,
+            WINDOW_LABEL,
+            crate::quiet::account_script().to_string(),
+        )
+        .await
+    };
+    if created {
+        destroy_probe(&app).await;
+    }
+    let raw = raw?;
+    let account = crate::quiet::parse_account_eval(&raw)?;
+    browser_log(&app, "アカウントを確認しました");
+    Ok(account)
+}
+
+async fn wait_for_account_markup(app: &AppHandle) -> Result<String, String> {
+    let started = std::time::Instant::now();
+    let script = crate::quiet::account_script().to_string();
+    loop {
+        let raw = eval_label(app, PROBE_LABEL, script.clone()).await?;
+        let ready = serde_json::from_str::<serde_json::Value>(&raw)
+            .ok()
+            .and_then(|value| {
+                let value = if let serde_json::Value::String(inner) = value {
+                    serde_json::from_str(&inner).unwrap_or(serde_json::Value::Null)
+                } else {
+                    value
+                };
+                value.get("ready").and_then(|item| item.as_bool())
+            })
+            .unwrap_or(false);
+        if ready || started.elapsed() > Duration::from_secs(12) {
+            return Ok(raw);
+        }
+        let _ =
+            tauri::async_runtime::spawn_blocking(|| std::thread::sleep(Duration::from_millis(250)))
+                .await;
+    }
 }
 
 async fn navigate_booth(
@@ -1648,5 +1771,63 @@ mod tests {
             .unwrap();
         assert_eq!(unnamed, "2336028");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn quiet_download_does_not_show_or_focus_a_window() {
+        let browser = include_str!("browser.rs");
+        let production = browser.split("mod tests").next().unwrap();
+        let download = function_body(production, "fn download_one_file");
+        let receive = function_body(production, "fn receive_without_window");
+        let cookies = function_body(production, "fn booth_cookie_header");
+        let probe = function_body(production, "fn open_profile_probe");
+        for body in [download, receive, cookies, probe] {
+            assert!(!body.contains(".show("), "{body}");
+            assert!(!body.contains("set_focus"), "{body}");
+            assert!(!body.contains("unminimize"), "{body}");
+        }
+        assert!(!download.contains(".navigate("));
+        assert!(!receive.contains(".navigate("));
+        assert!(download.contains("receive_without_window"));
+        assert!(download.contains("open_browser"));
+        assert!(cookies.contains("spawn_blocking"));
+        assert!(cookies.contains("session_header"));
+        assert!(cookies.contains("dispatch_ui"));
+        assert!(!cookies.contains("cookies_for_url"));
+        let session = function_body(include_str!("quiet.rs"), "fn session_header");
+        assert!(session.contains("cookies_for_url"));
+        assert!(!session.contains("dispatch_ui"));
+        assert!(!session.contains(".build("));
+        assert!(probe.contains("visible(false)"));
+        assert!(probe.contains("skip_taskbar(true)"));
+        assert!(probe.contains("focused(false)"));
+        assert!(probe.contains(".build("));
+        assert!(production.contains("fn open_browser"));
+        let open = function_body(production, "fn open_browser");
+        assert!(open.contains(".show()"));
+        let commands = include_str!("commands.rs");
+        assert!(commands.contains("async fn booth_account"));
+        assert!(commands.contains("async fn download_booth_file"));
+        assert!(!commands.contains("pub fn download_booth_file"));
+        assert!(!commands.contains("pub fn booth_account"));
+    }
+
+    fn function_body<'a>(source: &'a str, name: &str) -> &'a str {
+        let start = source
+            .find(name)
+            .unwrap_or_else(|| panic!("missing {name}"));
+        let rest = &source[start..];
+        let after = rest.find('\n').unwrap() + 1;
+        let tail = &rest[after..];
+        let end = tail
+            .find("\nfn ")
+            .or_else(|| tail.find("\npub fn "))
+            .or_else(|| tail.find("\npub async fn "))
+            .or_else(|| tail.find("\nasync fn "))
+            .or_else(|| tail.find("\nstruct "))
+            .or_else(|| tail.find("\nenum "))
+            .or_else(|| tail.find("\nimpl "))
+            .unwrap_or(tail.len());
+        &rest[..after + end]
     }
 }

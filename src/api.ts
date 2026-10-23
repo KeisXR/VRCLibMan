@@ -9,6 +9,7 @@ import type {
   ExtractReport,
   ExtensionLink,
   BrowserDiagnostic,
+  BoothAccount,
   ImportReport,
   LibraryWalkReport,
   BoothFileStatus,
@@ -47,6 +48,13 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
   return invoke<T>(command, args);
 }
 
+export function listenBoothUsed(onUsed: () => void): Promise<() => void> {
+  if (!isTauri()) {
+    return Promise.resolve(() => undefined);
+  }
+  return import("@tauri-apps/api/event").then(({ listen }) => listen("booth-browser-used", () => onUsed()));
+}
+
 export function listenBoothFile(onStatus: (status: BoothFileStatus) => void): Promise<() => void> {
   if (!isTauri()) {
     return Promise.resolve(() => undefined);
@@ -79,6 +87,7 @@ export const api = {
   regenerateExtensionToken: () => call<ExtensionLink>("regenerate_extension_token"),
   saveSettings: (settings: Settings) => call<void>("save_settings", { settings }),
   openBoothBrowser: () => call<void>("open_booth_browser"),
+  boothAccount: () => call<BoothAccount>("booth_account"),
   showBoothLibrary: () => call<void>("show_booth_library"),
   browseBoothHistory: (forward: boolean) => call<void>("browse_booth_history", { forward }),
   importBoothPage: () => call<ImportReport>("import_booth_page"),

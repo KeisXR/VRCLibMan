@@ -346,6 +346,11 @@ pub fn booth_browser_log(
 }
 
 #[tauri::command]
+pub async fn booth_account(app: tauri::AppHandle) -> Result<crate::quiet::BoothAccount, String> {
+    crate::browser::read_booth_account(app).await
+}
+
+#[tauri::command]
 pub async fn download_booth_file(
     app: tauri::AppHandle,
     booth_id: String,

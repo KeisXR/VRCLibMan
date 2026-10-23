@@ -5,7 +5,7 @@ import type { ImportReport, LibraryWalkReport } from "../types";
 import { errorText } from "../ui";
 
 export function BrowserPage({ enabled }: { enabled: boolean }) {
-  const { refresh, notify, fail } = useShell();
+  const { refresh, notify, fail, refreshAccount } = useShell();
   const [busy, setBusy] = useState(false);
   const [walking, setWalking] = useState(false);
   const [walkMessage, setWalkMessage] = useState("");
@@ -97,6 +97,7 @@ export function BrowserPage({ enabled }: { enabled: boolean }) {
                   setReport(result);
                   notify(`${result.inserted} 件追加、${result.updated} 件更新しました`);
                   refresh();
+                  refreshAccount();
                 })
               }
             >
@@ -119,6 +120,7 @@ export function BrowserPage({ enabled }: { enabled: boolean }) {
                     else if (result.cancelled) notify(`中止しました。${counts}`);
                     else notify(counts);
                     refresh();
+                    refreshAccount();
                   } catch (err) {
                     fail(errorText(err));
                   } finally {

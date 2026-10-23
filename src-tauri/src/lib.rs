@@ -11,6 +11,7 @@ mod matching;
 mod model;
 mod normalize;
 mod ollama;
+mod quiet;
 mod resolve;
 mod scan;
 mod thumb;
@@ -146,6 +147,7 @@ pub fn run() {
             commands::close_booth_browser,
             commands::booth_browser_log,
             commands::download_booth_file,
+            commands::booth_account,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

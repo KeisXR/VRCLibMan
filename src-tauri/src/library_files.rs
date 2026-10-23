@@ -178,7 +178,7 @@ fn same_path(left: &Path, right: &Path) -> bool {
 /// `\\?\C:\...` becomes `C:\...`, and `\\?\UNC\server\share\...` becomes
 /// `\\server\share\...`. A path without that prefix is unchanged, so this is a
 /// no-op for ordinary Linux canonical paths.
-fn without_verbatim_prefix(path: &Path) -> PathBuf {
+pub(crate) fn without_verbatim_prefix(path: &Path) -> PathBuf {
     let Some(text) = path.to_str() else {
         return path.to_path_buf();
     };
