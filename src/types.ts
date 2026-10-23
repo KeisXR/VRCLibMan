@@ -161,6 +161,7 @@ export interface Settings {
   ollamaModel: string;
   confidenceThreshold: number;
   libraryFolder: string;
+  builtinBrowser: boolean;
 }
 
 export interface LibraryStats {

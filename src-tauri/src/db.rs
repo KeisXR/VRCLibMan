@@ -141,6 +141,7 @@ fn ensure_ready(connection: &Connection) -> Result<(), String> {
         ("ollama_model", crate::model::DEFAULT_OLLAMA_MODEL),
         ("confidence_threshold", "0.6"),
         ("library_folder", ""),
+        ("builtin_browser", "0"),
     ] {
         connection
             .execute(
@@ -169,6 +170,7 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
             .unwrap_or_else(|| crate::model::DEFAULT_OLLAMA_MODEL.into()),
         confidence_threshold: threshold,
         library_folder: setting(connection, "library_folder")?.unwrap_or_default(),
+        builtin_browser: setting(connection, "builtin_browser")?.as_deref() == Some("1"),
     })
 }
 
@@ -181,6 +183,11 @@ pub(crate) fn save_settings(connection: &Connection, input: &SettingsInput) -> R
         &input.confidence_threshold.clamp(0.0, 1.0).to_string(),
     )?;
     set_setting(connection, "library_folder", input.library_folder.trim())?;
+    set_setting(
+        connection,
+        "builtin_browser",
+        if input.builtin_browser { "1" } else { "0" },
+    )?;
     Ok(())
 }
 
@@ -2170,11 +2177,35 @@ mod tests {
                 ollama_model: "qwen3:4b".into(),
                 confidence_threshold: 0.6,
                 library_folder: String::new(),
+                builtin_browser: false,
             },
         )
         .unwrap();
         ensure_ready(&connection).unwrap();
         assert_eq!(settings(&connection).unwrap().ollama_model, "qwen3:4b");
+        assert!(!settings(&connection).unwrap().builtin_browser);
+    }
+
+    #[test]
+    fn builtin_browser_stays_off_until_the_user_enables_it() {
+        let connection = open_memory().unwrap();
+        assert!(!settings(&connection).unwrap().builtin_browser);
+        assert_eq!(settings(&connection).unwrap().ollama_model, "gemma4:12b");
+        save_settings(
+            &connection,
+            &SettingsInput {
+                ollama_base_url: "http://127.0.0.1:11434".into(),
+                ollama_model: "gemma4:12b".into(),
+                confidence_threshold: 0.6,
+                library_folder: String::new(),
+                builtin_browser: true,
+            },
+        )
+        .unwrap();
+        ensure_ready(&connection).unwrap();
+        let saved = settings(&connection).unwrap();
+        assert!(saved.builtin_browser);
+        assert_eq!(saved.ollama_model, "gemma4:12b");
     }
 
     #[test]

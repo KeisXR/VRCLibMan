@@ -60,6 +60,32 @@ export function SettingsPage() {
     }
   }
 
+  async function setBuiltinBrowser(enabled: boolean) {
+    if (!settings) return;
+    if (enabled && !settings.builtinBrowser) {
+      const accepted = window.confirm(
+        "内蔵ブラウザでは、このアプリの中で BOOTH / pixiv にメールアドレスとパスワードでログインします。ログイン情報はアプリ専用のフォルダに保存され、アプリはクッキーを読み出したり外へ送ったりしません。拡張機能でページを書き出すより、アカウントへのリスク（制限や停止を含む）が高くなることがあります。年齢確認を自動で進めることはありません。ページを自動で辿ることもしません。ご自身の判断で使ってください。有効にしますか？",
+      );
+      if (!accepted) return;
+    }
+    try {
+      const next = { ...settings, builtinBrowser: enabled };
+      await api.saveSettings(next);
+      if (!enabled) {
+        try {
+          await api.closeBoothBrowser();
+        } catch {
+          // 見本データにはブラウザウィンドウがない。
+        }
+      }
+      setSettings(next);
+      notify(enabled ? "内蔵ブラウザを有効にしました" : "内蔵ブラウザを無効にしました");
+      refresh();
+    } catch (err) {
+      fail(errorText(err));
+    }
+  }
+
   async function saveSettings() {
     if (!settings) return;
     try {
@@ -216,6 +242,46 @@ export function SettingsPage() {
             <button className="button" type="button" onClick={() => void regenerateToken()}>
               コードを作り直す
             </button>
+          </div>
+        </div>
+      )}
+      {settings && (
+        <div className="panel" style={{ padding: 16, marginBottom: 16 }}>
+          <h2>内蔵ブラウザ</h2>
+          <p className="meta">
+            既定は拡張機能です。内蔵ブラウザは、自分でログインして今開いているライブラリのページだけを取り込む別のモードです。
+            自動でページを辿ったり、一括でダウンロードしたりしません。年齢確認も自動では進みません。
+            ログイン状態はこのアプリ専用のフォルダに残り、ログアウトでそのフォルダを消します。
+          </p>
+          <div className="row-actions">
+            {settings.builtinBrowser ? (
+              <>
+                <button className="button" type="button" onClick={() => void setBuiltinBrowser(false)}>
+                  内蔵ブラウザを無効にする
+                </button>
+                <button
+                  className="button danger"
+                  type="button"
+                  onClick={() =>
+                    void (async () => {
+                      if (!window.confirm("ブラウザを閉じ、このアプリの中の BOOTH のログイン状態を消します。")) return;
+                      try {
+                        await api.clearBoothSession();
+                        notify("セッションを消しました");
+                      } catch (err) {
+                        fail(errorText(err));
+                      }
+                    })()
+                  }
+                >
+                  ログアウトしてセッションを消す
+                </button>
+              </>
+            ) : (
+              <button className="button primary" type="button" onClick={() => void setBuiltinBrowser(true)}>
+                内蔵ブラウザを有効にする
+              </button>
+            )}
           </div>
         </div>
       )}

@@ -5,10 +5,11 @@ import { AvatarDetailPage } from "./pages/AvatarDetailPage";
 import { ImportPage } from "./pages/ImportPage";
 import { QueuePage } from "./pages/QueuePage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { BrowserPage } from "./pages/BrowserPage";
 import type { JobProgress, LibraryStats } from "./types";
 import { errorText } from "./ui";
 
-type Page = "avatars" | "avatar" | "queue" | "import" | "settings";
+type Page = "avatars" | "avatar" | "queue" | "import" | "settings" | "browser";
 
 interface Route {
   page: Page;
@@ -35,7 +36,7 @@ function parseRoute(hash: string): Route {
   if (parts[0] === "avatar" && parts[1]) {
     return { page: "avatar", id: decodeURIComponent(parts[1]) };
   }
-  if (parts[0] === "queue" || parts[0] === "import" || parts[0] === "settings") {
+  if (parts[0] === "queue" || parts[0] === "import" || parts[0] === "settings" || parts[0] === "browser") {
     return { page: parts[0] };
   }
   return { page: "avatars" };
@@ -48,6 +49,7 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
+  const [builtinBrowser, setBuiltinBrowser] = useState(false);
   const route = useMemo(() => parseRoute(hash), [hash]);
 
   const refresh = useCallback(() => setRevision((value) => value + 1), []);
@@ -86,6 +88,21 @@ export default function App() {
       stop();
     };
   }, [refresh]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.settings().then(
+      (value) => {
+        if (!cancelled) setBuiltinBrowser(value.builtinBrowser);
+      },
+      () => {
+        if (!cancelled) setBuiltinBrowser(false);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [revision]);
 
   useEffect(() => {
     let cancelled = false;
@@ -152,6 +169,11 @@ export default function App() {
             <a className={route.page === "settings" ? "nav-link active" : "nav-link"} href="#/settings">
               設定
             </a>
+            {builtinBrowser && (
+              <a className={route.page === "browser" ? "nav-link active" : "nav-link"} href="#/browser">
+                ブラウザ
+              </a>
+            )}
           </nav>
           <div className="rail-foot">
             {stats ? `${stats.products} 商品` : "読み込み中"}
@@ -178,6 +200,7 @@ export default function App() {
             {route.page === "queue" && <QueuePage />}
             {route.page === "import" && <ImportPage />}
             {route.page === "settings" && <SettingsPage />}
+            {route.page === "browser" && <BrowserPage enabled={builtinBrowser} />}
           </main>
         </div>
       </div>
