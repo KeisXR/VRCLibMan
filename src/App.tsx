@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, isTauri, listenProgress, onRefresh } from "./api";
 import { AvatarsPage } from "./pages/AvatarsPage";
 import { AvatarDetailPage } from "./pages/AvatarDetailPage";
@@ -58,6 +58,7 @@ export default function App() {
   const [builtinBrowser, setBuiltinBrowser] = useState(false);
   const [setupComplete, setSetupComplete] = useState<boolean | null>(null);
   const route = useMemo(() => parseRoute(hash), [hash]);
+  const contentRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(() => setRevision((value) => value + 1), []);
   const notify = useCallback((message: string) => {
@@ -74,6 +75,12 @@ export default function App() {
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
+
+  useLayoutEffect(() => {
+    const pane = contentRef.current;
+    if (!pane) return;
+    pane.scrollTop = 0;
+  }, [hash]);
 
   useEffect(() => onRefresh(refresh), [refresh]);
 
@@ -203,7 +210,7 @@ export default function App() {
             {isTauri() ? stats?.ollamaModel : "ブラウザ確認用"}
           </div>
         </aside>
-        <div className="main">
+        <div className="main" ref={contentRef}>
           <div className="topbar">
             {error && <div className="banner error">{error}</div>}
             {notice && <div className="banner notice">{notice}</div>}
