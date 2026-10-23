@@ -390,10 +390,30 @@ export function SettingsPage() {
                 }
               />
             </label>
-            <label className="field">
-              <span>最後に調べたフォルダ</span>
-              <input value={settings.libraryFolder} readOnly />
+            <label className="field span-2">
+              <span>ライブラリのフォルダ</span>
+              <input
+                value={settings.libraryFolder}
+                placeholder="ダウンロードしたファイルの移動先"
+                onChange={(event) => setSettings({ ...settings, libraryFolder: event.target.value })}
+              />
             </label>
+            <div className="row-actions span-2">
+              <button
+                className="button"
+                type="button"
+                onClick={() => {
+                  void chooseFolder().then(
+                    (path) => {
+                      if (path) setSettings({ ...settings, libraryFolder: path });
+                    },
+                    (err: unknown) => fail(errorText(err)),
+                  );
+                }}
+              >
+                ライブラリのフォルダを選ぶ
+              </button>
+            </div>
             <label className="field span-2">
               <span>リモートのフォルダ</span>
               <input
@@ -423,13 +443,25 @@ export function SettingsPage() {
                 <input
                   type="checkbox"
                   checked={settings.routeDownloads}
-                  onChange={(event) => setSettings({ ...settings, routeDownloads: event.target.checked })}
+                  onChange={(event) => {
+                    const enabled = event.target.checked;
+                    if (enabled && settings.libraryFolder.trim() === "") {
+                      void chooseFolder().then(
+                        (path) => {
+                          if (path) setSettings({ ...settings, libraryFolder: path, routeDownloads: true });
+                        },
+                        (err: unknown) => fail(errorText(err)),
+                      );
+                      return;
+                    }
+                    setSettings({ ...settings, routeDownloads: enabled });
+                  }}
                 />{" "}
                 BOOTH の Unity / VRChat 用ファイルを、ダウンロード時に VRCLibMan へ振り分ける
               </span>
             </label>
             <p className="meta span-2">
-              振り分けは既定でオフです。オンにすると、拡張は自分で押したダウンロードだけを Downloads/VRCLibMan/商品ID に置き、アプリが上のライブラリへ移します。アプリから一括では取りません。リモートにあるだけのファイルは薄く、未ダウンロードはグレーで出します。送る・取ってくるは押したファイルだけをコピーし、同じ名前があれば上書きします。切れている共有先では待たずに未ダウンロードとして表示します。
+              振り分けは既定でオフです。オンにするときは、移動先のライブラリフォルダが必要です。オンにすると、拡張は自分で押したダウンロードだけを、この PC のダウンロードフォルダの VRCLibMan/商品ID に置き、アプリがライブラリへ移します。それ以外の場所にあるファイルは移動しません。アプリから一括では取りません。リモートの確認は画面を出してから行い、送る・取ってくるは押したファイルだけをコピーします。コピー中は画面の上に表示します。切れている共有先では待たずに未ダウンロードとして表示します。
             </p>
           </div>
           <div className="row-actions">

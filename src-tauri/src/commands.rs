@@ -11,7 +11,7 @@ use crate::view::{self, AvatarCard, AvatarDetail, ProductOption, QueuePage};
 use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, MutexGuard};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 struct ClearRunning(Arc<std::sync::atomic::AtomicBool>);
 
@@ -96,16 +96,37 @@ pub fn list_avatars(state: State<'_, AppState>) -> Result<Vec<AvatarCard>, Strin
     Ok(view::avatar_cards(&snapshot))
 }
 
-#[tauri::command]
-pub fn get_avatar(state: State<'_, AppState>, id: String) -> Result<AvatarDetail, String> {
+fn load_avatar(app: &AppHandle, id: &str, probe_remote: bool) -> Result<AvatarDetail, String> {
+    let state = app.state::<AppState>();
     let (mut snapshot, remote) = {
-        let mut connection = db(&state)?;
+        let mut connection = state
+            .db
+            .lock()
+            .map_err(|_| "データベースをロックできません".to_string())?;
         let snapshot = db::load_snapshot(&mut connection)?;
         let remote = db::settings(&mut connection)?.remote_library_folder;
         (snapshot, remote)
     };
-    crate::library_files::fill_places(&mut snapshot, &remote);
-    view::avatar_detail(&snapshot, &id).ok_or_else(|| "アバターが見つかりません".into())
+    if probe_remote {
+        crate::library_files::fill_places(&mut snapshot, &remote);
+    } else {
+        crate::library_files::fill_local_places(&mut snapshot, &remote);
+    }
+    view::avatar_detail(&snapshot, id).ok_or_else(|| "アバターが見つかりません".into())
+}
+
+#[tauri::command]
+pub async fn get_avatar(app: AppHandle, id: String) -> Result<AvatarDetail, String> {
+    tauri::async_runtime::spawn_blocking(move || load_avatar(&app, &id, false))
+        .await
+        .map_err(|err| format!("アバターを表示できません: {err}"))?
+}
+
+#[tauri::command]
+pub async fn probe_remote_files(app: AppHandle, id: String) -> Result<AvatarDetail, String> {
+    tauri::async_runtime::spawn_blocking(move || load_avatar(&app, &id, true))
+        .await
+        .map_err(|err| format!("リモートを確認できません: {err}"))?
 }
 
 #[tauri::command]
@@ -172,58 +193,100 @@ pub fn add_free_product(state: State<'_, AppState>, url: String) -> Result<Strin
     db::add_free_product(&mut connection, &url)
 }
 
-#[tauri::command]
-pub fn pull_remote_file(
-    state: State<'_, AppState>,
-    booth_id: String,
-    variation: String,
-    filename: String,
-) -> Result<(), String> {
-    let (remote, library) = {
-        let connection = db(&state)?;
-        db::require_download(&connection, &booth_id, &variation, &filename)?;
-        let settings = db::settings(&connection)?;
-        if settings.remote_library_folder.trim().is_empty() {
-            return Err("リモートのフォルダが未設定です".into());
-        }
-        if settings.library_folder.trim().is_empty() {
-            return Err("先にフォルダを調べて、ライブラリの場所を決めてください".into());
-        }
-        (settings.remote_library_folder, settings.library_folder)
+fn finish_copy(app: &AppHandle, filename: &str, result: &Result<(), String>) {
+    let message = if result.is_ok() {
+        format!("{filename} をコピーしました")
+    } else {
+        "コピーを中断しました".into()
     };
-    let dest = crate::library_files::pull_file(
-        Path::new(remote.trim()),
-        Path::new(library.trim()),
-        &booth_id,
-        &filename,
-    )?;
-    let connection = db(&state)?;
-    db::note_downloaded_file(&connection, &booth_id, &variation, &filename, &dest)
+    emit_progress(app, "copy", 1, 1, message);
 }
 
 #[tauri::command]
-pub fn push_remote_file(
-    state: State<'_, AppState>,
+pub async fn pull_remote_file(
+    app: AppHandle,
     booth_id: String,
     variation: String,
     filename: String,
 ) -> Result<(), String> {
-    let (source, remote) = {
-        let connection = db(&state)?;
-        let source = db::local_source_for(&connection, &booth_id, &variation, &filename)?;
-        let settings = db::settings(&connection)?;
-        if settings.remote_library_folder.trim().is_empty() {
-            return Err("リモートのフォルダが未設定です".into());
-        }
-        (source, settings.remote_library_folder)
-    };
-    crate::library_files::push_file(
-        &source,
-        Path::new(remote.trim()),
-        &booth_id,
-        &filename,
-    )?;
-    Ok(())
+    let label = filename.clone();
+    emit_progress(&app, "copy", 0, 1, format!("{label} をコピーしています"));
+    let worker = app.clone();
+    let copied = tauri::async_runtime::spawn_blocking(move || {
+        let (remote, library) = {
+            let state = worker.state::<AppState>();
+            let connection = state
+                .db
+                .lock()
+                .map_err(|_| "データベースをロックできません".to_string())?;
+            db::require_download(&connection, &booth_id, &variation, &filename)?;
+            let settings = db::settings(&connection)?;
+            if settings.remote_library_folder.trim().is_empty() {
+                return Err("リモートのフォルダが未設定です".into());
+            }
+            if settings.library_folder.trim().is_empty() {
+                return Err("ライブラリのフォルダを選んでください".into());
+            }
+            (settings.remote_library_folder, settings.library_folder)
+        };
+        let dest = crate::library_files::pull_file(
+            Path::new(remote.trim()),
+            Path::new(library.trim()),
+            &booth_id,
+            &filename,
+        )?;
+        let state = worker.state::<AppState>();
+        let connection = state
+            .db
+            .lock()
+            .map_err(|_| "データベースをロックできません".to_string())?;
+        db::note_downloaded_file(&connection, &booth_id, &variation, &filename, &dest)
+    })
+    .await
+    .map_err(|err| format!("コピーを実行できません: {err}"))?;
+    finish_copy(&app, &label, &copied);
+    copied
+}
+
+#[tauri::command]
+pub async fn push_remote_file(
+    app: AppHandle,
+    booth_id: String,
+    variation: String,
+    filename: String,
+) -> Result<(), String> {
+    let label = filename.clone();
+    emit_progress(&app, "copy", 0, 1, format!("{label} をコピーしています"));
+    let worker = app.clone();
+    let copied = tauri::async_runtime::spawn_blocking(move || {
+        let (source, remote) = {
+            let state = worker.state::<AppState>();
+            let connection = state
+                .db
+                .lock()
+                .map_err(|_| "データベースをロックできません".to_string())?;
+            let source = db::local_source_for(&connection, &booth_id, &variation, &filename)?;
+            let settings = db::settings(&connection)?;
+            if settings.remote_library_folder.trim().is_empty() {
+                return Err("リモートのフォルダが未設定です".into());
+            }
+            (source, settings.remote_library_folder)
+        };
+        crate::library_files::push_file(&source, Path::new(remote.trim()), &booth_id, &filename)?;
+        let size = std::fs::metadata(&source)
+            .map(|meta| meta.len())
+            .map_err(|err| format!("ファイルのサイズを確認できません: {err}"))?;
+        let state = worker.state::<AppState>();
+        let connection = state
+            .db
+            .lock()
+            .map_err(|_| "データベースをロックできません".to_string())?;
+        db::remember_file_size(&connection, &booth_id, &variation, &filename, size)
+    })
+    .await
+    .map_err(|err| format!("コピーを実行できません: {err}"))?;
+    finish_copy(&app, &label, &copied);
+    copied
 }
 
 #[tauri::command]
@@ -582,7 +645,10 @@ pub fn avatar_candidates(state: State<'_, AppState>) -> Result<Vec<AvatarCandida
 }
 
 #[tauri::command]
-pub fn register_avatar_candidate(state: State<'_, AppState>, name: String) -> Result<String, String> {
+pub fn register_avatar_candidate(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<String, String> {
     let mut connection = db(&state)?;
     db::register_candidate(&mut connection, &name)
 }

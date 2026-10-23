@@ -4,7 +4,16 @@ use std::path::{Component, Path};
 const MAX_DEPTH: usize = 8;
 const MAX_ENTRIES: usize = 20_000;
 const FILE_EXTENSIONS: &[&str] = &[
-    "zip", "rar", "7z", "unitypackage", "vrm", "fbx", "pmx", "pmd", "blend", "psd",
+    "zip",
+    "rar",
+    "7z",
+    "unitypackage",
+    "vrm",
+    "fbx",
+    "pmx",
+    "pmd",
+    "blend",
+    "psd",
 ];
 const SKIP_DIRS: &[&str] = &[
     ".git",
@@ -84,7 +93,7 @@ fn normal_components(path: &Path) -> Vec<String> {
         .collect()
 }
 
-fn scan_block_reason(canon: &Path) -> Result<(), String> {
+pub(crate) fn scan_block_reason(canon: &Path) -> Result<(), String> {
     let normals = normal_components(canon);
     if normals.is_empty() {
         return Err(
@@ -108,6 +117,7 @@ fn scan_block_reason(canon: &Path) -> Result<(), String> {
 }
 
 /// macOS roots that must not be scanned. The temporary directory is allowed so tests can use it.
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn macos_scan_block(
     canon: &Path,
     home: Option<&Path>,
@@ -253,7 +263,8 @@ mod tests {
     impl TempDir {
         fn new() -> Self {
             let seq = TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
-            let path = std::env::temp_dir().join(format!("vrclibman-scan-{}-{seq}", std::process::id()));
+            let path =
+                std::env::temp_dir().join(format!("vrclibman-scan-{}-{seq}", std::process::id()));
             fs::create_dir_all(&path).unwrap();
             Self(path)
         }
@@ -269,18 +280,30 @@ mod tests {
         let root = TempDir::new();
         fs::write(root.0.join("Lime_outfit.unitypackage"), b"pkg").unwrap();
         fs::create_dir_all(root.0.join("node_modules")).unwrap();
-        fs::write(root.0.join("node_modules").join("hidden.unitypackage"), b"no").unwrap();
+        fs::write(
+            root.0.join("node_modules").join("hidden.unitypackage"),
+            b"no",
+        )
+        .unwrap();
         fs::create_dir_all(root.0.join("textures")).unwrap();
         fs::write(root.0.join("textures").join("cloth.psd"), b"img").unwrap();
         fs::create_dir_all(root.0.join("ライム衣装")).unwrap();
 
         let outcome = scan_folder(&root.0).unwrap();
-        let names: Vec<_> = outcome.entries.iter().map(|entry| entry.filename.as_str()).collect();
+        let names: Vec<_> = outcome
+            .entries
+            .iter()
+            .map(|entry| entry.filename.as_str())
+            .collect();
         assert!(names.contains(&"Lime_outfit.unitypackage"));
         assert!(names.contains(&"cloth.psd"));
         assert!(names.contains(&"ライム衣装"));
         assert!(!names.iter().any(|name| name.contains("hidden")));
-        assert!(!names.iter().any(|name| *name == "textures" || *name == "node_modules"));
+        assert!(
+            !names
+                .iter()
+                .any(|name| *name == "textures" || *name == "node_modules")
+        );
         assert!(!outcome.truncated);
     }
 
@@ -342,7 +365,13 @@ mod tests {
             macos_scan_block(home, Some(home), None),
             Some("ホームフォルダ直下はスキャンできません。中のフォルダを選んでください")
         );
-        assert_eq!(macos_scan_block(Path::new("/Users/kei/Assets"), Some(home), None), None);
-        assert_eq!(macos_scan_block(Path::new("/Users/other/Assets"), Some(home), None), None);
+        assert_eq!(
+            macos_scan_block(Path::new("/Users/kei/Assets"), Some(home), None),
+            None
+        );
+        assert_eq!(
+            macos_scan_block(Path::new("/Users/other/Assets"), Some(home), None),
+            None
+        );
     }
 }

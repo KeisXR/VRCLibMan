@@ -74,6 +74,7 @@ export interface ItemView {
   isFree: boolean;
   isAdult: boolean;
   remoteConfigured: boolean;
+  remoteChecked: boolean;
   remoteReachable: boolean;
 }
 

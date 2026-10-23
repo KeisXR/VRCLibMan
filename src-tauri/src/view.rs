@@ -1,6 +1,6 @@
 use crate::model::{
-    Avatar, BaseBody, Category, DownloadFact, FilePlace, LibraryStats, Link, LocalFile, PlacedDownload,
-    Product, ProductFlag, VariationFact,
+    Avatar, BaseBody, Category, DownloadFact, FilePlace, LibraryStats, Link, LocalFile,
+    PlacedDownload, Product, ProductFlag, VariationFact,
 };
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -17,6 +17,7 @@ pub struct Snapshot {
     pub placed_downloads: Vec<PlacedDownload>,
     pub product_flags: Vec<ProductFlag>,
     pub remote_configured: bool,
+    pub remote_checked: bool,
     pub remote_reachable: bool,
 }
 
@@ -69,6 +70,7 @@ pub struct ItemView {
     pub is_free: bool,
     pub is_adult: bool,
     pub remote_configured: bool,
+    pub remote_checked: bool,
     pub remote_reachable: bool,
 }
 
@@ -359,7 +361,11 @@ pub fn library_stats(snapshot: &Snapshot, model: &str) -> LibraryStats {
         .count() as u32;
     LibraryStats {
         products: snapshot.products.len() as u32,
-        owned_avatars: snapshot.avatars.iter().filter(|avatar| avatar.owned).count() as u32,
+        owned_avatars: snapshot
+            .avatars
+            .iter()
+            .filter(|avatar| avatar.owned)
+            .count() as u32,
         unextracted,
         needs_review,
         queue_count: unextracted + needs_review,
@@ -436,7 +442,16 @@ fn classify(snapshot: &Snapshot, avatar: &Avatar) -> Classified {
     let thumbnail_path = owned.iter().find_map(|body| body.thumbnail_path.clone());
     let thumbnail_url = owned.iter().find_map(|body| body.thumbnail_url.clone());
     let mut sections = Vec::new();
-    for key in ["outfit", "hair", "accessory", "texture", "gimmick", "world", "other", "uncategorized"] {
+    for key in [
+        "outfit",
+        "hair",
+        "accessory",
+        "texture",
+        "gimmick",
+        "world",
+        "other",
+        "uncategorized",
+    ] {
         let items: Vec<ItemView> = specific
             .iter()
             .filter(|(category, _)| category == key)
@@ -472,7 +487,10 @@ fn item_view(snapshot: &Snapshot, product: &Product, via_base_body: bool) -> Ite
         })
         .collect();
     let downloads = download_views(snapshot, &product.booth_id);
-    let download_names: HashSet<&str> = downloads.iter().map(|file| file.filename.as_str()).collect();
+    let download_names: HashSet<&str> = downloads
+        .iter()
+        .map(|file| file.filename.as_str())
+        .collect();
     files.retain(|file| !download_names.contains(file.filename.as_str()));
     let local_file_count = files.len() as u32;
     files.truncate(8);
@@ -485,11 +503,7 @@ fn item_view(snapshot: &Snapshot, product: &Product, via_base_body: bool) -> Ite
         title: product.title.clone(),
         shop: product.shop.clone(),
         url: product.url.clone(),
-        description_snippet: product
-            .description_snippet
-            .chars()
-            .take(500)
-            .collect(),
+        description_snippet: product.description_snippet.chars().take(500).collect(),
         thumbnail_url: product.thumbnail_url.clone(),
         thumbnail_path: product.thumbnail_path.clone(),
         category: product.category,
@@ -503,6 +517,7 @@ fn item_view(snapshot: &Snapshot, product: &Product, via_base_body: bool) -> Ite
         is_free: flag.and_then(|flag| flag.is_free).unwrap_or(false),
         is_adult: flag.and_then(|flag| flag.is_adult).unwrap_or(false),
         remote_configured: snapshot.remote_configured,
+        remote_checked: snapshot.remote_checked,
         remote_reachable: snapshot.remote_reachable,
     }
 }
@@ -689,6 +704,7 @@ mod tests {
             placed_downloads: Vec::new(),
             product_flags: Vec::new(),
             remote_configured: false,
+            remote_checked: true,
             remote_reachable: false,
         }
     }
@@ -700,7 +716,13 @@ mod tests {
         let ids: HashSet<_> = cards.iter().map(|card| card.id.as_str()).collect();
         assert_eq!(ids, HashSet::from(["lime", "plum", "manuka", "shinano"]));
         assert!(cards.iter().find(|card| card.id == "lime").unwrap().owned);
-        assert!(!cards.iter().find(|card| card.id == "shinano").unwrap().owned);
+        assert!(
+            !cards
+                .iter()
+                .find(|card| card.id == "shinano")
+                .unwrap()
+                .owned
+        );
 
         let lime = avatar_detail(&snapshot, "lime").unwrap();
         assert!(lime.sections.iter().any(|section| {
@@ -724,11 +746,13 @@ mod tests {
         assert!(outfit.via_base_body);
 
         let manuka = avatar_detail(&snapshot, "manuka").unwrap();
-        assert!(!manuka
-            .sections
-            .iter()
-            .flat_map(|section| &section.items)
-            .any(|item| item.booth_id == "4" || item.booth_id == "6"));
+        assert!(
+            !manuka
+                .sections
+                .iter()
+                .flat_map(|section| &section.items)
+                .any(|item| item.booth_id == "4" || item.booth_id == "6")
+        );
         assert!(manuka.generic_items.iter().any(|item| item.booth_id == "5"));
     }
 }

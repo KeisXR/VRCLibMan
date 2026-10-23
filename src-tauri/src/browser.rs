@@ -11,6 +11,7 @@ pub const LIBRARY_URL: &str = "https://accounts.booth.pm/library";
 const SESSION_DIR_NAME: &str = "booth-browser";
 /// Fixed WKWebsiteDataStore id so the BOOTH window does not share cookies with the main window.
 /// macOS 14 and later. Windows keeps using a separate WebView2 folder instead.
+#[cfg(any(target_os = "macos", test))]
 pub const BOOTH_DATA_STORE_ID: [u8; 16] = *b"vrclibman-booth!";
 
 const EXTRACT_JS: &str = include_str!("../../extension/extract.js");

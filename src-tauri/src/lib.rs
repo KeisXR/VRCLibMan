@@ -102,6 +102,7 @@ pub fn run() {
             commands::library_stats,
             commands::list_avatars,
             commands::get_avatar,
+            commands::probe_remote_files,
             commands::list_queue,
             commands::list_product_options,
             commands::list_knowledge,

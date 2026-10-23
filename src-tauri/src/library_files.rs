@@ -49,38 +49,201 @@ pub(crate) fn clean_variation(value: &str) -> Option<String> {
     if name.is_empty() || name.chars().count() > 80 {
         return None;
     }
-    if name.chars().any(|ch| matches!(ch, '/' | '\\' | '\0') || ch.is_control()) {
+    if name
+        .chars()
+        .any(|ch| matches!(ch, '/' | '\\' | '\0') || ch.is_control())
+    {
         return None;
     }
     Some(name)
 }
 
-pub(crate) fn path_has_vrclibman(path: &Path) -> bool {
-    path.components().any(|component| match component {
-        Component::Normal(part) => part.eq_ignore_ascii_case("VRCLibMan"),
-        _ => false,
-    })
+const STAGED_PATH_ERROR: &str =
+    "移動できるのは、ダウンロードフォルダの VRCLibMan\\商品ID\\ファイル名 だけです";
+
+#[cfg(test)]
+std::thread_local! {
+    static TEST_DOWNLOADS: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
 }
 
-/// Lexical checks only. Existence is probed later so a bad path does no I/O.
-pub(crate) fn intake_path_ok(path: &Path) -> Result<(), String> {
-    if !path.is_absolute() {
+#[cfg(test)]
+pub(crate) fn set_test_downloads(path: Option<PathBuf>) {
+    TEST_DOWNLOADS.with(|slot| *slot.borrow_mut() = path);
+}
+
+pub(crate) fn downloads_folder() -> Result<PathBuf, String> {
+    #[cfg(test)]
+    if let Some(path) = TEST_DOWNLOADS.with(|slot| slot.borrow().clone()) {
+        return Ok(path);
+    }
+    known_downloads_folder()
+}
+
+#[cfg(windows)]
+fn known_downloads_folder() -> Result<PathBuf, String> {
+    use std::os::windows::ffi::OsStringExt;
+
+    #[repr(C)]
+    struct Guid {
+        data1: u32,
+        data2: u16,
+        data3: u16,
+        data4: [u8; 8],
+    }
+    // FOLDERID_Downloads {374DE290-123F-4565-9164-39C4925E467B}
+    const FOLDERID_DOWNLOADS: Guid = Guid {
+        data1: 0x374D_E290,
+        data2: 0x123F,
+        data3: 0x4565,
+        data4: [0x91, 0x64, 0x39, 0xC4, 0x92, 0x5E, 0x46, 0x7B],
+    };
+    #[link(name = "shell32")]
+    extern "system" {
+        fn SHGetKnownFolderPath(
+            rfid: *const Guid,
+            flags: u32,
+            token: isize,
+            path: *mut *mut u16,
+        ) -> i32;
+    }
+    #[link(name = "ole32")]
+    extern "system" {
+        fn CoTaskMemFree(pointer: *mut std::ffi::c_void);
+    }
+    // SAFETY: SHGetKnownFolderPath writes a CoTaskMem-allocated wide string on success.
+    // The pointer is freed with CoTaskMemFree before this function returns.
+    unsafe {
+        let mut raw = std::ptr::null_mut();
+        let code = SHGetKnownFolderPath(&FOLDERID_DOWNLOADS, 0, 0, &mut raw);
+        if code != 0 || raw.is_null() {
+            return Err("ダウンロードフォルダを確認できません".into());
+        }
+        let mut length = 0usize;
+        while *raw.add(length) != 0 {
+            length += 1;
+        }
+        let text = std::ffi::OsString::from_wide(std::slice::from_raw_parts(raw, length));
+        CoTaskMemFree(raw.cast());
+        Ok(PathBuf::from(text))
+    }
+}
+
+#[cfg(not(windows))]
+fn known_downloads_folder() -> Result<PathBuf, String> {
+    let home = std::env::var_os("HOME")
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "ダウンロードフォルダを確認できません".to_string())?;
+    Ok(PathBuf::from(home).join("Downloads"))
+}
+
+fn path_keys(path: &Path) -> Result<Vec<String>, ()> {
+    let mut keys = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir | Component::ParentDir => return Err(()),
+            Component::RootDir => {}
+            Component::Prefix(prefix) => {
+                let text = prefix.as_os_str().to_string_lossy().to_lowercase();
+                let text = text.trim_start_matches(r"\\?\").to_string();
+                if !text.is_empty() {
+                    keys.push(text);
+                }
+            }
+            Component::Normal(name) => keys.push(name.to_string_lossy().to_lowercase()),
+        }
+    }
+    Ok(keys)
+}
+
+fn same_path(left: &Path, right: &Path) -> bool {
+    path_keys(left).ok() == path_keys(right).ok()
+}
+
+fn normal_names(path: &Path) -> Result<Vec<std::ffi::OsString>, ()> {
+    let mut names = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir | Component::ParentDir => return Err(()),
+            Component::Normal(name) => names.push(name.to_os_string()),
+            _ => {}
+        }
+    }
+    Ok(names)
+}
+
+/// `parent` is already canonical. The child must be a real directory or file,
+/// not a symlink or junction, and its canonical path must stay inside `parent`.
+fn open_child(parent: &Path, name: &std::ffi::OsStr, directory: bool) -> Result<PathBuf, String> {
+    let text = name.to_string_lossy();
+    if name.is_empty() || text == "." || text == ".." || text.contains(['/', '\\']) {
+        return Err(STAGED_PATH_ERROR.into());
+    }
+    let joined = parent.join(name);
+    let meta = std::fs::symlink_metadata(&joined).map_err(|_| STAGED_PATH_ERROR.to_string())?;
+    if meta.file_type().is_symlink() {
+        return Err("シンボリックリンクは移動しません".into());
+    }
+    if directory && !meta.is_dir() {
+        return Err(STAGED_PATH_ERROR.into());
+    }
+    if !directory && !meta.is_file() {
+        return Err("ダウンロードしたファイルが見つかりません".into());
+    }
+    let canon = std::fs::canonicalize(&joined).map_err(|_| STAGED_PATH_ERROR.to_string())?;
+    let Some(canon_parent) = canon.parent() else {
+        return Err(STAGED_PATH_ERROR.into());
+    };
+    if !same_path(canon_parent, parent) {
+        return Err(STAGED_PATH_ERROR.into());
+    }
+    Ok(canon)
+}
+
+/// Accept only `{downloads}/VRCLibMan/{booth_id}/{filename}` after canonicalization.
+/// A `VRCLibMan` folder anywhere else, a different product id, a subdirectory,
+/// `..`, or a symlink that leaves the folder is rejected.
+pub(crate) fn staged_download_ok(
+    source: &Path,
+    downloads: &Path,
+    booth_id: &str,
+) -> Result<PathBuf, String> {
+    if !source.is_absolute() || !downloads.is_absolute() {
         return Err("ダウンロードのパスが絶対パスではありません".into());
     }
-    if path
-        .components()
-        .any(|component| matches!(component, Component::ParentDir))
+    if !valid_booth_id(booth_id) {
+        return Err("商品IDを特定できません".into());
+    }
+    let filename = safe_filename(
+        source
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(""),
+    )
+    .ok_or_else(|| "ファイル名を読めません".to_string())?;
+    let source_keys = path_keys(source).map_err(|_| STAGED_PATH_ERROR.to_string())?;
+    let root_keys = path_keys(downloads).map_err(|_| STAGED_PATH_ERROR.to_string())?;
+    let tail = [
+        "vrclibman".to_string(),
+        booth_id.to_string(),
+        filename.to_lowercase(),
+    ];
+    if source_keys.len() != root_keys.len() + tail.len()
+        || source_keys[..root_keys.len()] != root_keys[..]
+        || source_keys[root_keys.len()..] != tail[..]
     {
-        return Err("ダウンロードのパスに親ディレクトリは使えません".into());
+        return Err(STAGED_PATH_ERROR.into());
     }
-    if !path_has_vrclibman(path) {
-        return Err("VRCLibMan のフォルダ以外のファイルは移動しません".into());
+    let source_names = normal_names(source).map_err(|_| STAGED_PATH_ERROR.to_string())?;
+    let root_names = normal_names(downloads).map_err(|_| STAGED_PATH_ERROR.to_string())?;
+    let root = std::fs::canonicalize(downloads).map_err(|_| STAGED_PATH_ERROR.to_string())?;
+    let staging = open_child(&root, &source_names[root_names.len()], true)?;
+    let product_dir = open_child(&staging, &source_names[root_names.len() + 1], true)?;
+    let file = open_child(&product_dir, &source_names[root_names.len() + 2], false)?;
+    let source_canon = std::fs::canonicalize(source).map_err(|_| STAGED_PATH_ERROR.to_string())?;
+    if !same_path(&source_canon, &file) {
+        return Err(STAGED_PATH_ERROR.into());
     }
-    let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
-    if safe_filename(name).is_none() {
-        return Err("ファイル名を読めません".into());
-    }
-    Ok(())
+    Ok(file)
 }
 
 pub(crate) fn probe_path(path: &Path, timeout: Duration) -> Probe {
@@ -205,23 +368,41 @@ pub(crate) fn library_destination(
     Ok(dest)
 }
 
+pub(crate) fn place_staged_download(
+    source: &Path,
+    downloads: &Path,
+    library: &Path,
+    booth_id: &str,
+) -> Result<PathBuf, String> {
+    let source = staged_download_ok(source, downloads, booth_id)?;
+    let filename = safe_filename(
+        source
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(""),
+    )
+    .ok_or_else(|| "ファイル名を読めません".to_string())?;
+    place_verified_file(&source, library, booth_id, &filename)
+}
+
 pub(crate) fn place_into_library(
     source: &Path,
     library: Option<&Path>,
     booth_id: &str,
 ) -> Result<PathBuf, String> {
-    intake_path_ok(source)?;
-    let filename = safe_filename(source.file_name().and_then(|name| name.to_str()).unwrap_or(""))
-        .ok_or_else(|| "ファイル名を読めません".to_string())?;
-    if probe_file(source, PROBE_TIMEOUT) != Probe::Present {
-        return match probe_path(source, PROBE_TIMEOUT) {
-            Probe::Unreachable => Err("ダウンロードしたファイルを確認できません".into()),
-            _ => Err("ダウンロードしたファイルが見つかりません".into()),
-        };
-    }
     let Some(library) = library.filter(|path| !path.as_os_str().is_empty()) else {
-        return Ok(source.to_path_buf());
+        return Err("ライブラリのフォルダを選んでから、振り分けをオンにしてください".into());
     };
+    let downloads = downloads_folder()?;
+    place_staged_download(source, &downloads, library, booth_id)
+}
+
+fn place_verified_file(
+    source: &Path,
+    library: &Path,
+    booth_id: &str,
+    filename: &str,
+) -> Result<PathBuf, String> {
     let dest = library_destination(library, booth_id, &filename)?;
     if probe_path(&dest, PROBE_TIMEOUT) == Probe::Present {
         if let (Ok(source_canon), Ok(dest_canon)) =
@@ -382,17 +563,27 @@ fn find_local(row: &DownloadFact, files: &[LocalFile]) -> Option<PathBuf> {
     None
 }
 
+pub(crate) fn fill_local_places(snapshot: &mut Snapshot, remote_folder: &str) {
+    fill_places_inner(snapshot, remote_folder, false);
+}
+
 pub(crate) fn fill_places(snapshot: &mut Snapshot, remote_folder: &str) {
+    fill_places_inner(snapshot, remote_folder, true);
+}
+
+fn fill_places_inner(snapshot: &mut Snapshot, remote_folder: &str, probe_remote: bool) {
     let remote_folder = remote_folder.trim();
     snapshot.remote_configured = !remote_folder.is_empty();
+    snapshot.remote_checked = !snapshot.remote_configured || probe_remote;
     let remote_root = Path::new(remote_folder);
-    let mut reachable = snapshot.remote_configured
+    let mut reachable = probe_remote
+        && snapshot.remote_configured
         && probe_path(remote_root, PROBE_TIMEOUT) == Probe::Present;
     let mut placed = Vec::new();
     for row in &snapshot.download_rows {
         let local = find_local(row, &snapshot.files);
         let mut remote_path = None;
-        if reachable && local.is_none() {
+        if probe_remote && reachable && local.is_none() {
             match locate_remote(remote_root, &row.booth_id, &row.filename) {
                 RemoteHit::Found(path) => remote_path = Some(path),
                 RemoteHit::Missing => {}
@@ -438,67 +629,161 @@ mod tests {
         assert!(started.elapsed() < Duration::from_millis(400));
     }
 
-    #[test]
-    fn intake_rejects_paths_outside_the_staging_folder() {
-        let staged = Path::new("/tmp/Downloads/VRCLibMan/424242/body.unitypackage");
-        assert!(intake_path_ok(staged).is_ok());
-        assert!(intake_path_ok(Path::new("Downloads/VRCLibMan/424242/body.unitypackage")).is_err());
-        assert!(intake_path_ok(Path::new("/tmp/Downloads/other/body.unitypackage")).is_err());
-        assert!(
-            intake_path_ok(Path::new("/tmp/Downloads/VRCLibMan/../secret.unitypackage")).is_err()
-        );
-        assert!(safe_filename("../secret.unitypackage").is_none());
-        assert!(safe_filename("body.unitypackage").is_some());
-        assert!(clean_variation("通常").is_some());
-        assert!(clean_variation("../通常").is_none());
+    fn fixture_root(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("vrclibman-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        root
+    }
+
+    fn write_file(path: &Path, bytes: &[u8]) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, bytes).unwrap();
     }
 
     #[test]
-    fn move_stays_inside_the_library_and_registers_in_place_without_one() {
-        let root = std::env::temp_dir().join(format!(
-            "vrclibman-files-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&root);
-        let staging = root.join("Downloads").join("VRCLibMan").join("424242");
+    fn staged_download_accepts_only_the_known_folder_product_file() {
+        let root = fixture_root("intake");
+        let downloads = root.join("Downloads");
         let library = root.join("library");
-        std::fs::create_dir_all(&staging).unwrap();
         std::fs::create_dir_all(&library).unwrap();
-        let source = staging.join("body.unitypackage");
-        std::fs::write(&source, b"pkg").unwrap();
-        let placed = place_into_library(&source, Some(&library), "424242").unwrap();
-        assert!(!source.exists());
-        assert_eq!(placed, library.join("424242").join("body.unitypackage"));
-        assert_eq!(std::fs::read(&placed).unwrap(), b"pkg");
-        assert!(placed.starts_with(&library));
+        let good = downloads
+            .join("VRCLibMan")
+            .join("900001")
+            .join("body.unitypackage");
+        write_file(&good, b"pkg");
+        let unrelated = root
+            .join("unrelated")
+            .join("VRCLibMan")
+            .join("999999")
+            .join("body.unitypackage");
+        write_file(&unrelated, b"other");
+        let documents = root
+            .join("Documents")
+            .join("VRCLibMan")
+            .join("900001")
+            .join("body.unitypackage");
+        write_file(&documents, b"repo");
+        let executable = root.join("Local").join("VRCLibMan").join("VRCLibMan.exe");
+        write_file(&executable, b"exe");
+        let nested = downloads
+            .join("VRCLibMan")
+            .join("900001")
+            .join("extra")
+            .join("body.unitypackage");
+        write_file(&nested, b"nested");
+        let wrong_id = downloads
+            .join("VRCLibMan")
+            .join("999999")
+            .join("body.unitypackage");
+        write_file(&wrong_id, b"wrong");
+        let escaped = downloads
+            .join("VRCLibMan")
+            .join("900001")
+            .join("..")
+            .join("900001")
+            .join("body.unitypackage");
 
-        let kept = staging.join("note.vrm");
-        std::fs::create_dir_all(&staging).unwrap();
-        std::fs::write(&kept, b"vrm").unwrap();
-        let stayed = place_into_library(&kept, None, "424242").unwrap();
-        assert_eq!(stayed, kept);
-        assert!(kept.exists());
+        assert!(staged_download_ok(&good, &downloads, "900001").is_ok());
+        assert!(staged_download_ok(&unrelated, &downloads, "900001").is_err());
+        assert!(staged_download_ok(&unrelated, &downloads, "999999").is_err());
+        assert!(staged_download_ok(&documents, &downloads, "900001").is_err());
+        assert!(staged_download_ok(&executable, &downloads, "900001").is_err());
+        assert!(staged_download_ok(&nested, &downloads, "900001").is_err());
+        assert!(staged_download_ok(&wrong_id, &downloads, "900001").is_err());
+        assert!(staged_download_ok(&escaped, &downloads, "900001").is_err());
+        assert!(
+            staged_download_ok(
+                Path::new("Downloads/VRCLibMan/900001/body.unitypackage"),
+                &downloads,
+                "900001"
+            )
+            .is_err()
+        );
+        assert!(safe_filename("../secret.unitypackage").is_none());
+        assert!(clean_variation("../通常").is_none());
+
+        let placed = place_staged_download(&good, &downloads, &library, "900001").unwrap();
+        assert!(!good.exists());
+        assert_eq!(placed, library.join("900001").join("body.unitypackage"));
+        assert_eq!(std::fs::read(&placed).unwrap(), b"pkg");
+        assert!(unrelated.exists());
+        assert!(documents.exists());
+        assert!(executable.exists());
+        assert!(place_into_library(&good, None, "900001").is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn staged_download_rejects_windows_symlinks_when_creation_is_allowed() {
+        let root = fixture_root("winlink");
+        let downloads = root.join("Downloads");
+        let outside = root.join("outside.unitypackage");
+        write_file(&outside, b"secret");
+        let link = downloads
+            .join("VRCLibMan")
+            .join("900001")
+            .join("body.unitypackage");
+        std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+        if let Err(err) = std::os::windows::fs::symlink_file(&outside, &link) {
+            let _ = std::fs::remove_dir_all(&root);
+            if err.raw_os_error() == Some(1314) {
+                return;
+            }
+            panic!("{err}");
+        }
+        assert!(staged_download_ok(&link, &downloads, "900001").is_err());
+        assert_eq!(std::fs::read(&outside).unwrap(), b"secret");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staged_download_rejects_symlinks_that_leave_the_folder() {
+        let root = fixture_root("link");
+        let downloads = root.join("Downloads");
+        let outside = root.join("outside.unitypackage");
+        write_file(&outside, b"secret");
+        let link = downloads
+            .join("VRCLibMan")
+            .join("900001")
+            .join("body.unitypackage");
+        std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        let error = staged_download_ok(&link, &downloads, "900001").unwrap_err();
+        assert!(error.contains("シンボリックリンク") || error.contains("VRCLibMan"));
+        assert_eq!(std::fs::read(&outside).unwrap(), b"secret");
+
+        let pocket = root.join("pocket");
+        write_file(&pocket.join("900001").join("body.unitypackage"), b"pocket");
+        let linked_root = root.join("linked-downloads");
+        std::fs::create_dir_all(&linked_root).unwrap();
+        std::os::unix::fs::symlink(&pocket, linked_root.join("VRCLibMan")).unwrap();
+        let via = linked_root
+            .join("VRCLibMan")
+            .join("900001")
+            .join("body.unitypackage");
+        assert!(staged_download_ok(&via, &linked_root, "900001").is_err());
+        assert!(pocket.join("900001").join("body.unitypackage").exists());
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[cfg(unix)]
     #[test]
     fn symlink_outside_the_library_is_refused() {
-        let root = std::env::temp_dir().join(format!(
-            "vrclibman-escape-{}",
-            std::process::id()
-        ));
+        let root = std::env::temp_dir().join(format!("vrclibman-escape-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let library = root.join("library");
         let outside = root.join("outside");
-        let staging = root.join("Downloads").join("VRCLibMan").join("424242");
+        let downloads = root.join("Downloads");
+        let staging = downloads.join("VRCLibMan").join("424242");
         std::fs::create_dir_all(&library).unwrap();
         std::fs::create_dir_all(&outside).unwrap();
         std::fs::create_dir_all(&staging).unwrap();
         std::os::unix::fs::symlink(&outside, library.join("424242")).unwrap();
         let source = staging.join("body.unitypackage");
         std::fs::write(&source, b"pkg").unwrap();
-        let err = place_into_library(&source, Some(&library), "424242").unwrap_err();
+        let err = place_staged_download(&source, &downloads, &library, "424242").unwrap_err();
         assert!(err.contains("外"));
         assert!(source.exists());
         assert!(std::fs::read_dir(&outside).unwrap().next().is_none());
@@ -507,10 +792,7 @@ mod tests {
 
     #[test]
     fn remote_lookup_finds_a_booth_folder_and_reports_a_missing_root() {
-        let root = std::env::temp_dir().join(format!(
-            "vrclibman-remote-{}",
-            std::process::id()
-        ));
+        let root = std::env::temp_dir().join(format!("vrclibman-remote-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("424242")).unwrap();
         let file = root.join("424242").join("body.unitypackage");

@@ -57,6 +57,7 @@ export const api = {
   stats: () => call<LibraryStats>("library_stats"),
   avatars: () => call<AvatarCard[]>("list_avatars"),
   avatar: (id: string) => call<AvatarDetail>("get_avatar", { id }),
+  probeRemoteFiles: (id: string) => call<AvatarDetail>("probe_remote_files", { id }),
   queue: (kind: string, offset = 0, limit = 50) =>
     call<QueuePage>("list_queue", { kind, offset, limit }),
   productOptions: () => call<ProductOption[]>("list_product_options"),

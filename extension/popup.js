@@ -449,7 +449,10 @@ routeInput.addEventListener("change", async () => {
       body: JSON.stringify({ enabled }),
     });
     if (!response.ok) {
-      setStatus("振り分け設定をアプリへ保存できませんでした");
+      const data = await response.json().catch(() => ({}));
+      routeInput.checked = false;
+      await chrome.storage.local.set({ routeDownloads: false });
+      setStatus(data.error || "振り分け設定をアプリへ保存できませんでした");
     }
   } catch {
     setStatus("アプリが起動していないので、拡張側だけ覚えました");

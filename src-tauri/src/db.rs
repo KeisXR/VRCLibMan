@@ -293,6 +293,39 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
 }
 
 pub(crate) fn save_settings(connection: &Connection, input: &SettingsInput) -> Result<(), String> {
+    let library = input.library_folder.trim();
+    if input.route_downloads && library.is_empty() {
+        return Err("振り分けをオンにする前に、ライブラリのフォルダを選んでください".into());
+    }
+    if !library.is_empty() {
+        let folder = std::path::Path::new(library);
+        if !folder.is_absolute()
+            || folder
+                .components()
+                .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            return Err(
+                "ライブラリのフォルダは、絶対パスで親ディレクトリを含まないものにしてください"
+                    .into(),
+            );
+        }
+        match crate::library_files::probe_path(folder, crate::library_files::PROBE_TIMEOUT) {
+            crate::library_files::Probe::Present => {}
+            crate::library_files::Probe::Absent => {
+                return Err("ライブラリのフォルダが見つかりません".into());
+            }
+            crate::library_files::Probe::Unreachable => {
+                return Err("ライブラリのフォルダに届きません。接続を確認してからもう一度".into());
+            }
+        }
+        if !std::fs::metadata(folder)
+            .map(|meta| meta.is_dir())
+            .unwrap_or(false)
+        {
+            return Err("ライブラリのフォルダが見つかりません".into());
+        }
+        crate::scan::scan_block_reason(folder)?;
+    }
     set_setting(connection, "ollama_base_url", input.ollama_base_url.trim())?;
     set_setting(connection, "ollama_model", input.ollama_model.trim())?;
     set_setting(
@@ -570,10 +603,18 @@ fn finish_upsert(
     }
 }
 
-fn merge_library_facts(connection: &Connection, incoming: &IncomingProduct) -> Result<bool, String> {
+fn merge_library_facts(
+    connection: &Connection,
+    incoming: &IncomingProduct,
+) -> Result<bool, String> {
     let mut changed = false;
     changed |= merge_flag(connection, &incoming.booth_id, "is_free", incoming.is_free)?;
-    changed |= merge_flag(connection, &incoming.booth_id, "is_adult", incoming.is_adult)?;
+    changed |= merge_flag(
+        connection,
+        &incoming.booth_id,
+        "is_adult",
+        incoming.is_adult,
+    )?;
     for variation in &incoming.variations {
         changed |= merge_variation(connection, &incoming.booth_id, variation)?;
     }
@@ -603,9 +644,7 @@ fn merge_flag(
         return Ok(false);
     };
     let sql = match column {
-        "is_free" => {
-            "UPDATE products SET is_free = ?1 WHERE booth_id = ?2 AND (is_free IS NOT ?1)"
-        }
+        "is_free" => "UPDATE products SET is_free = ?1 WHERE booth_id = ?2 AND (is_free IS NOT ?1)",
         "is_adult" => {
             "UPDATE products SET is_adult = ?1 WHERE booth_id = ?2 AND (is_adult IS NOT ?1)"
         }
@@ -1333,6 +1372,7 @@ pub(crate) fn load_snapshot(connection: &Connection) -> Result<Snapshot, String>
         placed_downloads: Vec::new(),
         product_flags: load_product_flags(connection)?,
         remote_configured: false,
+        remote_checked: true,
         remote_reachable: false,
     })
 }
@@ -1427,7 +1467,8 @@ fn sync_scanned_downloads(connection: &Connection) -> Result<(), String> {
 }
 
 pub(crate) fn add_free_product(connection: &mut Connection, url: &str) -> Result<String, String> {
-    let booth_id = booth_id_from_url(url).ok_or_else(|| "商品のURLからIDを読めません".to_string())?;
+    let booth_id =
+        booth_id_from_url(url).ok_or_else(|| "商品のURLからIDを読めません".to_string())?;
     if product_by_id(connection, &booth_id)?.is_some() {
         let _ = merge_flag(connection, &booth_id, "is_free", Some(true))?;
         return Ok(booth_id);
@@ -1464,12 +1505,16 @@ pub(crate) fn prepare_download(
     if !saved.route_downloads {
         return Err("ダウンロードの振り分けはオフです".into());
     }
+    if saved.library_folder.trim().is_empty() {
+        return Err("ライブラリのフォルダを選んでから、振り分けをオンにしてください".into());
+    }
     let booth_id = notice.booth_id.trim();
     if !crate::library_files::valid_booth_id(booth_id) {
         return Err("商品IDを特定できません".into());
     }
     let source = std::path::PathBuf::from(notice.path.trim());
-    crate::library_files::intake_path_ok(&source)?;
+    let downloads = crate::library_files::downloads_folder()?;
+    crate::library_files::staged_download_ok(&source, &downloads, booth_id)?;
     let actual_name = crate::library_files::safe_filename(
         source
             .file_name()
@@ -1544,8 +1589,12 @@ pub(crate) fn record_placed_download(
     path: &std::path::Path,
     size: Option<u64>,
 ) -> Result<(), String> {
+    let disk_size = std::fs::metadata(path).ok().map(|meta| meta.len());
+    let size = disk_size.or(size);
     let filename = crate::library_files::safe_filename(
-        path.file_name().and_then(|name| name.to_str()).unwrap_or(""),
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(""),
     )
     .ok_or_else(|| "ファイル名を読めません".to_string())?;
     let variation = crate::library_files::clean_variation(variation).unwrap_or_default();
@@ -1576,7 +1625,9 @@ pub(crate) fn record_placed_download(
             ],
         )
         .sql()?;
-    let bytes = std::fs::metadata(path).map(|meta| meta.len() as i64).unwrap_or(0);
+    let bytes = std::fs::metadata(path)
+        .map(|meta| meta.len() as i64)
+        .unwrap_or(0);
     connection
         .execute(
             "INSERT INTO local_files (
@@ -1664,6 +1715,26 @@ pub(crate) fn local_source_for(
         .ok_or_else(|| "手元にファイルがありません".into())
 }
 
+pub(crate) fn remember_file_size(
+    connection: &Connection,
+    booth_id: &str,
+    variation: &str,
+    filename: &str,
+    size: u64,
+) -> Result<(), String> {
+    let variation = crate::library_files::clean_variation(variation).unwrap_or_default();
+    let filename = crate::library_files::safe_filename(filename)
+        .ok_or_else(|| "ファイル名を読めません".to_string())?;
+    connection
+        .execute(
+            "UPDATE product_files SET size_bytes = ?1
+             WHERE booth_id = ?2 AND variation = ?3 AND filename = ?4",
+            params![size as i64, booth_id, variation, filename],
+        )
+        .sql()?;
+    Ok(())
+}
+
 pub(crate) fn note_downloaded_file(
     connection: &Connection,
     booth_id: &str,
@@ -1678,10 +1749,7 @@ pub(crate) fn note_downloaded_file(
 fn booth_id_from_url(url: &str) -> Option<String> {
     let start = url.find("/items/")?;
     let rest = &url[start + "/items/".len()..];
-    let id: String = rest
-        .chars()
-        .take_while(|ch| ch.is_ascii_digit())
-        .collect();
+    let id: String = rest.chars().take_while(|ch| ch.is_ascii_digit()).collect();
     if crate::library_files::valid_booth_id(&id) {
         Some(id)
     } else {
@@ -1910,7 +1978,11 @@ fn merge_catalog(connection: &Connection) -> Result<u32, String> {
     if setting(connection, "catalog_fetched")?.is_none() {
         set_setting(connection, "catalog_fetched", &parsed.fetched_on)?;
         set_setting(connection, "catalog_upstream", &parsed.upstream_updated)?;
-        set_setting(connection, "catalog_count", &parsed.entries.len().to_string())?;
+        set_setting(
+            connection,
+            "catalog_count",
+            &parsed.entries.len().to_string(),
+        )?;
     }
     Ok(added)
 }
@@ -1928,7 +2000,11 @@ pub(crate) fn install_catalog(
     };
     set_setting(connection, "catalog_fetched", &fetched)?;
     set_setting(connection, "catalog_upstream", &upstream)?;
-    set_setting(connection, "catalog_count", &parsed.entries.len().to_string())?;
+    set_setting(
+        connection,
+        "catalog_count",
+        &parsed.entries.len().to_string(),
+    )?;
     settle_dictionary(connection)?;
     reresolve_all(connection)?;
     Ok(CatalogRefresh {
@@ -2163,7 +2239,10 @@ fn settle_one(connection: &mut Connection, booth_id: &str, redo: bool) -> Result
     Ok(true)
 }
 
-fn catalog_body(connection: &Connection, booth_id: &str) -> Result<Option<(String, String)>, String> {
+fn catalog_body(
+    connection: &Connection,
+    booth_id: &str,
+) -> Result<Option<(String, String)>, String> {
     connection
         .query_row(
             "SELECT avatars.id, avatars.display_name
@@ -2203,7 +2282,10 @@ fn write_catalog_body(
     Ok(())
 }
 
-pub(crate) fn mark_owned_body(connection: &mut Connection, booth_id: &str) -> Result<String, String> {
+pub(crate) fn mark_owned_body(
+    connection: &mut Connection,
+    booth_id: &str,
+) -> Result<String, String> {
     let product = require_product(connection, booth_id)?;
     if matches!(
         product.category,
@@ -2254,7 +2336,10 @@ pub(crate) fn mark_owned_body(connection: &mut Connection, booth_id: &str) -> Re
         id
     };
     connection
-        .execute("UPDATE avatars SET owned = 1 WHERE id = ?1", params![avatar_id])
+        .execute(
+            "UPDATE avatars SET owned = 1 WHERE id = ?1",
+            params![avatar_id],
+        )
         .sql()?;
     let display = avatar_display(connection, &avatar_id)?;
     let now = now_iso();
@@ -2310,7 +2395,11 @@ pub(crate) fn setup_status(connection: &Connection) -> Result<SetupStatus, Strin
 }
 
 pub(crate) fn set_setup_complete(connection: &Connection, complete: bool) -> Result<(), String> {
-    set_setting(connection, "setup_complete", if complete { "1" } else { "0" })
+    set_setting(
+        connection,
+        "setup_complete",
+        if complete { "1" } else { "0" },
+    )
 }
 
 pub(crate) fn avatar_candidates(connection: &Connection) -> Result<Vec<AvatarCandidate>, String> {
@@ -2327,7 +2416,10 @@ pub(crate) fn avatar_candidates(connection: &Connection) -> Result<Vec<AvatarCan
     }
     let mut listed: Vec<AvatarCandidate> = counts
         .into_iter()
-        .map(|(name, product_count)| AvatarCandidate { name, product_count })
+        .map(|(name, product_count)| AvatarCandidate {
+            name,
+            product_count,
+        })
         .collect();
     listed.sort_by(|left, right| {
         right
@@ -2338,9 +2430,16 @@ pub(crate) fn avatar_candidates(connection: &Connection) -> Result<Vec<AvatarCan
     Ok(listed)
 }
 
-pub(crate) fn register_candidate(connection: &mut Connection, name: &str) -> Result<String, String> {
+pub(crate) fn register_candidate(
+    connection: &mut Connection,
+    name: &str,
+) -> Result<String, String> {
     let (display, aliases) = crate::catalog::split_bilingual_name(name);
-    let display = if display.is_empty() { name.trim().to_string() } else { display };
+    let display = if display.is_empty() {
+        name.trim().to_string()
+    } else {
+        display
+    };
     if display.is_empty() || display.chars().count() > 80 {
         return Err("アバター名を確認してください".into());
     }
@@ -2398,7 +2497,11 @@ fn unique_avatar_named(connection: &Connection, display: &str) -> Result<Option<
     }
     hits.sort();
     hits.dedup();
-    if hits.len() == 1 { Ok(hits.pop()) } else { Ok(None) }
+    if hits.len() == 1 {
+        Ok(hits.pop())
+    } else {
+        Ok(None)
+    }
 }
 
 fn remember_alias(connection: &Connection, avatar_id: &str, alias: &str) -> Result<(), String> {
@@ -2426,7 +2529,8 @@ fn remember_alias(connection: &Connection, avatar_id: &str, alias: &str) -> Resu
 }
 
 fn tokyo_date() -> String {
-    let offset = chrono::FixedOffset::east_opt(9 * 3600).unwrap_or(chrono::FixedOffset::east_opt(0).unwrap());
+    let offset = chrono::FixedOffset::east_opt(9 * 3600)
+        .unwrap_or(chrono::FixedOffset::east_opt(0).unwrap());
     chrono::Utc::now()
         .with_timezone(&offset)
         .format("%Y-%m-%d")
@@ -3247,14 +3351,18 @@ mod tests {
                 "shinano".to_string()
             ]
         );
-        assert!(snapshot
-            .avatars
-            .iter()
-            .any(|avatar| avatar.id == "shinano" && !avatar.owned));
-        assert!(snapshot
-            .avatars
-            .iter()
-            .any(|avatar| avatar.id == "lime" && avatar.owned));
+        assert!(
+            snapshot
+                .avatars
+                .iter()
+                .any(|avatar| avatar.id == "shinano" && !avatar.owned)
+        );
+        assert!(
+            snapshot
+                .avatars
+                .iter()
+                .any(|avatar| avatar.id == "lime" && avatar.owned)
+        );
         assert!(snapshot.avatars.iter().any(|avatar| avatar.id == "shinano"));
         assert!(
             snapshot
@@ -3853,14 +3961,17 @@ mod tests {
                 .iter()
                 .find(|product| product.booth_id == id)
                 .unwrap();
-            assert!(product.unresolved_names.is_empty(), "{id} {:?}", product.unresolved_names);
+            assert!(
+                product.unresolved_names.is_empty(),
+                "{id} {:?}",
+                product.unresolved_names
+            );
             assert!(
                 snapshot.links.iter().any(|link| {
                     link.product_id == id
-                        && snapshot
-                            .avatars
-                            .iter()
-                            .any(|avatar| avatar.id == link.avatar_id && avatar.display_name == "萌")
+                        && snapshot.avatars.iter().any(|avatar| {
+                            avatar.id == link.avatar_id && avatar.display_name == "萌"
+                        })
                 }),
                 "{id}"
             );
@@ -3962,12 +4073,25 @@ mod tests {
             .unwrap();
         assert!(!kikyo.owned);
         let candidates = avatar_candidates(&connection).unwrap();
-        let fictional = candidates.iter().find(|item| item.name == "架空丸").unwrap();
+        let fictional = candidates
+            .iter()
+            .find(|item| item.name == "架空丸")
+            .unwrap();
         assert_eq!(fictional.product_count, 2);
         let id = register_candidate(&mut connection, "架空丸").unwrap();
         let after = load_snapshot(&mut connection).unwrap();
-        assert!(after.links.iter().any(|link| link.product_id == "8800991" && link.avatar_id == id));
-        assert!(avatar_candidates(&connection).unwrap().iter().all(|item| item.name != "架空丸"));
+        assert!(
+            after
+                .links
+                .iter()
+                .any(|link| link.product_id == "8800991" && link.avatar_id == id)
+        );
+        assert!(
+            avatar_candidates(&connection)
+                .unwrap()
+                .iter()
+                .all(|item| item.name != "架空丸")
+        );
         let known = known_booth_ids(&connection).unwrap();
         assert!(known.iter().any(|item| item == "3016885"));
         assert!(known.iter().any(|item| item == "8800991"));
@@ -3984,14 +4108,18 @@ mod tests {
         }"#;
         import_products(&mut connection, &parse_export(json).unwrap()).unwrap();
         let before = load_snapshot(&mut connection).unwrap();
-        assert!(before
-            .avatars
-            .iter()
-            .any(|avatar| avatar.display_name == "桔梗" && !avatar.owned));
-        assert!(before
-            .products
-            .iter()
-            .any(|product| product.booth_id == "3001" && product.extracted_at.is_none()));
+        assert!(
+            before
+                .avatars
+                .iter()
+                .any(|avatar| avatar.display_name == "桔梗" && !avatar.owned)
+        );
+        assert!(
+            before
+                .products
+                .iter()
+                .any(|product| product.booth_id == "3001" && product.extracted_at.is_none())
+        );
         let id = mark_owned_body(&mut connection, "3001").unwrap();
         let after = load_snapshot(&mut connection).unwrap();
         let owned = after.avatars.iter().find(|avatar| avatar.id == id).unwrap();
@@ -4004,15 +4132,19 @@ mod tests {
             .unwrap();
         assert_eq!(body.category, Some(Category::Avatar));
         assert!(!body.needs_review);
-        assert!(after
-            .avatars
-            .iter()
-            .any(|avatar| avatar.display_name == "桔梗" && !avatar.owned));
+        assert!(
+            after
+                .avatars
+                .iter()
+                .any(|avatar| avatar.display_name == "桔梗" && !avatar.owned)
+        );
         let cards = avatar_cards(&after);
         assert!(cards.iter().any(|card| card.id == id && card.owned));
-        assert!(cards
-            .iter()
-            .any(|card| card.display_name == "桔梗" && !card.owned));
+        assert!(
+            cards
+                .iter()
+                .any(|card| card.display_name == "桔梗" && !card.owned)
+        );
     }
 
     #[test]
@@ -4086,7 +4218,8 @@ mod tests {
     #[test]
     fn free_url_and_routed_download_do_not_fetch_booth() {
         let mut connection = open_memory().unwrap();
-        let id = add_free_product(&mut connection, "https://booth.pm/ja/items/424242?ref=1").unwrap();
+        let id =
+            add_free_product(&mut connection, "https://booth.pm/ja/items/424242?ref=1").unwrap();
         assert_eq!(id, "424242");
         assert!(add_free_product(&mut connection, "https://example.test/nope").is_err());
         let free: i64 = connection
@@ -4098,12 +4231,20 @@ mod tests {
             .unwrap();
         assert_eq!(free, 1);
         let count: i64 = connection
-            .query_row("SELECT COUNT(*) FROM products WHERE booth_id = '424242'", [], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM products WHERE booth_id = '424242'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(count, 1);
         add_free_product(&mut connection, "https://booth.pm/ja/items/424242").unwrap();
         let count: i64 = connection
-            .query_row("SELECT COUNT(*) FROM products WHERE booth_id = '424242'", [], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM products WHERE booth_id = '424242'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(count, 1);
 
@@ -4119,16 +4260,31 @@ mod tests {
             booth_id: "515151".into(),
             path: source.display().to_string(),
             filename: "free.unitypackage".into(),
-            size: Some(4),
+            size: Some(3),
             is_free: Some(true),
             is_adult: None,
             variation: "通常".into(),
             title: "無料の小物".into(),
         };
-        assert!(prepare_download(&mut connection, &notice)
-            .unwrap_err()
-            .contains("オフ"));
+        assert!(
+            prepare_download(&mut connection, &notice)
+                .unwrap_err()
+                .contains("オフ")
+        );
         assert!(source.exists());
+        let refused = save_settings(
+            &connection,
+            &SettingsInput {
+                ollama_base_url: "http://127.0.0.1:11434".into(),
+                ollama_model: "gemma4:12b".into(),
+                confidence_threshold: 0.6,
+                library_folder: String::new(),
+                builtin_browser: false,
+                remote_library_folder: String::new(),
+                route_downloads: true,
+            },
+        );
+        assert!(refused.unwrap_err().contains("ライブラリ"));
         save_settings(
             &connection,
             &SettingsInput {
@@ -4142,14 +4298,33 @@ mod tests {
             },
         )
         .unwrap();
+        struct ClearDownloads;
+        impl Drop for ClearDownloads {
+            fn drop(&mut self) {
+                crate::library_files::set_test_downloads(None);
+            }
+        }
+        let _clear = ClearDownloads;
+        crate::library_files::set_test_downloads(Some(root.join("Downloads")));
         let outside = root.join("secret.unitypackage");
         std::fs::write(&outside, b"no").unwrap();
         let bad = crate::model::DownloadFinished {
             path: outside.display().to_string(),
+            filename: "secret.unitypackage".into(),
             ..notice.clone()
         };
-        assert!(prepare_download(&mut connection, &bad).is_err());
+        assert!(
+            prepare_download(&mut connection, &bad)
+                .unwrap_err()
+                .contains("VRCLibMan")
+        );
         assert!(outside.exists());
+        let wrong = crate::model::DownloadFinished {
+            booth_id: "900001".into(),
+            ..notice.clone()
+        };
+        assert!(prepare_download(&mut connection, &wrong).is_err());
+        assert!(source.exists());
         let plan = prepare_download(&mut connection, &notice).unwrap();
         let placed = crate::library_files::place_into_library(
             &plan.source,
@@ -4157,8 +4332,14 @@ mod tests {
             &plan.booth_id,
         )
         .unwrap();
-        record_placed_download(&connection, &plan.booth_id, &plan.variation, &placed, notice.size)
-            .unwrap();
+        record_placed_download(
+            &connection,
+            &plan.booth_id,
+            &plan.variation,
+            &placed,
+            notice.size,
+        )
+        .unwrap();
         assert!(!source.exists());
         assert_eq!(placed, library.join("515151").join("free.unitypackage"));
         let created_free: i64 = connection
@@ -4185,6 +4366,24 @@ mod tests {
             )
             .unwrap();
         assert_eq!(downloaded, 1);
+        let stored_size: i64 = connection
+            .query_row(
+                "SELECT size_bytes FROM product_files WHERE booth_id = '515151'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored_size, 4);
+        std::fs::write(&placed, b"free!").unwrap();
+        remember_file_size(&connection, "515151", "通常", "free.unitypackage", 5).unwrap();
+        let stored_size: i64 = connection
+            .query_row(
+                "SELECT size_bytes FROM product_files WHERE booth_id = '515151'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored_size, 5);
         let _ = std::fs::remove_dir_all(&root);
     }
 

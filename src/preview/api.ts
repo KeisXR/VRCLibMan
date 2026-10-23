@@ -64,6 +64,7 @@ interface Store {
   variations: { boothId: string; name: string; owned: boolean }[];
   downloads: (DownloadView & { boothId: string })[];
   remoteReachable: boolean;
+  remoteChecked: boolean;
 }
 
 function product(partial: Partial<Product> & Pick<Product, "boothId" | "title" | "category">): Product {
@@ -279,6 +280,7 @@ const store: Store = {
     },
   ],
   remoteReachable: true,
+  remoteChecked: false,
 };
 
 const stressPreview =
@@ -368,6 +370,7 @@ function itemView(item: Product, viaBaseBody: boolean): ItemView {
   const names = new Set(downloads.map((file) => file.filename));
   const files = filesFor(item.boothId).filter((file) => !names.has(file.filename));
   const remoteConfigured = store.settings.remoteLibraryFolder.trim().length > 0;
+  const remoteChecked = !remoteConfigured || store.remoteChecked;
   return {
     boothId: item.boothId,
     title: item.title,
@@ -389,7 +392,8 @@ function itemView(item: Product, viaBaseBody: boolean): ItemView {
     isFree: item.isFree,
     isAdult: item.isAdult,
     remoteConfigured,
-    remoteReachable: remoteConfigured && store.remoteReachable,
+    remoteChecked,
+    remoteReachable: remoteConfigured && store.remoteChecked && store.remoteReachable,
   };
 }
 
@@ -785,6 +789,9 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     case "list_avatars":
       return cards() as T;
     case "get_avatar":
+      return detail(String(args.id ?? "")) as T;
+    case "probe_remote_files":
+      store.remoteChecked = true;
       return detail(String(args.id ?? "")) as T;
     case "list_queue":
       return queue(String(args.kind ?? "review")) as T;
