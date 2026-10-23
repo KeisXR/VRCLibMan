@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, chooseFolder, isTauri, saveLibraryAndScan } from "../api";
 import { useShell } from "../App";
-import type { ImportReport } from "../types";
+import type { ImportReport, StagedDownload } from "../types";
 import { errorText } from "../ui";
 
 export function ImportPage() {
@@ -12,6 +12,7 @@ export function ImportPage() {
   const [report, setReport] = useState<ImportReport | null>(null);
   const [busy, setBusy] = useState(false);
   const [freeUrl, setFreeUrl] = useState("");
+  const [staged, setStaged] = useState<StagedDownload[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -20,6 +21,14 @@ export function ImportPage() {
         if (!cancelled) setLibraryFolder(value.libraryFolder);
       },
       () => undefined,
+    );
+    api.stagedDownloads().then(
+      (value) => {
+        if (!cancelled) setStaged(value);
+      },
+      () => {
+        if (!cancelled) setStaged([]);
+      },
     );
     return () => {
       cancelled = true;
@@ -84,6 +93,19 @@ export function ImportPage() {
           : `${result.processed} 件抽出し、${result.failed} 件失敗しました`,
       );
       if (result.errors.length > 0) fail(result.errors.join(" / "));
+      refresh();
+    } catch (err) {
+      fail(errorText(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function routeStaged(path: string) {
+    setBusy(true);
+    try {
+      await api.routeStagedDownload(path);
+      notify("ファイルをライブラリへ移しました");
       refresh();
     } catch (err) {
       fail(errorText(err));
@@ -188,6 +210,27 @@ export function ImportPage() {
           無料の項目を追加
         </button>
       </form>
+      {staged.length > 0 && (
+        <div className="panel">
+          <h2>ダウンロードフォルダに残っているファイル</h2>
+          <p className="meta">
+            アプリが止まっている間に Downloads/VRCLibMan へ置かれたファイルです。振り分けがオンで、ライブラリのフォルダがあるときだけ移します。安全に特定できないファイルは動かしません。
+          </p>
+          <ul className="file-list">
+            {staged.map((item) => (
+              <li key={item.path}>
+                <span>
+                  {item.boothId} / {item.filename}
+                  <span className="meta"> {item.reason}</span>
+                </span>
+                <button type="button" disabled={busy} onClick={() => void routeStaged(item.path)}>
+                  このファイルを移す
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {report && (
         <p className={report.variations === 0 && report.downloads === 0 ? "meta warn-text" : "meta"}>
           追加 {report.inserted} / 更新 {report.updated} / 変化なし {report.unchanged} / スキップ {report.skipped}

@@ -250,6 +250,8 @@ fn ensure_ready(connection: &Connection) -> Result<(), String> {
         ("remote_library_folder", ""),
         ("route_downloads", "0"),
         ("llm_backend", "ollama"),
+        ("background_mode", "0"),
+        ("launch_at_login", "0"),
     ] {
         connection
             .execute(
@@ -299,6 +301,8 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
         llm_backend: normalize_backend(
             &setting(connection, "llm_backend")?.unwrap_or_else(|| "ollama".into()),
         ),
+        background_mode: setting(connection, "background_mode")?.as_deref() == Some("1"),
+        launch_at_login: setting(connection, "launch_at_login")?.as_deref() == Some("1"),
     })
 }
 
@@ -311,6 +315,8 @@ fn normalize_backend(value: &str) -> String {
 }
 
 pub(crate) fn save_settings(connection: &Connection, input: &SettingsInput) -> Result<(), String> {
+    let (background_mode, launch_at_login) =
+        crate::presence::normalize_presence(input.background_mode, input.launch_at_login);
     let library = input.library_folder.trim();
     let backend = normalize_backend(&input.llm_backend);
     if backend == "apple" && !crate::apple_fm::can_select(None) {
@@ -372,6 +378,16 @@ pub(crate) fn save_settings(connection: &Connection, input: &SettingsInput) -> R
         if input.route_downloads { "1" } else { "0" },
     )?;
     set_setting(connection, "llm_backend", &backend)?;
+    set_setting(
+        connection,
+        "background_mode",
+        if background_mode { "1" } else { "0" },
+    )?;
+    set_setting(
+        connection,
+        "launch_at_login",
+        if launch_at_login { "1" } else { "0" },
+    )?;
     Ok(())
 }
 
@@ -2084,6 +2100,87 @@ pub(crate) fn commit_browser_download(
         notice.size,
     )?;
     Ok(placed)
+}
+
+pub(crate) struct SweepReport {
+    pub moved: u32,
+    pub left: Vec<crate::model::StagedLeftover>,
+}
+
+pub(crate) fn route_staged_download(connection: &mut Connection, source: &Path) -> Result<(), String> {
+    let booth_id = source
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    let filename = crate::library_files::safe_filename(
+        source
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(""),
+    )
+    .ok_or_else(|| "ファイル名を読めません".to_string())?;
+    if !crate::library_files::valid_booth_id(booth_id) {
+        return Err("商品IDを特定できません".into());
+    }
+    let notice = DownloadFinished {
+        booth_id: booth_id.to_string(),
+        path: source.display().to_string(),
+        filename,
+        size: None,
+        is_free: None,
+        is_adult: None,
+        variation: String::new(),
+        title: String::new(),
+    };
+    let plan = prepare_download(connection, &notice)?;
+    let placed = crate::library_files::place_into_library(
+        &plan.source,
+        plan.library.as_deref(),
+        &plan.booth_id,
+    )?;
+    record_placed_download(
+        connection,
+        &plan.booth_id,
+        &plan.variation,
+        &placed,
+        notice.size,
+    )
+}
+
+/// One pass over `Downloads/VRCLibMan/<booth id>/<file>`. No network and no directory walk
+/// past that exact shape. Files that fail the same checks as `/download-finished` stay put.
+pub(crate) fn sweep_staged_downloads(connection: &mut Connection) -> SweepReport {
+    let mut report = SweepReport {
+        moved: 0,
+        left: Vec::new(),
+    };
+    let Ok(downloads) = crate::library_files::downloads_folder() else {
+        return report;
+    };
+    for path in crate::library_files::staged_download_candidates(&downloads) {
+        let booth_id = path
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .and_then(|name| name.to_str())
+            .unwrap_or("")
+            .to_string();
+        let filename = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("")
+            .to_string();
+        match route_staged_download(connection, &path) {
+            Ok(()) => report.moved += 1,
+            Err(reason) => report.left.push(crate::model::StagedLeftover {
+                path: path.display().to_string(),
+                booth_id,
+                filename,
+                reason,
+            }),
+        }
+    }
+    report
 }
 
 pub(crate) fn require_download(
@@ -3956,6 +4053,8 @@ mod tests {
                 remote_library_folder: String::new(),
                 route_downloads: false,
                 llm_backend: "ollama".into(),
+                background_mode: false,
+                launch_at_login: false,
             },
         )
         .unwrap();
@@ -4010,6 +4109,8 @@ mod tests {
                 remote_library_folder: String::new(),
                 route_downloads: false,
                 llm_backend: "ollama".into(),
+                background_mode: false,
+                launch_at_login: false,
             },
         )
         .unwrap();
@@ -4944,6 +5045,8 @@ mod tests {
                 remote_library_folder: String::new(),
                 route_downloads: true,
                 llm_backend: "ollama".into(),
+                background_mode: false,
+                launch_at_login: false,
             },
         );
         assert!(refused.unwrap_err().contains("ライブラリ"));
@@ -4958,6 +5061,8 @@ mod tests {
                 remote_library_folder: String::new(),
                 route_downloads: true,
                 llm_backend: "ollama".into(),
+                background_mode: false,
+                launch_at_login: false,
             },
         )
         .unwrap();
@@ -5067,6 +5172,8 @@ mod tests {
                 remote_library_folder: String::new(),
                 route_downloads: route,
                 llm_backend: "ollama".into(),
+                background_mode: false,
+                launch_at_login: false,
             },
         )
     }
@@ -5286,6 +5393,249 @@ mod tests {
             .unwrap();
         assert_eq!(gimmick.category, Some(Category::Gimmick));
         assert!(!gimmick.is_generic);
+    }
+
+    #[test]
+    fn launch_at_login_is_stored_only_with_background_mode() {
+        let connection = open_memory().unwrap();
+        let saved = settings(&connection).unwrap();
+        assert!(!saved.background_mode);
+        assert!(!saved.launch_at_login);
+        assert_eq!(saved.ollama_model, "gemma4:12b");
+        let base = SettingsInput {
+            ollama_base_url: "http://127.0.0.1:11434".into(),
+            ollama_model: "gemma4:12b".into(),
+            confidence_threshold: 0.6,
+            library_folder: String::new(),
+            builtin_browser: false,
+            remote_library_folder: String::new(),
+            route_downloads: false,
+            llm_backend: "ollama".into(),
+            background_mode: false,
+            launch_at_login: true,
+        };
+        save_settings(&connection, &base).unwrap();
+        let saved = settings(&connection).unwrap();
+        assert!(!saved.background_mode);
+        assert!(!saved.launch_at_login);
+        assert!(!crate::presence::autostart_should_enable(
+            saved.background_mode,
+            saved.launch_at_login
+        ));
+        save_settings(
+            &connection,
+            &SettingsInput {
+                background_mode: true,
+                launch_at_login: true,
+                ..base
+            },
+        )
+        .unwrap();
+        let saved = settings(&connection).unwrap();
+        assert!(saved.background_mode);
+        assert!(saved.launch_at_login);
+        assert!(crate::presence::autostart_should_enable(
+            saved.background_mode,
+            saved.launch_at_login
+        ));
+        assert_eq!(saved.ollama_model, "gemma4:12b");
+    }
+
+    #[test]
+    fn opening_the_database_and_the_sweep_do_not_require_booth() {
+        let mut connection = open_memory().unwrap();
+        assert_eq!(settings(&connection).unwrap().ollama_model, "gemma4:12b");
+        let root = std::env::temp_dir().join(format!(
+            "vrclibman-sweep-empty-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("Downloads")).unwrap();
+        struct ClearDownloads;
+        impl Drop for ClearDownloads {
+            fn drop(&mut self) {
+                crate::library_files::set_test_downloads(None);
+            }
+        }
+        let _clear = ClearDownloads;
+        crate::library_files::set_test_downloads(Some(root.join("Downloads")));
+        let report = sweep_staged_downloads(&mut connection);
+        assert_eq!(report.moved, 0);
+        assert!(report.left.is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn startup_sweep_leaves_files_when_routing_is_off() {
+        let mut connection = open_memory().unwrap();
+        let root = std::env::temp_dir().join(format!("vrclibman-sweep-off-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let source = root
+            .join("Downloads")
+            .join("VRCLibMan")
+            .join("626262")
+            .join("body.unitypackage");
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::write(&source, b"pkg").unwrap();
+        struct ClearDownloads;
+        impl Drop for ClearDownloads {
+            fn drop(&mut self) {
+                crate::library_files::set_test_downloads(None);
+            }
+        }
+        let _clear = ClearDownloads;
+        crate::library_files::set_test_downloads(Some(root.join("Downloads")));
+        let report = sweep_staged_downloads(&mut connection);
+        assert_eq!(report.moved, 0);
+        assert!(source.exists());
+        assert_eq!(std::fs::read(&source).unwrap(), b"pkg");
+        assert!(report.left.iter().any(|item| {
+            item.booth_id == "626262"
+                && item.filename == "body.unitypackage"
+                && item.reason.contains("オフ")
+        }));
+        let count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM products WHERE booth_id = '626262'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn startup_sweep_moves_only_the_staged_file_without_network() {
+        let mut connection = open_memory().unwrap();
+        let root = std::env::temp_dir().join(format!("vrclibman-sweep-on-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let downloads = root.join("Downloads");
+        let library = root.join("library");
+        std::fs::create_dir_all(&library).unwrap();
+        let source = downloads
+            .join("VRCLibMan")
+            .join("616161")
+            .join("body.unitypackage");
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::write(&source, b"pkg").unwrap();
+        let nested = downloads
+            .join("VRCLibMan")
+            .join("616161")
+            .join("extra")
+            .join("nested.unitypackage");
+        std::fs::create_dir_all(nested.parent().unwrap()).unwrap();
+        std::fs::write(&nested, b"nested").unwrap();
+        let invalid = downloads
+            .join("VRCLibMan")
+            .join("nope")
+            .join("skip.unitypackage");
+        std::fs::create_dir_all(invalid.parent().unwrap()).unwrap();
+        std::fs::write(&invalid, b"skip").unwrap();
+        let outside = root.join("outside.unitypackage");
+        std::fs::write(&outside, b"secret").unwrap();
+        let foreign = root
+            .join("other")
+            .join("VRCLibMan")
+            .join("616161")
+            .join("foreign.unitypackage");
+        std::fs::create_dir_all(foreign.parent().unwrap()).unwrap();
+        std::fs::write(&foreign, b"foreign").unwrap();
+        let pocket = root.join("pocket").join("717171").join("via.unitypackage");
+        std::fs::create_dir_all(pocket.parent().unwrap()).unwrap();
+        std::fs::write(&pocket, b"via").unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&outside, source.parent().unwrap().join("link.unitypackage"))
+                .unwrap();
+            std::os::unix::fs::symlink(pocket.parent().unwrap(), downloads.join("VRCLibMan").join("717171"))
+                .unwrap();
+            let linked_root = root.join("linked-downloads");
+            std::fs::create_dir_all(&linked_root).unwrap();
+            std::os::unix::fs::symlink(root.join("pocket"), linked_root.join("VRCLibMan")).unwrap();
+            assert!(crate::library_files::staged_download_candidates(&linked_root).is_empty());
+            assert!(pocket.exists());
+        }
+        save_settings(
+            &connection,
+            &SettingsInput {
+                ollama_base_url: "http://127.0.0.1:11434".into(),
+                ollama_model: "gemma4:12b".into(),
+                confidence_threshold: 0.6,
+                library_folder: library.display().to_string(),
+                builtin_browser: false,
+                remote_library_folder: String::new(),
+                route_downloads: true,
+                llm_backend: "ollama".into(),
+                background_mode: false,
+                launch_at_login: false,
+            },
+        )
+        .unwrap();
+        struct ClearDownloads;
+        impl Drop for ClearDownloads {
+            fn drop(&mut self) {
+                crate::library_files::set_test_downloads(None);
+            }
+        }
+        let _clear = ClearDownloads;
+        crate::library_files::set_test_downloads(Some(downloads));
+        assert!(route_staged_download(&mut connection, &outside).is_err());
+        assert!(outside.exists());
+        assert_eq!(std::fs::read(&outside).unwrap(), b"secret");
+        assert!(route_staged_download(&mut connection, &foreign).is_err());
+        assert!(foreign.exists());
+        let report = sweep_staged_downloads(&mut connection);
+        assert_eq!(report.moved, 1);
+        assert!(!source.exists());
+        let placed = library.join("616161").join("body.unitypackage");
+        assert_eq!(std::fs::read(&placed).unwrap(), b"pkg");
+        assert!(nested.exists());
+        assert!(invalid.exists());
+        assert!(outside.exists());
+        assert!(foreign.exists());
+        assert!(pocket.exists());
+        assert_eq!(std::fs::read(&pocket).unwrap(), b"via");
+        #[cfg(unix)]
+        {
+            let link = root
+                .join("Downloads")
+                .join("VRCLibMan")
+                .join("616161")
+                .join("link.unitypackage");
+            assert!(link.exists());
+            assert!(report.left.iter().any(|item| {
+                item.filename == "link.unitypackage" && item.reason.contains("シンボリックリンク")
+            }));
+            assert_eq!(std::fs::read(&outside).unwrap(), b"secret");
+        }
+        let (title, description, url): (String, String, String) = connection
+            .query_row(
+                "SELECT title, description_snippet, url FROM products WHERE booth_id = '616161'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(title, "商品 616161");
+        assert!(description.is_empty());
+        assert_eq!(url, "https://booth.pm/ja/items/616161");
+        let variation: String = connection
+            .query_row(
+                "SELECT variation FROM product_files WHERE booth_id = '616161' AND filename = 'body.unitypackage'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(variation, "");
+        let foreign_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM products WHERE booth_id = '717171'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(foreign_count, 0);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     fn section_items(detail: &crate::view::AvatarDetail, category: &str) -> Vec<(String, bool)> {

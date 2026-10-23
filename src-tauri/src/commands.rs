@@ -3,7 +3,7 @@ use crate::db::{self, ExtractJob};
 use crate::model::{
     AvatarCandidate, AvatarInput, BaseBodyInput, CatalogInfo, CatalogRefresh, ExtractReport,
     ImportReport, JobProgress, Knowledge, LibraryStats, OllamaStatus, ProductUpdate, ScanReport,
-    Settings, SettingsInput, SetupStatus,
+    Settings, SettingsInput, SetupStatus, StagedLeftover,
 };
 use crate::apple_fm::{self, AppleError};
 use crate::model::Extraction;
@@ -171,23 +171,62 @@ pub fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
 }
 
 #[tauri::command]
-pub fn save_settings(state: State<'_, AppState>, settings: SettingsInput) -> Result<(), String> {
+pub fn save_settings(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    settings: SettingsInput,
+) -> Result<(), String> {
     let base = ollama::validate_base_url(&settings.ollama_base_url)?;
     let model = ollama::validate_model_name(&settings.ollama_model)?;
-    let mut connection = db(&state)?;
-    db::save_settings(
-        &mut connection,
-        &SettingsInput {
-            ollama_base_url: base,
-            ollama_model: model,
-            confidence_threshold: settings.confidence_threshold,
-            library_folder: settings.library_folder,
-            builtin_browser: settings.builtin_browser,
-            remote_library_folder: settings.remote_library_folder,
-            route_downloads: settings.route_downloads,
-            llm_backend: settings.llm_backend,
-        },
-    )
+    let saved = {
+        let connection = db(&state)?;
+        db::save_settings(
+            &connection,
+            &SettingsInput {
+                ollama_base_url: base,
+                ollama_model: model,
+                confidence_threshold: settings.confidence_threshold,
+                library_folder: settings.library_folder,
+                builtin_browser: settings.builtin_browser,
+                remote_library_folder: settings.remote_library_folder,
+                route_downloads: settings.route_downloads,
+                llm_backend: settings.llm_backend,
+                background_mode: settings.background_mode,
+                launch_at_login: settings.launch_at_login,
+            },
+        )?;
+        db::settings(&connection)?
+    };
+    crate::presence::remember_background(&app, saved.background_mode);
+    crate::presence::apply_presence(&app, saved.background_mode, saved.launch_at_login)
+}
+
+#[tauri::command]
+pub fn list_staged_downloads(state: State<'_, AppState>) -> Result<Vec<StagedLeftover>, String> {
+    state
+        .staged_left
+        .lock()
+        .map(|left| left.clone())
+        .map_err(|_| "一覧を読めません".to_string())
+}
+
+#[tauri::command]
+pub fn route_staged_download(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<(), String> {
+    let source = std::path::PathBuf::from(path.trim());
+    {
+        let mut connection = db(&state)?;
+        db::route_staged_download(&mut connection, &source)?;
+    }
+    if let Ok(mut left) = state.staged_left.lock() {
+        let shown = source.display().to_string();
+        left.retain(|item| item.path != shown && item.path != path);
+    }
+    let _ = app.emit("library-changed", ());
+    Ok(())
 }
 
 #[tauri::command]

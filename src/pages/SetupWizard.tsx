@@ -13,7 +13,9 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
   const [apple, setApple] = useState<AppleFmStatus | null>(null);
   const [ollamaError, setOllamaError] = useState("");
   const [checking, setChecking] = useState(true);
-  const [step, setStep] = useState<"model" | "extension">("model");
+  const [step, setStep] = useState<"model" | "extension" | "presence">("model");
+  const [backgroundChoice, setBackgroundChoice] = useState<"unset" | "on" | "off">("unset");
+  const [loginChoice, setLoginChoice] = useState<"unset" | "on" | "off">("unset");
   const [pulling, setPulling] = useState(false);
   const [progress, setProgress] = useState<JobProgress | null>(null);
   const [link, setLink] = useState<ExtensionLink | null>(null);
@@ -112,11 +114,37 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
     setCopied(true);
   }
 
-  async function finish() {
+  async function savePresence(backgroundMode: boolean, launchAtLogin: boolean) {
+    const settings = await api.settings();
+    await api.saveSettings({
+      ...settings,
+      backgroundMode,
+      launchAtLogin: backgroundMode && launchAtLogin,
+    });
     await api.completeSetup();
     onDone();
   }
 
+  async function finishPresence() {
+    if (backgroundChoice === "unset" || loginChoice === "unset") return;
+    setMessage("");
+    try {
+      await savePresence(backgroundChoice === "on", loginChoice === "on");
+    } catch (err) {
+      setMessage(errorText(err));
+    }
+  }
+
+  async function chooseLater() {
+    setMessage("");
+    try {
+      await savePresence(false, false);
+    } catch (err) {
+      setMessage(errorText(err));
+    }
+  }
+
+  const presenceReady = backgroundChoice !== "unset" && loginChoice !== "unset";
   const model = status?.model || DEFAULT_OLLAMA_MODEL;
   const defaultModel = status?.defaultModel || DEFAULT_OLLAMA_MODEL;
   const usingApple = status?.backend === "apple";
@@ -131,7 +159,9 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
     <div className="setup-screen">
       <div className="setup-card panel">
         <p className="meta">初回セットアップ</p>
-        <h1>{step === "model" ? "分類用のモデル" : "Booth から取り込む"}</h1>
+        <h1>
+          {step === "model" ? "分類用のモデル" : step === "extension" ? "Booth から取り込む" : "閉じたあとの動き"}
+        </h1>
         {step === "model" && (
           <>
             <p>
@@ -234,7 +264,67 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
               <button className="button" type="button" onClick={() => void openExternal(LIBRARY_URL)}>
                 ライブラリを開く
               </button>
-              <button className="button primary" type="button" onClick={() => void finish()}>
+              <button className="button primary" type="button" onClick={() => setStep("presence")}>
+                次へ
+              </button>
+            </div>
+          </>
+        )}
+        {step === "presence" && (
+          <>
+            <p>
+              どちらも既定はオフです。オンは選んだときだけ有効になります。あとから設定でも変えられます。
+            </p>
+            <p>ウィンドウを閉じても、ダウンロードの受け付けを続けますか？</p>
+            <div className="row-actions">
+              <button
+                className={backgroundChoice === "on" ? "button primary" : "button"}
+                type="button"
+                onClick={() => setBackgroundChoice("on")}
+              >
+                オン
+              </button>
+              <button
+                className={backgroundChoice === "off" ? "button primary" : "button"}
+                type="button"
+                onClick={() => {
+                  setBackgroundChoice("off");
+                  setLoginChoice("off");
+                }}
+              >
+                オフ
+              </button>
+            </div>
+            <p className="meta">
+              オフのときはウィンドウを閉じるとアプリも終了します。オンのときはウィンドウだけ閉じて、トレイ（Windows）またはメニューバー（macOS）から開き直せます。
+            </p>
+            <p>ログインしたときに起動しますか？</p>
+            <div className="row-actions">
+              <button
+                className={loginChoice === "on" ? "button primary" : "button"}
+                type="button"
+                disabled={backgroundChoice !== "on"}
+                onClick={() => setLoginChoice("on")}
+              >
+                オン
+              </button>
+              <button
+                className={loginChoice === "off" ? "button primary" : "button"}
+                type="button"
+                onClick={() => setLoginChoice("off")}
+              >
+                オフ
+              </button>
+            </div>
+            <p className="meta">
+              ログイン時の起動は、バックグラウンドをオンにしたときだけ使えます。両方オンのとき、ログインから起動したプロセスはウィンドウを出さず、トレイまたはメニューバーから開けます。
+            </p>
+            {message && <p className="meta">{message}</p>}
+            <div className="row-actions">
+              <button className="button" type="button" onClick={() => void chooseLater()}>
+                あとで設定で選ぶ
+              </button>
+              <button className="button primary" type="button" disabled={!presenceReady} onClick={() => void finishPresence()}>
                 はじめる
               </button>
             </div>
