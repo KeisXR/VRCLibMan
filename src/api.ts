@@ -57,6 +57,7 @@ export const api = {
   stats: () => call<LibraryStats>("library_stats"),
   avatars: () => call<AvatarCard[]>("list_avatars"),
   avatar: (id: string) => call<AvatarDetail>("get_avatar", { id }),
+  probeRemoteFiles: (id: string) => call<AvatarDetail>("probe_remote_files", { id }),
   queue: (kind: string, offset = 0, limit = 50) =>
     call<QueuePage>("list_queue", { kind, offset, limit }),
   productOptions: () => call<ProductOption[]>("list_product_options"),
@@ -99,8 +100,25 @@ export const api = {
   aliasAvatarCandidate: (name: string, avatarId: string) =>
     call<void>("alias_avatar_candidate", { name, avatarId }),
   markOwnedAvatar: (boothId: string) => call<string>("mark_owned_avatar", { boothId }),
+  addFreeProduct: (url: string) => call<string>("add_free_product", { url }),
+  pullRemoteFile: (boothId: string, variation: string, filename: string) =>
+    call<void>("pull_remote_file", { boothId, variation, filename }),
+  pushRemoteFile: (boothId: string, variation: string, filename: string) =>
+    call<void>("push_remote_file", { boothId, variation, filename }),
   cacheThumbnails: () => call<number>("cache_thumbnails"),
 };
+
+export async function saveLibraryAndScan(folder: string, settings?: Settings): Promise<ScanReport> {
+  const current = settings ?? (await api.settings());
+  await api.saveSettings({ ...current, libraryFolder: folder });
+  return api.scanLibrary(folder);
+}
+
+export async function revealInFolder(path: string): Promise<void> {
+  if (!isTauri()) return;
+  const { revealItemInDir } = await import("@tauri-apps/plugin-opener");
+  await revealItemInDir(path);
+}
 
 export async function chooseFolder(): Promise<string | null> {
   if (!isTauri()) {

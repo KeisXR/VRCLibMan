@@ -39,6 +39,22 @@ export interface FileBrief {
   matchScore: number;
 }
 
+export type FilePlace = "local" | "remote" | "missing";
+
+export interface VariationView {
+  name: string;
+  owned: boolean;
+}
+
+export interface DownloadView {
+  variation: string;
+  filename: string;
+  sizeBytes: number | null;
+  state: FilePlace;
+  localPath: string | null;
+  remotePath: string | null;
+}
+
 export interface ItemView {
   boothId: string;
   title: string;
@@ -53,6 +69,13 @@ export interface ItemView {
   viaBaseBody: boolean;
   localFiles: FileBrief[];
   localFileCount: number;
+  variations: VariationView[];
+  downloads: DownloadView[];
+  isFree: boolean;
+  isAdult: boolean;
+  remoteConfigured: boolean;
+  remoteChecked: boolean;
+  remoteReachable: boolean;
 }
 
 export interface OwnedBody {
@@ -105,6 +128,7 @@ export interface QueueProduct {
   unresolvedNames: string[];
   linkedAvatarIds: string[];
   userConfirmed: boolean;
+  filePresence: "local" | "partial" | "remote" | "missing" | "unknown";
 }
 
 export interface QueueFile {
@@ -165,6 +189,8 @@ export interface Settings {
   confidenceThreshold: number;
   libraryFolder: string;
   builtinBrowser: boolean;
+  remoteLibraryFolder: string;
+  routeDownloads: boolean;
 }
 
 export interface LibraryStats {
@@ -182,6 +208,8 @@ export interface ImportReport {
   updated: number;
   unchanged: number;
   skipped: number;
+  variations: number;
+  downloads: number;
   warnings: string[];
 }
 

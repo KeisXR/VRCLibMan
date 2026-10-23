@@ -18,6 +18,13 @@
     <button id="export-all" class="secondary" type="button">ライブラリをすべて送る</button>
     <button id="export-new" class="secondary" type="button">新しい購入だけ送る</button>
     <button id="open-library" class="secondary" type="button">ライブラリを開く</button>
+    <button id="diagnose" class="secondary" type="button">解析結果をコピー</button>
+    <textarea id="diagnosis" readonly hidden></textarea>
+    <label class="check">
+      <input id="route-downloads" type="checkbox" />
+      <span>ダウンロードを VRCLibMan へ振り分ける（既定オフ）</span>
+    </label>
+    <p class="hint">自分で押した BOOTH の Unity / VRChat 用ファイルだけを Downloads/VRCLibMan/商品ID に置きます。アプリがライブラリのフォルダへ移します。一括では取りません。</p>
     <p id="status"></p>
     <script src="extract.js"></script>
     <script src="popup.js"></script>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, openExternal } from "../api";
+import { api, chooseFolder, openExternal, saveLibraryAndScan } from "../api";
 import { useShell } from "../App";
 import { formatBytes } from "../media";
 import { DEFAULT_OLLAMA_MODEL } from "../types";
@@ -18,6 +18,7 @@ const emptyAvatar = {
 export function SettingsPage() {
   const { revision, refresh, notify, fail } = useShell();
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [savedFolder, setSavedFolder] = useState("");
   const [knowledge, setKnowledge] = useState<Knowledge | null>(null);
   const [avatar, setAvatar] = useState(emptyAvatar);
   const [body, setBody] = useState({ id: "", displayName: "", note: "" });
@@ -46,6 +47,7 @@ export function SettingsPage() {
       ([nextSettings, nextKnowledge, nextLink, nextCatalog]) => {
         if (cancelled) return;
         setSettings(nextSettings);
+        setSavedFolder(nextSettings.libraryFolder);
         setCatalog(nextCatalog);
         setKnowledge(nextKnowledge);
         setLink(nextLink);
@@ -97,9 +99,21 @@ export function SettingsPage() {
 
   async function saveSettings() {
     if (!settings) return;
+    const folder = settings.libraryFolder.trim();
+    const folderChanged = folder !== savedFolder.trim();
     try {
       await api.saveSettings(settings);
-      notify("設定を保存しました");
+      if (folder && folderChanged) {
+        const result = await api.scanLibrary(folder);
+        setSavedFolder(folder);
+        notify(
+          `設定を保存し、ライブラリのフォルダを調べました。${result.indexed} 件を調べ、${result.linked} 件を商品と結び付けました${result.truncated ? "。上限に達したため途中です" : ""}`,
+        );
+      } else {
+        setSavedFolder(folder);
+        notify("設定を保存しました");
+      }
+      setStatus("");
       refresh();
       try {
         const result = await api.testOllama();
@@ -110,7 +124,9 @@ export function SettingsPage() {
         setInstalledSize(null);
       }
     } catch (err) {
-      fail(errorText(err));
+      const message = errorText(err);
+      setStatus(message);
+      fail(message);
     }
   }
 
@@ -390,10 +406,109 @@ export function SettingsPage() {
                 }
               />
             </label>
-            <label className="field">
-              <span>最後に調べたフォルダ</span>
-              <input value={settings.libraryFolder} readOnly />
+            <label className="field span-2">
+              <span>ライブラリのフォルダ</span>
+              <input
+                value={settings.libraryFolder}
+                placeholder="ダウンロードしたファイルの移動先"
+                onChange={(event) => setSettings({ ...settings, libraryFolder: event.target.value })}
+              />
             </label>
+            <p className="meta span-2">
+              取り込み画面と同じライブラリのフォルダです。選ぶと、その場で保存して中を調べます。ホームフォルダやボリュームの直下は保存できません。
+            </p>
+            <div className="row-actions span-2">
+              <button
+                className="button"
+                type="button"
+                onClick={() => {
+                  if (!settings) return;
+                  void (async () => {
+                    try {
+                      const path = await chooseFolder();
+                      if (!path) return;
+                      const next = { ...settings, libraryFolder: path };
+                      setSettings(next);
+                      const result = await saveLibraryAndScan(path, next);
+                      setSavedFolder(path);
+                      setStatus("");
+                      notify(
+                        `ライブラリのフォルダを保存し、${result.indexed} 件を調べ、${result.linked} 件を商品と結び付けました${result.truncated ? "。上限に達したため途中です" : ""}`,
+                      );
+                      refresh();
+                    } catch (err) {
+                      const message = errorText(err);
+                      setStatus(message);
+                      fail(message);
+                    }
+                  })();
+                }}
+              >
+                ライブラリのフォルダを選ぶ
+              </button>
+            </div>
+            <label className="field span-2">
+              <span>リモートのフォルダ</span>
+              <input
+                value={settings.remoteLibraryFolder}
+                placeholder="ネットワークドライブやマウントしたフォルダ"
+                onChange={(event) => setSettings({ ...settings, remoteLibraryFolder: event.target.value })}
+              />
+            </label>
+            <div className="row-actions span-2">
+              <button
+                className="button"
+                type="button"
+                onClick={() => {
+                  void chooseFolder().then(
+                    (path) => {
+                      if (path) setSettings({ ...settings, remoteLibraryFolder: path });
+                    },
+                    (err: unknown) => fail(errorText(err)),
+                  );
+                }}
+              >
+                リモートのフォルダを選ぶ
+              </button>
+            </div>
+            <label className="field span-2">
+              <span>
+                <input
+                  type="checkbox"
+                  checked={settings.routeDownloads}
+                  onChange={(event) => {
+                    const enabled = event.target.checked;
+                    if (enabled && settings.libraryFolder.trim() === "") {
+                      void (async () => {
+                        try {
+                          const path = await chooseFolder();
+                          if (!path) return;
+                          const next = { ...settings, libraryFolder: path, routeDownloads: true };
+                          setSettings(next);
+                          const result = await saveLibraryAndScan(path, next);
+                          setSavedFolder(path);
+                          setStatus("");
+                          notify(
+                            `ライブラリのフォルダを保存し、${result.indexed} 件を調べ、${result.linked} 件を商品と結び付けました${result.truncated ? "。上限に達したため途中です" : ""}`,
+                          );
+                          refresh();
+                        } catch (err) {
+                          const message = errorText(err);
+                          setStatus(message);
+                          fail(message);
+                        }
+                      })();
+                      return;
+                    }
+                    setSettings({ ...settings, routeDownloads: enabled });
+                  }}
+                />{" "}
+                BOOTH の Unity / VRChat 用ファイルを、ダウンロード時に VRCLibMan へ振り分ける
+              </span>
+            </label>
+            <p className="meta span-2">
+              振り分けは既定でオフです。オンにするときは、移動先のライブラリフォルダが必要です。オンにすると、拡張は自分で押したダウンロードだけを、この PC のダウンロードフォルダの VRCLibMan/商品ID に置き、アプリがライブラリへ移します。それ以外の場所にあるファイルは移動しません。アプリから一括では取りません。リモートの確認は画面を出してから行い、送る・取ってくるは押したファイルだけをコピーします。コピー中は画面の上に表示します。切れている共有先では待たずに未ダウンロードとして表示します。
+            </p>
           </div>
           <div className="row-actions">
             <button className="button primary" type="button" onClick={() => void saveSettings()}>

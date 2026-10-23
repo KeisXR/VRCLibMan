@@ -87,7 +87,9 @@ export function BrowserPage({ enabled }: { enabled: boolean }) {
           {report && (
             <p className="meta">
               新規 {report.inserted}、更新 {report.updated}、変更なし {report.unchanged}
+              、バリエーション {report.variations}、ダウンロード {report.downloads}
               {report.skipped > 0 ? `、スキップ ${report.skipped}` : ""}
+              {report.warnings.length > 0 ? `。${report.warnings[0]}` : ""}
             </p>
           )}
         </div>

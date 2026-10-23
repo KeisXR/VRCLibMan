@@ -1,4 +1,4 @@
-use crate::model::IncomingProduct;
+use crate::model::{IncomingDownload, IncomingProduct, IncomingVariation};
 use regex::Regex;
 use serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -106,7 +106,124 @@ fn parse_one(value: &Value) -> Result<IncomingProduct, String> {
         } else {
             Some(cap(&thumbnail, 800))
         },
+        variations: parse_variations(map.get("variations")),
+        downloads: parse_downloads(map.get("downloads").or_else(|| map.get("files"))),
+        is_free: optional_bool(map, &["isFree", "is_free"]),
+        is_adult: optional_bool(map, &["isAdult", "is_adult"]),
     })
+}
+
+fn parse_variations(value: Option<&Value>) -> Vec<IncomingVariation> {
+    let Some(Value::Array(items)) = value else {
+        return Vec::new();
+    };
+    let mut variations: Vec<IncomingVariation> = Vec::new();
+    for item in items {
+        let (name, owned) = if let Some(text) = item.as_str() {
+            (text.to_string(), true)
+        } else if let Some(map) = item.as_object() {
+            (
+                first_text(map, &["name", "variation"]),
+                optional_bool(map, &["owned"]).unwrap_or(false),
+            )
+        } else {
+            continue;
+        };
+        let Some(name) = crate::library_files::clean_variation(&name) else {
+            continue;
+        };
+        if let Some(existing) = variations.iter_mut().find(|row| row.name == name) {
+            if owned {
+                existing.owned = true;
+            }
+        } else {
+            variations.push(IncomingVariation { name, owned });
+        }
+    }
+    variations
+}
+
+fn parse_downloads(value: Option<&Value>) -> Vec<IncomingDownload> {
+    let Some(Value::Array(items)) = value else {
+        return Vec::new();
+    };
+    let mut downloads: Vec<IncomingDownload> = Vec::new();
+    for item in items {
+        let Some(map) = item.as_object() else {
+            continue;
+        };
+        let downloadable_id = clean_downloadable_id(&first_text(
+            map,
+            &["downloadableId", "downloadable_id"],
+        ));
+        let Some(filename) = crate::library_files::safe_filename(&first_text(
+            map,
+            &["filename", "name"],
+        ))
+        .or_else(|| crate::library_files::safe_filename(&downloadable_id)) else {
+            continue;
+        };
+        let variation = crate::library_files::clean_variation(&first_text(
+            map,
+            &["variation", "variationName"],
+        ))
+        .unwrap_or_default();
+        let size_bytes = map
+            .get("sizeBytes")
+            .or_else(|| map.get("size"))
+            .and_then(|value| match value {
+                Value::Number(number) => number.as_u64(),
+                Value::String(text) => text.trim().parse().ok(),
+                _ => None,
+            });
+        if downloads.iter().any(|row| {
+            if !downloadable_id.is_empty() && row.downloadable_id == downloadable_id {
+                return true;
+            }
+            downloadable_id.is_empty()
+                && row.downloadable_id.is_empty()
+                && row.filename == filename
+                && row.variation == variation
+        }) {
+            continue;
+        }
+        downloads.push(IncomingDownload {
+            filename,
+            size_bytes,
+            variation,
+            downloadable_id,
+        });
+    }
+    downloads
+}
+
+fn clean_downloadable_id(value: &str) -> String {
+    let id = value.trim();
+    if (1..=12).contains(&id.len()) && id.bytes().all(|byte| byte.is_ascii_digit()) {
+        id.to_string()
+    } else {
+        String::new()
+    }
+}
+
+fn optional_bool(map: &Map<String, Value>, keys: &[&str]) -> Option<bool> {
+    for key in keys {
+        let Some(value) = map.get(*key) else {
+            continue;
+        };
+        return match value {
+            Value::Bool(bit) => Some(*bit),
+            Value::Null => None,
+            Value::Number(number) => number.as_u64().map(|number| number != 0),
+            Value::String(text) => match text.trim() {
+                "true" | "1" => Some(true),
+                "false" | "0" => Some(false),
+                _ => None,
+            },
+            _ => None,
+        };
+    }
+    None
 }
 
 fn first_text(map: &Map<String, Value>, keys: &[&str]) -> String {
@@ -209,6 +326,41 @@ mod tests {
         assert_eq!(parsed.products.len(), 1);
         assert_eq!(parsed.products[0].description_snippet, "公開終了（取得できず）");
         assert_eq!(parsed.products[0].shop, "mokemoke-dy");
+    }
+
+    #[test]
+    fn variations_downloads_and_flags_are_optional() {
+        let json = r#"{
+            "boothId": "424242",
+            "title": "架空の服",
+            "isFree": true,
+            "isAdult": false,
+            "variations": [
+                {"name": "通常", "owned": true},
+                {"name": "特典", "owned": false},
+                {"name": "通常", "owned": false}
+            ],
+            "downloads": [
+                {"filename": "body.unitypackage", "variation": "通常", "sizeBytes": 12},
+                {"filename": "../secret.unitypackage", "variation": "通常"}
+            ]
+        }"#;
+        let parsed = parse_export(json).unwrap();
+        let product = &parsed.products[0];
+        assert_eq!(product.is_free, Some(true));
+        assert_eq!(product.is_adult, Some(false));
+        assert_eq!(product.variations.len(), 2);
+        assert!(product.variations.iter().any(|row| row.name == "通常" && row.owned));
+        assert!(product.variations.iter().any(|row| row.name == "特典" && !row.owned));
+        assert_eq!(product.downloads.len(), 1);
+        assert_eq!(product.downloads[0].filename, "body.unitypackage");
+        assert_eq!(product.downloads[0].size_bytes, Some(12));
+
+        let omitted = parse_export(r#"[{"boothId":"424243","title":"説明だけ"}]"#).unwrap();
+        assert!(omitted.products[0].variations.is_empty());
+        assert!(omitted.products[0].downloads.is_empty());
+        assert_eq!(omitted.products[0].is_free, None);
+        assert_eq!(omitted.products[0].is_adult, None);
     }
 
     #[test]

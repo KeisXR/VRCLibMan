@@ -1,9 +1,10 @@
 use crate::import_data::ParsedExport;
-use crate::matching::{LabelScore, choose_match, score_label};
+use crate::matching::{LabelScore, choose_match, contains_booth_id, score_label};
 use crate::model::{
     Avatar, AvatarCandidate, AvatarInput, BaseBody, BaseBodyInput, CatalogInfo, CatalogRefresh,
-    Category, Extraction, ImportReport, IncomingProduct, Knowledge, Link, LocalFile, Product,
-    ProductUpdate, Settings, SettingsInput, SetupStatus, now_iso,
+    Category, DownloadFact, DownloadFinished, Extraction, ImportReport, IncomingDownload,
+    IncomingProduct, IncomingVariation, Knowledge, Link, LocalFile, Product, ProductFlag,
+    ProductUpdate, Settings, SettingsInput, SetupStatus, VariationFact, now_iso,
 };
 use crate::resolve::{ResolveInput, resolve_product};
 use crate::scan::ScanOutcome;
@@ -155,6 +156,69 @@ fn migrate(connection: &Connection) -> Result<(), String> {
         )
         .sql()?;
     ensure_owned_column(connection)?;
+    ensure_product_flag_columns(connection)?;
+    connection
+        .execute_batch(
+            "CREATE TABLE IF NOT EXISTS product_variations (
+                booth_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                owned INTEGER NOT NULL,
+                PRIMARY KEY (booth_id, name),
+                FOREIGN KEY (booth_id) REFERENCES products(booth_id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS product_files (
+                booth_id TEXT NOT NULL,
+                variation TEXT NOT NULL DEFAULT '',
+                filename TEXT NOT NULL,
+                size_bytes INTEGER,
+                downloaded INTEGER NOT NULL DEFAULT 0,
+                local_path TEXT,
+                PRIMARY KEY (booth_id, variation, filename),
+                FOREIGN KEY (booth_id) REFERENCES products(booth_id) ON DELETE CASCADE
+            );",
+        )
+        .sql()?;
+    ensure_column(
+        connection,
+        "product_files",
+        "downloadable_id",
+        "ALTER TABLE product_files ADD COLUMN downloadable_id TEXT",
+    )?;
+    Ok(())
+}
+
+fn ensure_product_flag_columns(connection: &Connection) -> Result<(), String> {
+    ensure_column(
+        connection,
+        "products",
+        "is_free",
+        "ALTER TABLE products ADD COLUMN is_free INTEGER",
+    )?;
+    ensure_column(
+        connection,
+        "products",
+        "is_adult",
+        "ALTER TABLE products ADD COLUMN is_adult INTEGER",
+    )
+}
+
+fn ensure_column(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+    statement: &str,
+) -> Result<(), String> {
+    let mut info = connection
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .sql()?;
+    let names: Vec<String> = info
+        .query_map([], |row| row.get(1))
+        .sql()?
+        .collect::<Result<Vec<_>, _>>()
+        .sql()?;
+    if !names.iter().any(|name| name == column) {
+        connection.execute(statement, []).sql()?;
+    }
     Ok(())
 }
 
@@ -183,6 +247,8 @@ fn ensure_ready(connection: &Connection) -> Result<(), String> {
         ("confidence_threshold", "0.6"),
         ("library_folder", ""),
         ("builtin_browser", "0"),
+        ("remote_library_folder", ""),
+        ("route_downloads", "0"),
     ] {
         connection
             .execute(
@@ -227,10 +293,45 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
         confidence_threshold: threshold,
         library_folder: setting(connection, "library_folder")?.unwrap_or_default(),
         builtin_browser: setting(connection, "builtin_browser")?.as_deref() == Some("1"),
+        remote_library_folder: setting(connection, "remote_library_folder")?.unwrap_or_default(),
+        route_downloads: setting(connection, "route_downloads")?.as_deref() == Some("1"),
     })
 }
 
 pub(crate) fn save_settings(connection: &Connection, input: &SettingsInput) -> Result<(), String> {
+    let library = input.library_folder.trim();
+    if input.route_downloads && library.is_empty() {
+        return Err("振り分けをオンにする前に、ライブラリのフォルダを選んでください".into());
+    }
+    if !library.is_empty() {
+        let folder = std::path::Path::new(library);
+        if !folder.is_absolute()
+            || folder
+                .components()
+                .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            return Err(
+                "ライブラリのフォルダは、絶対パスで親ディレクトリを含まないものにしてください"
+                    .into(),
+            );
+        }
+        match crate::library_files::probe_path(folder, crate::library_files::PROBE_TIMEOUT) {
+            crate::library_files::Probe::Present => {}
+            crate::library_files::Probe::Absent => {
+                return Err("ライブラリのフォルダが見つかりません".into());
+            }
+            crate::library_files::Probe::Unreachable => {
+                return Err("ライブラリのフォルダに届きません。接続を確認してからもう一度".into());
+            }
+        }
+        if !std::fs::metadata(folder)
+            .map(|meta| meta.is_dir())
+            .unwrap_or(false)
+        {
+            return Err("ライブラリのフォルダが見つかりません".into());
+        }
+        crate::scan::scan_block_reason(folder)?;
+    }
     set_setting(connection, "ollama_base_url", input.ollama_base_url.trim())?;
     set_setting(connection, "ollama_model", input.ollama_model.trim())?;
     set_setting(
@@ -243,6 +344,16 @@ pub(crate) fn save_settings(connection: &Connection, input: &SettingsInput) -> R
         connection,
         "builtin_browser",
         if input.builtin_browser { "1" } else { "0" },
+    )?;
+    set_setting(
+        connection,
+        "remote_library_folder",
+        input.remote_library_folder.trim(),
+    )?;
+    set_setting(
+        connection,
+        "route_downloads",
+        if input.route_downloads { "1" } else { "0" },
     )?;
     Ok(())
 }
@@ -353,12 +464,31 @@ pub(crate) fn import_products(
         apply_listed_compatibility(connection, &booth_id)?;
     }
     settle_dictionary(connection)?;
+    let variations = parsed
+        .products
+        .iter()
+        .map(|product| product.variations.len() as u32)
+        .sum();
+    let downloads = parsed
+        .products
+        .iter()
+        .map(|product| product.downloads.len() as u32)
+        .sum();
+    let mut warnings = parsed.warnings.clone();
+    if !parsed.products.is_empty() && variations == 0 && downloads == 0 {
+        warnings.push(
+            "バリエーションもダウンロードも 0 件です。ファイルの有無は分かりません。拡張の「解析結果をコピー」で構造を確認するか、ライブラリを取り込み直すか、フォルダを調べてください"
+                .into(),
+        );
+    }
     Ok(ImportReport {
         inserted,
         updated,
         unchanged,
         skipped: parsed.skipped,
-        warnings: parsed.warnings.clone(),
+        variations,
+        downloads,
+        warnings,
     })
 }
 
@@ -410,7 +540,7 @@ fn upsert(connection: &Connection, incoming: &IncomingProduct) -> Result<Upsert,
             && url == existing.url
             && thumbnail == existing.thumbnail_url
         {
-            return Ok(Upsert::Unchanged);
+            return finish_upsert(connection, incoming, Upsert::Unchanged);
         }
         if description_changed {
             let category = if existing.category_locked {
@@ -460,7 +590,7 @@ fn upsert(connection: &Connection, incoming: &IncomingProduct) -> Result<Upsert,
                 )
                 .sql()?;
         }
-        return Ok(Upsert::Updated);
+        return finish_upsert(connection, incoming, Upsert::Updated);
     }
 
     connection
@@ -482,7 +612,198 @@ fn upsert(connection: &Connection, incoming: &IncomingProduct) -> Result<Upsert,
             ],
         )
         .sql()?;
-    Ok(Upsert::Inserted)
+    finish_upsert(connection, incoming, Upsert::Inserted)
+}
+
+fn finish_upsert(
+    connection: &Connection,
+    incoming: &IncomingProduct,
+    status: Upsert,
+) -> Result<Upsert, String> {
+    let facts_changed = merge_library_facts(connection, incoming)?;
+    if matches!(status, Upsert::Unchanged) && facts_changed {
+        Ok(Upsert::Updated)
+    } else {
+        Ok(status)
+    }
+}
+
+fn merge_library_facts(
+    connection: &Connection,
+    incoming: &IncomingProduct,
+) -> Result<bool, String> {
+    let mut changed = false;
+    changed |= merge_flag(connection, &incoming.booth_id, "is_free", incoming.is_free)?;
+    changed |= merge_flag(
+        connection,
+        &incoming.booth_id,
+        "is_adult",
+        incoming.is_adult,
+    )?;
+    for variation in &incoming.variations {
+        changed |= merge_variation(connection, &incoming.booth_id, variation)?;
+    }
+    for download in &incoming.downloads {
+        if !download.variation.is_empty() {
+            changed |= merge_variation(
+                connection,
+                &incoming.booth_id,
+                &IncomingVariation {
+                    name: download.variation.clone(),
+                    owned: true,
+                },
+            )?;
+        }
+        changed |= merge_download(connection, &incoming.booth_id, download)?;
+    }
+    Ok(changed)
+}
+
+fn merge_flag(
+    connection: &Connection,
+    booth_id: &str,
+    column: &str,
+    value: Option<bool>,
+) -> Result<bool, String> {
+    let Some(value) = value else {
+        return Ok(false);
+    };
+    let sql = match column {
+        "is_free" => "UPDATE products SET is_free = ?1 WHERE booth_id = ?2 AND (is_free IS NOT ?1)",
+        "is_adult" => {
+            "UPDATE products SET is_adult = ?1 WHERE booth_id = ?2 AND (is_adult IS NOT ?1)"
+        }
+        _ => return Err("不明な項目です".into()),
+    };
+    let changed = connection
+        .execute(sql, params![if value { 1 } else { 0 }, booth_id])
+        .sql()?;
+    Ok(changed > 0)
+}
+
+fn merge_variation(
+    connection: &Connection,
+    booth_id: &str,
+    variation: &IncomingVariation,
+) -> Result<bool, String> {
+    let Some(name) = crate::library_files::clean_variation(&variation.name) else {
+        return Ok(false);
+    };
+    let owned = if variation.owned { 1 } else { 0 };
+    let changed = connection
+        .execute(
+            "INSERT INTO product_variations (booth_id, name, owned) VALUES (?1, ?2, ?3)
+             ON CONFLICT(booth_id, name) DO UPDATE SET
+               owned = CASE WHEN product_variations.owned = 1 THEN 1 ELSE excluded.owned END
+             WHERE NOT (product_variations.owned = 1 OR product_variations.owned = excluded.owned)",
+            params![booth_id, name, owned],
+        )
+        .sql()?;
+    Ok(changed > 0)
+}
+
+fn clean_downloadable_id(value: &str) -> String {
+    let id = value.trim();
+    if (1..=12).contains(&id.len()) && id.bytes().all(|byte| byte.is_ascii_digit()) {
+        id.to_string()
+    } else {
+        String::new()
+    }
+}
+
+fn merge_download(
+    connection: &Connection,
+    booth_id: &str,
+    download: &IncomingDownload,
+) -> Result<bool, String> {
+    let downloadable_id = clean_downloadable_id(&download.downloadable_id);
+    let Some(filename) = crate::library_files::safe_filename(&download.filename)
+        .or_else(|| crate::library_files::safe_filename(&downloadable_id))
+    else {
+        return Ok(false);
+    };
+    let variation = crate::library_files::clean_variation(&download.variation).unwrap_or_default();
+    if !downloadable_id.is_empty() {
+        let existing: Option<(String, String)> = connection
+            .query_row(
+                "SELECT variation, filename FROM product_files
+                 WHERE booth_id = ?1 AND downloadable_id = ?2",
+                params![booth_id, downloadable_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .sql()?;
+        if let Some((old_variation, old_filename)) = existing {
+            let new_filename = if filename != downloadable_id {
+                filename
+            } else {
+                old_filename.clone()
+            };
+            let new_variation = if variation.is_empty() {
+                old_variation.clone()
+            } else {
+                variation
+            };
+            let mut changed = false;
+            if new_filename != old_filename || new_variation != old_variation {
+                let clash: i64 = connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM product_files
+                         WHERE booth_id = ?1 AND variation = ?2 AND filename = ?3
+                           AND IFNULL(downloadable_id, '') != ?4",
+                        params![booth_id, new_variation, new_filename, downloadable_id],
+                        |row| row.get(0),
+                    )
+                    .sql()?;
+                if clash == 0 {
+                    let updated = connection
+                        .execute(
+                            "UPDATE product_files SET variation = ?1, filename = ?2
+                             WHERE booth_id = ?3 AND downloadable_id = ?4",
+                            params![new_variation, new_filename, booth_id, downloadable_id],
+                        )
+                        .sql()?;
+                    changed |= updated > 0;
+                }
+            }
+            if let Some(size) = download.size_bytes {
+                let updated = connection
+                    .execute(
+                        "UPDATE product_files SET size_bytes = ?1
+                         WHERE booth_id = ?2 AND downloadable_id = ?3 AND size_bytes IS NOT ?1",
+                        params![size as i64, booth_id, downloadable_id],
+                    )
+                    .sql()?;
+                changed |= updated > 0;
+            }
+            return Ok(changed);
+        }
+    }
+    let id_value = if downloadable_id.is_empty() {
+        None
+    } else {
+        Some(downloadable_id)
+    };
+    let changed = connection
+        .execute(
+            "INSERT INTO product_files (
+                booth_id, variation, filename, size_bytes, downloaded, local_path, downloadable_id
+             ) VALUES (?1, ?2, ?3, ?4, 0, NULL, ?5)
+             ON CONFLICT(booth_id, variation, filename) DO UPDATE SET
+               size_bytes = COALESCE(excluded.size_bytes, product_files.size_bytes),
+               downloadable_id = COALESCE(product_files.downloadable_id, excluded.downloadable_id)
+             WHERE (excluded.size_bytes IS NOT NULL AND product_files.size_bytes IS NOT excluded.size_bytes)
+                OR (product_files.downloadable_id IS NULL AND excluded.downloadable_id IS NOT NULL)",
+            params![
+                booth_id,
+                variation,
+                filename,
+                download.size_bytes.map(|size| size as i64),
+                id_value
+            ],
+        )
+        .sql()?;
+    Ok(changed > 0)
 }
 
 fn apply_listed_compatibility(connection: &mut Connection, booth_id: &str) -> Result<(), String> {
@@ -1074,6 +1395,7 @@ pub(crate) fn apply_scan(
             }
         }
     }
+    sync_scanned_downloads(&tx)?;
     tx.commit().sql()?;
     Ok(crate::model::ScanReport {
         indexed: outcome.entries.len() as u32,
@@ -1151,7 +1473,455 @@ pub(crate) fn load_snapshot(connection: &Connection) -> Result<Snapshot, String>
         avatars: load_avatars(connection)?,
         base_bodies: load_bases(connection)?,
         links: load_links(connection)?,
+        variations: load_variations(connection)?,
+        download_rows: load_download_rows(connection)?,
+        placed_downloads: Vec::new(),
+        product_flags: load_product_flags(connection)?,
+        remote_configured: false,
+        remote_checked: true,
+        remote_reachable: false,
     })
+}
+
+fn load_variations(connection: &Connection) -> Result<Vec<VariationFact>, String> {
+    let mut statement = connection
+        .prepare("SELECT booth_id, name, owned FROM product_variations")
+        .sql()?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok(VariationFact {
+                booth_id: row.get(0)?,
+                name: row.get(1)?,
+                owned: row.get::<_, i64>(2)? != 0,
+            })
+        })
+        .sql()?;
+    rows.collect::<Result<Vec<_>, _>>().sql()
+}
+
+fn load_download_rows(connection: &Connection) -> Result<Vec<DownloadFact>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT booth_id, variation, filename, size_bytes, downloaded, local_path
+             FROM product_files",
+        )
+        .sql()?;
+    let rows = statement
+        .query_map([], |row| {
+            let size: Option<i64> = row.get(3)?;
+            Ok(DownloadFact {
+                booth_id: row.get(0)?,
+                variation: row.get(1)?,
+                filename: row.get(2)?,
+                size_bytes: size.and_then(|value| u64::try_from(value).ok()),
+                downloaded: row.get::<_, i64>(4)? != 0,
+                local_path: row.get(5)?,
+            })
+        })
+        .sql()?;
+    rows.collect::<Result<Vec<_>, _>>().sql()
+}
+
+fn load_product_flags(connection: &Connection) -> Result<Vec<ProductFlag>, String> {
+    let mut statement = connection
+        .prepare("SELECT booth_id, is_free, is_adult FROM products")
+        .sql()?;
+    let rows = statement
+        .query_map([], |row| {
+            let free: Option<i64> = row.get(1)?;
+            let adult: Option<i64> = row.get(2)?;
+            Ok(ProductFlag {
+                booth_id: row.get(0)?,
+                is_free: free.map(|value| value != 0),
+                is_adult: adult.map(|value| value != 0),
+            })
+        })
+        .sql()?;
+    rows.collect::<Result<Vec<_>, _>>().sql()
+}
+
+fn booth_id_in_path(path: &str, ids: &HashSet<String>) -> Option<String> {
+    let parts: Vec<&str> = path
+        .split(['/', '\\'])
+        .filter(|part| !part.is_empty())
+        .collect();
+    let dirs = if parts.len() > 1 {
+        &parts[..parts.len() - 1]
+    } else {
+        &parts[..]
+    };
+    if let Some(exact) = dirs.iter().rev().find(|part| ids.contains(**part)) {
+        return Some((*exact).to_string());
+    }
+    let mut found = Vec::new();
+    for id in ids {
+        if contains_booth_id(path, id) {
+            found.push(id.clone());
+        }
+    }
+    if found.len() == 1 {
+        found.pop()
+    } else {
+        None
+    }
+}
+
+fn sync_scanned_downloads(connection: &Connection) -> Result<(), String> {
+    let mut id_query = connection.prepare("SELECT booth_id FROM products").sql()?;
+    let product_ids: HashSet<String> = id_query
+        .query_map([], |row| row.get(0))
+        .sql()?
+        .collect::<Result<HashSet<_>, _>>()
+        .sql()?;
+    drop(id_query);
+    let mut statement = connection
+        .prepare(
+            "SELECT path, filename, size, linked_product_id FROM local_files WHERE is_dir = 0",
+        )
+        .sql()?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            ))
+        })
+        .sql()?
+        .collect::<Result<Vec<_>, _>>()
+        .sql()?;
+    drop(statement);
+    for (path, filename, size, linked) in rows {
+        let Some(filename) = crate::library_files::safe_filename(&filename) else {
+            continue;
+        };
+        let booth_id = linked
+            .filter(|id| product_ids.contains(id))
+            .or_else(|| booth_id_in_path(&path, &product_ids));
+        let Some(booth_id) = booth_id else {
+            continue;
+        };
+        let existing: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM product_files WHERE booth_id = ?1 AND filename = ?2",
+                params![booth_id, filename],
+                |row| row.get(0),
+            )
+            .sql()?;
+        if existing > 0 {
+            connection
+                .execute(
+                    "UPDATE product_files SET downloaded = 1, local_path = ?1,
+                       size_bytes = COALESCE(size_bytes, ?2)
+                     WHERE booth_id = ?3 AND filename = ?4
+                       AND (downloaded = 0 OR local_path IS NULL OR size_bytes IS NULL)",
+                    params![path, size, booth_id, filename],
+                )
+                .sql()?;
+        } else {
+            connection
+                .execute(
+                    "INSERT INTO product_files (
+                        booth_id, variation, filename, size_bytes, downloaded, local_path
+                     ) VALUES (?1, '', ?2, ?3, 1, ?4)",
+                    params![booth_id, filename, size, path],
+                )
+                .sql()?;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn add_free_product(connection: &mut Connection, url: &str) -> Result<String, String> {
+    let booth_id =
+        booth_id_from_url(url).ok_or_else(|| "商品のURLからIDを読めません".to_string())?;
+    if product_by_id(connection, &booth_id)?.is_some() {
+        let _ = merge_flag(connection, &booth_id, "is_free", Some(true))?;
+        return Ok(booth_id);
+    }
+    let incoming = IncomingProduct {
+        booth_id: booth_id.clone(),
+        title: format!("商品 {booth_id}"),
+        shop: String::new(),
+        description_snippet: String::new(),
+        url: format!("https://booth.pm/ja/items/{booth_id}"),
+        thumbnail_url: None,
+        variations: Vec::new(),
+        downloads: Vec::new(),
+        is_free: Some(true),
+        is_adult: None,
+    };
+    upsert(connection, &incoming)?;
+    Ok(booth_id)
+}
+
+#[derive(Debug)]
+pub(crate) struct DownloadPlan {
+    pub source: std::path::PathBuf,
+    pub library: Option<std::path::PathBuf>,
+    pub booth_id: String,
+    pub variation: String,
+}
+
+pub(crate) fn prepare_download(
+    connection: &mut Connection,
+    notice: &DownloadFinished,
+) -> Result<DownloadPlan, String> {
+    let saved = settings(connection)?;
+    if !saved.route_downloads {
+        return Err("ダウンロードの振り分けはオフです".into());
+    }
+    if saved.library_folder.trim().is_empty() {
+        return Err("ライブラリのフォルダを選んでから、振り分けをオンにしてください".into());
+    }
+    let booth_id = notice.booth_id.trim();
+    if !crate::library_files::valid_booth_id(booth_id) {
+        return Err("商品IDを特定できません".into());
+    }
+    let source = std::path::PathBuf::from(notice.path.trim());
+    let downloads = crate::library_files::downloads_folder()?;
+    crate::library_files::staged_download_ok(&source, &downloads, booth_id)?;
+    let actual_name = crate::library_files::safe_filename(
+        source
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(""),
+    );
+    let Some(filename) = actual_name else {
+        return Err("ファイル名を読めません".into());
+    };
+    if let Some(claimed) = crate::library_files::safe_filename(&notice.filename) {
+        if filename != claimed {
+            return Err("ファイル名がパスと一致しません".into());
+        }
+    }
+    let variation = crate::library_files::clean_variation(&notice.variation).unwrap_or_default();
+    let title = notice
+        .title
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let title: String = title.chars().take(300).collect();
+    if product_by_id(connection, booth_id)?.is_none() {
+        let incoming = IncomingProduct {
+            booth_id: booth_id.to_string(),
+            title: if title.is_empty() {
+                format!("商品 {booth_id}")
+            } else {
+                title.clone()
+            },
+            shop: String::new(),
+            description_snippet: String::new(),
+            url: format!("https://booth.pm/ja/items/{booth_id}"),
+            thumbnail_url: None,
+            variations: Vec::new(),
+            downloads: Vec::new(),
+            is_free: if notice.is_free == Some(true) {
+                Some(true)
+            } else {
+                None
+            },
+            is_adult: if notice.is_adult == Some(true) {
+                Some(true)
+            } else {
+                None
+            },
+        };
+        upsert(connection, &incoming)?;
+    } else {
+        if notice.is_free == Some(true) {
+            let _ = merge_flag(connection, booth_id, "is_free", Some(true))?;
+        }
+        if notice.is_adult == Some(true) {
+            let _ = merge_flag(connection, booth_id, "is_adult", Some(true))?;
+        }
+    }
+    Ok(DownloadPlan {
+        source,
+        library: if saved.library_folder.trim().is_empty() {
+            None
+        } else {
+            Some(std::path::PathBuf::from(saved.library_folder.trim()))
+        },
+        booth_id: booth_id.to_string(),
+        variation,
+    })
+}
+
+pub(crate) fn record_placed_download(
+    connection: &Connection,
+    booth_id: &str,
+    variation: &str,
+    path: &std::path::Path,
+    size: Option<u64>,
+) -> Result<(), String> {
+    let disk_size = std::fs::metadata(path).ok().map(|meta| meta.len());
+    let size = disk_size.or(size);
+    let filename = crate::library_files::safe_filename(
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(""),
+    )
+    .ok_or_else(|| "ファイル名を読めません".to_string())?;
+    let variation = crate::library_files::clean_variation(variation).unwrap_or_default();
+    if !variation.is_empty() {
+        let _ = merge_variation(
+            connection,
+            booth_id,
+            &IncomingVariation {
+                name: variation.clone(),
+                owned: true,
+            },
+        )?;
+    }
+    connection
+        .execute(
+            "INSERT INTO product_files (booth_id, variation, filename, size_bytes, downloaded, local_path)
+             VALUES (?1, ?2, ?3, ?4, 1, ?5)
+             ON CONFLICT(booth_id, variation, filename) DO UPDATE SET
+               downloaded = 1,
+               local_path = excluded.local_path,
+               size_bytes = COALESCE(excluded.size_bytes, product_files.size_bytes)",
+            params![
+                booth_id,
+                variation,
+                filename,
+                size.map(|value| value as i64),
+                path.display().to_string()
+            ],
+        )
+        .sql()?;
+    let bytes = std::fs::metadata(path)
+        .map(|meta| meta.len() as i64)
+        .unwrap_or(0);
+    connection
+        .execute(
+            "INSERT INTO local_files (
+                path, filename, is_dir, size, linked_product_id, candidate_product_id,
+                match_score, link_source, scanned_at
+             ) VALUES (?1, ?2, 0, ?3, ?4, ?4, 1, 'download', ?5)
+             ON CONFLICT(path) DO UPDATE SET
+               filename = excluded.filename,
+               size = excluded.size,
+               linked_product_id = excluded.linked_product_id,
+               candidate_product_id = excluded.candidate_product_id,
+               match_score = 1,
+               link_source = 'download',
+               scanned_at = excluded.scanned_at",
+            params![
+                path.display().to_string(),
+                filename,
+                bytes,
+                booth_id,
+                now_iso()
+            ],
+        )
+        .sql()?;
+    Ok(())
+}
+
+pub(crate) fn require_download(
+    connection: &Connection,
+    booth_id: &str,
+    variation: &str,
+    filename: &str,
+) -> Result<(), String> {
+    let variation = crate::library_files::clean_variation(variation).unwrap_or_default();
+    let filename = crate::library_files::safe_filename(filename)
+        .ok_or_else(|| "ファイル名を読めません".to_string())?;
+    let found: Option<String> = connection
+        .query_row(
+            "SELECT filename FROM product_files
+             WHERE booth_id = ?1 AND variation = ?2 AND filename = ?3",
+            params![booth_id, variation, filename],
+            |row| row.get(0),
+        )
+        .optional()
+        .sql()?;
+    if found.is_none() {
+        return Err("ダウンロード項目がありません".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn local_source_for(
+    connection: &Connection,
+    booth_id: &str,
+    variation: &str,
+    filename: &str,
+) -> Result<std::path::PathBuf, String> {
+    require_download(connection, booth_id, variation, filename)?;
+    let variation = crate::library_files::clean_variation(variation).unwrap_or_default();
+    let filename = crate::library_files::safe_filename(filename).unwrap();
+    let stored: Option<String> = connection
+        .query_row(
+            "SELECT local_path FROM product_files
+             WHERE booth_id = ?1 AND variation = ?2 AND filename = ?3",
+            params![booth_id, variation, filename],
+            |row| row.get(0),
+        )
+        .optional()
+        .sql()?
+        .flatten();
+    if let Some(path) = stored.filter(|path| !path.is_empty()) {
+        return Ok(std::path::PathBuf::from(path));
+    }
+    let scanned: Option<String> = connection
+        .query_row(
+            "SELECT path FROM local_files
+             WHERE linked_product_id = ?1 AND filename = ?2 AND is_dir = 0
+             LIMIT 1",
+            params![booth_id, filename],
+            |row| row.get(0),
+        )
+        .optional()
+        .sql()?;
+    scanned
+        .map(std::path::PathBuf::from)
+        .ok_or_else(|| "手元にファイルがありません".into())
+}
+
+pub(crate) fn remember_file_size(
+    connection: &Connection,
+    booth_id: &str,
+    variation: &str,
+    filename: &str,
+    size: u64,
+) -> Result<(), String> {
+    let variation = crate::library_files::clean_variation(variation).unwrap_or_default();
+    let filename = crate::library_files::safe_filename(filename)
+        .ok_or_else(|| "ファイル名を読めません".to_string())?;
+    connection
+        .execute(
+            "UPDATE product_files SET size_bytes = ?1
+             WHERE booth_id = ?2 AND variation = ?3 AND filename = ?4",
+            params![size as i64, booth_id, variation, filename],
+        )
+        .sql()?;
+    Ok(())
+}
+
+pub(crate) fn note_downloaded_file(
+    connection: &Connection,
+    booth_id: &str,
+    variation: &str,
+    _filename: &str,
+    path: &std::path::Path,
+) -> Result<(), String> {
+    let size = std::fs::metadata(path).ok().map(|meta| meta.len());
+    record_placed_download(connection, booth_id, variation, path, size)
+}
+
+fn booth_id_from_url(url: &str) -> Option<String> {
+    let start = url.find("/items/")?;
+    let rest = &url[start + "/items/".len()..];
+    let id: String = rest.chars().take_while(|ch| ch.is_ascii_digit()).collect();
+    if crate::library_files::valid_booth_id(&id) {
+        Some(id)
+    } else {
+        None
+    }
 }
 
 pub(crate) fn knowledge(connection: &Connection) -> Result<Knowledge, String> {
@@ -1375,7 +2145,11 @@ fn merge_catalog(connection: &Connection) -> Result<u32, String> {
     if setting(connection, "catalog_fetched")?.is_none() {
         set_setting(connection, "catalog_fetched", &parsed.fetched_on)?;
         set_setting(connection, "catalog_upstream", &parsed.upstream_updated)?;
-        set_setting(connection, "catalog_count", &parsed.entries.len().to_string())?;
+        set_setting(
+            connection,
+            "catalog_count",
+            &parsed.entries.len().to_string(),
+        )?;
     }
     Ok(added)
 }
@@ -1393,7 +2167,11 @@ pub(crate) fn install_catalog(
     };
     set_setting(connection, "catalog_fetched", &fetched)?;
     set_setting(connection, "catalog_upstream", &upstream)?;
-    set_setting(connection, "catalog_count", &parsed.entries.len().to_string())?;
+    set_setting(
+        connection,
+        "catalog_count",
+        &parsed.entries.len().to_string(),
+    )?;
     settle_dictionary(connection)?;
     reresolve_all(connection)?;
     Ok(CatalogRefresh {
@@ -1628,7 +2406,10 @@ fn settle_one(connection: &mut Connection, booth_id: &str, redo: bool) -> Result
     Ok(true)
 }
 
-fn catalog_body(connection: &Connection, booth_id: &str) -> Result<Option<(String, String)>, String> {
+fn catalog_body(
+    connection: &Connection,
+    booth_id: &str,
+) -> Result<Option<(String, String)>, String> {
     connection
         .query_row(
             "SELECT avatars.id, avatars.display_name
@@ -1668,7 +2449,10 @@ fn write_catalog_body(
     Ok(())
 }
 
-pub(crate) fn mark_owned_body(connection: &mut Connection, booth_id: &str) -> Result<String, String> {
+pub(crate) fn mark_owned_body(
+    connection: &mut Connection,
+    booth_id: &str,
+) -> Result<String, String> {
     let product = require_product(connection, booth_id)?;
     if matches!(
         product.category,
@@ -1719,7 +2503,10 @@ pub(crate) fn mark_owned_body(connection: &mut Connection, booth_id: &str) -> Re
         id
     };
     connection
-        .execute("UPDATE avatars SET owned = 1 WHERE id = ?1", params![avatar_id])
+        .execute(
+            "UPDATE avatars SET owned = 1 WHERE id = ?1",
+            params![avatar_id],
+        )
         .sql()?;
     let display = avatar_display(connection, &avatar_id)?;
     let now = now_iso();
@@ -1775,7 +2562,11 @@ pub(crate) fn setup_status(connection: &Connection) -> Result<SetupStatus, Strin
 }
 
 pub(crate) fn set_setup_complete(connection: &Connection, complete: bool) -> Result<(), String> {
-    set_setting(connection, "setup_complete", if complete { "1" } else { "0" })
+    set_setting(
+        connection,
+        "setup_complete",
+        if complete { "1" } else { "0" },
+    )
 }
 
 pub(crate) fn avatar_candidates(connection: &Connection) -> Result<Vec<AvatarCandidate>, String> {
@@ -1792,7 +2583,10 @@ pub(crate) fn avatar_candidates(connection: &Connection) -> Result<Vec<AvatarCan
     }
     let mut listed: Vec<AvatarCandidate> = counts
         .into_iter()
-        .map(|(name, product_count)| AvatarCandidate { name, product_count })
+        .map(|(name, product_count)| AvatarCandidate {
+            name,
+            product_count,
+        })
         .collect();
     listed.sort_by(|left, right| {
         right
@@ -1803,9 +2597,16 @@ pub(crate) fn avatar_candidates(connection: &Connection) -> Result<Vec<AvatarCan
     Ok(listed)
 }
 
-pub(crate) fn register_candidate(connection: &mut Connection, name: &str) -> Result<String, String> {
+pub(crate) fn register_candidate(
+    connection: &mut Connection,
+    name: &str,
+) -> Result<String, String> {
     let (display, aliases) = crate::catalog::split_bilingual_name(name);
-    let display = if display.is_empty() { name.trim().to_string() } else { display };
+    let display = if display.is_empty() {
+        name.trim().to_string()
+    } else {
+        display
+    };
     if display.is_empty() || display.chars().count() > 80 {
         return Err("アバター名を確認してください".into());
     }
@@ -1863,7 +2664,11 @@ fn unique_avatar_named(connection: &Connection, display: &str) -> Result<Option<
     }
     hits.sort();
     hits.dedup();
-    if hits.len() == 1 { Ok(hits.pop()) } else { Ok(None) }
+    if hits.len() == 1 {
+        Ok(hits.pop())
+    } else {
+        Ok(None)
+    }
 }
 
 fn remember_alias(connection: &Connection, avatar_id: &str, alias: &str) -> Result<(), String> {
@@ -1891,7 +2696,8 @@ fn remember_alias(connection: &Connection, avatar_id: &str, alias: &str) -> Resu
 }
 
 fn tokyo_date() -> String {
-    let offset = chrono::FixedOffset::east_opt(9 * 3600).unwrap_or(chrono::FixedOffset::east_opt(0).unwrap());
+    let offset = chrono::FixedOffset::east_opt(9 * 3600)
+        .unwrap_or(chrono::FixedOffset::east_opt(0).unwrap());
     chrono::Utc::now()
         .with_timezone(&offset)
         .format("%Y-%m-%d")
@@ -2712,14 +3518,18 @@ mod tests {
                 "shinano".to_string()
             ]
         );
-        assert!(snapshot
-            .avatars
-            .iter()
-            .any(|avatar| avatar.id == "shinano" && !avatar.owned));
-        assert!(snapshot
-            .avatars
-            .iter()
-            .any(|avatar| avatar.id == "lime" && avatar.owned));
+        assert!(
+            snapshot
+                .avatars
+                .iter()
+                .any(|avatar| avatar.id == "shinano" && !avatar.owned)
+        );
+        assert!(
+            snapshot
+                .avatars
+                .iter()
+                .any(|avatar| avatar.id == "lime" && avatar.owned)
+        );
         assert!(snapshot.avatars.iter().any(|avatar| avatar.id == "shinano"));
         assert!(
             snapshot
@@ -2837,6 +3647,8 @@ mod tests {
                 confidence_threshold: 0.6,
                 library_folder: String::new(),
                 builtin_browser: false,
+                remote_library_folder: String::new(),
+                route_downloads: false,
             },
         )
         .unwrap();
@@ -2888,6 +3700,8 @@ mod tests {
                 confidence_threshold: 0.6,
                 library_folder: String::new(),
                 builtin_browser: true,
+                remote_library_folder: String::new(),
+                route_downloads: false,
             },
         )
         .unwrap();
@@ -3314,14 +4128,17 @@ mod tests {
                 .iter()
                 .find(|product| product.booth_id == id)
                 .unwrap();
-            assert!(product.unresolved_names.is_empty(), "{id} {:?}", product.unresolved_names);
+            assert!(
+                product.unresolved_names.is_empty(),
+                "{id} {:?}",
+                product.unresolved_names
+            );
             assert!(
                 snapshot.links.iter().any(|link| {
                     link.product_id == id
-                        && snapshot
-                            .avatars
-                            .iter()
-                            .any(|avatar| avatar.id == link.avatar_id && avatar.display_name == "萌")
+                        && snapshot.avatars.iter().any(|avatar| {
+                            avatar.id == link.avatar_id && avatar.display_name == "萌"
+                        })
                 }),
                 "{id}"
             );
@@ -3423,12 +4240,25 @@ mod tests {
             .unwrap();
         assert!(!kikyo.owned);
         let candidates = avatar_candidates(&connection).unwrap();
-        let fictional = candidates.iter().find(|item| item.name == "架空丸").unwrap();
+        let fictional = candidates
+            .iter()
+            .find(|item| item.name == "架空丸")
+            .unwrap();
         assert_eq!(fictional.product_count, 2);
         let id = register_candidate(&mut connection, "架空丸").unwrap();
         let after = load_snapshot(&mut connection).unwrap();
-        assert!(after.links.iter().any(|link| link.product_id == "8800991" && link.avatar_id == id));
-        assert!(avatar_candidates(&connection).unwrap().iter().all(|item| item.name != "架空丸"));
+        assert!(
+            after
+                .links
+                .iter()
+                .any(|link| link.product_id == "8800991" && link.avatar_id == id)
+        );
+        assert!(
+            avatar_candidates(&connection)
+                .unwrap()
+                .iter()
+                .all(|item| item.name != "架空丸")
+        );
         let known = known_booth_ids(&connection).unwrap();
         assert!(known.iter().any(|item| item == "3016885"));
         assert!(known.iter().any(|item| item == "8800991"));
@@ -3445,14 +4275,18 @@ mod tests {
         }"#;
         import_products(&mut connection, &parse_export(json).unwrap()).unwrap();
         let before = load_snapshot(&mut connection).unwrap();
-        assert!(before
-            .avatars
-            .iter()
-            .any(|avatar| avatar.display_name == "桔梗" && !avatar.owned));
-        assert!(before
-            .products
-            .iter()
-            .any(|product| product.booth_id == "3001" && product.extracted_at.is_none()));
+        assert!(
+            before
+                .avatars
+                .iter()
+                .any(|avatar| avatar.display_name == "桔梗" && !avatar.owned)
+        );
+        assert!(
+            before
+                .products
+                .iter()
+                .any(|product| product.booth_id == "3001" && product.extracted_at.is_none())
+        );
         let id = mark_owned_body(&mut connection, "3001").unwrap();
         let after = load_snapshot(&mut connection).unwrap();
         let owned = after.avatars.iter().find(|avatar| avatar.id == id).unwrap();
@@ -3465,15 +4299,354 @@ mod tests {
             .unwrap();
         assert_eq!(body.category, Some(Category::Avatar));
         assert!(!body.needs_review);
-        assert!(after
-            .avatars
-            .iter()
-            .any(|avatar| avatar.display_name == "桔梗" && !avatar.owned));
+        assert!(
+            after
+                .avatars
+                .iter()
+                .any(|avatar| avatar.display_name == "桔梗" && !avatar.owned)
+        );
         let cards = avatar_cards(&after);
         assert!(cards.iter().any(|card| card.id == id && card.owned));
-        assert!(cards
-            .iter()
-            .any(|card| card.display_name == "桔梗" && !card.owned));
+        assert!(
+            cards
+                .iter()
+                .any(|card| card.display_name == "桔梗" && !card.owned)
+        );
+    }
+
+    #[test]
+    fn purchased_variations_stay_owned_and_partial_pages_keep_files() {
+        let mut connection = open_memory().unwrap();
+        let first = r#"{"boothId":"424242","title":"架空の服","isFree":true,"variations":[{"name":"通常","owned":true},{"name":"特典","owned":false}],"downloads":[{"filename":"body.unitypackage","variation":"通常","sizeBytes":12}]}"#;
+        import_products(&mut connection, &parse_export(first).unwrap()).unwrap();
+        let second = r#"{"boothId":"424242","title":"架空の服","variations":[{"name":"通常","owned":false}],"downloads":[{"filename":"extra.zip","sizeBytes":3}]}"#;
+        let report = import_products(&mut connection, &parse_export(second).unwrap()).unwrap();
+        assert_eq!(report.updated, 1);
+        let owned: i64 = connection
+            .query_row(
+                "SELECT owned FROM product_variations WHERE booth_id = '424242' AND name = '通常'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(owned, 1);
+        let bonus: i64 = connection
+            .query_row(
+                "SELECT owned FROM product_variations WHERE booth_id = '424242' AND name = '特典'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(bonus, 0);
+        let files: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM product_files WHERE booth_id = '424242'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(files, 2);
+        connection
+            .execute(
+                "UPDATE product_files SET downloaded = 1, local_path = 'C:\\Assets\\body.unitypackage' WHERE filename = 'body.unitypackage'",
+                [],
+            )
+            .unwrap();
+        let again = r#"{"boothId":"424242","title":"架空の服","downloads":[{"filename":"body.unitypackage","variation":"通常","sizeBytes":12}]}"#;
+        import_products(&mut connection, &parse_export(again).unwrap()).unwrap();
+        let downloaded: i64 = connection
+            .query_row(
+                "SELECT downloaded FROM product_files WHERE filename = 'body.unitypackage'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(downloaded, 1);
+        let free: Option<i64> = connection
+            .query_row(
+                "SELECT is_free FROM products WHERE booth_id = '424242'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(free, Some(1));
+        let explicit = r#"{"boothId":"424242","title":"架空の服","isFree":false}"#;
+        import_products(&mut connection, &parse_export(explicit).unwrap()).unwrap();
+        let free: Option<i64> = connection
+            .query_row(
+                "SELECT is_free FROM products WHERE booth_id = '424242'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(free, Some(0));
+    }
+
+    #[test]
+    fn an_import_without_files_warns_and_a_downloadable_id_keeps_its_row() {
+        let mut connection = open_memory().unwrap();
+        let empty = r#"{"boothId":"424242","title":"架空の服"}"#;
+        let report = import_products(&mut connection, &parse_export(empty).unwrap()).unwrap();
+        assert_eq!(report.variations, 0);
+        assert_eq!(report.downloads, 0);
+        assert!(report.warnings.iter().any(|warning| warning.contains("0 件")));
+        let placeholder = r#"{"boothId":"424242","title":"架空の服","variations":[{"name":"通常","owned":true}],"downloads":[{"filename":"2336025","downloadableId":"2336025","variation":"通常"}]}"#;
+        import_products(&mut connection, &parse_export(placeholder).unwrap()).unwrap();
+        let named = r#"{"boothId":"424242","title":"架空の服","downloads":[{"filename":"body.unitypackage","downloadableId":"2336025","variation":"通常","sizeBytes":12}]}"#;
+        let report = import_products(&mut connection, &parse_export(named).unwrap()).unwrap();
+        assert_eq!(report.downloads, 1);
+        assert_eq!(report.variations, 0);
+        assert!(report.warnings.iter().all(|warning| !warning.contains("0 件")));
+        let filename: String = connection
+            .query_row(
+                "SELECT filename FROM product_files WHERE booth_id = '424242' AND downloadable_id = '2336025'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(filename, "body.unitypackage");
+        let count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM product_files WHERE booth_id = '424242'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn a_folder_scan_creates_local_file_rows_from_product_ids() {
+        let mut connection = open_memory().unwrap();
+        let json = r#"{"boothId":"424242","title":"架空の服","downloads":[{"filename":"known.unitypackage"}]}"#;
+        import_products(&mut connection, &parse_export(json).unwrap()).unwrap();
+        let outcome = crate::scan::ScanOutcome {
+            truncated: false,
+            entries: vec![
+                crate::scan::ScanEntry {
+                    path: "/library/424242/known.unitypackage".into(),
+                    filename: "known.unitypackage".into(),
+                    is_dir: false,
+                    size: 12,
+                    labels: vec!["known".into(), "424242".into()],
+                },
+                crate::scan::ScanEntry {
+                    path: "/library/clothes/pack-424242/bonus.zip".into(),
+                    filename: "bonus.zip".into(),
+                    is_dir: false,
+                    size: 4,
+                    labels: vec!["bonus".into()],
+                },
+                crate::scan::ScanEntry {
+                    path: "/library/other/note.txt".into(),
+                    filename: "note.txt".into(),
+                    is_dir: false,
+                    size: 1,
+                    labels: vec!["note".into()],
+                },
+            ],
+        };
+        apply_scan(&mut connection, "/library", &outcome).unwrap();
+        let known: (i64, String) = connection
+            .query_row(
+                "SELECT downloaded, local_path FROM product_files
+                 WHERE booth_id = '424242' AND filename = 'known.unitypackage'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(known.0, 1);
+        assert_eq!(known.1, "/library/424242/known.unitypackage");
+        let bonus: (i64, String) = connection
+            .query_row(
+                "SELECT downloaded, local_path FROM product_files
+                 WHERE booth_id = '424242' AND filename = 'bonus.zip'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(bonus.0, 1);
+        assert!(bonus.1.contains("bonus.zip"));
+        let note: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM product_files WHERE filename = 'note.txt'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(note, 0);
+    }
+
+    #[test]
+    fn free_url_and_routed_download_do_not_fetch_booth() {
+        let mut connection = open_memory().unwrap();
+        let id =
+            add_free_product(&mut connection, "https://booth.pm/ja/items/424242?ref=1").unwrap();
+        assert_eq!(id, "424242");
+        assert!(add_free_product(&mut connection, "https://example.test/nope").is_err());
+        let free: i64 = connection
+            .query_row(
+                "SELECT is_free FROM products WHERE booth_id = '424242'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(free, 1);
+        let count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM products WHERE booth_id = '424242'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+        add_free_product(&mut connection, "https://booth.pm/ja/items/424242").unwrap();
+        let count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM products WHERE booth_id = '424242'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+
+        let root = std::env::temp_dir().join(format!("vrclibman-accept-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let staging = root.join("Downloads").join("VRCLibMan").join("515151");
+        let library = root.join("library");
+        std::fs::create_dir_all(&staging).unwrap();
+        std::fs::create_dir_all(&library).unwrap();
+        let source = staging.join("free.unitypackage");
+        std::fs::write(&source, b"free").unwrap();
+        let notice = crate::model::DownloadFinished {
+            booth_id: "515151".into(),
+            path: source.display().to_string(),
+            filename: "free.unitypackage".into(),
+            size: Some(3),
+            is_free: Some(true),
+            is_adult: None,
+            variation: "通常".into(),
+            title: "無料の小物".into(),
+        };
+        assert!(
+            prepare_download(&mut connection, &notice)
+                .unwrap_err()
+                .contains("オフ")
+        );
+        assert!(source.exists());
+        let refused = save_settings(
+            &connection,
+            &SettingsInput {
+                ollama_base_url: "http://127.0.0.1:11434".into(),
+                ollama_model: "gemma4:12b".into(),
+                confidence_threshold: 0.6,
+                library_folder: String::new(),
+                builtin_browser: false,
+                remote_library_folder: String::new(),
+                route_downloads: true,
+            },
+        );
+        assert!(refused.unwrap_err().contains("ライブラリ"));
+        save_settings(
+            &connection,
+            &SettingsInput {
+                ollama_base_url: "http://127.0.0.1:11434".into(),
+                ollama_model: "gemma4:12b".into(),
+                confidence_threshold: 0.6,
+                library_folder: library.display().to_string(),
+                builtin_browser: false,
+                remote_library_folder: String::new(),
+                route_downloads: true,
+            },
+        )
+        .unwrap();
+        struct ClearDownloads;
+        impl Drop for ClearDownloads {
+            fn drop(&mut self) {
+                crate::library_files::set_test_downloads(None);
+            }
+        }
+        let _clear = ClearDownloads;
+        crate::library_files::set_test_downloads(Some(root.join("Downloads")));
+        let outside = root.join("secret.unitypackage");
+        std::fs::write(&outside, b"no").unwrap();
+        let bad = crate::model::DownloadFinished {
+            path: outside.display().to_string(),
+            filename: "secret.unitypackage".into(),
+            ..notice.clone()
+        };
+        assert!(
+            prepare_download(&mut connection, &bad)
+                .unwrap_err()
+                .contains("VRCLibMan")
+        );
+        assert!(outside.exists());
+        let wrong = crate::model::DownloadFinished {
+            booth_id: "900001".into(),
+            ..notice.clone()
+        };
+        assert!(prepare_download(&mut connection, &wrong).is_err());
+        assert!(source.exists());
+        let plan = prepare_download(&mut connection, &notice).unwrap();
+        let placed = crate::library_files::place_into_library(
+            &plan.source,
+            plan.library.as_deref(),
+            &plan.booth_id,
+        )
+        .unwrap();
+        record_placed_download(
+            &connection,
+            &plan.booth_id,
+            &plan.variation,
+            &placed,
+            notice.size,
+        )
+        .unwrap();
+        assert!(!source.exists());
+        assert_eq!(placed, library.join("515151").join("free.unitypackage"));
+        let created_free: i64 = connection
+            .query_row(
+                "SELECT is_free FROM products WHERE booth_id = '515151'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(created_free, 1);
+        let title: String = connection
+            .query_row(
+                "SELECT title FROM products WHERE booth_id = '515151'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(title, "無料の小物");
+        let downloaded: i64 = connection
+            .query_row(
+                "SELECT downloaded FROM product_files WHERE booth_id = '515151'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(downloaded, 1);
+        let stored_size: i64 = connection
+            .query_row(
+                "SELECT size_bytes FROM product_files WHERE booth_id = '515151'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored_size, 4);
+        std::fs::write(&placed, b"free!").unwrap();
+        remember_file_size(&connection, "515151", "通常", "free.unitypackage", 5).unwrap();
+        let stored_size: i64 = connection
+            .query_row(
+                "SELECT size_bytes FROM product_files WHERE booth_id = '515151'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored_size, 5);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     fn section_items(detail: &crate::view::AvatarDetail, category: &str) -> Vec<(String, bool)> {

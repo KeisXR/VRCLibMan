@@ -5,7 +5,10 @@ const allButton = document.querySelector("#export-all");
 const newButton = document.querySelector("#export-new");
 const saveTokenButton = document.querySelector("#save-token");
 const openLibraryButton = document.querySelector("#open-library");
+const diagnoseButton = document.querySelector("#diagnose");
+const diagnosisBox = document.querySelector("#diagnosis");
 const tokenInput = document.querySelector("#token");
+const routeInput = document.querySelector("#route-downloads");
 const api = () => globalThis.VrcLibManExtract;
 const LOCAL_PORT = 17321;
 const LOCAL_BASE = `http://127.0.0.1:${LOCAL_PORT}`;
@@ -181,9 +184,15 @@ async function probe(token) {
   }
 }
 
+async function storedRoute() {
+  const stored = await chrome.storage.local.get({ routeDownloads: false });
+  return stored.routeDownloads === true;
+}
+
 async function refreshLink() {
   const token = await savedToken();
   tokenInput.value = token;
+  routeInput.checked = await storedRoute();
   if (!token) {
     linkStatus.textContent = "未ペアリング。アプリの設定に出るコードを貼ってください";
     return;
@@ -192,6 +201,21 @@ async function refreshLink() {
   linkStatus.textContent = reachable
     ? "ペアリング済み。アプリは起動しています"
     : "ペアリング済み。アプリは起動していません";
+  if (!reachable) return;
+  try {
+    const response = await fetch(`${LOCAL_BASE}/route-downloads`, {
+      method: "GET",
+      credentials: "omit",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) return;
+    const data = await response.json();
+    const enabled = data.enabled === true;
+    routeInput.checked = enabled;
+    await chrome.storage.local.set({ routeDownloads: enabled });
+  } catch {
+    // アプリの設定が読めないときは、拡張に保存した値のままにする。
+  }
 }
 
 async function fetchKnownIds(token) {
@@ -303,6 +327,9 @@ function sentText(report, products) {
     `${products.length} 件を送りました。新規 ${report.inserted ?? 0}、更新 ${report.updated ?? 0}、変更なし ${report.unchanged ?? 0}`,
   ];
   if (report.skipped) parts.push(`スキップ ${report.skipped}`);
+  if (typeof report.variations === "number" || typeof report.downloads === "number") {
+    parts.push(`バリエーション ${report.variations ?? 0}、ダウンロード ${report.downloads ?? 0}`);
+  }
   if (Array.isArray(report.warnings) && report.warnings.length > 0) parts.push(report.warnings[0]);
   return parts.join("。");
 }
@@ -409,6 +436,54 @@ saveTokenButton.addEventListener("click", async () => {
 
 openLibraryButton.addEventListener("click", () => {
   chrome.tabs.create({ url: LIBRARY_URL });
+});
+
+diagnoseButton.addEventListener("click", async () => {
+  try {
+    const tab = await currentTab();
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["extract.js"] });
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => globalThis.VrcLibManExtract.diagnose(document, location.href),
+    });
+    const text = JSON.stringify(result?.result ?? {}, null, 2);
+    diagnosisBox.hidden = false;
+    diagnosisBox.value = text;
+    try {
+      await navigator.clipboard.writeText(text);
+      setStatus("解析結果をコピーしました。商品名やファイル名は含めていません");
+    } catch {
+      setStatus("解析結果を下の欄に出しました。商品名やファイル名は含めていません");
+    }
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : String(error));
+  }
+});
+
+routeInput.addEventListener("change", async () => {
+  const enabled = routeInput.checked === true;
+  await chrome.storage.local.set({ routeDownloads: enabled });
+  const token = await savedToken();
+  if (!token) return;
+  try {
+    const response = await fetch(`${LOCAL_BASE}/route-downloads`, {
+      method: "POST",
+      credentials: "omit",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ enabled }),
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      routeInput.checked = false;
+      await chrome.storage.local.set({ routeDownloads: false });
+      setStatus(data.error || "振り分け設定をアプリへ保存できませんでした");
+    }
+  } catch {
+    setStatus("アプリが起動していないので、拡張側だけ覚えました");
+  }
 });
 
 refreshLink();

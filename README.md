@@ -95,6 +95,16 @@ Ollama の接続先は `http://127.0.0.1` か `localhost` だけです。温度�
 
 フォルダ調査は、ドライブ直下、Windows、Program Files を拒否します。Mac では加えて `/System`、`/Library`、`/Applications`、`/private`、ホームフォルダそのもの、`/Volumes` そのものを拒否します。深さ 8、2 万件までです。
 
+## 手元のファイル
+
+購入したバリエーションと、ダウンロード欄のファイル名は、ライブラリか商品ページを送ったときだけ記録します。ライブラリに出ているバリエーションは購入済みです。商品ページでダウンロード欄が無いバリエーションは未購入としてグレーにします。一度購入済みにした名前は、あとから届いた「未購入」では戻しません。
+
+各ファイルは「ローカルにある」「リモートにだけある」「未ダウンロード」のどれかです。リモートは設定したフォルダ（UNC やマウントした共有）だけで、切れているときは約 1.5 秒で諦めて未ダウンロードにします。画面は固まりません。「ローカルに取ってくる」と「リモートに送る」は、押したファイルだけをコピーします。アプリが BOOTH からファイルを取りに行くことはありません。
+
+拡張の `downloads` 権限は二つの用途です。アプリが起動していないとき、書き出した JSON を保存ダイアログで手元に残します。設定とポップアップの振り分けをオンにしたときだけ、自分で押した BOOTH の `.unitypackage` / `.zip` / `.rar` / `.7z` / `.vrm` を、この PC のダウンロードフォルダの `VRCLibMan/商品ID/` に置き、完了後にアプリが設定のライブラリフォルダへ移します。受け付けるのはそのフォルダの直下だけです。別の場所にある `VRCLibMan` や、商品 ID が違うフォルダ、サブフォルダ、シンボリックリンクは移しません。振り分けは既定でオフで、オンにするにはライブラリフォルダが必要です。拡張から `chrome.downloads.download` で BOOTH のファイルを始めることはしません。
+
+ライブラリに無い無料商品は、商品ページを送る、振り分け中の無料ダウンロードが届く、取り込み画面に URL を貼る、のどれかで項目になります。URL を貼っただけではページを開きません。
+
 ## 開発
 
 ```powershell
@@ -111,7 +121,7 @@ npm install
 npm run tauri build
 ```
 
-できたファイルは `src-tauri\target\release\bundle\nsis\VRCLibMan_0.1.2_x64-setup.exe` です。中の実行ファイルは `VRCLibMan.exe` です。ARM の Windows では `x64` が `arm64` になります。版は `package.json`、`src-tauri\tauri.conf.json`、`src-tauri\Cargo.toml` の `version` を同じにしてください。GitHub へ載せるときは、その版のタグ `v0.1.2` を push します。workflow が下書き Release に、未署名の setup.exe、Apple Silicon の dmg、拡張の zip を置きます。コード署名の秘密情報は入れていません。NSIS は現在のユーザー向けに `vrclibman://` を登録し、アンインストールでその登録を外します。`npm run tauri dev` は同じプロトコルを開発用の実行ファイルへ付け替えるので、配布版を試すときはインストールし直してください。
+できたファイルは `src-tauri\target\release\bundle\nsis\VRCLibMan_0.1.3_x64-setup.exe` です。中の実行ファイルは `VRCLibMan.exe` です。ARM の Windows では `x64` が `arm64` になります。版は `package.json`、`src-tauri\tauri.conf.json`、`src-tauri\Cargo.toml` の `version` を同じにしてください。GitHub へ載せるときは、その版のタグ `v0.1.3` を push します。workflow が下書き Release に、未署名の setup.exe、Apple Silicon の dmg、拡張の zip を置きます。コード署名の秘密情報は入れていません。NSIS は現在のユーザー向けに `vrclibman://` を登録し、アンインストールでその登録を外します。`npm run tauri dev` は同じプロトコルを開発用の実行ファイルへ付け替えるので、配布版を試すときはインストールし直してください。
 
 Mac で手元の dmg を作るときは、Xcode Command Line Tools、rustup の `aarch64-apple-darwin`、Node、Ollama を入れます。Intel 用ターゲットは要りません。
 

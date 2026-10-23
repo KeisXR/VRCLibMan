@@ -17,6 +17,7 @@ const {
   isLibraryUrl,
   quietHtml,
   noteIfUnpublished,
+  diagnose,
   UNAVAILABLE_TEXT,
 } = require("../extension/extract.js");
 
@@ -197,6 +198,189 @@ test("update mode keeps newer purchases and stops at a known id", () => {
   const full = takeUntilKnown(page, null);
   assert.equal(full.stopped, false);
   assert.equal(full.products.length, 4);
+});
+
+test("item page records purchased variations and leaves the others unpurchased", () => {
+  const html = `<!doctype html><body>
+    <h2>架空の服</h2>
+    <span class="price">無料</span>
+    <span data-adult="true"></span>
+    <div data-variation="通常">
+      <span class="variation-name">通常</span>
+      <a href="https://booth.pm/downloads/424242/file" download="body.unitypackage" data-size="12">body.unitypackage</a>
+    </div>
+    <div class="variation-item" data-owned="false">
+      <span class="variation-name">特典</span>
+    </div>
+    <div class="item-card"><a href="/ja/items/9990001" download="other.unitypackage">other.unitypackage</a></div>
+  </body>`;
+  const { document } = parseHTML(html);
+  const products = extractPage(document, "https://booth.pm/ja/items/424242");
+  assert.equal(products.length, 1);
+  assert.equal(products[0].isFree, true);
+  assert.equal(products[0].isAdult, true);
+  assert.deepEqual(
+    products[0].variations.map((row) => [row.name, row.owned]),
+    [["通常", true], ["特典", false]],
+  );
+  assert.deepEqual(products[0].downloads, [
+    { filename: "body.unitypackage", sizeBytes: 12, variation: "通常" },
+  ]);
+});
+
+test("library cards treat listed variations as purchased and keep download names", () => {
+  const { document } = parseHTML(LIBRARY_HTML);
+  const products = extractPage(document, "https://booth.pm/library");
+  assert.deepEqual(products[0].downloads, [
+    { filename: "manuka.zip", sizeBytes: null, variation: "" },
+  ]);
+  assert.equal(products[0].isFree, undefined);
+  const html = `<!doctype html><body>
+    <div class="bg-white">
+      <img class="l-library-item-thumbnail" alt="" src="https://booth.pximg.net/c/72x72/a.jpg" />
+      <a href="/ja/items/424242">架空の服</a>
+      <span class="variation-name">通常</span>
+      <span class="price">¥1,200</span>
+    </div>
+  </body>`;
+  const priced = extractPage(parseHTML(html).document, "https://booth.pm/library");
+  assert.deepEqual(priced[0].variations, [{ name: "通常", owned: true }]);
+  assert.equal(priced[0].isFree, false);
+});
+
+test("library and gift pages keep downloadable ids and names beside the download link", () => {
+  const html = `<!doctype html><body>
+    <div class="mb-16 bg-white">
+      <div class="gap-8 border-b pb-16">
+        <a href="https://booth.pm/ja/items/424242">
+          <img class="l-library-item-thumbnail" alt="" src="https://booth.pximg.net/c/72x72/a.jpg" />
+        </a>
+        <a class="text-text-default" href="https://booth.pm/items/424242">架空の服</a>
+        <span class="text-text-gray600">架空工房</span>
+      </div>
+      <div class="mt-16">
+        <div>
+          <div>通常</div>
+          <div>avatar_body.unitypackage</div>
+          <a href="https://booth.pm/downloadables/2336025">ダウンロード</a>
+        </div>
+        <div>
+          <div>bonus_pack.zip</div>
+          <div class="js-download-button" data-href="https://booth.pm/downloadables/2336026">
+            <button type="button">ダウンロード</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>`;
+  const { document } = parseHTML(html);
+  const library = extractPage(document, "https://accounts.booth.pm/library");
+  const gifts = extractPage(document, "https://accounts.booth.pm/library/gifts");
+  assert.equal(library.length, 1);
+  assert.equal(gifts.length, 1);
+  assert.deepEqual(library[0].downloads, [
+    { filename: "avatar_body.unitypackage", sizeBytes: null, variation: "通常", downloadableId: "2336025" },
+    { filename: "bonus_pack.zip", sizeBytes: null, variation: "", downloadableId: "2336026" },
+  ]);
+  assert.deepEqual(library[0].variations, [{ name: "通常", owned: true }]);
+  const report = diagnose(document, "https://accounts.booth.pm/library");
+  const encoded = JSON.stringify(report);
+  assert.equal(encoded.includes("架空の服"), false);
+  assert.equal(encoded.includes("avatar_body"), false);
+  assert.equal(encoded.includes("bonus_pack"), false);
+  assert.equal(report.productCount, 1);
+  assert.equal(report.variationCount, 1);
+  assert.equal(report.filenameCount, 2);
+  assert.ok(report.downloadLinkCount >= 2);
+  assert.equal(report.selectorHits["img.l-library-item-thumbnail"], 1);
+  assert.equal(report.selectorHits["a[href*='downloadables']"], 1);
+  assert.equal(report.hrefShapes["https://booth.pm/downloadables/#"], 2);
+});
+
+test("item download rows use the title and nearby text, not the download label", () => {
+  const html = `<!doctype html><body>
+    <h2>架空の服</h2>
+    <ul class="variations" id="variations">
+      <li class="variation-item">
+        <div>ダウンロード商品</div>
+        <div class="variation-price">¥ 0</div>
+        <a title="outfit_body.unitypackage" href="https://booth.pm/downloadables/2336025?variation_id=6076989">
+          <span class="cmd-label">無料ダウンロード</span>
+          <div>outfit_body</div>
+          <div>.unitypackage</div>
+        </a>
+        <div class="js-download-free-button" data-dropdown-items='[{"text":"アプリでDL","deeplinkDownloadableUrl":"https://booth.pm/downloadables/2336025/deeplink?client=booth-library-manager&amp;variation_id=6076989","fallbackUrl":"https://booth.pm/announcements/1"}]'></div>
+      </li>
+    </ul>
+  </body>`;
+  const { document } = parseHTML(html);
+  const products = extractPage(document, "https://booth.pm/ja/items/424242");
+  assert.equal(products.length, 1);
+  assert.equal(products[0].isFree, true);
+  assert.deepEqual(products[0].downloads, [
+    { filename: "outfit_body.unitypackage", sizeBytes: null, variation: "", downloadableId: "2336025" },
+  ]);
+  assert.deepEqual(products[0].variations, []);
+  const report = diagnose(document, "https://booth.pm/ja/items/424242");
+  const encoded = JSON.stringify(report);
+  assert.equal(encoded.includes("架空の服"), false);
+  assert.equal(encoded.includes("outfit_body"), false);
+  assert.equal(report.hrefShapes["https://booth.pm/downloadables/#?variation_id=#"], 1);
+  assert.equal(
+    report.hrefShapes["https://booth.pm/downloadables/#/deeplink?client=#&variation_id=#"],
+    1,
+  );
+});
+
+test("item json fills a missing filename for the same downloadable id and records price flags", () => {
+  const product = {
+    boothId: "424242",
+    title: "架空の服",
+    shop: "",
+    descriptionSnippet: "",
+    downloads: [{ filename: "2336025", sizeBytes: null, variation: "", downloadableId: "2336025" }],
+    variations: [],
+  };
+  const detail = detailFromItemJson({
+    id: 424242,
+    name: "架空の服",
+    description: "説明",
+    price: "¥ 0",
+    is_adult: false,
+    shop: { name: "架空工房" },
+    variations: [{
+      name: null,
+      status: "free_download",
+      price: 0,
+      downloadable: {
+        musics: [],
+        no_musics: [{
+          name: "outfit_body.unitypackage",
+          file_name: "outfit_body",
+          file_extension: ".unitypackage",
+          url: "https://booth.pm/downloadables/2336025?variation_id=1",
+        }],
+      },
+    }],
+  }, "424242");
+  mergeDetail(product, detail);
+  assert.equal(product.isFree, true);
+  assert.equal(product.isAdult, false);
+  assert.equal(product.shop, "架空工房");
+  assert.deepEqual(product.downloads, [
+    { filename: "outfit_body.unitypackage", sizeBytes: null, variation: "", downloadableId: "2336025" },
+  ]);
+  const paid = detailFromItemJson({
+    id: 1001,
+    name: "有料の服",
+    price: "¥ 6,000",
+    is_adult: false,
+    variations: [{ name: "特典", status: "addable_to_cart", downloadable: { no_musics: [], musics: [] } }],
+  }, "1001");
+  assert.equal(paid.isFree, false);
+  assert.equal(paid.isAdult, false);
+  assert.deepEqual(paid.downloads, []);
+  assert.deepEqual(paid.variations, []);
 });
 
 test("card images use a pximg size the CDN serves", () => {

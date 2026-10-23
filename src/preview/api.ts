@@ -1,3 +1,4 @@
+import { filePresence } from "../media";
 import type {
   AvatarCard,
   AvatarDetail,
@@ -8,6 +9,7 @@ import type {
   FileBrief,
   ExtensionLink,
   ImportReport,
+  DownloadView,
   ItemView,
   Knowledge,
   LibraryStats,
@@ -38,6 +40,8 @@ interface Product {
   userConfirmed: boolean;
   needsReview: boolean;
   updatedAt: string;
+  isFree: boolean;
+  isAdult: boolean;
 }
 
 interface LocalFile {
@@ -58,6 +62,10 @@ interface Store {
   links: { productId: string; avatarId: string }[];
   settings: Settings;
   setupComplete: boolean;
+  variations: { boothId: string; name: string; owned: boolean }[];
+  downloads: (DownloadView & { boothId: string })[];
+  remoteReachable: boolean;
+  remoteChecked: boolean;
 }
 
 function product(partial: Partial<Product> & Pick<Product, "boothId" | "title" | "category">): Product {
@@ -76,6 +84,8 @@ function product(partial: Partial<Product> & Pick<Product, "boothId" | "title" |
     userConfirmed: false,
     needsReview: false,
     updatedAt: "2026-10-22T00:00:00Z",
+    isFree: false,
+    isAdult: false,
     ...partial,
   };
 }
@@ -92,8 +102,10 @@ const store: Store = {
     ollamaBaseUrl: "http://127.0.0.1:11434",
     ollamaModel: "gemma4:12b",
     confidenceThreshold: 0.6,
-    libraryFolder: "",
+    libraryFolder: "C:\\Assets",
     builtinBrowser: false,
+    remoteLibraryFolder: "\\\\nas\\vrclibman",
+    routeDownloads: false,
   },
   setupComplete: false,
   baseBodies: [
@@ -142,6 +154,21 @@ const store: Store = {
       shop: "サンプル工房",
       category: "outfit",
       compatibleAvatars: ["しなの", "ライム", "マヌカ"],
+    }),
+    product({
+      boothId: "8800111",
+      title: "無料のリボン",
+      shop: "サンプル工房",
+      category: "accessory",
+      isFree: true,
+    }),
+    product({
+      boothId: "8800112",
+      title: "年齢制限のアクセサリ",
+      shop: "サンプル工房",
+      category: "accessory",
+      isAdult: true,
+      descriptionSnippet: "",
     }),
     product({
       boothId: "8800102",
@@ -195,6 +222,8 @@ const store: Store = {
     { productId: "8800101", avatarId: "lime" },
     { productId: "8800101", avatarId: "shinano" },
     { productId: "8800101", avatarId: "manuka" },
+    { productId: "8800111", avatarId: "lime" },
+    { productId: "8800112", avatarId: "lime" },
     { productId: "8800102", avatarId: "manuka" },
     { productId: "8800106", avatarId: "owned-8800106" },
   ],
@@ -218,10 +247,49 @@ const store: Store = {
       matchScore: 0.62,
     },
   ],
+  variations: [
+    { boothId: "8800101", name: "通常", owned: true },
+    { boothId: "8800101", name: "特典", owned: false },
+  ],
+  downloads: [
+    {
+      boothId: "8800101",
+      variation: "通常",
+      filename: "ワンピース.unitypackage",
+      sizeBytes: 48_000_000,
+      state: "local",
+      localPath: "C:\\Assets\\Lime\\ワンピース.unitypackage",
+      remotePath: null,
+    },
+    {
+      boothId: "8800101",
+      variation: "通常",
+      filename: "bonus.zip",
+      sizeBytes: 1024,
+      state: "remote",
+      localPath: null,
+      remotePath: "\\\\nas\\vrclibman\\8800101\\bonus.zip",
+    },
+    {
+      boothId: "8800101",
+      variation: "",
+      filename: "extra.unitypackage",
+      sizeBytes: null,
+      state: "missing",
+      localPath: null,
+      remotePath: null,
+    },
+  ],
+  remoteReachable: true,
+  remoteChecked: false,
 };
 
 const stressPreview =
   typeof location !== "undefined" && new URLSearchParams(location.search).has("stress");
+
+if (typeof location !== "undefined" && new URLSearchParams(location.search).get("remote") === "down") {
+  store.remoteReachable = false;
+}
 
 if (stressPreview) {
   store.setupComplete = true;
@@ -283,8 +351,27 @@ function filesFor(boothId: string): FileBrief[] {
     }));
 }
 
+function placedDownloads(boothId: string): DownloadView[] {
+  const configured = store.settings.remoteLibraryFolder.trim().length > 0;
+  const reachable = configured && store.remoteReachable;
+  return store.downloads
+    .filter((row) => row.boothId === boothId)
+    .map((row) => ({
+      variation: row.variation,
+      filename: row.filename,
+      sizeBytes: row.sizeBytes,
+      state: row.state === "remote" && !reachable ? "missing" : row.state,
+      localPath: row.localPath,
+      remotePath: row.remotePath,
+    }));
+}
+
 function itemView(item: Product, viaBaseBody: boolean): ItemView {
-  const files = filesFor(item.boothId);
+  const downloads = placedDownloads(item.boothId);
+  const names = new Set(downloads.map((file) => file.filename));
+  const files = filesFor(item.boothId).filter((file) => !names.has(file.filename));
+  const remoteConfigured = store.settings.remoteLibraryFolder.trim().length > 0;
+  const remoteChecked = !remoteConfigured || store.remoteChecked;
   return {
     boothId: item.boothId,
     title: item.title,
@@ -299,6 +386,15 @@ function itemView(item: Product, viaBaseBody: boolean): ItemView {
     viaBaseBody,
     localFiles: files.slice(0, 8),
     localFileCount: files.length,
+    variations: store.variations
+      .filter((row) => row.boothId === item.boothId)
+      .map((row) => ({ name: row.name, owned: row.owned })),
+    downloads,
+    isFree: item.isFree,
+    isAdult: item.isAdult,
+    remoteConfigured,
+    remoteChecked,
+    remoteReachable: remoteConfigured && store.remoteChecked && store.remoteReachable,
   };
 }
 
@@ -432,6 +528,18 @@ function candidates() {
     .sort((left, right) => right.productCount - left.productCount || left.name.localeCompare(right.name, "ja"));
 }
 
+function queuePresence(boothId: string): ReturnType<typeof filePresence> {
+  const downloads = store.downloads.filter((row) => row.boothId === boothId);
+  const names = new Set(downloads.map((row) => row.filename));
+  const extra = store.files.filter(
+    (file) => file.linkedProductId === boothId && !file.isDir && !names.has(file.filename),
+  ).length;
+  return filePresence(
+    downloads.map((row) => ({ state: row.state })),
+    extra,
+  );
+}
+
 function queue(kind: string): QueuePage {
   const unextracted = store.products.filter((item) => item.category == null).length;
   const needsReview = store.products.filter((item) => item.needsReview && item.category != null).length;
@@ -453,6 +561,7 @@ function queue(kind: string): QueuePage {
       unresolvedNames: item.unresolvedNames,
       linkedAvatarIds: linksOf(item.boothId),
       userConfirmed: item.userConfirmed,
+      filePresence: queuePresence(item.boothId),
     }));
   const files: QueueFile[] = unlinked.map((file) => ({
     path: file.path,
@@ -559,6 +668,8 @@ function importExport(json: string): ImportReport {
   let updated = 0;
   let unchanged = 0;
   let skipped = 0;
+  let variations = 0;
+  let downloads = 0;
   const warnings: string[] = [];
   for (const raw of items) {
     if (!raw || typeof raw !== "object") {
@@ -572,6 +683,8 @@ function importExport(json: string): ImportReport {
       boothId = match?.[1] ?? "";
     }
     const title = textOf(row.title || row.name).slice(0, 300);
+    variations += Array.isArray(row.variations) ? row.variations.length : 0;
+    downloads += Array.isArray(row.downloads) ? row.downloads.length : Array.isArray(row.files) ? row.files.length : 0;
     if (!/^\d{4,12}$/.test(boothId) || !title) {
       skipped += 1;
       warnings.push("商品IDかタイトルがないデータをスキップしました");
@@ -631,7 +744,12 @@ function importExport(json: string): ImportReport {
     }
     updated += 1;
   }
-  return { inserted, updated, unchanged, skipped, warnings: warnings.slice(0, 8) };
+  if (inserted + updated + unchanged > 0 && variations === 0 && downloads === 0) {
+    warnings.push(
+      "バリエーションもダウンロードも 0 件です。ファイルの有無は分かりません。拡張の「解析結果をコピー」で構造を確認するか、ライブラリを取り込み直すか、フォルダを調べてください",
+    );
+  }
+  return { inserted, updated, unchanged, skipped, variations, downloads, warnings: warnings.slice(0, 8) };
 }
 
 function slug(name: string): string {
@@ -694,6 +812,9 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     case "list_avatars":
       return cards() as T;
     case "get_avatar":
+      return detail(String(args.id ?? "")) as T;
+    case "probe_remote_files":
+      store.remoteChecked = true;
       return detail(String(args.id ?? "")) as T;
     case "list_queue":
       return queue(String(args.kind ?? "review")) as T;
@@ -822,6 +943,61 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       return undefined as T;
     case "avatar_candidates":
       return candidates() as T;
+    case "add_free_product": {
+      const url = String(args.url ?? "");
+      const match = url.match(/\/items\/(\d{4,12})/);
+      if (!match) throw new Error("商品のURLからIDを読めません");
+      const boothId = match[1];
+      const existing = store.products.find((item) => item.boothId === boothId);
+      if (existing) {
+        existing.isFree = true;
+        return boothId as T;
+      }
+      store.products.push(
+        product({
+          boothId,
+          title: `商品 ${boothId}`,
+          shop: "",
+          category: null,
+          needsReview: true,
+          descriptionSnippet: "",
+          isFree: true,
+        }),
+      );
+      return boothId as T;
+    }
+    case "pull_remote_file": {
+      const row = store.downloads.find(
+        (item) =>
+          item.boothId === args.boothId &&
+          item.variation === String(args.variation ?? "") &&
+          item.filename === args.filename,
+      );
+      if (!row || row.state !== "remote") throw new Error("リモートにファイルがありません");
+      if (!store.settings.remoteLibraryFolder.trim() || !store.remoteReachable) {
+        throw new Error("リモートのフォルダに届きません。接続を確認してからもう一度");
+      }
+      if (!store.settings.libraryFolder.trim()) {
+        throw new Error("先にフォルダを調べて、ライブラリの場所を決めてください");
+      }
+      row.state = "local";
+      row.localPath = `${store.settings.libraryFolder}\\${row.boothId}\\${row.filename}`;
+      return undefined as T;
+    }
+    case "push_remote_file": {
+      const row = store.downloads.find(
+        (item) =>
+          item.boothId === args.boothId &&
+          item.variation === String(args.variation ?? "") &&
+          item.filename === args.filename,
+      );
+      if (!row || row.state !== "local" || !row.localPath) throw new Error("手元にファイルがありません");
+      if (!store.settings.remoteLibraryFolder.trim() || !store.remoteReachable) {
+        throw new Error("リモートのフォルダに届きません。接続を確認してからもう一度");
+      }
+      row.remotePath = `${store.settings.remoteLibraryFolder}\\${row.boothId}\\${row.filename}`;
+      return undefined as T;
+    }
     case "mark_owned_avatar": {
       const boothId = String(args.boothId ?? "");
       const product = store.products.find((item) => item.boothId === boothId);

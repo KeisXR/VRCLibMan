@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
-import { api, openExternal, openLocal } from "../api";
+import { api, openExternal, openLocal, revealInFolder } from "../api";
 import { useShell } from "../App";
-import { confidenceLabel, formatBytes } from "../media";
+import { confidenceLabel, filePresence, formatBytes } from "../media";
 import { CATEGORY_LABEL } from "../types";
-import type { AvatarDetail, ItemView, Knowledge } from "../types";
-import { Thumb, errorText } from "../ui";
+import type { AvatarDetail, DownloadView, ItemView, Knowledge } from "../types";
+import { FileMark, Thumb, errorText } from "../ui";
 
-export function AvatarDetailPage({ id }: { id: string }) {
+export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?: string }) {
   const { revision, refresh, notify, fail } = useShell();
   const [detail, setDetail] = useState<AvatarDetail | null>(null);
   const [knowledge, setKnowledge] = useState<Knowledge | null>(null);
@@ -16,7 +16,16 @@ export function AvatarDetailPage({ id }: { id: string }) {
     let cancelled = false;
     api.avatar(id).then(
       (value) => {
-        if (!cancelled) setDetail(value);
+        if (cancelled) return;
+        setDetail(value);
+        if (avatarNeedsRemoteProbe(value)) {
+          api.probeRemoteFiles(id).then(
+            (next) => {
+              if (!cancelled) setDetail(next);
+            },
+            () => undefined,
+          );
+        }
       },
       (err: unknown) => {
         if (!cancelled) fail(errorText(err));
@@ -32,6 +41,11 @@ export function AvatarDetailPage({ id }: { id: string }) {
       cancelled = true;
     };
   }, [id, revision, fail]);
+
+  useEffect(() => {
+    if (!detail || !fileBoothId) return;
+    document.getElementById(`files-${fileBoothId}`)?.scrollIntoView({ block: "start" });
+  }, [detail, fileBoothId]);
 
   async function merge() {
     if (!detail || !intoId) return;
@@ -139,36 +153,139 @@ export function AvatarDetailPage({ id }: { id: string }) {
 }
 
 function ItemCard({ item }: { item: ItemView }) {
+  const { refresh, notify, fail } = useShell();
+  const [busy, setBusy] = useState("");
+
+  async function pull(file: DownloadView) {
+    setBusy(file.filename);
+    try {
+      await api.pullRemoteFile(item.boothId, file.variation, file.filename);
+      notify(`${file.filename} を手元のフォルダへコピーしました`);
+      refresh();
+    } catch (err) {
+      fail(errorText(err));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function push(file: DownloadView) {
+    setBusy(file.filename);
+    try {
+      await api.pushRemoteFile(item.boothId, file.variation, file.filename);
+      notify(`${file.filename} をリモートへコピーしました`);
+      refresh();
+    } catch (err) {
+      fail(errorText(err));
+    } finally {
+      setBusy("");
+    }
+  }
+
   return (
     <article className="item">
       <Thumb path={item.thumbnailPath} url={item.thumbnailUrl} name={item.title} small />
       <div>
-        <h3>{item.title}</h3>
+        <h3>
+          {item.title}
+          {item.isFree && <span className="badge">無料</span>}
+          {item.isAdult && <span className="badge adult">R-18</span>}
+          <FileMark
+            presence={filePresence(item.downloads, item.localFileCount)}
+            onClick={() => document.getElementById(`files-${item.boothId}`)?.scrollIntoView({ block: "nearest" })}
+          />
+        </h3>
         <div className="meta">
           {item.shop}
           {item.viaBaseBody ? " ・ 同じ素体" : ""}
           {item.isGeneric ? " ・ 汎用" : ""}
           {` ・ 確信度 ${confidenceLabel(item.confidence)}`}
         </div>
-        {item.localFileCount > 0 && (
-          <ul className="file-list">
-            {item.localFiles.map((file) => (
-              <li key={file.path}>
-                <button type="button" onClick={() => void openLocal(file.path)}>
-                  {file.isDir ? "フォルダ" : "ファイル"} {file.filename}
-                </button>
-                <span>{formatBytes(file.size)}</span>
-              </li>
-            ))}
-            {item.localFileCount > item.localFiles.length && (
-              <li>ほか {item.localFileCount - item.localFiles.length} 件</li>
-            )}
-          </ul>
+        {item.isAdult && item.descriptionSnippet && (
+          <details className="adult-note">
+            <summary>説明を表示</summary>
+            <p>{item.descriptionSnippet}</p>
+          </details>
         )}
+        {item.variations.length > 0 && (
+          <div className="variations">
+            {item.variations.map((variation) => (
+              <span key={variation.name} className={variation.owned ? "variation-chip" : "variation-chip off"}>
+                {variation.owned ? variation.name : `${variation.name}（未購入）`}
+              </span>
+            ))}
+          </div>
+        )}
+        <div id={`files-${item.boothId}`}>
+          {item.downloads.length === 0 && item.localFileCount === 0 && (
+            <p className="meta">ファイル情報はまだありません。取り込み直すか、フォルダを調べてください</p>
+          )}
+          {item.downloads.length > 0 && item.remoteConfigured && item.remoteChecked && !item.remoteReachable && (
+            <p className="meta">リモートのフォルダを確認できません。接続してからもう一度開いてください。</p>
+          )}
+          {item.downloads.length > 0 && (
+            <ul className="file-list">
+              {item.downloads.map((file) => (
+                <li key={`${file.variation}:${file.filename}`} className={`download-row ${file.state}`}>
+                  <div>
+                    <span className="download-name">{file.filename}</span>
+                    {file.variation ? <span className="meta"> {file.variation}</span> : null}
+                    <span className="meta"> {placeLabel(file, item)}</span>
+                    {file.sizeBytes != null && file.sizeBytes > 0 ? <span className="meta"> {formatBytes(file.sizeBytes)}</span> : null}
+                  </div>
+                  <div className="row-actions">
+                    {file.state === "local" && file.localPath && (
+                      <button type="button" onClick={() => void revealInFolder(file.localPath || "")}>
+                        保存先を開く
+                      </button>
+                    )}
+                    {file.state === "local" && item.remoteConfigured && item.remoteReachable && (
+                      <button type="button" disabled={busy === file.filename} onClick={() => void push(file)}>
+                        {busy === file.filename ? "コピー中" : "リモートに送る"}
+                      </button>
+                    )}
+                    {file.state === "remote" && item.remoteChecked && (
+                      <button type="button" disabled={busy === file.filename} onClick={() => void pull(file)}>
+                        {busy === file.filename ? "コピー中" : "ローカルに取ってくる"}
+                      </button>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          {item.localFileCount > 0 && (
+            <ul className="file-list">
+              {item.localFiles.map((file) => (
+                <li key={file.path}>
+                  <button type="button" onClick={() => void openLocal(file.path)}>
+                    {file.isDir ? "フォルダ" : "ファイル"} {file.filename}
+                  </button>
+                  <span>{formatBytes(file.size)}</span>
+                </li>
+              ))}
+              {item.localFileCount > item.localFiles.length && (
+                <li>ほか {item.localFileCount - item.localFiles.length} 件</li>
+              )}
+            </ul>
+          )}
+        </div>
       </div>
       <button className="button" type="button" onClick={() => void openExternal(item.url)}>
         Booth
       </button>
     </article>
   );
+}
+
+function avatarNeedsRemoteProbe(detail: AvatarDetail): boolean {
+  const items = [...detail.sections.flatMap((section) => section.items), ...detail.genericItems];
+  return items.some((item) => item.remoteConfigured && !item.remoteChecked);
+}
+
+function placeLabel(file: DownloadView, item: ItemView): string {
+  if (file.state === "local") return "ローカルにある";
+  if (item.remoteConfigured && !item.remoteChecked) return "確認しています";
+  if (file.state === "remote") return "リモートにだけある";
+  return "未ダウンロード";
 }

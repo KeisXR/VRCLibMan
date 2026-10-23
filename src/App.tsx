@@ -15,6 +15,7 @@ type Page = "avatars" | "avatar" | "queue" | "import" | "settings" | "browser";
 interface Route {
   page: Page;
   id?: string;
+  fileBoothId?: string;
 }
 
 interface ShellValue {
@@ -35,7 +36,11 @@ export function useShell(): ShellValue {
 function parseRoute(hash: string): Route {
   const parts = (hash.replace(/^#/, "") || "/").split("/").filter(Boolean);
   if (parts[0] === "avatar" && parts[1]) {
-    return { page: "avatar", id: decodeURIComponent(parts[1]) };
+    return {
+      page: "avatar",
+      id: decodeURIComponent(parts[1]),
+      fileBoothId: parts[2] === "files" && parts[3] ? decodeURIComponent(parts[3]) : undefined,
+    };
   }
   if (parts[0] === "queue" || parts[0] === "import" || parts[0] === "settings" || parts[0] === "browser") {
     return { page: parts[0] };
@@ -207,7 +212,9 @@ export default function App() {
           </div>
           <main className="content">
             {route.page === "avatars" && <AvatarsPage />}
-            {route.page === "avatar" && route.id && <AvatarDetailPage id={route.id} />}
+            {route.page === "avatar" && route.id && (
+              <AvatarDetailPage id={route.id} fileBoothId={route.fileBoothId} />
+            )}
             {route.page === "queue" && <QueuePage />}
             {route.page === "import" && <ImportPage />}
             {route.page === "settings" && <SettingsPage />}
