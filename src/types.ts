@@ -203,6 +203,11 @@ export interface LibraryStats {
   ollamaModel: string;
 }
 
+export interface BrowserDiagnostic {
+  path: string;
+  text: string;
+}
+
 export interface ImportReport {
   inserted: number;
   updated: number;

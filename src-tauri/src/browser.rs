@@ -1,9 +1,13 @@
 use crate::db;
 use crate::model::ImportReport;
+use serde::Serialize;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use url::Url;
+
+const LOG_NAME: &str = "booth-browser.log";
 
 pub const WINDOW_LABEL: &str = "booth";
 pub const LIBRARY_URL: &str = "https://accounts.booth.pm/library";
@@ -113,6 +117,104 @@ pub fn export_json(products: serde_json::Value) -> String {
     .to_string()
 }
 
+fn log_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
+        .app_local_data_dir()
+        .map_err(|err| format!("保存先を読めません: {err}"))?
+        .join(LOG_NAME))
+}
+
+fn browser_log(app: &AppHandle, message: &str) {
+    let stamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+    let line = format!("{stamp} {message}\n");
+    eprintln!("VRCLibMan: {message}");
+    let Ok(path) = log_path(app) else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(meta) = std::fs::metadata(&path) {
+        if meta.len() > 200_000 {
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                let lines: Vec<&str> = text.lines().collect();
+                let start = lines.len().saturating_sub(200);
+                let _ = std::fs::write(&path, format!("{}\n", lines[start..].join("\n")));
+            }
+        }
+    }
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = file.write_all(line.as_bytes());
+    }
+}
+
+/// クエリや断片は記録しない。パスワードや戻り先のトークンを残さないため。
+pub fn public_url(url: &Url) -> String {
+    let host = url.host_str().unwrap_or("");
+    format!("{}://{host}{}", url.scheme(), url.path())
+}
+
+/// メールとパスワードのログインで出る別窓は、同じ窓で開く。
+/// Google や年齢確認、それ以外のサイトは開かない。
+pub fn open_in_same_window(url: &Url) -> bool {
+    if url.scheme() != "https" {
+        return false;
+    }
+    let host = url.host_str().unwrap_or("");
+    let known = host == "booth.pm"
+        || host.ends_with(".booth.pm")
+        || host == "pixiv.net"
+        || host.ends_with(".pixiv.net");
+    if !known {
+        return false;
+    }
+    let path = url.path().to_ascii_lowercase();
+    let query = url.query().unwrap_or("").to_ascii_lowercase();
+    !is_age_gate(&path, &query)
+}
+
+fn open_popup_in_same_window(app: &AppHandle, url: Url) {
+    if open_in_same_window(&url) {
+        browser_log(
+            app,
+            &format!("別窓の要求を今の窓で開きます {}", public_url(&url)),
+        );
+        if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
+            if let Err(err) = window.navigate(url) {
+                browser_log(app, &format!("別窓の移動に失敗しました: {err}"));
+            }
+        }
+        return;
+    }
+    browser_log(
+        app,
+        &format!("別窓の要求は開きません {}", public_url(&url)),
+    );
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserDiagnostic {
+    pub path: String,
+    pub text: String,
+}
+
+pub fn diagnostic(app: &AppHandle) -> Result<BrowserDiagnostic, String> {
+    let path = log_path(app)?;
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|_| "まだ記録はありません".into());
+    let lines: Vec<&str> = text.lines().collect();
+    let start = lines.len().saturating_sub(40);
+    Ok(BrowserDiagnostic {
+        path: path.display().to_string(),
+        text: if lines.is_empty() {
+            "まだ記録はありません".into()
+        } else {
+            lines[start..].join("\n")
+        },
+    })
+}
+
 fn browser_enabled(app: &AppHandle) -> Result<(), String> {
     let state = app.state::<crate::AppState>();
     let connection = state
@@ -132,19 +234,67 @@ fn local_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|err| format!("保存先を読めません: {err}"))
 }
 
+/// Windows の WebView2 は再入できない。同期コマンドの中で
+/// `WebviewWindowBuilder::build` すると、新しい窓だけが応答しなくなる
+/// （メインの窓はメッセージを処理できるので生きたままに見える）。
+/// IPC のコールバックが返ったあと、メインスレッドで作る。
+/// https://github.com/tauri-apps/wry/issues/583
+pub async fn dispatch_ui<T, F>(app: AppHandle, work: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&AppHandle) -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(move || {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let handle = app.clone();
+        app.run_on_main_thread(move || {
+            let _ = sender.send(work(&handle));
+        })
+        .map_err(|err| format!("画面の処理を予約できません: {err}"))?;
+        receiver
+            .recv()
+            .map_err(|_| "画面の処理が返りませんでした".to_string())?
+    })
+    .await
+    .map_err(|err| format!("画面の処理を実行できません: {err}"))?
+}
+
 pub fn open_browser(app: &AppHandle) -> Result<(), String> {
-    browser_enabled(app)?;
+    // 設定の確認はここで終わらせ、データベースのロックを持ったまま窓を作らない。
+    if let Err(err) = browser_enabled(app) {
+        browser_log(app, &format!("内蔵ブラウザは使えません: {err}"));
+        return Err(err);
+    }
     if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
+        browser_log(app, "既にある窓を前面に出します");
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
         return Ok(());
     }
     let url = Url::parse(LIBRARY_URL).map_err(|err| err.to_string())?;
+    let for_popup = app.clone();
     let mut builder = WebviewWindowBuilder::new(app, WINDOW_LABEL, WebviewUrl::External(url))
         .title("BOOTH")
         .inner_size(1100.0, 800.0)
-        .focused(true);
+        .focused(true)
+        .on_page_load(|window, payload| {
+            if payload.url().scheme() != "https" && payload.url().scheme() != "http" {
+                return;
+            }
+            let kind = match payload.event() {
+                tauri::webview::PageLoadEvent::Started => "読み始め",
+                tauri::webview::PageLoadEvent::Finished => "読み終わり",
+            };
+            browser_log(
+                window.app_handle(),
+                &format!("{kind} {}", public_url(payload.url())),
+            );
+        })
+        .on_new_window(move |url, _features| {
+            open_popup_in_same_window(&for_popup, url);
+            tauri::webview::NewWindowResponse::Deny
+        });
     // WKWebView already sends a Safari user agent. Leave it unchanged unless Booth
     // starts rejecting the embedded login; then set one current Safari string here.
     #[cfg(not(target_os = "macos"))]
@@ -155,28 +305,39 @@ pub fn open_browser(app: &AppHandle) -> Result<(), String> {
         }
         std::fs::create_dir_all(&dir)
             .map_err(|err| format!("セッション用のフォルダを作れません: {err}"))?;
-        builder = builder.data_directory(dir);
+        // メイン画面の EBWebView とは別フォルダ。同じ data_directory だと
+        // WebView2 がロックして、新しい窓だけが止まる。
+        builder = builder.data_directory(dir.clone());
+        browser_log(app, &format!("セッションフォルダ {}", dir.display()));
     }
     #[cfg(target_os = "macos")]
     {
         builder = builder.data_store_identifier(BOOTH_DATA_STORE_ID);
+        browser_log(app, "セッションは macOS のデータストアです");
     }
-    builder
-        .build()
-        .map_err(|err| format!("ブラウザを開けません: {err}"))?;
+    browser_log(app, "窓を作っています");
+    if let Err(err) = builder.build() {
+        let message = format!("ブラウザを開けません: {err}");
+        browser_log(app, &message);
+        return Err(message);
+    }
+    browser_log(app, "窓を開きました");
     Ok(())
 }
 
 pub fn show_library(app: &AppHandle) -> Result<(), String> {
     browser_enabled(app)?;
     open_browser(app)?;
+    browser_log(app, "ライブラリへ移動します");
     let window = app
         .get_webview_window(WINDOW_LABEL)
         .ok_or("ブラウザを開いてから移動してください")?;
     let url = Url::parse(LIBRARY_URL).map_err(|err| err.to_string())?;
-    window
-        .navigate(url)
-        .map_err(|err| format!("ライブラリを開けません: {err}"))
+    window.navigate(url).map_err(|err| {
+        let message = format!("ライブラリを開けません: {err}");
+        browser_log(app, &message);
+        message
+    })
 }
 
 pub fn browse_history(app: &AppHandle, forward: bool) -> Result<(), String> {
@@ -185,17 +346,38 @@ pub fn browse_history(app: &AppHandle, forward: bool) -> Result<(), String> {
         .get_webview_window(WINDOW_LABEL)
         .ok_or("ブラウザを開いてから移動してください")?;
     let script = if forward {
+        browser_log(app, "進む");
         "history.forward()"
     } else {
+        browser_log(app, "戻る");
         "history.back()"
     };
-    window
-        .eval(script)
-        .map_err(|err| format!("移動できません: {err}"))
+    window.eval(script).map_err(|err| {
+        let message = format!("移動できません: {err}");
+        browser_log(app, &message);
+        message
+    })
 }
 
 pub fn import_current_page(app: &AppHandle) -> Result<ImportReport, String> {
+    // ページの結果を待つ間、UI スレッドを止めない。待ちはコマンド側の spawn_blocking に置く。
+    let result = import_current_page_inner(app);
+    match &result {
+        Ok(report) => browser_log(
+            app,
+            &format!(
+                "取り込み完了 追加 {} 更新 {} ダウンロード {}",
+                report.inserted, report.updated, report.downloads
+            ),
+        ),
+        Err(err) => browser_log(app, &format!("取り込み失敗 {err}")),
+    }
+    result
+}
+
+fn import_current_page_inner(app: &AppHandle) -> Result<ImportReport, String> {
     browser_enabled(app)?;
+    browser_log(app, "取り込みを開始");
     let window = app
         .get_webview_window(WINDOW_LABEL)
         .ok_or("ブラウザを開いて、ライブラリのページを表示してから取り込んでください")?;
@@ -209,6 +391,9 @@ pub fn import_current_page(app: &AppHandle) -> Result<ImportReport, String> {
         .recv_timeout(Duration::from_secs(8))
         .map_err(|_| "ページの読み取りが返りませんでした".to_string())?;
     let (href, products) = parse_page_read(&raw)?;
+    if let Ok(url) = Url::parse(&href) {
+        browser_log(app, &format!("取り込み対象 {}", public_url(&url)));
+    }
     library_page_for_import(&href)?;
     let state = app.state::<crate::AppState>();
     let mut connection = state
@@ -219,6 +404,7 @@ pub fn import_current_page(app: &AppHandle) -> Result<ImportReport, String> {
 }
 
 pub fn close_browser(app: &AppHandle) -> Result<(), String> {
+    browser_log(app, "窓を閉じます");
     if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
         let _ = window.destroy();
     }
@@ -232,15 +418,21 @@ pub async fn clear_session(app: &AppHandle) -> Result<(), String> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        clear_folder_session(app)
+        clear_folder_session(app).await
     }
 }
 
 #[cfg(not(target_os = "macos"))]
-fn clear_folder_session(app: &AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
-        let _ = window.destroy();
-    }
+async fn clear_folder_session(app: &AppHandle) -> Result<(), String> {
+    let handle = app.clone();
+    browser_log(app, "セッションを消します");
+    dispatch_ui(handle, |app| {
+        if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
+            let _ = window.destroy();
+        }
+        Ok(())
+    })
+    .await?;
     let root = local_data_dir(app)?;
     let dir = session_dir(&root);
     if !session_dir_is_safe(&root, &dir) {
@@ -248,14 +440,18 @@ fn clear_folder_session(app: &AppHandle) -> Result<(), String> {
     }
     for _ in 0..10 {
         if !dir.exists() {
+            browser_log(app, "セッションを消しました");
             return Ok(());
         }
         if std::fs::remove_dir_all(&dir).is_ok() {
+            browser_log(app, "セッションを消しました");
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(200));
     }
-    Err("セッションのフォルダを消せませんでした。ブラウザを閉じてからもう一度押してください".into())
+    let message = "セッションのフォルダを消せませんでした。ブラウザを閉じてからもう一度押してください";
+    browser_log(app, message);
+    Err(message.into())
 }
 
 #[cfg(target_os = "macos")]
@@ -320,6 +516,61 @@ mod tests {
         assert_eq!(BOOTH_DATA_STORE_ID.len(), 16);
         assert_ne!(BOOTH_DATA_STORE_ID, [0u8; 16]);
         assert_eq!(&BOOTH_DATA_STORE_ID, b"vrclibman-booth!");
+    }
+
+    #[test]
+    fn booth_window_is_created_after_the_ipc_callback_returns() {
+        let commands = include_str!("commands.rs");
+        for name in [
+            "open_booth_browser",
+            "show_booth_library",
+            "browse_booth_history",
+            "close_booth_browser",
+        ] {
+            let marker = format!("async fn {name}");
+            let start = commands.find(&marker).unwrap_or_else(|| panic!("{name} は async のままにする"));
+            let rest = &commands[start..];
+            let end = rest[marker.len()..]
+                .find("\n#[tauri::command]")
+                .map(|index| marker.len() + index)
+                .unwrap_or(rest.len());
+            let body = &rest[..end];
+            assert!(
+                body.contains("dispatch_ui"),
+                "{name} は IPC の外で窓を触る"
+            );
+            assert!(
+                !commands.contains(&format!("pub fn {name}")),
+                "{name} を同期コマンドに戻さない"
+            );
+        }
+        let browser = include_str!("browser.rs");
+        assert!(browser.contains("fn dispatch_ui"));
+        assert!(browser.contains("run_on_main_thread"));
+        assert!(browser.contains("https://github.com/tauri-apps/wry/issues/583"));
+    }
+
+    #[test]
+    fn login_popups_stay_on_pixiv_or_booth_and_skip_secrets() {
+        let login = Url::parse("https://accounts.pixiv.net/login?return_to=secret-token").unwrap();
+        assert!(open_in_same_window(&login));
+        assert_eq!(public_url(&login), "https://accounts.pixiv.net/login");
+        assert!(!public_url(&login).contains("secret"));
+        let library = Url::parse("https://accounts.booth.pm/library?page=2").unwrap();
+        assert!(open_in_same_window(&library));
+        assert_eq!(public_url(&library), "https://accounts.booth.pm/library");
+        assert!(!open_in_same_window(
+            &Url::parse("https://accounts.google.com/o/oauth2/auth?code=secret").unwrap()
+        ));
+        assert!(!open_in_same_window(
+            &Url::parse("https://accounts.booth.pm/age_verification?r18=1").unwrap()
+        ));
+        assert!(!open_in_same_window(
+            &Url::parse("http://accounts.pixiv.net/login").unwrap()
+        ));
+        assert!(!open_in_same_window(
+            &Url::parse("https://evil.example/login").unwrap()
+        ));
     }
 
     #[test]
