@@ -12,6 +12,7 @@ mod matching;
 mod model;
 mod normalize;
 mod ollama;
+mod presence;
 mod resolve;
 mod scan;
 mod thumb;
@@ -19,7 +20,7 @@ mod view;
 
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Manager};
+use tauri::Manager;
 
 pub struct AppState {
     pub db: Mutex<rusqlite::Connection>,
@@ -28,14 +29,8 @@ pub struct AppState {
     pub thumbs_dir: std::path::PathBuf,
     pub receiver_error: Mutex<Option<String>>,
     pub import_guard: Mutex<local_import::ImportGuard>,
-}
-
-fn focus_main(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
+    pub background_mode: AtomicBool,
+    pub staged_left: Mutex<Vec<model::StagedLeftover>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -44,13 +39,21 @@ pub fn run() {
     #[cfg(desktop)]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            focus_main(app);
+            presence::show_main_later(app);
         }));
     }
     builder
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .args([presence::AUTOSTART_ARG])
+                .build(),
+        )
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .on_window_event(|window, event| {
+            presence::handle_main_close(window, event);
+        })
         .setup(|app| {
             use tauri_plugin_deep_link::DeepLinkExt;
             let directory = app.path().app_data_dir()?;
@@ -66,6 +69,8 @@ pub fn run() {
                 thumbs_dir: thumbs,
                 receiver_error: Mutex::new(None),
                 import_guard: Mutex::new(local_import::ImportGuard::default()),
+                background_mode: AtomicBool::new(false),
+                staged_left: Mutex::new(Vec::new()),
             });
             if let Some(state) = app.try_state::<AppState>() {
                 if let Ok(connection) = state.db.lock() {
@@ -92,9 +97,44 @@ pub fn run() {
                     .iter()
                     .any(|url| url.as_str().to_ascii_lowercase().starts_with("vrclibman:"));
                 if ours {
-                    focus_main(&handle);
+                    presence::show_main_later(&handle);
                 }
             });
+            let (background_mode, launch_at_login, left) = {
+                let state = app.state::<AppState>();
+                let mut connection = state
+                    .db
+                    .lock()
+                    .map_err(|err| std::io::Error::other(err.to_string()))?;
+                let settings =
+                    db::settings(&connection).map_err(|err| std::io::Error::other(err))?;
+                let report = db::sweep_staged_downloads(&mut connection);
+                (
+                    settings.background_mode,
+                    settings.launch_at_login,
+                    report.left,
+                )
+            };
+            presence::remember_background(app.handle(), background_mode);
+            if let Some(state) = app.try_state::<AppState>() {
+                if let Ok(mut slot) = state.staged_left.lock() {
+                    *slot = left;
+                }
+            }
+            let _ = presence::sync_login_item(
+                app.handle(),
+                presence::autostart_should_enable(background_mode, launch_at_login),
+            );
+            if background_mode {
+                let _ = presence::ensure_tray(app.handle());
+            }
+            if presence::should_open_window_on_start(
+                background_mode,
+                presence::launched_by_login_item(std::env::args()),
+            ) {
+                presence::show_main_window(app.handle())
+                    .map_err(|err| std::io::Error::other(err))?;
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -144,7 +184,10 @@ pub fn run() {
             commands::import_booth_page,
             commands::clear_booth_session,
             commands::close_booth_browser,
+            commands::list_staged_downloads,
+            commands::route_staged_download,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|app, event| presence::handle_run_event(app, event));
 }

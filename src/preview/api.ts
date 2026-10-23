@@ -107,6 +107,8 @@ const store: Store = {
     remoteLibraryFolder: "\\\\nas\\vrclibman",
     routeDownloads: false,
     llmBackend: "ollama",
+    backgroundMode: false,
+    launchAtLogin: false,
   },
   setupComplete: false,
   baseBodies: [
@@ -837,7 +839,14 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       if (!/^http:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i.test(settings.ollamaBaseUrl.replace(/\/$/, ""))) {
         throw new Error("Ollamaは手元のPC（localhost）だけに接続します");
       }
-      store.settings = { ...settings, confidenceThreshold: Math.min(1, Math.max(0, settings.confidenceThreshold)) };
+      const backgroundMode = Boolean(settings.backgroundMode);
+      const launchAtLogin = backgroundMode && Boolean(settings.launchAtLogin);
+      store.settings = {
+        ...settings,
+        backgroundMode,
+        launchAtLogin,
+        confidenceThreshold: Math.min(1, Math.max(0, settings.confidenceThreshold)),
+      };
       return undefined as T;
     }
     case "import_export":
@@ -1072,7 +1081,10 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     case "close_booth_browser":
     case "clear_booth_session":
     case "cache_thumbnails":
+    case "route_staged_download":
       desktopOnly();
+    case "list_staged_downloads":
+      return [] as T;
     default:
       throw new Error(`未対応の操作です: ${command}`);
   }

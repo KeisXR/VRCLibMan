@@ -13,11 +13,13 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "VRCLibMan",
         "width": 1180,
         "height": 800,
         "minWidth": 920,
-        "minHeight": 640
+        "minHeight": 640,
+        "create": false
       }
     ],
     "security": {

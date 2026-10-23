@@ -530,6 +530,40 @@ export function SettingsPage() {
             <p className="meta span-2">
               振り分けは既定でオフです。オンにするときは、移動先のライブラリフォルダが必要です。オンにすると、拡張は自分で押したダウンロードだけを、この PC のダウンロードフォルダの VRCLibMan/商品ID に置き、アプリがライブラリへ移します。それ以外の場所にあるファイルは移動しません。アプリから一括では取りません。リモートの確認は画面を出してから行い、送る・取ってくるは押したファイルだけをコピーします。コピー中は画面の上に表示します。切れている共有先では待たずに未ダウンロードとして表示します。
             </p>
+            <label className="field span-2">
+              <span>
+                <input
+                  type="checkbox"
+                  checked={settings.backgroundMode}
+                  onChange={(event) => {
+                    const enabled = event.target.checked;
+                    setSettings({
+                      ...settings,
+                      backgroundMode: enabled,
+                      launchAtLogin: enabled ? settings.launchAtLogin : false,
+                    });
+                  }}
+                />{" "}
+                ウィンドウを閉じても、ダウンロードの受け付けを続ける
+              </span>
+            </label>
+            <p className="meta span-2">
+              既定はオフです。オフのときはウィンドウを閉じるとアプリも終了し、トレイは残りません。オンのときはウィンドウを破棄してメモリを放し、プロセスと 17321 の受け付けだけ残します。トレイ（Windows）またはメニューバー（macOS）から開き直すか、終了できます。
+            </p>
+            <label className="field span-2">
+              <span>
+                <input
+                  type="checkbox"
+                  checked={settings.launchAtLogin}
+                  disabled={!settings.backgroundMode}
+                  onChange={(event) => setSettings({ ...settings, launchAtLogin: event.target.checked })}
+                />{" "}
+                ログイン時に起動する
+              </span>
+            </label>
+            <p className="meta span-2">
+              ログイン時の起動は、バックグラウンドをオンにしたときだけ使えます。バックグラウンドをオフにすると、ログイン項目もオフになります。両方オンのとき、ログインから起動したプロセスはウィンドウを出さず、トレイまたはメニューバーから開けます。
+            </p>
           </div>
           <div className="row-actions">
             <button className="button primary" type="button" onClick={() => void saveSettings()}>
