@@ -443,6 +443,41 @@ mod tests {
         assert!(err.contains("タイムアウト"));
     }
 
+    #[test]
+    fn unavailable_stub_reports_that_apple_fm_is_not_usable() {
+        let status = std::process::Command::new("cc").arg("--version").status();
+        if !status.map(|code| code.success()).unwrap_or(false) {
+            eprintln!("cc が無いのでスタブの実行は飛ばします");
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!(
+            "vrclibman-afm-stub-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bin = dir.join(if cfg!(windows) { "stub.exe" } else { "stub" });
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("afm/unavailable-stub.c");
+        let compiled = std::process::Command::new("cc")
+            .arg("-O2")
+            .arg("-o")
+            .arg(&bin)
+            .arg(&source)
+            .status()
+            .unwrap();
+        assert!(compiled.success());
+        let output = std::process::Command::new(&bin)
+            .arg("--availability")
+            .output()
+            .unwrap();
+        let text = String::from_utf8(output.stdout).unwrap();
+        assert!(text.contains("\"availability\":\"unavailable\""), "{text}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[cfg(unix)]
     fn write_fake_helper() -> PathBuf {
         let path = std::env::temp_dir().join(format!(

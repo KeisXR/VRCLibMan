@@ -966,6 +966,11 @@ fn generic_without_avatars(
     {
         return true;
     }
+    // Texture and gimmick with no avatar, and none listed for one, are generic.
+    // The model's own flag does not decide this.
+    if matches!(category, Some(Category::Texture | Category::Gimmick)) {
+        return names.is_empty();
+    }
     model_generic
 }
 
@@ -2399,7 +2404,8 @@ fn settle_one(connection: &mut Connection, booth_id: &str, redo: bool) -> Result
         return Ok(false);
     }
     // Avatar bodies that are not in the profile list stay in the queue for a manual ownership mark.
-    let pieces = crate::compat::explicit_dedication_pieces(&product.title);
+    let avatars = load_avatars(connection)?;
+    let pieces = crate::compat::explicit_dedication_pieces(&product.title, &avatars);
     if pieces.is_empty() {
         return Ok(false);
     }
@@ -4101,6 +4107,47 @@ mod tests {
                 .iter()
                 .any(|link| link.product_id == "8835445" && link.avatar_id == kipfel.id)
         );
+    }
+
+    #[test]
+    fn texture_and_gimmick_without_avatars_are_generic() {
+        let mut connection = open_memory().unwrap();
+        let json = r#"{
+            "products": [
+                {"boothId":"7001","title":"瞳テクスチャ","shop":"s","description":"目の模様です。"},
+                {"boothId":"7002","title":"光るギミック","shop":"s","description":"小物です。"},
+                {"boothId":"7003","title":"【プラム対応】瞳","shop":"s","description":"プラムの瞳です。"}
+            ]
+        }"#;
+        import_products(&mut connection, &parse_export(json).unwrap()).unwrap();
+        apply_extraction(
+            &mut connection,
+            "7001",
+            &extraction(Category::Texture, &[], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        apply_extraction(
+            &mut connection,
+            "7002",
+            &extraction(Category::Gimmick, &[], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        apply_extraction(
+            &mut connection,
+            "7003",
+            &extraction(Category::Texture, &["プラム"], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        let snapshot = load_snapshot(&mut connection).unwrap();
+        let texture = snapshot.products.iter().find(|product| product.booth_id == "7001").unwrap();
+        let gimmick = snapshot.products.iter().find(|product| product.booth_id == "7002").unwrap();
+        let named = snapshot.products.iter().find(|product| product.booth_id == "7003").unwrap();
+        assert!(texture.is_generic);
+        assert!(gimmick.is_generic);
+        assert!(!named.is_generic);
     }
 
     #[test]

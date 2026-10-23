@@ -53,17 +53,23 @@ pub fn category_for_listed_product(title: &str, description: &str) -> Category {
 
 pub fn title_avatar_hints(title: &str, avatars: &[Avatar]) -> Vec<String> {
     let mut names = Vec::new();
+    let mut compounds = Vec::new();
     let mut push = |name: &str| {
         let cleaned = name
             .trim()
             .trim_matches(|ch: char| ch.is_whitespace() || is_punct(ch));
-        if cleaned.is_empty() || is_blocked_avatar_label(cleaned) {
-            if !(cleaned.chars().count() == 1 && cleaned.chars().all(crate::normalize::is_cjk)) {
+        if cleaned.is_empty() {
+            return;
+        }
+        if is_blocked_avatar_label(cleaned) {
+            let Some(avatar) = crate::resolve::resolve_name(cleaned, avatars) else {
                 return;
+            };
+            let display = avatar.display_name.clone();
+            if !names.iter().any(|existing| existing == &display) {
+                names.push(display);
             }
-            if crate::resolve::resolve_name(cleaned, avatars).is_none() {
-                return;
-            }
+            return;
         }
         if !names.iter().any(|existing: &String| existing == cleaned) {
             names.push(cleaned.to_string());
@@ -72,72 +78,142 @@ pub fn title_avatar_hints(title: &str, avatars: &[Avatar]) -> Vec<String> {
     // 【X専用】/【X対応】 is an explicit name even when the library does not know it yet.
     for inner in bracket_inners(title) {
         if let Some(avatar) = crate::resolve::resolve_name(inner.trim(), avatars) {
+            remember_compound(&mut compounds, inner.trim());
+            remember_compound(&mut compounds, &avatar.display_name);
             push(&avatar.display_name);
             continue;
         }
+        if let Some(stem) = dedication_stem(&inner) {
+            if let Some(avatar) = crate::resolve::resolve_name(stem, avatars) {
+                remember_compound(&mut compounds, stem);
+                remember_compound(&mut compounds, &avatar.display_name);
+                push(&avatar.display_name);
+                continue;
+            }
+        }
         if let Some(name) = crate::normalize::dedication_inside(&inner) {
-            let pieces = crate::normalize::paren_pieces(&name);
-            if pieces.len() > 1 {
-                for piece in pieces {
-                    push(&piece);
-                }
-            } else {
-                for variant in crate::normalize::label_variants(&name) {
-                    if !variant.contains('(') {
-                        push(&variant);
-                    }
-                }
-                for piece in name.split(|ch| matches!(ch, '/' | '／' | '、' | '&' | '＆')) {
-                    push(piece);
-                }
+            let mut pieces = Vec::new();
+            emit_dedication_name(&name, avatars, &mut pieces);
+            for piece in pieces {
+                push(&piece);
             }
         }
     }
     // Search the original title. Stripping 【プラム Plum】 would delete the name
     // along with the brackets. Promo text still cannot become a name unless it
     // is already an avatar, and those promo avatars are not matchable.
-    for name in known_names_in(title, avatars) {
-        push(&name);
+    // A dotted name that is one avatar hides its pieces, unless a piece is also written outside that name.
+    let discovered = known_names_in(title, avatars);
+    for name in &discovered {
+        remember_compound(&mut compounds, name);
+    }
+    let outside = if compounds.is_empty() {
+        Vec::new()
+    } else {
+        known_names_in(&mask_dotted_compounds(title, &compounds), avatars)
+    };
+    for name in discovered {
+        let buried = compounds
+            .iter()
+            .any(|compound| is_dotted_piece(compound, &name))
+            && !outside.iter().any(|kept| kept == &name);
+        if !buried {
+            push(&name);
+        }
     }
     names
 }
 
-/// Names written in 【桔梗/萌対応】. One-character names stay so a known avatar can match.
-pub fn explicit_dedication_pieces(title: &str) -> Vec<String> {
-    let mut names = Vec::new();
-    let mut push = |name: &str| {
-        let cleaned = name
+fn remember_compound(compounds: &mut Vec<String>, source: &str) {
+    if !(source.contains('・') || source.contains('･')) {
+        return;
+    }
+    if !compounds.iter().any(|existing| existing == source) {
+        compounds.push(source.to_string());
+    }
+}
+
+fn is_dotted_piece(compound: &str, name: &str) -> bool {
+    compound != name
+        && compound
+            .split(|ch| matches!(ch, '・' | '･'))
+            .any(|piece| piece.trim() == name)
+}
+
+fn mask_dotted_compounds(title: &str, compounds: &[String]) -> String {
+    let mut masked = title.to_string();
+    for compound in compounds {
+        if compound.contains('・') || compound.contains('･') {
+            masked = masked.replace(compound.as_str(), " ");
+        }
+    }
+    masked
+}
+
+fn dedication_stem(inner: &str) -> Option<&str> {
+    let original = inner.trim();
+    let stem = original
+        .strip_suffix("専用")
+        .or_else(|| original.strip_suffix("対応"))?
+        .trim();
+    if stem.is_empty() { None } else { Some(stem) }
+}
+
+fn emit_dedication_name(name: &str, avatars: &[Avatar], names: &mut Vec<String>) {
+    let mut push = |piece: &str| {
+        let cleaned = piece
             .trim()
             .trim_matches(|ch: char| ch.is_whitespace() || is_punct(ch));
-        if cleaned.is_empty()
-            || cleaned.contains('/')
-            || cleaned.contains('／')
-            || cleaned.contains('、')
-        {
+        if cleaned.is_empty() {
             return;
         }
-        let short = cleaned.chars().count() == 1 && cleaned.chars().all(crate::normalize::is_cjk);
-        if !short && is_blocked_avatar_label(cleaned) {
-            return;
-        }
-        if short || !is_blocked_avatar_label(cleaned) {
-            if !names.iter().any(|existing: &String| existing == cleaned) {
-                names.push(cleaned.to_string());
+        if is_blocked_avatar_label(cleaned) {
+            let Some(avatar) = crate::resolve::resolve_name(cleaned, avatars) else {
+                return;
+            };
+            let display = avatar.display_name.clone();
+            if !names.iter().any(|existing| existing == &display) {
+                names.push(display);
             }
+            return;
+        }
+        if !names.iter().any(|existing: &String| existing == cleaned) {
+            names.push(cleaned.to_string());
         }
     };
-    for inner in bracket_inners(title) {
-        let Some(name) = crate::normalize::dedication_inside(&inner) else {
-            continue;
-        };
-        for variant in crate::normalize::label_variants(&name) {
+    if let Some(avatar) = crate::resolve::resolve_name(name, avatars) {
+        push(&avatar.display_name);
+        return;
+    }
+    let compound = name.contains('・') || name.contains('･');
+    if !compound {
+        for variant in crate::normalize::label_variants(name) {
             if !variant.contains('(') {
                 push(&variant);
             }
         }
-        for piece in name.split(|ch| matches!(ch, '/' | '／' | '、' | '&' | '＆')) {
-            push(piece);
+    }
+    for piece in name.split(|ch| matches!(ch, '/' | '／' | '、' | '&' | '＆' | '・' | '･')) {
+        push(piece);
+    }
+}
+
+/// Names written in 【桔梗/萌対応】. One-character names stay so a known avatar can match.
+pub fn explicit_dedication_pieces(title: &str, avatars: &[Avatar]) -> Vec<String> {
+    let mut names = Vec::new();
+    for inner in bracket_inners(title) {
+        if let Some(stem) = dedication_stem(&inner) {
+            if let Some(avatar) = crate::resolve::resolve_name(stem, avatars) {
+                if !names.iter().any(|existing| existing == &avatar.display_name) {
+                    names.push(avatar.display_name.clone());
+                }
+                continue;
+            }
         }
+        let Some(name) = crate::normalize::dedication_inside(&inner) else {
+            continue;
+        };
+        emit_dedication_name(&name, avatars, &mut names);
     }
     names
 }
@@ -145,10 +221,11 @@ pub fn explicit_dedication_pieces(title: &str) -> Vec<String> {
 /// A known avatar written in the title with a version, such as 「クルミ ver1.2」,
 /// stays as that whole string even when the model omits the version.
 fn is_name_separator(ch: char) -> bool {
-    matches!(
-        ch,
-        ' ' | '　' | '/' | '／' | '、' | '【' | '】' | '「' | '」' | '(' | ')' | '（' | '）' | '_'
-    )
+    ch.is_whitespace()
+        || matches!(
+            ch,
+            '/' | '／' | '、' | '【' | '】' | '「' | '」' | '(' | ')' | '（' | '）' | '_' | '・' | '･'
+        )
 }
 
 pub fn versioned_known_names(title: &str, avatars: &[Avatar]) -> Vec<String> {
@@ -160,7 +237,7 @@ pub fn versioned_known_names(title: &str, avatars: &[Avatar]) -> Vec<String> {
             continue;
         };
         let mut cursor = ver_index;
-        while cursor > 0 && matches!(chars[cursor - 1].1, ' ' | '　' | '_') {
+        while cursor > 0 && (chars[cursor - 1].1.is_whitespace() || chars[cursor - 1].1 == '_') {
             cursor -= 1;
         }
         let name_end = cursor;
@@ -198,8 +275,17 @@ pub fn names_for_extraction(
     let mut names = Vec::new();
     let mut push = |name: &str| {
         let trimmed = name.trim();
-        let one_character = trimmed.chars().count() == 1 && trimmed.chars().all(crate::normalize::is_cjk);
-        if trimmed.is_empty() || (is_blocked_avatar_label(trimmed) && !one_character) {
+        if trimmed.is_empty() {
+            return;
+        }
+        if is_blocked_avatar_label(trimmed) {
+            let Some(avatar) = crate::resolve::resolve_name(trimmed, avatars) else {
+                return;
+            };
+            let display = avatar.display_name.clone();
+            if !names.iter().any(|existing| existing == &display) {
+                names.push(display);
+            }
             return;
         }
         if !names.iter().any(|existing: &String| existing == trimmed) {
@@ -213,6 +299,9 @@ pub fn names_for_extraction(
         push(name);
     }
     for name in versioned_known_names(title, avatars) {
+        push(&name);
+    }
+    for name in versioned_known_names(description, avatars) {
         push(&name);
     }
     if listed.is_empty() {
@@ -861,6 +950,45 @@ Avatar
         assert!(names.iter().any(|name| name == "クルミ ver1.2"));
         assert!(names.iter().any(|name| name == "クルミ"));
         assert!(versioned_known_names("見知らぬ子 ver1.2", &avatars).is_empty());
+        let from_description = names_for_extraction(
+            "部屋着",
+            "対応アバター\nクルミ ver1.2\n",
+            &[],
+            &avatars,
+        );
+        assert!(from_description.iter().any(|name| name == "クルミ ver1.2"));
+    }
+
+    #[test]
+    fn attribute_brackets_are_not_avatars_unless_one_is_known() {
+        let hints = title_avatar_hints("【NSFW対応】【脱衣対応】服", &[]);
+        assert!(hints.is_empty(), "{hints:?}");
+        let mut avatars = sample_avatars();
+        avatars.push(avatar("body", "素体"));
+        let kept = title_avatar_hints("【素体対応】服", &avatars);
+        assert_eq!(kept, vec!["素体".to_string()]);
+        assert!(title_avatar_hints("【素体対応】服", &sample_avatars()).is_empty());
+    }
+
+    #[test]
+    fn a_middle_dot_splits_unless_the_whole_name_is_one_avatar() {
+        let split = title_avatar_hints("【ソラネ・クルミ対応】ワンピース", &sample_avatars());
+        assert!(split.iter().any(|name| name == "ソラネ"), "{split:?}");
+        assert!(split.iter().any(|name| name == "クルミ"), "{split:?}");
+        assert!(split.iter().all(|name| name != "ソラネ・クルミ"), "{split:?}");
+        let mut avatars = sample_avatars();
+        avatars.push(avatar("pair", "ソラネ・クルミ"));
+        let whole = title_avatar_hints("【ソラネ・クルミ対応】ワンピース", &avatars);
+        assert_eq!(whole, vec!["ソラネ・クルミ".to_string()]);
+        avatars.push(avatar("kurumi", "クルミ"));
+        let preferred = title_avatar_hints("【ソラネ・クルミ対応】ワンピース", &avatars);
+        assert_eq!(preferred, vec!["ソラネ・クルミ".to_string()]);
+        let half = title_avatar_hints("【ソラネ･クルミ対応】ワンピース", &avatars);
+        assert_eq!(half, vec!["ソラネ・クルミ".to_string()]);
+        let listed = title_avatar_hints("クルミ、【ソラネ・クルミ対応】", &avatars);
+        assert!(listed.iter().any(|name| name == "ソラネ・クルミ"), "{listed:?}");
+        assert!(listed.iter().any(|name| name == "クルミ"), "{listed:?}");
+        assert!(listed.iter().all(|name| name != "ソラネ"), "{listed:?}");
     }
 
     #[test]

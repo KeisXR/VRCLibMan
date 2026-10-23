@@ -271,6 +271,9 @@ pub fn is_blocked_avatar_label(name: &str) -> bool {
     if is_promo_name(trimmed) || matches!(trimmed, "対応" | "専用" | "向け" | "用") {
         return true;
     }
+    if is_attribute_label(trimmed) {
+        return true;
+    }
     if is_platform_label(trimmed) {
         return true;
     }
@@ -384,6 +387,19 @@ pub fn is_name_alias(text: &str) -> bool {
     trimmed
         .chars()
         .all(|ch| is_cjk(ch) || ch.is_ascii_alphabetic())
+}
+
+pub fn is_attribute_label(name: &str) -> bool {
+    let folded: String = nfkc(name)
+        .trim()
+        .chars()
+        .filter(|ch| !ch.is_whitespace() && !matches!(*ch, '-' | '‐' | '−' | 'ー'))
+        .flat_map(|ch| ch.to_lowercase())
+        .collect();
+    matches!(
+        folded.as_str(),
+        "nsfw" | "r18" | "18禁" | "脱衣" | "成人向け" | "素体" | "汎用" | "adult"
+    )
 }
 
 fn is_platform_label(name: &str) -> bool {
@@ -784,6 +800,14 @@ pub fn suggested_display_name(title: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn attribute_labels_are_not_avatar_names() {
+        for label in ["NSFW", "R18", "R-18", "18禁", "脱衣", "成人向け", "素体", "汎用"] {
+            assert!(is_blocked_avatar_label(label), "{label}");
+        }
+        assert!(!is_blocked_avatar_label("クルミ"));
+    }
 
     #[test]
     fn folds_halfwidth_katakana_and_strips_relation_suffix() {
