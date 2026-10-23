@@ -6,6 +6,7 @@ import type {
   BaseBody,
   Category,
   FileBrief,
+  ExtensionLink,
   ImportReport,
   ItemView,
   Knowledge,
@@ -77,6 +78,13 @@ function product(partial: Partial<Product> & Pick<Product, "boothId" | "title" |
     ...partial,
   };
 }
+
+const extensionLink: ExtensionLink = {
+  token: "K7NP-4Q2M",
+  port: 17321,
+  listening: false,
+  error: "見本では受信しません",
+};
 
 const store: Store = {
   settings: {
@@ -643,6 +651,11 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       return { avatars: store.avatars, baseBodies: store.baseBodies } satisfies Knowledge as T;
     case "get_settings":
       return { ...store.settings } as T;
+    case "extension_link":
+      return { ...extensionLink } as T;
+    case "regenerate_extension_token":
+      extensionLink.token = extensionLink.token === "K7NP-4Q2M" ? "M8QR-5S3N" : "K7NP-4Q2M";
+      return { ...extensionLink } as T;
     case "save_settings": {
       const settings = args.settings as Settings;
       if (!/^http:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i.test(settings.ollamaBaseUrl.replace(/\/$/, ""))) {

@@ -188,6 +188,56 @@ pub(crate) fn set_library_folder(connection: &Connection, path: &str) -> Result<
     set_setting(connection, "library_folder", path)
 }
 
+pub(crate) fn import_export_json(
+    connection: &mut Connection,
+    json: &str,
+) -> Result<ImportReport, String> {
+    let parsed = crate::import_data::parse_export(json)?;
+    if parsed.products.is_empty() {
+        return Err(parsed
+            .warnings
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "商品が1件もありません".into()));
+    }
+    import_products(connection, &parsed)
+}
+
+pub(crate) fn extension_token(connection: &Connection) -> Result<String, String> {
+    if let Some(existing) = setting(connection, "extension_token")? {
+        if crate::local_import::stored_token_ok(&existing) {
+            return Ok(existing);
+        }
+    }
+    let token = crate::local_import::generate_token();
+    set_setting(connection, "extension_token", &token)?;
+    Ok(token)
+}
+
+pub(crate) fn extension_origin(connection: &Connection) -> Result<Option<String>, String> {
+    let Some(value) = setting(connection, "extension_origin")? else {
+        return Ok(None);
+    };
+    if crate::local_import::is_extension_origin(&value) {
+        Ok(Some(value))
+    } else {
+        Ok(None)
+    }
+}
+
+pub(crate) fn set_extension_origin(connection: &Connection, origin: &str) -> Result<(), String> {
+    set_setting(connection, "extension_origin", origin)
+}
+
+pub(crate) fn regenerate_extension_token(connection: &Connection) -> Result<String, String> {
+    let token = crate::local_import::generate_token();
+    set_setting(connection, "extension_token", &token)?;
+    connection
+        .execute("DELETE FROM settings WHERE key = 'extension_origin'", [])
+        .sql()?;
+    Ok(token)
+}
+
 fn setting(connection: &Connection, key: &str) -> Result<Option<String>, String> {
     connection
         .query_row(

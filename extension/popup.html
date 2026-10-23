@@ -7,9 +7,16 @@
   </head>
   <body>
     <h1>VRCLibMan</h1>
-    <p>このページだけを書き出すか、ライブラリの全ページを1つのJSONにまとめます。説明の補完にログイン情報は使いません。</p>
-    <button id="export" type="button">このページを書き出す</button>
-    <button id="export-all" class="secondary" type="button">ライブラリをすべて書き出す</button>
+    <p>今開いているページをアプリへ送ります。説明の補完にログイン情報は使いません。</p>
+    <p id="link-status">接続を確認しています</p>
+    <label>
+      ペアリングコード
+      <input id="token" type="text" autocomplete="off" spellcheck="false" />
+    </label>
+    <button id="save-token" class="secondary" type="button">コードを保存</button>
+    <button id="export" type="button">このページを送る</button>
+    <button id="export-all" class="secondary" type="button">ライブラリをすべて送る</button>
+    <button id="open-library" class="secondary" type="button">ライブラリを開く</button>
     <p id="status"></p>
     <script src="extract.js"></script>
     <script src="popup.js"></script>

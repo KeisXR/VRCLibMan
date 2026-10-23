@@ -132,7 +132,7 @@ pub struct Extraction {
     pub confidence: f64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportReport {
     pub inserted: u32,
@@ -158,6 +158,15 @@ pub struct ExtractReport {
     pub failed: u32,
     pub cancelled: bool,
     pub errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionLink {
+    pub token: String,
+    pub port: u16,
+    pub listening: bool,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

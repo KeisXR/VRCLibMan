@@ -94,7 +94,9 @@ export function ImportPage() {
       <div className="page-head">
         <div>
           <h1>取り込み</h1>
-          <p>Booth のログイン情報はこのアプリに入れません。拡張が今開いているページだけを JSON にします。</p>
+          <p>
+            拡張が今開いている Booth のページを読み、起動中のこのアプリへ送ります。アプリは Booth を取りに行きません。届かないときは JSON を保存し、ここにドロップできます。
+          </p>
         </div>
       </div>
       {!isTauri() && (

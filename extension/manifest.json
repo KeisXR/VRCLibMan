@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "VRCLibMan Booth Export",
-  "version": "0.1.5",
-  "description": "ログイン済みの Booth ページから、今見えている商品だけを JSON で書き出します。パスワードやクッキーはアプリへ渡しません。",
-  "permissions": ["activeTab", "scripting", "downloads"],
-  "host_permissions": ["https://booth.pm/*", "https://*.booth.pm/*"],
+  "version": "0.1.6",
+  "description": "ログイン済みの Booth ページから、今見えている商品だけを手元のアプリへ送ります。パスワードやクッキーはアプリへ渡しません。",
+  "permissions": ["activeTab", "scripting", "downloads", "storage"],
+  "host_permissions": ["https://booth.pm/*", "https://*.booth.pm/*", "http://127.0.0.1:17321/*"],
   "action": {
     "default_title": "VRCLibMan に書き出す",
     "default_popup": "popup.html"
