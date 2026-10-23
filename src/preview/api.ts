@@ -9,6 +9,8 @@ import type {
   FileBrief,
   ExtensionLink,
   ImportReport,
+  JobProgress,
+  LibraryWalkReport,
   DownloadView,
   ItemView,
   Knowledge,
@@ -187,6 +189,13 @@ const store: Store = {
       descriptionSnippet: "どのアバターでも使えるギミックです。",
     }),
     product({
+      boothId: "8800120",
+      title: "瞳のテクスチャ集",
+      shop: "サンプル工房",
+      category: "texture",
+      confidence: 1,
+    }),
+    product({
       boothId: "8800104",
       title: "架空ちゃん対応パーカー",
       shop: "サンプル工房",
@@ -226,6 +235,7 @@ const store: Store = {
     { productId: "8800111", avatarId: "lime" },
     { productId: "8800112", avatarId: "lime" },
     { productId: "8800102", avatarId: "manuka" },
+    { productId: "8800120", avatarId: "lime" },
     { productId: "8800106", avatarId: "owned-8800106" },
   ],
   files: [
@@ -280,6 +290,24 @@ const store: Store = {
       localPath: null,
       remotePath: null,
     },
+    {
+      boothId: "8800120",
+      variation: "",
+      filename: "eye_base.zip",
+      sizeBytes: 4096,
+      state: "local",
+      localPath: "C:\\Assets\\Lime\\eye_base.zip",
+      remotePath: null,
+    },
+    ...["8187247", "8187248", "8187253", "8187254", "8187260"].map((id) => ({
+      boothId: "8800120",
+      variation: "",
+      filename: id,
+      sizeBytes: null,
+      state: "missing" as const,
+      localPath: null,
+      remotePath: null,
+    })),
   ],
   remoteReachable: true,
   remoteChecked: false,
@@ -291,6 +319,16 @@ const stressPreview =
 if (typeof location !== "undefined" && new URLSearchParams(location.search).get("remote") === "down") {
   store.remoteReachable = false;
 }
+
+if (typeof location !== "undefined" && new URLSearchParams(location.search).get("browser") === "1") {
+  store.settings.builtinBrowser = true;
+  store.settings.routeDownloads = true;
+  store.setupComplete = true;
+}
+
+let previewBoothLoggedIn = !(
+  typeof location !== "undefined" && new URLSearchParams(location.search).get("account") === "out"
+);
 
 if (stressPreview) {
   store.setupComplete = true;
@@ -651,6 +689,23 @@ function textOf(value: unknown): string {
   return "";
 }
 
+function unnamedIn(items: unknown[]): number {
+  let count = 0;
+  for (const raw of items) {
+    if (!raw || typeof raw !== "object") continue;
+    const row = raw as Record<string, unknown>;
+    const list = Array.isArray(row.downloads) ? row.downloads : Array.isArray(row.files) ? row.files : [];
+    for (const item of list) {
+      if (!item || typeof item !== "object") continue;
+      const file = item as Record<string, unknown>;
+      const name = textOf(file.filename || file.name);
+      const id = textOf(file.downloadableId || file.downloadable_id);
+      if (!name || name === id || /^\d{4,12}$/.test(name)) count += 1;
+    }
+  }
+  return count;
+}
+
 function importExport(json: string): ImportReport {
   let parsed: unknown;
   try {
@@ -750,7 +805,16 @@ function importExport(json: string): ImportReport {
       "バリエーションもダウンロードも 0 件です。ファイルの有無は分かりません。拡張の「解析結果をコピー」で構造を確認するか、ライブラリを取り込み直すか、フォルダを調べてください",
     );
   }
-  return { inserted, updated, unchanged, skipped, variations, downloads, warnings: warnings.slice(0, 8) };
+  return {
+    inserted,
+    updated,
+    unchanged,
+    skipped,
+    variations,
+    downloads,
+    unnamedDownloads: unnamedIn(items),
+    warnings: warnings.slice(0, 8),
+  };
 }
 
 function slug(name: string): string {
@@ -803,6 +867,79 @@ function saveAvatar(input: AvatarInput): string {
 
 function desktopOnly(): never {
   throw new Error("この操作はデスクトップアプリで使えます。ブラウザ確認用の見本では動きません。");
+}
+
+const previewProgress = new EventTarget();
+let previewLibraryCancel = false;
+
+export function emitPreviewProgress(progress: JobProgress): void {
+  previewProgress.dispatchEvent(new CustomEvent("progress", { detail: progress }));
+}
+
+export function listenPreviewProgress(onProgress: (progress: JobProgress) => void): () => void {
+  const listener = (event: Event) => {
+    const detail = (event as CustomEvent<JobProgress>).detail;
+    onProgress(detail);
+  };
+  previewProgress.addEventListener("progress", listener);
+  return () => previewProgress.removeEventListener("progress", listener);
+}
+
+function previewWalkMessage(
+  label: string,
+  page: number,
+  last: number,
+  products: number,
+  files: number,
+  named: number,
+  unnamed: number,
+): string {
+  return `${label} ${page}/${last} ページ（商品 ${products}、ファイル ${files}、名前あり ${named}、名前なし ${unnamed}）`;
+}
+
+async function previewLibraryWalk(): Promise<LibraryWalkReport> {
+  if (!store.settings.builtinBrowser) {
+    throw new Error("内蔵ブラウザは設定で有効にしてから使います");
+  }
+  previewLibraryCancel = false;
+  const steps = [
+    { label: "ライブラリ", page: 1, last: 2, products: 1, files: 2, named: 1, unnamed: 1 },
+    { label: "ライブラリ", page: 2, last: 2, products: 2, files: 3, named: 2, unnamed: 1 },
+    { label: "ギフト", page: 1, last: 1, products: 3, files: 4, named: 2, unnamed: 2 },
+  ];
+  let seen = steps[0];
+  for (let index = 0; index < steps.length; index += 1) {
+    if (previewLibraryCancel) break;
+    seen = steps[index];
+    emitPreviewProgress({
+      job: "browser-library",
+      current: 0,
+      total: 0,
+      message: previewWalkMessage(seen.label, seen.page, seen.last, seen.products, seen.files, seen.named, seen.unnamed),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    if (previewLibraryCancel) break;
+  }
+  const cancelled = previewLibraryCancel;
+  const report: LibraryWalkReport = {
+    products: seen.products,
+    files: seen.files,
+    namedFiles: seen.named,
+    unnamedFiles: seen.unnamed,
+    pages: cancelled ? 1 : 3,
+    cancelled,
+    notice: "",
+    inserted: seen.products,
+    updated: 0,
+    unchanged: 0,
+  };
+  emitPreviewProgress({
+    job: "browser-library",
+    current: 1,
+    total: 1,
+    message: `商品 ${report.products}、ファイル ${report.files}、名前あり ${report.namedFiles}、名前なし ${report.unnamedFiles}`,
+  });
+  return report;
 }
 
 export async function dispatch<T>(command: string, args: Record<string, unknown>): Promise<T> {
@@ -975,6 +1112,37 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       );
       return boothId as T;
     }
+    case "booth_account": {
+      if (!store.settings.builtinBrowser || !previewBoothLoggedIn) {
+        return { loggedIn: false, displayName: "", pixivId: "", avatarUrl: "" } as T;
+      }
+      return { loggedIn: true, displayName: "テスト利用者", pixivId: "424242", avatarUrl: "" } as T;
+    }
+    case "download_booth_file": {
+      if (!store.settings.builtinBrowser) {
+        throw new Error("内蔵ブラウザはオフです。拡張のダウンロードを使ってください");
+      }
+      if (!store.settings.routeDownloads) {
+        throw new Error("ダウンロードの振り分けはオフです");
+      }
+      if (!store.settings.libraryFolder.trim()) {
+        throw new Error("ライブラリのフォルダを選んでから、振り分けをオンにしてください");
+      }
+      const boothId = String(args.boothId ?? "");
+      const variation = String(args.variation ?? "");
+      const filename = String(args.filename ?? "");
+      const row = store.downloads.find(
+        (item) => item.boothId === boothId && item.variation === variation && item.filename === filename,
+      );
+      if (!row) throw new Error("ダウンロード項目がありません");
+      const number = /^\d{4,12}$/.test(filename);
+      if (!number && !/\.(unitypackage|zip|rar|7z|vrm)$/i.test(filename)) {
+        throw new Error("この行にはダウンロード番号がありません。拡張を更新して取り込み直してください");
+      }
+      row.state = "local";
+      row.localPath = `${store.settings.libraryFolder}\\${boothId}\\${filename}`;
+      return undefined as T;
+    }
     case "pull_remote_file": {
       const row = store.downloads.find(
         (item) =>
@@ -1065,12 +1233,21 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     }
     case "refresh_avatar_catalog":
     case "pull_ollama_model":
+    case "booth_browser_log":
+      return { path: "", text: "見本では記録はありません" } as T;
     case "open_booth_browser":
     case "show_booth_library":
     case "browse_booth_history":
+    case "import_booth_library":
+      return (await previewLibraryWalk()) as T;
+    case "cancel_booth_library":
+      previewLibraryCancel = true;
+      return undefined as T;
+    case "clear_booth_session":
+      previewBoothLoggedIn = false;
+      return undefined as T;
     case "import_booth_page":
     case "close_booth_browser":
-    case "clear_booth_session":
     case "cache_thumbnails":
       desktopOnly();
     default:

@@ -66,7 +66,11 @@
 }
 
 * { box-sizing: border-box; }
-html, body, #root { height: 100%; }
+html, body, #root {
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+}
 body {
   margin: 0;
   background: var(--bg);
@@ -90,20 +94,32 @@ a:hover { text-decoration: underline; }
 .app {
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
-  min-height: 100%;
+  grid-template-rows: minmax(0, 1fr);
+  height: 100%;
+  overflow: hidden;
   background: var(--bg);
 }
 .rail {
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
+  min-height: 0;
   padding: var(--space-5) var(--space-3);
   background: transparent;
+  overflow: visible;
 }
-.brand { display: flex; flex-direction: column; gap: 2px; padding: 0 var(--space-3); }
+.brand { display: flex; flex-direction: column; gap: 2px; padding: 0 var(--space-3); flex-shrink: 0; }
 .brand strong { font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
 .brand span { color: var(--faint); font-size: 12px; }
-nav { display: flex; flex-direction: column; gap: 4px; }
+nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
 .nav-link {
   display: flex;
   justify-content: space-between;
@@ -131,9 +147,105 @@ nav { display: flex; flex-direction: column; gap: 4px; }
   font-variant-numeric: tabular-nums;
   text-align: center;
 }
-.rail-foot { margin-top: auto; color: var(--faint); font-size: 12px; padding: 0 var(--space-3); }
-.main { display: flex; flex-direction: column; min-width: 0; background: transparent; }
-.topbar { min-height: 8px; }
+.rail-foot {
+  margin-top: auto;
+  color: var(--faint);
+  font-size: 12px;
+  padding: 0 var(--space-3);
+  overflow: visible;
+  flex-shrink: 0;
+}
+.account-menu { position: relative; overflow: visible; margin: 0 0 10px; }
+.account-pill {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 36px;
+  margin: 0 0 10px;
+  padding: 0 12px 0 44px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  min-width: 0;
+  overflow: visible;
+  text-align: left;
+}
+.account-menu .account-pill { margin: 0; }
+button.account-pill { font: inherit; }
+button.account-pill:hover { background: var(--hover); }
+.account-pill.neutral { color: var(--text-secondary); }
+.account-avatar {
+  position: absolute;
+  left: -5px;
+  top: -4px;
+  width: 42px;
+  height: 42px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--sunken);
+  object-fit: cover;
+  display: block;
+  box-sizing: border-box;
+}
+span.account-avatar { background: var(--button); }
+.account-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: 1.3;
+}
+.account-popover {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.account-popover button {
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  text-align: left;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+.account-popover button:hover { background: var(--hover); }
+.account-popover button:disabled { opacity: 0.45; cursor: default; }
+.account-confirm { display: flex; flex-direction: column; gap: 2px; padding: 6px 6px 4px; }
+.account-confirm p { margin: 0 2px 4px; color: var(--text); font-size: 13px; }
+.main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: transparent;
+}
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  flex-shrink: 0;
+  min-height: 8px;
+  background: var(--bg);
+}
 .banner {
   margin: var(--space-4) var(--space-6) 0;
   padding: 10px 14px;
@@ -397,6 +509,8 @@ nav { display: flex; flex-direction: column; gap: 4px; }
 .download-row.remote { opacity: 0.55; }
 .download-row.missing,
 .download-row.missing .download-name { color: var(--faint); }
+.download-row.can-receive { cursor: pointer; }
+.download-row > div { min-width: 0; }
 .badge {
   display: inline-block;
   margin-left: var(--space-2);
@@ -436,7 +550,23 @@ a.presence:hover, button.presence:hover { background: var(--hover); text-decorat
 .download-row .row-actions { margin: 0; }
 details.generic { margin-top: var(--space-2); }
 details.generic summary { cursor: pointer; color: var(--text-secondary); }
+.download-fold { display: block; }
+.download-fold summary { cursor: pointer; color: var(--faint); font-size: 13px; }
+.download-fold .file-list { margin-left: var(--space-2); }
 .warn-text { color: var(--warn); }
+.browser-log {
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  background: var(--sunken);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  margin: var(--space-2) 0 0;
+}
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4) var(--space-3); }
 .span-2 { grid-column: 1 / -1; }
 .panel { padding: var(--space-4); margin-bottom: var(--space-4); }
@@ -444,7 +574,10 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
   position: fixed;
   inset: 0;
   z-index: 30;
-  overflow: auto;
+  max-height: 100vh;
+  max-height: 100dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--bg);
   padding: 64px var(--space-4);
 }
@@ -484,10 +617,15 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .density-roomy .form-grid { gap: 20px 16px; }
 
 @media (max-width: 860px) {
-  .app { grid-template-columns: 1fr; }
-  .rail { gap: var(--space-3); }
+  .app {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .rail { gap: var(--space-3); max-height: 42vh; overflow: visible; }
   nav { flex-direction: row; flex-wrap: wrap; }
-  .rail-foot { display: none; }
+  .rail-meta { display: none; }
+  .rail-foot { margin-top: 0; }
+  .rail-foot:not(:has(.account-pill)) { display: none; }
   .split, .knowledge, .form-grid { grid-template-columns: 1fr; }
   .content, .density-roomy .content { padding: var(--space-4); }
   .banner, .progress { margin-left: var(--space-4); margin-right: var(--space-4); }

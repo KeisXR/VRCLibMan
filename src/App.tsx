@@ -1,5 +1,5 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { api, isTauri, listenProgress, onRefresh } from "./api";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { api, isTauri, listenBoothUsed, listenProgress, onRefresh } from "./api";
 import { AvatarsPage } from "./pages/AvatarsPage";
 import { AvatarDetailPage } from "./pages/AvatarDetailPage";
 import { ImportPage } from "./pages/ImportPage";
@@ -7,7 +7,7 @@ import { QueuePage } from "./pages/QueuePage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { BrowserPage } from "./pages/BrowserPage";
 import { SetupWizard } from "./pages/SetupWizard";
-import type { JobProgress, LibraryStats } from "./types";
+import type { BoothAccount, JobProgress, LibraryStats } from "./types";
 import { errorText } from "./ui";
 
 type Page = "avatars" | "avatar" | "queue" | "import" | "settings" | "browser";
@@ -23,6 +23,8 @@ interface ShellValue {
   refresh: () => void;
   notify: (message: string) => void;
   fail: (message: string) => void;
+  builtinBrowser: boolean;
+  refreshAccount: () => void;
 }
 
 const ShellContext = createContext<ShellValue | null>(null);
@@ -56,8 +58,11 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const [builtinBrowser, setBuiltinBrowser] = useState(false);
+  const [account, setAccount] = useState<BoothAccount | null>(null);
+  const accountReload = useRef<() => void>(() => {});
   const [setupComplete, setSetupComplete] = useState<boolean | null>(null);
   const route = useMemo(() => parseRoute(hash), [hash]);
+  const contentRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(() => setRevision((value) => value + 1), []);
   const notify = useCallback((message: string) => {
@@ -74,6 +79,12 @@ export default function App() {
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
+
+  useLayoutEffect(() => {
+    const pane = contentRef.current;
+    if (!pane) return;
+    pane.scrollTop = 0;
+  }, [hash]);
 
   useEffect(() => onRefresh(refresh), [refresh]);
 
@@ -154,9 +165,53 @@ export default function App() {
     };
   }, []);
 
+  const refreshAccount = useCallback(() => {
+    accountReload.current();
+  }, []);
+
+  useEffect(() => {
+    if (!builtinBrowser) {
+      accountReload.current = () => {};
+      setAccount(null);
+      return;
+    }
+    let alive = true;
+    let pending = true;
+    let generation = 0;
+    const load = () => {
+      const ticket = ++generation;
+      if (pending) setAccount(null);
+      pending = false;
+      void api.boothAccount().then(
+        (value) => {
+          if (alive && ticket === generation) setAccount(value);
+        },
+        () => {
+          if (alive && ticket === generation) {
+            setAccount({ loggedIn: false, displayName: "", pixivId: "", avatarUrl: "" });
+          }
+        },
+      );
+    };
+    accountReload.current = load;
+    load();
+    let stop = () => undefined as void;
+    void listenBoothUsed(() => {
+      if (alive) load();
+    }).then((unlisten) => {
+      if (!alive) unlisten();
+      else stop = unlisten;
+    });
+    return () => {
+      alive = false;
+      accountReload.current = () => {};
+      stop();
+    };
+  }, [builtinBrowser]);
+
   const shell = useMemo<ShellValue>(
-    () => ({ revision, refresh, notify, fail }),
-    [revision, refresh, notify, fail],
+    () => ({ revision, refresh, notify, fail, builtinBrowser, refreshAccount }),
+    [revision, refresh, notify, fail, builtinBrowser, refreshAccount],
   );
   const percent =
     progress && progress.total > 0 ? Math.min(100, (progress.current / progress.total) * 100) : 0;
@@ -198,12 +253,31 @@ export default function App() {
             )}
           </nav>
           <div className="rail-foot">
-            {stats ? `${stats.products} 商品` : "読み込み中"}
-            <br />
-            {isTauri() ? stats?.ollamaModel : "ブラウザ確認用"}
+            {builtinBrowser && (
+              <AccountPill
+                account={account}
+                onLogin={() => {
+                  void api.openBoothBrowser().then(
+                    () => refreshAccount(),
+                    (err: unknown) => fail(errorText(err)),
+                  );
+                }}
+                onLogout={async () => {
+                  await api.clearBoothSession();
+                  setAccount({ loggedIn: false, displayName: "", pixivId: "", avatarUrl: "" });
+                  refreshAccount();
+                }}
+                onFail={(message) => fail(message)}
+              />
+            )}
+            <div className="rail-meta">
+              {stats ? `${stats.products} 商品` : "読み込み中"}
+              <br />
+              {isTauri() ? stats?.ollamaModel : "ブラウザ確認用"}
+            </div>
           </div>
         </aside>
-        <div className="main">
+        <div className="main" ref={contentRef}>
           <div className="topbar">
             {error && <div className="banner error">{error}</div>}
             {notice && <div className="banner notice">{notice}</div>}
@@ -229,5 +303,157 @@ export default function App() {
         </div>
       </div>
     </ShellContext.Provider>
+  );
+}
+
+function accountLabel(account: BoothAccount | null): string {
+  if (!account) return "確認しています";
+  if (!account.loggedIn) return "未ログイン";
+  if (account.displayName.trim()) return account.displayName.trim();
+  if (account.pixivId.trim()) return account.pixivId.trim();
+  return "ログイン中";
+}
+
+function safeAvatar(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:" || parsed.search || parsed.hash || parsed.username) return "";
+    const host = parsed.hostname;
+    const allowed =
+      host === "booth.pm" ||
+      host.endsWith(".booth.pm") ||
+      host === "pximg.net" ||
+      host.endsWith(".pximg.net");
+    return allowed ? parsed.toString() : "";
+  } catch {
+    return "";
+  }
+}
+
+function AccountPill({
+  account,
+  onLogin,
+  onLogout,
+  onFail,
+}: {
+  account: BoothAccount | null;
+  onLogin: () => void;
+  onLogout: () => Promise<void>;
+  onFail: (message: string) => void;
+}) {
+  const [broken, setBroken] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const label = accountLabel(account);
+  const avatar = !broken && account?.loggedIn ? safeAvatar(account.avatarUrl) : "";
+  const face = avatar ? (
+    <img className="account-avatar" src={avatar} alt="" onError={() => setBroken(true)} />
+  ) : (
+    <span className="account-avatar" aria-hidden="true" />
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointer = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+        setConfirming(false);
+      }
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        setConfirming(false);
+      }
+    };
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  if (!account) {
+    return (
+      <div className="account-pill neutral" title={label}>
+        {face}
+        <span className="account-name">{label}</span>
+      </div>
+    );
+  }
+  if (!account.loggedIn) {
+    return (
+      <button className="account-pill neutral" type="button" onClick={onLogin} title={label}>
+        {face}
+        <span className="account-name">{label}</span>
+      </button>
+    );
+  }
+
+  async function confirmLogout() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await onLogout();
+      setOpen(false);
+      setConfirming(false);
+    } catch (err) {
+      onFail(errorText(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="account-menu" ref={rootRef}>
+      <button
+        className="account-pill"
+        type="button"
+        title={label}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        onClick={() => {
+          setConfirming(false);
+          setOpen((value) => !value);
+        }}
+      >
+        {face}
+        <span className="account-name">{label}</span>
+      </button>
+      {open && (
+        <div className="account-popover" role="menu">
+          {confirming ? (
+            <div className="account-confirm">
+              <p>ログアウトしますか</p>
+              <button type="button" disabled={busy} onClick={() => void confirmLogout()}>
+                ログアウト
+              </button>
+              <button type="button" disabled={busy} onClick={() => setConfirming(false)}>
+                キャンセル
+              </button>
+            </div>
+          ) : (
+            <>
+              <button type="button" role="menuitem" onClick={() => setConfirming(true)}>
+                ログアウト
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setOpen(false);
+                  onLogin();
+                }}
+              >
+                ブラウザを開く
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

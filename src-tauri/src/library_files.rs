@@ -171,6 +171,26 @@ fn same_path(left: &Path, right: &Path) -> bool {
     path_keys(left).ok() == path_keys(right).ok()
 }
 
+/// Windows `canonicalize` returns `\\?\` verbatim paths. `path_keys` already
+/// ignores that prefix when it compares paths. The download target needs the
+/// plain form, because WebView2 mishandles the verbatim prefix.
+///
+/// `\\?\C:\...` becomes `C:\...`, and `\\?\UNC\server\share\...` becomes
+/// `\\server\share\...`. A path without that prefix is unchanged, so this is a
+/// no-op for ordinary Linux canonical paths.
+pub(crate) fn without_verbatim_prefix(path: &Path) -> PathBuf {
+    let Some(text) = path.to_str() else {
+        return path.to_path_buf();
+    };
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    if let Some(rest) = text.strip_prefix(r"\\?\") {
+        return PathBuf::from(rest);
+    }
+    path.to_path_buf()
+}
+
 fn normal_names(path: &Path) -> Result<Vec<std::ffi::OsString>, ()> {
     let mut names = Vec::new();
     for component in path.components() {
@@ -256,6 +276,117 @@ pub(crate) fn staged_download_ok(
         return Err(staged_path_error());
     }
     Ok(file)
+}
+
+/// Create `{downloads}/VRCLibMan/{booth_id}` as real directories.
+/// A symlink or junction at either level is refused before anything is written through it.
+pub(crate) fn prepare_staging_dir(downloads: &Path, booth_id: &str) -> Result<PathBuf, String> {
+    if !downloads.is_absolute() {
+        return Err("ダウンロードのパスが絶対パスではありません".into());
+    }
+    if !valid_booth_id(booth_id) {
+        return Err("商品IDを特定できません".into());
+    }
+    let root = std::fs::canonicalize(downloads).map_err(|_| staged_path_error())?;
+    let staging = ensure_real_dir(&root, "VRCLibMan")?;
+    let product = ensure_real_dir(&staging, booth_id)?;
+    Ok(without_verbatim_prefix(&product))
+}
+
+fn ensure_real_dir(parent: &Path, name: &str) -> Result<PathBuf, String> {
+    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\']) {
+        return Err(staged_path_error());
+    }
+    let joined = parent.join(name);
+    match std::fs::symlink_metadata(&joined) {
+        Ok(meta) => {
+            if meta.file_type().is_symlink() {
+                return Err("シンボリックリンクは移動しません".into());
+            }
+            if !meta.is_dir() {
+                return Err(staged_path_error());
+            }
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::create_dir(&joined).map_err(|err| format!("保存先を作れません: {err}"))?;
+            let meta = std::fs::symlink_metadata(&joined).map_err(|_| staged_path_error())?;
+            if meta.file_type().is_symlink() || !meta.is_dir() {
+                let _ = std::fs::remove_dir(&joined);
+                return Err("シンボリックリンクは移動しません".into());
+            }
+        }
+        Err(_) => return Err(staged_path_error()),
+    }
+    let canon = std::fs::canonicalize(&joined).map_err(|_| staged_path_error())?;
+    let Some(canon_parent) = canon.parent() else {
+        return Err(staged_path_error());
+    };
+    if !same_path(canon_parent, parent) {
+        return Err(staged_path_error());
+    }
+    Ok(canon)
+}
+
+pub(crate) fn filename_is_number(name: &str) -> bool {
+    let name = name.trim();
+    (4..=12).contains(&name.len()) && name.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+pub(crate) fn is_packaged_asset(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    ["unitypackage", "zip", "rar", "7z", "vrm"]
+        .iter()
+        .any(|ext| {
+            let suffix = format!(".{ext}");
+            match lower.strip_suffix(&suffix) {
+                Some(stem) => !stem.is_empty() && !stem.ends_with(' ') && !stem.ends_with('.'),
+                None => false,
+            }
+        })
+}
+
+/// Prefer the row's real filename. A number-only row takes the download's suggested name.
+/// The result is a single path segment, never a directory.
+pub(crate) fn choose_download_name(row_filename: &str, suggested: &str) -> String {
+    let suggested = suggested.split(['?', '#']).next().unwrap_or("");
+    let suggested = suggested.rsplit(['/', '\\']).next().unwrap_or("");
+    let row = safe_filename(row_filename).unwrap_or_default();
+    let suggested = safe_filename(suggested).unwrap_or_default();
+    if is_packaged_asset(&row) && !filename_is_number(&row) {
+        return row;
+    }
+    if is_packaged_asset(&suggested) {
+        return suggested;
+    }
+    if is_packaged_asset(&row) {
+        return row;
+    }
+    "received.bin".to_string()
+}
+
+pub(crate) fn looks_like_login_page(bytes: &[u8]) -> bool {
+    let bytes = bytes
+        .strip_prefix(&[0xEF, 0xBB, 0xBF])
+        .unwrap_or(bytes);
+    let text = String::from_utf8_lossy(bytes);
+    let trimmed = text
+        .trim_start()
+        .trim_start_matches('\u{feff}')
+        .to_ascii_lowercase();
+    trimmed.starts_with("<!doctype")
+        || trimmed.starts_with("<html")
+        || trimmed.starts_with("<head")
+}
+
+pub(crate) fn file_looks_like_login_page(path: &Path) -> bool {
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut buf = [0u8; 1024];
+    let Ok(read) = std::io::Read::read(&mut file, &mut buf) else {
+        return false;
+    };
+    looks_like_login_page(&buf[..read])
 }
 
 pub(crate) fn probe_path(path: &Path, timeout: Duration) -> Probe {
@@ -882,5 +1013,80 @@ mod tests {
         assert!(err.contains("届きません"));
         assert!(dead.elapsed() < Duration::from_secs(1));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn staging_dir_is_only_the_product_folder_under_downloads() {
+        let root = fixture_root("stage");
+        let downloads = root.join("Downloads");
+        std::fs::create_dir_all(&downloads).unwrap();
+        let dir = prepare_staging_dir(&downloads, "424242").unwrap();
+        assert_eq!(dir, downloads.join("VRCLibMan").join("424242"));
+        assert_eq!(prepare_staging_dir(&downloads, "424242").unwrap(), dir);
+        assert!(prepare_staging_dir(&downloads, "..").is_err());
+        assert!(prepare_staging_dir(&downloads, "42").is_err());
+        assert!(prepare_staging_dir(Path::new("Downloads"), "424242").is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn windows_verbatim_prefix_normalizes_without_canonicalize() {
+        assert_eq!(
+            without_verbatim_prefix(Path::new(
+                r"\\?\C:\Users\someone\Downloads\VRCLibMan\424242"
+            )),
+            PathBuf::from(r"C:\Users\someone\Downloads\VRCLibMan\424242")
+        );
+        assert_eq!(
+            without_verbatim_prefix(Path::new(r"\\?\UNC\server\share\VRCLibMan\424242")),
+            PathBuf::from(r"\\server\share\VRCLibMan\424242")
+        );
+        let plain = PathBuf::from(r"C:\Users\someone\Downloads\VRCLibMan\424242");
+        assert_eq!(without_verbatim_prefix(&plain), plain);
+        let unix = PathBuf::from("/tmp/Downloads/VRCLibMan/424242");
+        assert_eq!(without_verbatim_prefix(&unix), unix);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staging_dir_does_not_follow_a_linked_folder() {
+        let root = fixture_root("stage-link");
+        let downloads = root.join("Downloads");
+        let pocket = root.join("pocket");
+        std::fs::create_dir_all(&downloads).unwrap();
+        std::fs::create_dir_all(&pocket).unwrap();
+        std::os::unix::fs::symlink(&pocket, downloads.join("VRCLibMan")).unwrap();
+        assert!(prepare_staging_dir(&downloads, "424242").is_err());
+        assert!(!pocket.join("424242").exists());
+        std::fs::remove_file(downloads.join("VRCLibMan")).unwrap();
+        let product = downloads.join("VRCLibMan").join("424242");
+        std::fs::create_dir_all(downloads.join("VRCLibMan")).unwrap();
+        std::os::unix::fs::symlink(&pocket, &product).unwrap();
+        assert!(prepare_staging_dir(&downloads, "424242").is_err());
+        assert!(std::fs::read_dir(&pocket).unwrap().next().is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn download_name_keeps_a_real_row_name_and_a_number_takes_the_suggestion() {
+        assert_eq!(
+            choose_download_name("body.unitypackage", "other.zip"),
+            "body.unitypackage"
+        );
+        assert_eq!(
+            choose_download_name("2336025", "folder/body.unitypackage?token=secret"),
+            "body.unitypackage"
+        );
+        assert_eq!(choose_download_name("2336025", "../secret.unitypackage"), "secret.unitypackage");
+        assert_eq!(choose_download_name("2336025", "login.html"), "received.bin");
+        assert_eq!(choose_download_name("body .unitypackage", "pack.zip"), "pack.zip");
+        assert!(!is_packaged_asset(".zip"));
+        assert!(!is_packaged_asset("note.txt"));
+        assert!(looks_like_login_page(b"  <!DOCTYPE html><html><head></head>"));
+        assert!(looks_like_login_page(b"\xEF\xBB\xBF<html>"));
+        assert!(looks_like_login_page(b"<head><title>login</title>"));
+        assert!(!looks_like_login_page(b"PK\x03\x04dummy"));
+        assert!(!looks_like_login_page(&[0x1f, 0x8b, 0x08, 0x00]));
+        assert!(!looks_like_login_page(b"{ \"asset\": true }"));
     }
 }

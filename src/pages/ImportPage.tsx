@@ -192,6 +192,7 @@ export function ImportPage() {
         <p className={report.variations === 0 && report.downloads === 0 ? "meta warn-text" : "meta"}>
           追加 {report.inserted} / 更新 {report.updated} / 変化なし {report.unchanged} / スキップ {report.skipped}
           {" / "}バリエーション {report.variations} / ダウンロード {report.downloads}
+          {report.unnamedDownloads > 0 ? `（名前なし ${report.unnamedDownloads}）` : ""}
           {report.warnings.length > 0 ? `。${report.warnings.slice(0, 3).join(" ")}` : ""}
         </p>
       )}

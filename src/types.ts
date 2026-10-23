@@ -204,6 +204,18 @@ export interface LibraryStats {
   ollamaModel: string;
 }
 
+export interface BrowserDiagnostic {
+  path: string;
+  text: string;
+}
+
+export interface BoothAccount {
+  loggedIn: boolean;
+  displayName: string;
+  pixivId: string;
+  avatarUrl: string;
+}
+
 export interface ImportReport {
   inserted: number;
   updated: number;
@@ -211,7 +223,21 @@ export interface ImportReport {
   skipped: number;
   variations: number;
   downloads: number;
+  unnamedDownloads: number;
   warnings: string[];
+}
+
+export interface LibraryWalkReport {
+  products: number;
+  files: number;
+  namedFiles: number;
+  unnamedFiles: number;
+  pages: number;
+  cancelled: boolean;
+  notice: string;
+  inserted: number;
+  updated: number;
+  unchanged: number;
 }
 
 export interface ScanReport {
@@ -275,6 +301,14 @@ export interface JobProgress {
   job: string;
   current: number;
   total: number;
+  message: string;
+}
+
+export interface BoothFileStatus {
+  boothId: string;
+  variation: string;
+  filename: string;
+  phase: "receiving" | "error" | "done";
   message: string;
 }
 

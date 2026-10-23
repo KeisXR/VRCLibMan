@@ -7,11 +7,13 @@ mod compat;
 mod db;
 mod import_data;
 mod library_files;
+mod library_walk;
 mod local_import;
 mod matching;
 mod model;
 mod normalize;
 mod ollama;
+mod quiet;
 mod resolve;
 mod scan;
 mod thumb;
@@ -142,8 +144,13 @@ pub fn run() {
             commands::show_booth_library,
             commands::browse_booth_history,
             commands::import_booth_page,
+            commands::import_booth_library,
+            commands::cancel_booth_library,
             commands::clear_booth_session,
             commands::close_booth_browser,
+            commands::booth_browser_log,
+            commands::download_booth_file,
+            commands::booth_account,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -8,7 +8,11 @@ import type {
   CatalogRefresh,
   ExtractReport,
   ExtensionLink,
+  BrowserDiagnostic,
+  BoothAccount,
   ImportReport,
+  LibraryWalkReport,
+  BoothFileStatus,
   JobProgress,
   Knowledge,
   LibraryStats,
@@ -45,9 +49,25 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
   return invoke<T>(command, args);
 }
 
-export function listenProgress(onProgress: (progress: JobProgress) => void): Promise<() => void> {
+export function listenBoothUsed(onUsed: () => void): Promise<() => void> {
   if (!isTauri()) {
     return Promise.resolve(() => undefined);
+  }
+  return import("@tauri-apps/api/event").then(({ listen }) => listen("booth-browser-used", () => onUsed()));
+}
+
+export function listenBoothFile(onStatus: (status: BoothFileStatus) => void): Promise<() => void> {
+  if (!isTauri()) {
+    return Promise.resolve(() => undefined);
+  }
+  return import("@tauri-apps/api/event").then(({ listen }) =>
+    listen<BoothFileStatus>("booth-file-download", (event) => onStatus(event.payload)),
+  );
+}
+
+export function listenProgress(onProgress: (progress: JobProgress) => void): Promise<() => void> {
+  if (!isTauri()) {
+    return import("./preview/api").then((preview) => preview.listenPreviewProgress(onProgress));
   }
   return import("@tauri-apps/api/event").then(({ listen }) =>
     listen<JobProgress>("job-progress", (event) => onProgress(event.payload)),
@@ -68,11 +88,15 @@ export const api = {
   regenerateExtensionToken: () => call<ExtensionLink>("regenerate_extension_token"),
   saveSettings: (settings: Settings) => call<void>("save_settings", { settings }),
   openBoothBrowser: () => call<void>("open_booth_browser"),
+  boothAccount: () => call<BoothAccount>("booth_account"),
   showBoothLibrary: () => call<void>("show_booth_library"),
   browseBoothHistory: (forward: boolean) => call<void>("browse_booth_history", { forward }),
   importBoothPage: () => call<ImportReport>("import_booth_page"),
+  importBoothLibrary: () => call<LibraryWalkReport>("import_booth_library"),
+  cancelBoothLibrary: () => call<void>("cancel_booth_library"),
   clearBoothSession: () => call<void>("clear_booth_session"),
   closeBoothBrowser: () => call<void>("close_booth_browser"),
+  boothBrowserLog: () => call<BrowserDiagnostic>("booth_browser_log"),
   importExport: (json: string) => call<ImportReport>("import_export", { json }),
   updateProduct: (update: ProductUpdate) => call<void>("update_product", { update }),
   linkFile: (path: string, productId: string | null) =>
@@ -105,6 +129,8 @@ export const api = {
   addFreeProduct: (url: string) => call<string>("add_free_product", { url }),
   pullRemoteFile: (boothId: string, variation: string, filename: string) =>
     call<void>("pull_remote_file", { boothId, variation, filename }),
+  downloadBoothFile: (boothId: string, variation: string, filename: string) =>
+    call<void>("download_booth_file", { boothId, variation, filename }),
   pushRemoteFile: (boothId: string, variation: string, filename: string) =>
     call<void>("push_remote_file", { boothId, variation, filename }),
   cacheThumbnails: () => call<number>("cache_thumbnails"),

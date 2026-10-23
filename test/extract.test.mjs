@@ -255,20 +255,34 @@ test("library and gift pages keep downloadable ids and names beside the download
         <a href="https://booth.pm/ja/items/424242">
           <img class="l-library-item-thumbnail" alt="" src="https://booth.pximg.net/c/72x72/a.jpg" />
         </a>
-        <a class="text-text-default" href="https://booth.pm/items/424242">架空の服</a>
-        <span class="text-text-gray600">架空工房</span>
+        <div>
+          <a class="text-text-default" href="https://booth.pm/items/424242">架空の服</a>
+          <div class="text-text-gray600">架空工房</div>
+        </div>
       </div>
       <div class="mt-16">
-        <div>
-          <div>通常</div>
-          <div>avatar_body.unitypackage</div>
+        <div class="flex items-center justify-between">
+          <div>
+            <div>通常</div>
+            <div class="flex min-w-0">
+              <div class="truncate"><span>avatar_body</span></div>
+              <div class="shrink-0">.unitypackage</div>
+            </div>
+          </div>
           <a href="https://booth.pm/downloadables/2336025">ダウンロード</a>
         </div>
-        <div>
-          <div>bonus_pack.zip</div>
-          <div class="js-download-button" data-href="https://booth.pm/downloadables/2336026">
-            <button type="button">ダウンロード</button>
+        <div class="flex items-center justify-between">
+          <div class="min-w-0" title="bonus_pack.zip">
+            <div class="truncate">bonus_pack…</div>
           </div>
+          <a href="https://booth.pm/downloadables/2336026"><span>ダウンロード</span></a>
+        </div>
+        <div class="flex items-center justify-between">
+          <div>eye_texture.zip (12.4MB)</div>
+          <a href="https://booth.pm/downloadables/2336027">ダウンロード</a>
+        </div>
+        <div class="flex items-center justify-between">
+          <a href="https://booth.pm/downloadables/2336028">ダウンロード</a>
         </div>
       </div>
     </div>
@@ -281,6 +295,8 @@ test("library and gift pages keep downloadable ids and names beside the download
   assert.deepEqual(library[0].downloads, [
     { filename: "avatar_body.unitypackage", sizeBytes: null, variation: "通常", downloadableId: "2336025" },
     { filename: "bonus_pack.zip", sizeBytes: null, variation: "", downloadableId: "2336026" },
+    { filename: "eye_texture.zip", sizeBytes: null, variation: "", downloadableId: "2336027" },
+    { filename: "2336028", sizeBytes: null, variation: "", downloadableId: "2336028" },
   ]);
   assert.deepEqual(library[0].variations, [{ name: "通常", owned: true }]);
   const report = diagnose(document, "https://accounts.booth.pm/library");
@@ -288,13 +304,15 @@ test("library and gift pages keep downloadable ids and names beside the download
   assert.equal(encoded.includes("架空の服"), false);
   assert.equal(encoded.includes("avatar_body"), false);
   assert.equal(encoded.includes("bonus_pack"), false);
+  assert.equal(encoded.includes("eye_texture"), false);
   assert.equal(report.productCount, 1);
   assert.equal(report.variationCount, 1);
-  assert.equal(report.filenameCount, 2);
-  assert.ok(report.downloadLinkCount >= 2);
+  assert.equal(report.filenameCount, 3);
+  assert.equal(report.missingFilenameCount, 1);
+  assert.ok(report.downloadLinkCount >= 4);
   assert.equal(report.selectorHits["img.l-library-item-thumbnail"], 1);
-  assert.equal(report.selectorHits["a[href*='downloadables']"], 1);
-  assert.equal(report.hrefShapes["https://booth.pm/downloadables/#"], 2);
+  assert.equal(report.selectorHits["a[href*='downloadables']"], 4);
+  assert.equal(report.hrefShapes["https://booth.pm/downloadables/#"], 4);
 });
 
 test("item download rows use the title and nearby text, not the download label", () => {
