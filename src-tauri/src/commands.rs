@@ -182,8 +182,8 @@ pub async fn import_booth_page(app: tauri::AppHandle) -> Result<ImportReport, St
 }
 
 #[tauri::command]
-pub fn clear_booth_session(app: tauri::AppHandle) -> Result<(), String> {
-    crate::browser::clear_session(&app)
+pub async fn clear_booth_session(app: tauri::AppHandle) -> Result<(), String> {
+    crate::browser::clear_session(&app).await
 }
 
 #[tauri::command]

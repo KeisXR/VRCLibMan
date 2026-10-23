@@ -8,7 +8,7 @@
   --accent-ink: #ffffff;
   --line: rgba(23, 23, 23, 0.08);
   --hover: rgba(23, 23, 23, 0.05);
-  --font: "Segoe UI", "Yu Gothic UI", "Hiragino Sans", "Noto Sans JP", "Meiryo", sans-serif;
+  --font: -apple-system, system-ui, "Segoe UI", "Yu Gothic UI", "Hiragino Sans", "Noto Sans JP", "Meiryo", sans-serif;
 }
 
 @media (prefers-color-scheme: dark) {

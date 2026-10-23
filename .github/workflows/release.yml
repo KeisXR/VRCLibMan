@@ -1,11 +1,6 @@
 name: release
 
-# Windows NSIS only. macOS is not built.
-# To add it later, append matrix rows (Rust targets below already follow the runner):
-#   - platform: macos-latest # Apple silicon
-#     args: --target aarch64-apple-darwin
-#   - platform: macos-latest # Intel
-#     args: --target x86_64-apple-darwin
+# Windows NSIS and Apple Silicon dmg. Intel and universal macOS builds are not produced.
 on:
   push:
     tags:
@@ -21,6 +16,8 @@ jobs:
         include:
           - platform: windows-latest
             args: ""
+          - platform: macos-latest
+            args: --target aarch64-apple-darwin
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v7
@@ -32,7 +29,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || '' }}
 
       - uses: swatinem/rust-cache@v2
         with:
@@ -90,6 +87,9 @@ jobs:
           releaseBody: |
             Windows 用の未署名 NSIS インストーラです。SmartScreen が「Windows によって PC が保護されました」と出すことがあります。
             「詳細情報」から「実行」を選んでください。
+            Mac は Apple Silicon と macOS 14 以降向けの未署名 dmg です。署名も公証もしていません。
+            開けないときは、システム設定の「プライバシーとセキュリティ」で「このまま開く」を選ぶか、`xattr -dr com.apple.quarantine` をその .app に実行してください。
+            `vrclibman://` は、.app を /Applications に置いたときだけ動きます。
             拡張は vrclibman-booth-export-*.zip です。展開したフォルダ（直下に manifest.json）を、Chrome の「パッケージ化されていない拡張機能」として読み込みます。
           releaseDraft: true
           prerelease: false

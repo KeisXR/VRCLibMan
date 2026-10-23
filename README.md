@@ -14,10 +14,11 @@ Booth のパスワードやクッキーは持ちません。ブラウザ拡張�
 ## 必要なもの
 
 - Node.js
-- Rust（rustup）と Visual Studio 2022 Build Tools の C++ ワークロード
-- WebView2（Windows 11 には入っています）
-- [Ollama](https://ollama.com/)。分類の初期モデルは `gemma4:12b`（目安 8GB の VRAM）です。`ollama pull gemma4:12b`
-- 軽い代替は `ollama pull qwen3:4b`。設定のモデル名で、導入済みのモデルを選べます。すでに保存したモデル名は、更新しても上書きしません。
+- Rust（rustup）。Windows では Visual Studio 2022 Build Tools の C++ ワークロード。Mac では Xcode Command Line Tools
+- Windows では WebView2（Windows 11 には入っています）。Mac は macOS 14 以上の WebKit
+- [Ollama](https://ollama.com/)。分類の既定モデルは `gemma4:12b` です。`ollama pull gemma4:12b`
+- 軽い代替は `ollama pull qwen3:4b`。これより小さいモデルは勧めません。設定のモデル名で、導入済みのモデルを選べます。すでに保存したモデル名は、更新しても上書きしません。
+- メモリは 16GB 以上を想定しています。それ未満の Mac 向けに既定モデルは切り替えません。
 
 ## インストール（Windows）
 
@@ -35,7 +36,21 @@ Booth のパスワードやクッキーは持ちません。ブラウザ拡張�
 
 手元でインストーラを作る手順は、下の「開発」にあります。
 
-macOS 用のインストーラはまだ作りません。
+## インストール（Mac）
+
+対応するのは Apple Silicon の macOS 14 以降だけです。Intel Mac 用のビルドはありません。公開された GitHub Release の `dmg` を開き、`VRCLibMan.app` をアプリケーションフォルダへドラッグします。署名も公証もしていません。ad-hoc 署名だけです。
+
+初めて開くとき、macOS が止めることがあります。システム設定の「プライバシーとセキュリティ」で「このまま開く」を選ぶか、ターミナルで次を実行してください。
+
+```sh
+xattr -dr com.apple.quarantine /Applications/VRCLibMan.app
+```
+
+ライブラリは `~/Library/Application Support/app.vrclibman.desktop/library.sqlite` です。サムネイルは同じ場所の `thumbs` です。内蔵ブラウザのログイン状態は、メイン画面とは別の WebKit データストアに残します。ログアウトはそのデータストアを消します。
+
+`vrclibman://` は、`.app` を `/Applications` に置いたときだけ動きます。デスクトップやダウンロードフォルダに置いただけでは、拡張からの起動に使えません。
+
+拡張の zip は Windows のリリースと同じです。Chrome への読み込み方は Windows の節と同じです。
 
 ## 起動
 
@@ -78,7 +93,7 @@ Ollama の接続先は `http://127.0.0.1` か `localhost` だけです。温度�
 
 拡張の「ライブラリをすべて送る」は、これまでどおり全ページを読み、既にある商品も更新します。「新しい購入だけ送る」は新しい購入から読み、アプリが取り込み済みと答えた商品に当たったページで止まります。ページの間隔は、説明の補完と同じく 250 ミリ秒以上です。
 
-フォルダ調査は、ドライブ直下、Windows、Program Files を拒否します。深さ 8、2 万件までです。
+フォルダ調査は、ドライブ直下、Windows、Program Files を拒否します。Mac では加えて `/System`、`/Library`、`/Applications`、`/private`、ホームフォルダそのもの、`/Volumes` そのものを拒否します。深さ 8、2 万件までです。
 
 ## 開発
 
@@ -96,4 +111,15 @@ npm install
 npm run tauri build
 ```
 
-できたファイルは `src-tauri\target\release\bundle\nsis\VRCLibMan_0.1.2_x64-setup.exe` です。中の実行ファイルは `VRCLibMan.exe` です。ARM の Windows では `x64` が `arm64` になります。版は `package.json`、`src-tauri\tauri.conf.json`、`src-tauri\Cargo.toml` の `version` を同じにしてください。GitHub へ載せるときは、その版のタグ `v0.1.2` を push します。workflow が下書き Release に、未署名の setup.exe と拡張の zip を置きます。コード署名の秘密情報は入れていません。NSIS は現在のユーザー向けに `vrclibman://` を登録し、アンインストールでその登録を外します。`npm run tauri dev` は同じプロトコルを開発用の実行ファイルへ付け替えるので、配布版を試すときはインストールし直してください。
+できたファイルは `src-tauri\target\release\bundle\nsis\VRCLibMan_0.1.2_x64-setup.exe` です。中の実行ファイルは `VRCLibMan.exe` です。ARM の Windows では `x64` が `arm64` になります。版は `package.json`、`src-tauri\tauri.conf.json`、`src-tauri\Cargo.toml` の `version` を同じにしてください。GitHub へ載せるときは、その版のタグ `v0.1.2` を push します。workflow が下書き Release に、未署名の setup.exe、Apple Silicon の dmg、拡張の zip を置きます。コード署名の秘密情報は入れていません。NSIS は現在のユーザー向けに `vrclibman://` を登録し、アンインストールでその登録を外します。`npm run tauri dev` は同じプロトコルを開発用の実行ファイルへ付け替えるので、配布版を試すときはインストールし直してください。
+
+Mac で手元の dmg を作るときは、Xcode Command Line Tools、rustup の `aarch64-apple-darwin`、Node、Ollama を入れます。Intel 用ターゲットは要りません。
+
+```sh
+xcode-select --install
+rustup target add aarch64-apple-darwin
+npm install
+npm run tauri build -- --target aarch64-apple-darwin
+```
+
+できたファイルは `src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/` の dmg です。署名は ad-hoc（`signingIdentity` が `-`）だけで、公証はしません。`vrclibman://` を試すときは、できた `.app` を `/Applications` に置いてから開いてください。

@@ -72,13 +72,20 @@ pub fn validate_scan_root(path: &Path) -> Result<(), String> {
     let canon = path
         .canonicalize()
         .map_err(|err| format!("フォルダを確認できません: {err}"))?;
-    let normals: Vec<String> = canon
-        .components()
+    scan_block_reason(&canon)
+}
+
+fn normal_components(path: &Path) -> Vec<String> {
+    path.components()
         .filter_map(|component| match component {
             Component::Normal(name) => Some(name.to_string_lossy().to_lowercase()),
             _ => None,
         })
-        .collect();
+        .collect()
+}
+
+fn scan_block_reason(canon: &Path) -> Result<(), String> {
+    let normals = normal_components(canon);
     if normals.is_empty() {
         return Err(
             "ドライブ直下はスキャンできません。アセットの入ったフォルダを選んでください".into(),
@@ -89,7 +96,47 @@ pub fn validate_scan_root(path: &Path) -> Result<(), String> {
             return Err("システムフォルダはスキャンできません".into());
         }
     }
+    #[cfg(target_os = "macos")]
+    if let Some(message) = macos_scan_block(
+        canon,
+        home_dir().as_deref(),
+        std::env::temp_dir().canonicalize().ok().as_deref(),
+    ) {
+        return Err(message.into());
+    }
     Ok(())
+}
+
+/// macOS roots that must not be scanned. The temporary directory is allowed so tests can use it.
+pub(crate) fn macos_scan_block(
+    canon: &Path,
+    home: Option<&Path>,
+    temp: Option<&Path>,
+) -> Option<&'static str> {
+    if let Some(temp) = temp.filter(|temp| !temp.as_os_str().is_empty()) {
+        if canon.starts_with(temp) && canon != temp {
+            return None;
+        }
+    }
+    let normals = normal_components(canon);
+    let Some(first) = normals.first() else {
+        return Some("ドライブ直下はスキャンできません。アセットの入ったフォルダを選んでください");
+    };
+    if matches!(first.as_str(), "system" | "library" | "applications") || first == "private" {
+        return Some("システムフォルダはスキャンできません");
+    }
+    if normals.len() == 1 && first == "volumes" {
+        return Some("ボリュームの直下はスキャンできません。中のフォルダを選んでください");
+    }
+    if home.is_some_and(|home| canon == home) {
+        return Some("ホームフォルダ直下はスキャンできません。中のフォルダを選んでください");
+    }
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn home_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME").map(std::path::PathBuf::from)
 }
 
 pub fn scan_folder(root: &Path) -> Result<ScanOutcome, String> {
@@ -249,5 +296,53 @@ mod tests {
             error.contains("ドライブ直下"),
             "expected the drive-root message, got {error}"
         );
+    }
+
+    #[test]
+    fn macos_blocks_system_roots_home_and_volumes_but_not_a_folder_inside() {
+        assert_eq!(
+            macos_scan_block(Path::new("/System"), None, None),
+            Some("システムフォルダはスキャンできません")
+        );
+        assert_eq!(
+            macos_scan_block(Path::new("/System/Library"), None, None),
+            Some("システムフォルダはスキャンできません")
+        );
+        assert_eq!(
+            macos_scan_block(Path::new("/Library"), None, None),
+            Some("システムフォルダはスキャンできません")
+        );
+        assert_eq!(
+            macos_scan_block(Path::new("/Applications/Safari.app"), None, None),
+            Some("システムフォルダはスキャンできません")
+        );
+        assert_eq!(
+            macos_scan_block(Path::new("/private"), None, None),
+            Some("システムフォルダはスキャンできません")
+        );
+        assert_eq!(
+            macos_scan_block(Path::new("/private/etc"), None, None),
+            Some("システムフォルダはスキャンできません")
+        );
+        let temp = Path::new("/private/var/folders/ab/cd");
+        assert_eq!(
+            macos_scan_block(temp.join("vrclibman-scan").as_path(), None, Some(temp)),
+            None
+        );
+        assert_eq!(
+            macos_scan_block(Path::new("/Volumes"), None, None),
+            Some("ボリュームの直下はスキャンできません。中のフォルダを選んでください")
+        );
+        assert_eq!(
+            macos_scan_block(Path::new("/Volumes/Data/Assets"), None, None),
+            None
+        );
+        let home = Path::new("/Users/kei");
+        assert_eq!(
+            macos_scan_block(home, Some(home), None),
+            Some("ホームフォルダ直下はスキャンできません。中のフォルダを選んでください")
+        );
+        assert_eq!(macos_scan_block(Path::new("/Users/kei/Assets"), Some(home), None), None);
+        assert_eq!(macos_scan_block(Path::new("/Users/other/Assets"), Some(home), None), None);
     }
 }
