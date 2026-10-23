@@ -37,6 +37,98 @@ pub fn strong_category_override(title: &str) -> Option<Category> {
     }
 }
 
+/// World assets beat a weak model guess. `ギミック` alone stays an avatar gimmick.
+/// A world gimmick needs a world signal: ワールド, world, Udon, UdonSharp,
+/// ワールド用, ワールドギミック, a shader for a world, or a world prefab.
+pub fn world_hint_overrides(
+    title: &str,
+    description: &str,
+    model: Category,
+    confidence: f64,
+) -> bool {
+    let title_strength = world_strength(title);
+    let body_strength = world_strength(description);
+    if title_strength == 0 && body_strength == 0 {
+        return false;
+    }
+    if title_strength >= 2 || body_strength >= 2 {
+        return model != Category::Avatar || title_strength >= 2;
+    }
+    if title_strength == 1 {
+        return true;
+    }
+    let described = nfkc(description).to_lowercase();
+    let weak_model = matches!(
+        model,
+        Category::Gimmick | Category::Other | Category::Accessory | Category::World
+    );
+    if has_jp_world_asset(&described) {
+        return weak_model || (confidence < 0.6 && model != Category::Avatar);
+    }
+    confidence < 0.6 && model != Category::Avatar
+}
+
+fn world_strength(text: &str) -> u8 {
+    let lower = nfkc(text).to_lowercase();
+    if lower.is_empty() {
+        return 0;
+    }
+    if strong_world(&lower) {
+        2
+    } else if has_world_word(&lower) || has_jp_world_asset(&lower) {
+        1
+    } else {
+        0
+    }
+}
+
+fn strong_world(lower: &str) -> bool {
+    if lower.contains("udon") || lower.contains("skybox") {
+        return true;
+    }
+    const MARKED: &[&str] = &[
+        "ワールド用",
+        "ワールドギミック",
+        "ワールドシェーダ",
+        "ワールドプレハブ",
+        "ワールドプロップ",
+    ];
+    if MARKED.iter().any(|phrase| lower.contains(phrase)) {
+        return true;
+    }
+    let worldish = has_world_word(lower)
+        || lower.contains("worldprefab")
+        || lower.contains("worldshader")
+        || lower.contains("worldgimmick")
+        || lower.contains("worldprop")
+        || lower.contains("worldtool");
+    if !worldish {
+        return false;
+    }
+    const WITH: &[&str] = &[
+        "prefab",
+        "プレハブ",
+        "shader",
+        "シェーダ",
+        "gimmick",
+        "ギミック",
+        "prop",
+        "tool",
+        "ツール",
+    ];
+    WITH.iter().any(|phrase| lower.contains(phrase))
+}
+
+fn has_jp_world_asset(lower: &str) -> bool {
+    lower.replace("ワールド風", "").contains("ワールド")
+}
+
+fn has_world_word(lower: &str) -> bool {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r"(?:^|[^a-z])worlds?(?:[^a-z]|$)").unwrap());
+    re.is_match(lower)
+}
+
 pub fn category_for_listed_product(title: &str, description: &str) -> Category {
     let from_title = classify_text(title, true);
     if from_title != Category::Other {
@@ -153,7 +245,8 @@ pub fn names_for_extraction(
     let mut names = Vec::new();
     let mut push = |name: &str| {
         let trimmed = name.trim();
-        let one_character = trimmed.chars().count() == 1 && trimmed.chars().all(crate::normalize::is_cjk);
+        let one_character =
+            trimmed.chars().count() == 1 && trimmed.chars().all(crate::normalize::is_cjk);
         if trimmed.is_empty() || (is_blocked_avatar_label(trimmed) && !one_character) {
             return;
         }
@@ -514,6 +607,9 @@ fn classify_text(text: &str, allow_broad: bool) -> Category {
     if has(&["オリジナル3dモデル"]) {
         return Category::Avatar;
     }
+    if world_strength(text) >= 2 {
+        return Category::World;
+    }
     if has(&[
         "こたつ",
         "毛布",
@@ -531,9 +627,6 @@ fn classify_text(text: &str, allow_broad: bool) -> Category {
     if has(&["ギミック", "シェーダー", "shader", "ツール"]) {
         return Category::Gimmick;
     }
-    if has(&["ワールド", "world", "skybox"]) {
-        return Category::World;
-    }
     if has(&[
         "衣装",
         "服",
@@ -547,6 +640,9 @@ fn classify_text(text: &str, allow_broad: bool) -> Category {
         "tech wear",
     ]) {
         return Category::Outfit;
+    }
+    if world_strength(text) == 1 {
+        return Category::World;
     }
     Category::Other
 }
@@ -756,6 +852,78 @@ Avatar
             category_for_listed_product("ライム -Lime-", "ライムのオリジナル3Dモデルです。"),
             Category::Avatar
         );
+    }
+
+    #[test]
+    fn world_signals_do_not_swallow_avatar_gimmicks() {
+        assert_eq!(
+            category_for_listed_product("木製のワールド小物", ""),
+            Category::World
+        );
+        assert_eq!(
+            category_for_listed_product("Udonのスイッチ", ""),
+            Category::World
+        );
+        assert_eq!(
+            category_for_listed_product("UdonSharpツール", ""),
+            Category::World
+        );
+        assert_eq!(
+            category_for_listed_product("ワールド用シェーダー", ""),
+            Category::World
+        );
+        assert_eq!(
+            category_for_listed_product("World Prefab", ""),
+            Category::World
+        );
+        assert_eq!(
+            category_for_listed_product("表情ギミック", ""),
+            Category::Gimmick
+        );
+        assert_eq!(
+            category_for_listed_product("ワールド風パーカー", ""),
+            Category::Outfit
+        );
+        assert_eq!(
+            category_for_listed_product("汎用の小物", "どのアバターでも使える小物です"),
+            Category::Other
+        );
+        assert!(world_hint_overrides(
+            "木製のワールド小物",
+            "",
+            Category::Gimmick,
+            0.95
+        ));
+        assert!(world_hint_overrides(
+            "見本の小物",
+            "ワールドに置く小物です",
+            Category::Gimmick,
+            0.95
+        ));
+        assert!(world_hint_overrides(
+            "ワールド用シェーダー",
+            "",
+            Category::Outfit,
+            0.95
+        ));
+        assert!(!world_hint_overrides(
+            "表情ギミック",
+            "any world",
+            Category::Gimmick,
+            0.9
+        ));
+        assert!(!world_hint_overrides(
+            "見本の衣装",
+            "a world",
+            Category::Outfit,
+            0.9
+        ));
+        assert!(!world_hint_overrides(
+            "汎用の小物",
+            "どのアバターでも使える小物です",
+            Category::Gimmick,
+            0.9
+        ));
     }
 
     #[test]

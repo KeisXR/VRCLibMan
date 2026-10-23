@@ -459,6 +459,36 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
   align-items: center;
 }
 .candidate select, .candidate .button { width: auto; }
+.candidate-block {
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-secondary);
+}
+.candidate-block.is-selected { box-shadow: inset 0 0 0 1px var(--text); }
+.alias-combo { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.alias-preview { margin: 0; }
+.alias-options {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 220px;
+  overflow: auto;
+}
+.alias-option {
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  color: var(--text);
+}
+.alias-option:hover,
+.alias-option.is-active { background: var(--hover); font-weight: 650; }
+.queue-candidate-list {
+  max-height: min(560px, 62vh);
+  overflow: auto;
+  padding-right: 2px;
+}
 .picker { display: flex; flex-direction: column; gap: 4px; max-height: 240px; overflow: auto; margin-top: var(--space-2); }
 .picker label { display: flex; gap: 6px; align-items: center; font-size: 13px; }
 .ownership { margin-top: var(--space-5); }

@@ -115,6 +115,7 @@ pub struct AvatarCard {
     pub outfit_count: u32,
     pub hair_count: u32,
     pub gimmick_count: u32,
+    pub world_count: u32,
     pub generic_count: u32,
 }
 
@@ -216,6 +217,7 @@ pub fn avatar_cards(snapshot: &Snapshot) -> Vec<AvatarCard> {
             outfit_count: section_len(&classified.sections, "outfit"),
             hair_count: section_len(&classified.sections, "hair"),
             gimmick_count: section_len(&classified.sections, "gimmick"),
+            world_count: section_len(&classified.sections, "world"),
             generic_count: classified.generic.len() as u32,
         });
     }
@@ -465,6 +467,8 @@ fn classify(snapshot: &Snapshot, avatar: &Avatar) -> Classified {
                 key,
                 item_view(snapshot, product, !linked.contains(avatar.id.as_str())),
             ));
+        } else if linked.is_empty() && product.category == Some(Category::World) {
+            specific.push(("world".to_string(), item_view(snapshot, product, false)));
         } else if product.is_generic && linked.is_empty() {
             generic.push(item_view(snapshot, product, false));
         }
@@ -791,5 +795,34 @@ mod tests {
                 .any(|item| item.booth_id == "4" || item.booth_id == "6")
         );
         assert!(manuka.generic_items.iter().any(|item| item.booth_id == "5"));
+    }
+
+    #[test]
+    fn unlinked_world_items_stay_out_of_the_generic_pile() {
+        let mut snapshot = sample();
+        snapshot.products.push(product(
+            "8",
+            "見本のワールド小物",
+            Some(Category::World),
+            true,
+        ));
+        snapshot
+            .products
+            .push(product("9", "表情ギミック", Some(Category::Gimmick), false));
+        snapshot.links.push(link("9", "lime"));
+        let lime = avatar_detail(&snapshot, "lime").unwrap();
+        assert!(lime.sections.iter().any(|section| {
+            section.category == "world" && section.items.iter().any(|item| item.booth_id == "8")
+        }));
+        assert!(lime.sections.iter().any(|section| {
+            section.category == "gimmick" && section.items.iter().any(|item| item.booth_id == "9")
+        }));
+        assert!(!lime.generic_items.iter().any(|item| item.booth_id == "8"));
+        assert!(lime.generic_items.iter().any(|item| item.booth_id == "5"));
+        let card = avatar_cards(&snapshot)
+            .into_iter()
+            .find(|card| card.id == "lime")
+            .unwrap();
+        assert_eq!(card.world_count, 1);
     }
 }
