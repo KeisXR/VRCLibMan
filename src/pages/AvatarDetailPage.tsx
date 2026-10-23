@@ -230,7 +230,7 @@ function ItemCard({ item }: { item: ItemView }) {
                   <div>
                     <span className="download-name">{file.filename}</span>
                     {file.variation ? <span className="meta"> {file.variation}</span> : null}
-                    <span className="meta"> {placeLabel(file, item)}</span>
+                    <span className={`meta state-${file.state}`}> {placeLabel(file, item)}</span>
                     {file.sizeBytes != null && file.sizeBytes > 0 ? <span className="meta"> {formatBytes(file.sizeBytes)}</span> : null}
                   </div>
                   <div className="row-actions">
