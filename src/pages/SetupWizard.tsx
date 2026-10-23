@@ -50,6 +50,19 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
     return () => stop();
   }, []);
 
+  async function useInstalled(name: string) {
+    if (!name) return;
+    setMessage("");
+    try {
+      const settings = await api.settings();
+      await api.saveSettings({ ...settings, ollamaModel: name });
+      setMessage(`今の設定を ${name} にしました。既定は ${defaultModel} のままです。`);
+      await check();
+    } catch (err) {
+      setMessage(errorText(err));
+    }
+  }
+
   async function pull() {
     setPulling(true);
     setMessage("");
@@ -117,7 +130,27 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
               </p>
             )}
             {!checking && connected && !ready && (
-              <p className="meta">{model} はまだありません。取得しますか？</p>
+              <p className="meta">{model} はまだありません。取得するか、入っているモデルから選べます。設定は自動では切り替わりません。</p>
+            )}
+            {!checking && connected && !ready && (ollama?.models.length ?? 0) > 0 && (
+              <label className="field">
+                <span>入っているモデル</span>
+                <select
+                  value=""
+                  disabled={pulling}
+                  onChange={(event) => {
+                    const name = event.target.value;
+                    if (name) void useInstalled(name);
+                  }}
+                >
+                  <option value="">選んで切り替える</option>
+                  {ollama?.models.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+              </label>
             )}
             {pulling && (
               <div className="progress">

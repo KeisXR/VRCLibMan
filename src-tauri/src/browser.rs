@@ -7,14 +7,20 @@ use url::Url;
 
 pub const WINDOW_LABEL: &str = "booth";
 pub const LIBRARY_URL: &str = "https://accounts.booth.pm/library";
+#[cfg(any(not(target_os = "macos"), test))]
 const SESSION_DIR_NAME: &str = "booth-browser";
+/// Fixed WKWebsiteDataStore id so the BOOTH window does not share cookies with the main window.
+/// macOS 14 and later. Windows keeps using a separate WebView2 folder instead.
+pub const BOOTH_DATA_STORE_ID: [u8; 16] = *b"vrclibman-booth!";
 
 const EXTRACT_JS: &str = include_str!("../../extension/extract.js");
 
+#[cfg(any(not(target_os = "macos"), test))]
 pub fn session_dir(local_data: &Path) -> PathBuf {
     local_data.join(SESSION_DIR_NAME)
 }
 
+#[cfg(any(not(target_os = "macos"), test))]
 pub fn session_dir_is_safe(local_data: &Path, dir: &Path) -> bool {
     dir != local_data
         && dir.file_name().and_then(|name| name.to_str()) == Some(SESSION_DIR_NAME)
@@ -118,6 +124,7 @@ fn browser_enabled(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(any(not(target_os = "macos"), test))]
 fn local_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_local_data_dir()
@@ -132,18 +139,28 @@ pub fn open_browser(app: &AppHandle) -> Result<(), String> {
         let _ = window.set_focus();
         return Ok(());
     }
-    let dir = session_dir(&local_data_dir(app)?);
-    if !session_dir_is_safe(&local_data_dir(app)?, &dir) {
-        return Err("セッションの場所が不正です".into());
-    }
-    std::fs::create_dir_all(&dir)
-        .map_err(|err| format!("セッション用のフォルダを作れません: {err}"))?;
     let url = Url::parse(LIBRARY_URL).map_err(|err| err.to_string())?;
-    WebviewWindowBuilder::new(app, WINDOW_LABEL, WebviewUrl::External(url))
+    let mut builder = WebviewWindowBuilder::new(app, WINDOW_LABEL, WebviewUrl::External(url))
         .title("BOOTH")
         .inner_size(1100.0, 800.0)
-        .data_directory(dir)
-        .focused(true)
+        .focused(true);
+    // WKWebView already sends a Safari user agent. Leave it unchanged unless Booth
+    // starts rejecting the embedded login; then set one current Safari string here.
+    #[cfg(not(target_os = "macos"))]
+    {
+        let dir = session_dir(&local_data_dir(app)?);
+        if !session_dir_is_safe(&local_data_dir(app)?, &dir) {
+            return Err("セッションの場所が不正です".into());
+        }
+        std::fs::create_dir_all(&dir)
+            .map_err(|err| format!("セッション用のフォルダを作れません: {err}"))?;
+        builder = builder.data_directory(dir);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.data_store_identifier(BOOTH_DATA_STORE_ID);
+    }
+    builder
         .build()
         .map_err(|err| format!("ブラウザを開けません: {err}"))?;
     Ok(())
@@ -207,7 +224,19 @@ pub fn close_browser(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-pub fn clear_session(app: &AppHandle) -> Result<(), String> {
+pub async fn clear_session(app: &AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        clear_macos_data_store(app).await
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        clear_folder_session(app)
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn clear_folder_session(app: &AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
         let _ = window.destroy();
     }
@@ -226,6 +255,35 @@ pub fn clear_session(app: &AppHandle) -> Result<(), String> {
         std::thread::sleep(Duration::from_millis(200));
     }
     Err("セッションのフォルダを消せませんでした。ブラウザを閉じてからもう一度押してください".into())
+}
+
+#[cfg(target_os = "macos")]
+async fn clear_macos_data_store(app: &AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
+        let _ = window.clear_all_browsing_data();
+        let _ = window.destroy();
+        std::thread::sleep(Duration::from_millis(300));
+    }
+    let ids = app
+        .fetch_data_store_identifiers()
+        .await
+        .map_err(|err| format!("ログイン状態を確認できません: {err}"))?;
+    if !ids.iter().any(|id| id == &BOOTH_DATA_STORE_ID) {
+        return Ok(());
+    }
+    for _ in 0..8 {
+        match app.remove_data_store(BOOTH_DATA_STORE_ID).await {
+            Ok(()) => return Ok(()),
+            Err(err) => {
+                if err.to_string().contains("currently opened") {
+                    std::thread::sleep(Duration::from_millis(200));
+                    continue;
+                }
+                return Err(format!("ログイン状態を消せません: {err}"));
+            }
+        }
+    }
+    Err("ログイン状態を消せませんでした。ブラウザを閉じてからもう一度押してください".into())
 }
 
 #[cfg(test)]
@@ -257,7 +315,15 @@ mod tests {
     }
 
     #[test]
+    fn booth_data_store_id_is_fixed_and_separate() {
+        assert_eq!(BOOTH_DATA_STORE_ID.len(), 16);
+        assert_ne!(BOOTH_DATA_STORE_ID, [0u8; 16]);
+        assert_eq!(&BOOTH_DATA_STORE_ID, b"vrclibman-booth!");
+    }
+
+    #[test]
     fn session_directory_stays_beside_the_library_database() {
+        let _linked: fn(&AppHandle) -> Result<PathBuf, String> = local_data_dir;
         let root = Path::new("/tmp/vrclibman-local");
         let dir = session_dir(root);
         assert!(session_dir_is_safe(root, &dir));
@@ -273,6 +339,14 @@ mod tests {
         assert!(temp.join("library.sqlite").is_file());
         assert!(!session_dir(&temp).exists());
         let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_session_is_the_website_data_store_not_a_folder() {
+        assert_eq!(BOOTH_DATA_STORE_ID.len(), 16);
+        let root = Path::new("/tmp/vrclibman-local");
+        assert!(session_dir_is_safe(root, &session_dir(root)));
     }
 
     #[test]

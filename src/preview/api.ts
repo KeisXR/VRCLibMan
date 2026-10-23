@@ -788,8 +788,16 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     case "scan_library":
     case "extract_products":
       desktopOnly();
-    case "test_ollama":
-      return { models: [], modelReady: false, modelSizeBytes: null } as T;
+    case "test_ollama": {
+      const installed = ["qwen3:4b"];
+      const selected = store.settings.ollamaModel;
+      const modelReady = installed.some((name) => name === selected);
+      return {
+        models: installed,
+        modelReady,
+        modelSizeBytes: modelReady ? 2_500_000_000 : null,
+      } as T;
+    }
     case "catalog_info":
       return {
         count: 932,

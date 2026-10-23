@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSDownloadsFolderUsageDescription</key>
+  <string>自分でダウンロードしたファイルを、選んだライブラリのフォルダへ移すために使います。</string>
+  <key>NSNetworkVolumesUsageDescription</key>
+  <string>設定したネットワーク上のフォルダを確認し、選んだファイルをコピーするために使います。</string>
+</dict>
+</plist>
