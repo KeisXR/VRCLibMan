@@ -5047,6 +5047,7 @@ mod tests {
                 builtin_browser: browser,
                 remote_library_folder: String::new(),
                 route_downloads: route,
+                llm_backend: "ollama".into(),
             },
         )
     }

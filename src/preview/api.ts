@@ -326,6 +326,10 @@ if (typeof location !== "undefined" && new URLSearchParams(location.search).get(
   store.setupComplete = true;
 }
 
+let previewBoothLoggedIn = !(
+  typeof location !== "undefined" && new URLSearchParams(location.search).get("account") === "out"
+);
+
 if (stressPreview) {
   store.setupComplete = true;
   for (let index = store.avatars.length; index < 1000; index += 1) {
@@ -1109,12 +1113,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       return boothId as T;
     }
     case "booth_account": {
-      if (!store.settings.builtinBrowser) {
-        return { loggedIn: false, displayName: "", pixivId: "", avatarUrl: "" } as T;
-      }
-      const loggedOut =
-        typeof location !== "undefined" && new URLSearchParams(location.search).get("account") === "out";
-      if (loggedOut) {
+      if (!store.settings.builtinBrowser || !previewBoothLoggedIn) {
         return { loggedIn: false, displayName: "", pixivId: "", avatarUrl: "" } as T;
       }
       return { loggedIn: true, displayName: "テスト利用者", pixivId: "424242", avatarUrl: "" } as T;
@@ -1244,9 +1243,11 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     case "cancel_booth_library":
       previewLibraryCancel = true;
       return undefined as T;
+    case "clear_booth_session":
+      previewBoothLoggedIn = false;
+      return undefined as T;
     case "import_booth_page":
     case "close_booth_browser":
-    case "clear_booth_session":
     case "cache_thumbnails":
       desktopOnly();
     default:

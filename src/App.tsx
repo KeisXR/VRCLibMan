@@ -177,15 +177,19 @@ export default function App() {
     }
     let alive = true;
     let pending = true;
+    let generation = 0;
     const load = () => {
+      const ticket = ++generation;
       if (pending) setAccount(null);
       pending = false;
       void api.boothAccount().then(
         (value) => {
-          if (alive) setAccount(value);
+          if (alive && ticket === generation) setAccount(value);
         },
         () => {
-          if (alive) setAccount({ loggedIn: false, displayName: "", pixivId: "", avatarUrl: "" });
+          if (alive && ticket === generation) {
+            setAccount({ loggedIn: false, displayName: "", pixivId: "", avatarUrl: "" });
+          }
         },
       );
     };
@@ -258,6 +262,12 @@ export default function App() {
                     (err: unknown) => fail(errorText(err)),
                   );
                 }}
+                onLogout={async () => {
+                  await api.clearBoothSession();
+                  setAccount({ loggedIn: false, displayName: "", pixivId: "", avatarUrl: "" });
+                  refreshAccount();
+                }}
+                onFail={(message) => fail(message)}
               />
             )}
             <div className="rail-meta">
@@ -298,7 +308,7 @@ export default function App() {
 
 function accountLabel(account: BoothAccount | null): string {
   if (!account) return "確認しています";
-  if (!account.loggedIn) return "ログインしていません";
+  if (!account.loggedIn) return "未ログイン";
   if (account.displayName.trim()) return account.displayName.trim();
   if (account.pixivId.trim()) return account.pixivId.trim();
   return "ログイン中";
@@ -320,8 +330,22 @@ function safeAvatar(url: string): string {
   }
 }
 
-function AccountPill({ account, onLogin }: { account: BoothAccount | null; onLogin: () => void }) {
+function AccountPill({
+  account,
+  onLogin,
+  onLogout,
+  onFail,
+}: {
+  account: BoothAccount | null;
+  onLogin: () => void;
+  onLogout: () => Promise<void>;
+  onFail: (message: string) => void;
+}) {
   const [broken, setBroken] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
   const label = accountLabel(account);
   const avatar = !broken && account?.loggedIn ? safeAvatar(account.avatarUrl) : "";
   const face = avatar ? (
@@ -329,18 +353,107 @@ function AccountPill({ account, onLogin }: { account: BoothAccount | null; onLog
   ) : (
     <span className="account-avatar" aria-hidden="true" />
   );
-  if (!account || account.loggedIn) {
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointer = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+        setConfirming(false);
+      }
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        setConfirming(false);
+      }
+    };
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  if (!account) {
     return (
-      <div className={account ? "account-pill" : "account-pill neutral"} title={label}>
+      <div className="account-pill neutral" title={label}>
         {face}
         <span className="account-name">{label}</span>
       </div>
     );
   }
+  if (!account.loggedIn) {
+    return (
+      <button className="account-pill neutral" type="button" onClick={onLogin} title={label}>
+        {face}
+        <span className="account-name">{label}</span>
+      </button>
+    );
+  }
+
+  async function confirmLogout() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await onLogout();
+      setOpen(false);
+      setConfirming(false);
+    } catch (err) {
+      onFail(errorText(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
-    <button className="account-pill neutral" type="button" onClick={onLogin} title={label}>
-      {face}
-      <span className="account-name">{label}</span>
-    </button>
+    <div className="account-menu" ref={rootRef}>
+      <button
+        className="account-pill"
+        type="button"
+        title={label}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        onClick={() => {
+          setConfirming(false);
+          setOpen((value) => !value);
+        }}
+      >
+        {face}
+        <span className="account-name">{label}</span>
+      </button>
+      {open && (
+        <div className="account-popover" role="menu">
+          {confirming ? (
+            <div className="account-confirm">
+              <p>ログアウトしますか</p>
+              <button type="button" disabled={busy} onClick={() => void confirmLogout()}>
+                ログアウト
+              </button>
+              <button type="button" disabled={busy} onClick={() => setConfirming(false)}>
+                キャンセル
+              </button>
+            </div>
+          ) : (
+            <>
+              <button type="button" role="menuitem" onClick={() => setConfirming(true)}>
+                ログアウト
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setOpen(false);
+                  onLogin();
+                }}
+              >
+                ブラウザを開く
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

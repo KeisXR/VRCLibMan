@@ -454,7 +454,68 @@ pub fn close_browser(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// WINDOW_LABEL が残っているあいだは、同じユーザーデータに二本目の WebView を作らない。
+pub fn logout_may_build_webview(window_label_exists: bool) -> bool {
+    !window_label_exists
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogoutOrder {
+    /// 見えている窓を UI スレッドで壊してから、保存してあるプロファイルを消す。
+    DestroyThenClear,
+    /// 見えている窓が無いので、保存してあるプロファイルだけ消す。
+    ClearOnly,
+}
+
+pub fn logout_order(window_label_exists: bool) -> LogoutOrder {
+    if window_label_exists {
+        LogoutOrder::DestroyThenClear
+    } else {
+        LogoutOrder::ClearOnly
+    }
+}
+
+/// 見えている窓と、同じプロファイルの隠した窓を UI スレッドで捨てる。build は呼ばない。
+fn destroy_session_windows(app: &AppHandle) -> bool {
+    let mut closed = false;
+    for label in [WINDOW_LABEL, PROBE_LABEL] {
+        if let Some(window) = app.get_webview_window(label) {
+            let _ = window.destroy();
+            closed = true;
+        }
+    }
+    if closed {
+        browser_log(app, "ログアウトのため窓を閉じます");
+    }
+    closed
+}
+
+/// 内蔵ブラウザの BOOTH / pixiv セッションだけを消す。
+/// 同じユーザーデータに WebView2 が残ったまま次の窓を作ると固まるので、
+/// 先に UI スレッドで窓を壊してから、保存してあるプロファイルを消す。
 pub async fn clear_session(app: &AppHandle) -> Result<(), String> {
+    browser_log(app, "セッションを消します");
+    let (existed, closed) = dispatch_ui(app.clone(), |handle| {
+        let existed = handle.get_webview_window(WINDOW_LABEL).is_some();
+        let closed = destroy_session_windows(handle);
+        if existed && logout_may_build_webview(true) {
+            return Err("表示中のブラウザがあるので、別の窓は作りません".into());
+        }
+        Ok((existed, closed))
+    })
+    .await?;
+    if closed {
+        let _ = tauri::async_runtime::spawn_blocking(|| {
+            std::thread::sleep(Duration::from_millis(300));
+        })
+        .await;
+    }
+    match logout_order(existed) {
+        LogoutOrder::DestroyThenClear | LogoutOrder::ClearOnly => clear_stored_profile(app).await,
+    }
+}
+
+async fn clear_stored_profile(app: &AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         clear_macos_data_store(app).await
@@ -467,15 +528,6 @@ pub async fn clear_session(app: &AppHandle) -> Result<(), String> {
 
 #[cfg(not(target_os = "macos"))]
 async fn clear_folder_session(app: &AppHandle) -> Result<(), String> {
-    let handle = app.clone();
-    browser_log(app, "セッションを消します");
-    dispatch_ui(handle, |app| {
-        if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
-            let _ = window.destroy();
-        }
-        Ok(())
-    })
-    .await?;
     let root = local_data_dir(app)?;
     let dir = session_dir(&root);
     if !session_dir_is_safe(&root, &dir) {
@@ -500,11 +552,6 @@ async fn clear_folder_session(app: &AppHandle) -> Result<(), String> {
 
 #[cfg(target_os = "macos")]
 async fn clear_macos_data_store(app: &AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
-        let _ = window.clear_all_browsing_data();
-        let _ = window.destroy();
-        std::thread::sleep(Duration::from_millis(300));
-    }
     let ids = app
         .fetch_data_store_identifiers()
         .await
@@ -1810,6 +1857,68 @@ mod tests {
         assert!(commands.contains("async fn download_booth_file"));
         assert!(!commands.contains("pub fn download_booth_file"));
         assert!(!commands.contains("pub fn booth_account"));
+    }
+
+    #[test]
+    fn logout_refuses_a_second_webview_while_the_booth_window_exists() {
+        assert!(!logout_may_build_webview(true));
+        assert!(logout_may_build_webview(false));
+        assert_eq!(logout_order(true), LogoutOrder::DestroyThenClear);
+        assert_eq!(logout_order(false), LogoutOrder::ClearOnly);
+
+        let browser = include_str!("browser.rs");
+        let production = browser.split("mod tests").next().unwrap();
+        let start = production
+            .find("pub fn logout_may_build_webview")
+            .expect("logout plan");
+        let end = production[start..]
+            .find("static PROBE_BUSY")
+            .expect("logout region");
+        let logout = &production[start..start + end];
+        let clear = function_body(logout, "fn clear_session");
+        let destroy_call = clear
+            .find("destroy_session_windows")
+            .expect("destroy on the UI thread");
+        let profile = clear
+            .find("clear_stored_profile")
+            .expect("clear after destroy");
+        assert!(destroy_call < profile);
+        assert!(clear.contains("dispatch_ui"));
+        assert!(clear.find("dispatch_ui").unwrap() < profile);
+        assert!(!clear.contains(".build("));
+        assert!(!clear.contains("WebviewWindowBuilder"));
+        assert!(!logout.contains(".build("));
+        assert!(!logout.contains("WebviewWindowBuilder"));
+        assert!(!logout.contains(".cookies("));
+        assert!(!logout.contains("cookies_for_url"));
+        assert!(!logout.contains("\"main\""));
+
+        let destroy = function_body(logout, "fn destroy_session_windows");
+        assert!(destroy.contains(".destroy()"));
+        assert!(destroy.contains("WINDOW_LABEL"));
+        assert!(destroy.contains("PROBE_LABEL"));
+        assert!(destroy.find(".build(").is_none());
+
+        let folder = function_body(logout, "fn clear_folder_session");
+        assert!(folder.contains("session_dir"));
+        assert!(folder.contains("session_dir_is_safe"));
+        assert!(folder.contains("remove_dir_all"));
+        assert!(!folder.contains(".build("));
+        assert!(!folder.contains(".destroy()"));
+        assert!(!folder.contains("dispatch_ui"));
+
+        let macos = function_body(logout, "fn clear_macos_data_store");
+        assert!(macos.contains("remove_data_store"));
+        assert!(macos.contains("BOOTH_DATA_STORE_ID"));
+        assert!(!macos.contains(".build("));
+        assert!(!macos.contains(".destroy()"));
+        assert!(!macos.contains(".cookies("));
+
+        let commands = include_str!("commands.rs");
+        let command = function_body(commands, "fn clear_booth_session");
+        assert!(command.contains("clear_session"));
+        assert!(!command.contains(".build("));
+        assert!(!command.contains(".cookies("));
     }
 
     fn function_body<'a>(source: &'a str, name: &str) -> &'a str {
