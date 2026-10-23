@@ -1,4 +1,6 @@
+mod apple_fm;
 mod browser;
+mod mask;
 mod catalog;
 mod commands;
 mod compat;
@@ -121,6 +123,7 @@ pub fn run() {
             commands::extract_products,
             commands::cancel_extract,
             commands::test_ollama,
+            commands::apple_fm_status,
             commands::catalog_info,
             commands::refresh_avatar_catalog,
             commands::setup_status,

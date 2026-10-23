@@ -1,23 +1,46 @@
-# 第三者のデータ
+# Third-party notices
 
-## もちふぃった～プロファイル一覧
+VRCLibMan bundles the word lists below so a guardrail retry can mask text on this computer. The app does not download them at runtime. The files are unmodified from the pinned commits.
 
-アバター対応表の初期データは、えりんぎ氏の「もちふぃった～プロファイル一覧」を使っています。
+## inappropriate-words-ja
 
-- 出典: https://github.com/eringiriri/mochifitter_list
-- 作者: えりんぎ
-- データ: https://github.com/eringiriri/mochifitter_list/blob/main/data/profiles.json
-- 規約: https://github.com/eringiriri/mochifitter_list/blob/main/terms.html （第4節、最終更新 2026年1月8日）
-- 取得日: 2026-10-23
-- 上流データの更新日時: 2026-02-12 18:36:02 JST
-- 同梱ファイル: `src-tauri/knowledge/mochifitter-profiles.json`（出典のメモは同じフォルダの `mochifitter-profiles.SOURCE.md`）
+- Source: https://github.com/MosasoM/inappropriate-words-ja
+- File: `Sexual.txt`
+- Commit: `e24de6e185135f92c3491ef61931c26905bd3b1f`
+- Bundled path: `src-tauri/resources/wordlists/Sexual.txt`
+- The file is unmodified.
 
-規約第4節では、掲載情報のコピー、保存、引用、二次利用、商用利用が認められています。情報の正確性は保証されず、利用は自己責任です。掲載されているアバターや衣装の著作権は、それぞれの作者にあります。出典の表示は必須ではありませんが、このアプリでは設定画面とこの文書に出典を残しています。
+```
+MIT License
 
-規約第8節は、過度なアクセスやスクレイピングを禁止しています。このアプリはスナップショットを同梱し、設定のボタンを押したときだけ GitHub の raw を1回取得します。定期取得はしません。
+Copyright (c) 2020 K Hashimoto
 
-同梱しているのはアバター名、BOOTH の商品 URL から取り出した商品 ID、作者、ショップ、素体メモです。画像、価格、商品説明は含めていません。
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-共通素体シート（スペキュラム合金さん）はライセンスが確認できないため、同梱も取り込みもしていません。
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-サイトのソースコード（HTML、CSS、JavaScript など）は MIT ライセンスです。このアプリはそのソースコードを再配布していません。データ本体の利用条件は規約第4節です。
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## List of Dirty, Naughty, Obscene, and Otherwise Bad Words
+
+- Source: https://github.com/LDNOOBW/List-of-Dirty-Naughty-Obscene-and-Otherwise-Bad-Words
+- File: `en`
+- Commit: `5faf2ba42d7b1c0977169ec3611df25a3c08eb13`
+- Bundled path: `src-tauri/resources/wordlists/en`
+- License: CC-BY-4.0
+- The file is unmodified.
+
+Attribution required by CC-BY-4.0: "List of Dirty, Naughty, Obscene, and Otherwise Bad Words" by LDNOOBW, https://github.com/LDNOOBW/List-of-Dirty-Naughty-Obscene-and-Otherwise-Bad-Words, commit 5faf2ba42d7b1c0977169ec3611df25a3c08eb13. VRCLibMan includes the `en` file without changes.

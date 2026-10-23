@@ -48,7 +48,9 @@ pub struct ResolveOutput {
 
 pub fn resolve_name<'a>(raw: &str, avatars: &'a [Avatar]) -> Option<&'a Avatar> {
     let single_cjk = raw.chars().count() == 1 && raw.chars().all(is_cjk);
-    if raw.trim().is_empty() || (is_blocked_avatar_label(raw) && !single_cjk) {
+    // NSFW や素体は属性であって名前ではない。ただし同名のアバターが登録されていれば、そのアバターとして解決する。
+    let attribute = crate::normalize::is_attribute_label(raw);
+    if raw.trim().is_empty() || (is_blocked_avatar_label(raw) && !single_cjk && !attribute) {
         return None;
     }
     let mut hits = Vec::new();
@@ -60,7 +62,7 @@ pub fn resolve_name<'a>(raw: &str, avatars: &'a [Avatar]) -> Option<&'a Avatar> 
         return None;
     }
     for variant in label_variants(raw) {
-        if is_blocked_avatar_label(&variant) {
+        if is_blocked_avatar_label(&variant) && !crate::normalize::is_attribute_label(&variant) {
             continue;
         }
         consider_key(&normalize_label(&variant), avatars, &mut hits);
@@ -236,14 +238,18 @@ fn consider_compatible_name(
         return;
     }
     let single_cjk = raw.chars().count() == 1 && raw.chars().all(is_cjk);
-    if is_blocked_avatar_label(raw) && !single_cjk {
+    let attribute = crate::normalize::is_attribute_label(raw);
+    if is_blocked_avatar_label(raw) && !single_cjk && !attribute {
         return;
     }
     if let Some(avatar) = resolve_piece(raw, avatars) {
         if !ids.contains(&avatar.id) {
             ids.push(avatar.id.clone());
         }
-    } else if keep_unresolved(raw, avatars) {
+        return;
+    }
+    // 素体や NSFW は、同名のアバターが無いときは未解決の名前にしない。
+    if !attribute && keep_unresolved(raw, avatars) {
         push_unresolved(unresolved, &unresolved_label(raw));
     }
 }
@@ -258,7 +264,8 @@ fn is_reading_pair(pieces: &[String]) -> bool {
 
 fn resolve_piece<'a>(piece: &str, avatars: &'a [Avatar]) -> Option<&'a Avatar> {
     let single_cjk = piece.chars().count() == 1 && piece.chars().all(is_cjk);
-    if is_blocked_avatar_label(piece) && !single_cjk {
+    let attribute = crate::normalize::is_attribute_label(piece);
+    if is_blocked_avatar_label(piece) && !single_cjk && !attribute {
         return None;
     }
     resolve_name(piece, avatars).or_else(|| {
@@ -326,7 +333,8 @@ fn usable_names(raw_names: &[String]) -> Vec<String> {
     for name in raw_names {
         let trimmed = name.trim();
         let single_cjk = trimmed.chars().count() == 1 && trimmed.chars().all(is_cjk);
-        if trimmed.is_empty() || (is_blocked_avatar_label(trimmed) && !single_cjk) {
+        let attribute = crate::normalize::is_attribute_label(trimmed);
+        if trimmed.is_empty() || (is_blocked_avatar_label(trimmed) && !single_cjk && !attribute) {
             continue;
         }
         if !names.iter().any(|existing: &String| existing == trimmed) {
@@ -559,9 +567,12 @@ fn mashed_known_names(raw: &str, avatars: &[Avatar]) -> bool {
 }
 
 fn avatar_matchable(avatar: &Avatar) -> bool {
-    let single_cjk =
-        avatar.display_name.chars().count() == 1 && avatar.display_name.chars().all(is_cjk);
-    single_cjk || (!is_promo_name(&avatar.display_name) && !is_blocked_avatar_label(&avatar.display_name))
+    let name = &avatar.display_name;
+    let single_cjk = name.chars().count() == 1 && name.chars().all(is_cjk);
+    if single_cjk || crate::normalize::is_attribute_label(name) {
+        return true;
+    }
+    !is_promo_name(name) && !is_blocked_avatar_label(name)
 }
 
 pub fn links_grounded(ids: &[String], avatars: &[Avatar], title: &str, description: &str) -> bool {
@@ -774,6 +785,47 @@ mod tests {
         assert_eq!(output.avatar_ids, vec!["lime".to_string()]);
         assert!(!output.needs_review);
         assert!(output.created_avatars.is_empty());
+    }
+
+    #[test]
+    fn a_known_attribute_name_links_and_an_unknown_one_stays_unnamed() {
+        let avatars = vec![avatar("body", "素体", &[], None)];
+        let linked = resolve_product(
+            &ResolveInput {
+                booth_id: "1",
+                title: "【素体対応】服",
+                description: "",
+                category: Some(Category::Outfit),
+                raw_names: &["素体".into()],
+                is_generic: false,
+                confidence: Some(0.9),
+                user_confirmed: false,
+                threshold: 0.6,
+                allow_create: true,
+            },
+            &avatars,
+        );
+        assert_eq!(linked.avatar_ids, vec!["body".to_string()]);
+        assert!(linked.unresolved.is_empty());
+        assert!(!linked.needs_review);
+        let dropped = resolve_product(
+            &ResolveInput {
+                booth_id: "2",
+                title: "【NSFW対応】【脱衣対応】服",
+                description: "",
+                category: Some(Category::Outfit),
+                raw_names: &["NSFW".into(), "脱衣".into()],
+                is_generic: false,
+                confidence: Some(0.9),
+                user_confirmed: false,
+                threshold: 0.6,
+                allow_create: true,
+            },
+            &avatars,
+        );
+        assert!(dropped.avatar_ids.is_empty());
+        assert!(dropped.unresolved.is_empty());
+        assert!(dropped.created_avatars.is_empty());
     }
 
     #[test]

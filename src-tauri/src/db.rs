@@ -249,6 +249,7 @@ fn ensure_ready(connection: &Connection) -> Result<(), String> {
         ("builtin_browser", "0"),
         ("remote_library_folder", ""),
         ("route_downloads", "0"),
+        ("llm_backend", "ollama"),
     ] {
         connection
             .execute(
@@ -295,11 +296,26 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
         builtin_browser: setting(connection, "builtin_browser")?.as_deref() == Some("1"),
         remote_library_folder: setting(connection, "remote_library_folder")?.unwrap_or_default(),
         route_downloads: setting(connection, "route_downloads")?.as_deref() == Some("1"),
+        llm_backend: normalize_backend(
+            &setting(connection, "llm_backend")?.unwrap_or_else(|| "ollama".into()),
+        ),
     })
+}
+
+fn normalize_backend(value: &str) -> String {
+    if value.trim() == "apple" {
+        "apple".into()
+    } else {
+        "ollama".into()
+    }
 }
 
 pub(crate) fn save_settings(connection: &Connection, input: &SettingsInput) -> Result<(), String> {
     let library = input.library_folder.trim();
+    let backend = normalize_backend(&input.llm_backend);
+    if backend == "apple" && !crate::apple_fm::can_select(None) {
+        return Err("Apple のオンデバイスモデルは、今の Mac では使えません".into());
+    }
     if input.route_downloads && library.is_empty() {
         return Err("振り分けをオンにする前に、ライブラリのフォルダを選んでください".into());
     }
@@ -355,6 +371,7 @@ pub(crate) fn save_settings(connection: &Connection, input: &SettingsInput) -> R
         "route_downloads",
         if input.route_downloads { "1" } else { "0" },
     )?;
+    set_setting(connection, "llm_backend", &backend)?;
     Ok(())
 }
 
@@ -948,6 +965,11 @@ fn generic_without_avatars(
             .all(|name| crate::normalize::is_blocked_avatar_label(name))
     {
         return true;
+    }
+    // Texture and gimmick with no avatar, and none listed for one, are generic.
+    // The model's own flag does not decide this.
+    if matches!(category, Some(Category::Texture | Category::Gimmick)) {
+        return names.is_empty();
     }
     model_generic
 }
@@ -2382,7 +2404,8 @@ fn settle_one(connection: &mut Connection, booth_id: &str, redo: bool) -> Result
         return Ok(false);
     }
     // Avatar bodies that are not in the profile list stay in the queue for a manual ownership mark.
-    let pieces = crate::compat::explicit_dedication_pieces(&product.title);
+    let avatars = load_avatars(connection)?;
+    let pieces = crate::compat::explicit_dedication_pieces(&product.title, &avatars);
     if pieces.is_empty() {
         return Ok(false);
     }
@@ -2558,7 +2581,37 @@ pub(crate) fn setup_status(connection: &Connection) -> Result<SetupStatus, Strin
         complete: setting(connection, "setup_complete")?.as_deref() == Some("1"),
         model: settings.ollama_model,
         default_model: crate::model::DEFAULT_OLLAMA_MODEL.into(),
+        backend: settings.llm_backend,
     })
+}
+
+pub(crate) fn protected_names(connection: &Connection) -> Result<Vec<String>, String> {
+    let mut names = Vec::new();
+    for avatar in load_avatars(connection)? {
+        if !avatar.display_name.trim().is_empty() {
+            names.push(avatar.display_name);
+        }
+        names.extend(avatar.aliases.into_iter().filter(|name| !name.trim().is_empty()));
+    }
+    Ok(names)
+}
+
+pub(crate) fn mark_guardrail_review(connection: &Connection, booth_id: &str) -> Result<(), String> {
+    let now = now_iso();
+    connection
+        .execute(
+            "UPDATE products SET
+               category = CASE WHEN category_locked = 1 THEN category ELSE COALESCE(category, 'other') END,
+               needs_review = 1,
+               confidence = 0.2,
+               user_confirmed = 0,
+               extracted_at = ?1,
+               updated_at = ?1
+             WHERE booth_id = ?2",
+            params![now, booth_id],
+        )
+        .sql()?;
+    Ok(())
 }
 
 pub(crate) fn set_setup_complete(connection: &Connection, complete: bool) -> Result<(), String> {
@@ -3649,6 +3702,7 @@ mod tests {
                 builtin_browser: false,
                 remote_library_folder: String::new(),
                 route_downloads: false,
+                llm_backend: "ollama".into(),
             },
         )
         .unwrap();
@@ -3702,6 +3756,7 @@ mod tests {
                 builtin_browser: true,
                 remote_library_folder: String::new(),
                 route_downloads: false,
+                llm_backend: "ollama".into(),
             },
         )
         .unwrap();
@@ -4052,6 +4107,47 @@ mod tests {
                 .iter()
                 .any(|link| link.product_id == "8835445" && link.avatar_id == kipfel.id)
         );
+    }
+
+    #[test]
+    fn texture_and_gimmick_without_avatars_are_generic() {
+        let mut connection = open_memory().unwrap();
+        let json = r#"{
+            "products": [
+                {"boothId":"7001","title":"瞳テクスチャ","shop":"s","description":"目の模様です。"},
+                {"boothId":"7002","title":"光るギミック","shop":"s","description":"小物です。"},
+                {"boothId":"7003","title":"【プラム対応】瞳","shop":"s","description":"プラムの瞳です。"}
+            ]
+        }"#;
+        import_products(&mut connection, &parse_export(json).unwrap()).unwrap();
+        apply_extraction(
+            &mut connection,
+            "7001",
+            &extraction(Category::Texture, &[], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        apply_extraction(
+            &mut connection,
+            "7002",
+            &extraction(Category::Gimmick, &[], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        apply_extraction(
+            &mut connection,
+            "7003",
+            &extraction(Category::Texture, &["プラム"], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        let snapshot = load_snapshot(&mut connection).unwrap();
+        let texture = snapshot.products.iter().find(|product| product.booth_id == "7001").unwrap();
+        let gimmick = snapshot.products.iter().find(|product| product.booth_id == "7002").unwrap();
+        let named = snapshot.products.iter().find(|product| product.booth_id == "7003").unwrap();
+        assert!(texture.is_generic);
+        assert!(gimmick.is_generic);
+        assert!(!named.is_generic);
     }
 
     #[test]
@@ -4544,6 +4640,7 @@ mod tests {
                 builtin_browser: false,
                 remote_library_folder: String::new(),
                 route_downloads: true,
+                llm_backend: "ollama".into(),
             },
         );
         assert!(refused.unwrap_err().contains("ライブラリ"));
@@ -4557,6 +4654,7 @@ mod tests {
                 builtin_browser: false,
                 remote_library_folder: String::new(),
                 route_downloads: true,
+                llm_backend: "ollama".into(),
             },
         )
         .unwrap();
