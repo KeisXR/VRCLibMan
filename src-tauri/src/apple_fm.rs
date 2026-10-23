@@ -38,10 +38,16 @@ pub fn helper_path() -> Option<PathBuf> {
     }
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
-    let name = sidecar_name();
-    let candidate = dir.join(&name);
-    if candidate.is_file() {
-        return Some(candidate);
+    helper_in_dir(dir)
+}
+
+pub(crate) fn helper_in_dir(dir: &Path) -> Option<PathBuf> {
+    // Tauri copies the sidecar into the app as vrclibman-afm, without the target triple.
+    for name in ["vrclibman-afm", sidecar_name().as_str()] {
+        let candidate = dir.join(name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
     }
     None
 }
@@ -56,7 +62,49 @@ fn sidecar_name() -> String {
     format!("vrclibman-afm-{}-{os}", std::env::consts::ARCH)
 }
 
+pub fn os_supports_apple_fm() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        macos_version_at_least(27, 2)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
+}
+
+pub fn version_at_least(text: &str, major: u32, minor: u32) -> bool {
+    let mut parts = text.trim().split('.');
+    let got_major = parts.next().unwrap_or("0").parse::<u32>().unwrap_or(0);
+    let got_minor = parts.next().unwrap_or("0").parse::<u32>().unwrap_or(0);
+    got_major > major || (got_major == major && got_minor >= minor)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_version_at_least(major: u32, minor: u32) -> bool {
+    let Ok(output) = Command::new("/usr/bin/sw_vers").arg("-productVersion").output() else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    version_at_least(text.trim(), major, minor)
+}
+
+fn unsupported_status() -> AppleStatus {
+    AppleStatus {
+        availability: "unsupported".into(),
+        variant: String::new(),
+        context_size: 0,
+        message: "Apple のオンデバイスモデルは macOS 27.2 以上で使えます".into(),
+    }
+}
+
 pub fn status(path: Option<&Path>) -> AppleStatus {
+    if !os_supports_apple_fm() {
+        return unsupported_status();
+    }
     let owned = helper_path();
     let Some(path) = path.or_else(|| owned.as_deref()) else {
         return AppleStatus {
@@ -87,6 +135,11 @@ pub fn extract_warm(
     description: &str,
     timeout: Duration,
 ) -> Result<Extraction, AppleError> {
+    if !os_supports_apple_fm() {
+        return Err(AppleError::Message(
+            "Apple のオンデバイスモデルは macOS 27.2 以上で使えます".into(),
+        ));
+    }
     let path = helper_path().ok_or_else(|| {
         AppleError::Message("Apple のオンデバイスモデルは、この PC では使えません".into())
     })?;
@@ -286,6 +339,69 @@ mod tests {
     use super::*;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn finds_the_bundled_helper_without_a_target_triple() {
+        let dir = std::env::temp_dir().join(format!(
+            "vrclibman-afm-names-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let bare = dir.join("vrclibman-afm");
+        std::fs::write(&bare, b"helper").unwrap();
+        assert_eq!(helper_in_dir(&dir).unwrap(), bare);
+        std::fs::remove_file(&bare).unwrap();
+        let triple = dir.join(sidecar_name());
+        std::fs::write(&triple, b"helper").unwrap();
+        assert_eq!(helper_in_dir(&dir).unwrap(), triple);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apple_fm_requires_macos_27_2() {
+        assert!(version_at_least("27.2", 27, 2));
+        assert!(version_at_least("27.2.1", 27, 2));
+        assert!(version_at_least("28.0", 27, 2));
+        assert!(!version_at_least("27.1.9", 27, 2));
+        assert!(!version_at_least("26.0", 27, 2));
+        assert!(!version_at_least("14.6.1", 27, 2));
+        #[cfg(not(target_os = "macos"))]
+        {
+            let report = status(None);
+            assert_eq!(report.availability, "unsupported");
+            assert!(report.message.contains("27.2"));
+            assert!(extract_warm("指示", "題", "説明", Duration::from_secs(1)).is_err());
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn real_helper_answers_availability_when_the_os_can_run_it() {
+        if !os_supports_apple_fm() {
+            eprintln!("macOS 27.2 未満なので飛ばします");
+            return;
+        }
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries").join(format!(
+            "vrclibman-afm-{}-apple-darwin",
+            std::env::consts::ARCH
+        ));
+        if !path.is_file() {
+            eprintln!("補助プログラムが無いので飛ばします");
+            return;
+        }
+        match availability_of(&path, Duration::from_secs(20)) {
+            Ok(report) if report.availability == "available" => {
+                assert!(report.context_size > 0, "{}", report.message);
+            }
+            Ok(report) => eprintln!("モデルが使えないので飛ばします: {}", report.message),
+            Err(err) => panic!("補助プログラムが --availability に応答しません: {err}"),
+        }
+    }
 
     #[test]
     fn generation_json_strips_tool_names_and_keeps_versions() {

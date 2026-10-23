@@ -576,23 +576,36 @@ async fn classify_product(
     match first {
         Ok(extraction) => Ok(Classified::Done(extraction)),
         Err(AppleError::Guardrail) => {
-            let title = crate::mask::mask_text(&job.title, keep, lists).unwrap_or_else(|_| job.title.clone());
-            let description = crate::mask::mask_text(&job.description, keep, lists)
-                .unwrap_or_else(|_| job.description.clone());
-            match run_apple(ollama::SYSTEM_PROMPT, &title, &description).await? {
-                Ok(extraction) => Ok(Classified::Done(extraction)),
-                Err(_) if ollama_ready => {
-                    let extraction = ollama::extract_product(
-                        client,
-                        &settings.ollama_base_url,
-                        &settings.ollama_model,
-                        &job.title,
-                        &job.description,
-                    )
-                    .await?;
-                    Ok(Classified::Done(extraction))
+            let masked = match (
+                crate::mask::mask_text(&job.title, keep, lists),
+                crate::mask::mask_text(&job.description, keep, lists),
+            ) {
+                (Ok(title), Ok(description)) => Some((title, description)),
+                (Err(err), _) | (_, Err(err)) => {
+                    eprintln!(
+                        "VRCLibMan: 語リストを読めないので、伏せて読み直さず次の手段に進みます: {err}"
+                    );
+                    None
                 }
-                Err(_) => Ok(Classified::Review),
+            };
+            if let Some((title, description)) = masked {
+                match run_apple(ollama::SYSTEM_PROMPT, &title, &description).await? {
+                    Ok(extraction) => return Ok(Classified::Done(extraction)),
+                    Err(_) => {}
+                }
+            }
+            if ollama_ready {
+                let extraction = ollama::extract_product(
+                    client,
+                    &settings.ollama_base_url,
+                    &settings.ollama_model,
+                    &job.title,
+                    &job.description,
+                )
+                .await?;
+                Ok(Classified::Done(extraction))
+            } else {
+                Ok(Classified::Review)
             }
         }
         Err(AppleError::Message(message)) => Err(message),

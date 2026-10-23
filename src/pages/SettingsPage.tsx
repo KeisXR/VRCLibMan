@@ -541,7 +541,7 @@ export function SettingsPage() {
           </div>
           {status && <p className="meta">{status}</p>}
           <p className="meta">
-            既定のモデルは {DEFAULT_OLLAMA_MODEL} です。今の設定は {settings.ollamaModel} です。分類は {settings.llmBackend === "apple" ? "Apple のオンデバイスモデル" : "Ollama"} です。Apple は macOS で使えるときだけ選べ、選んでも既定のモデル名は変わりません。{apple?.message ? ` ${apple.message}` : ""} 軽い代替は qwen3:4b。
+            既定のモデルは {DEFAULT_OLLAMA_MODEL} です。今の設定は {settings.ollamaModel} です。分類は {settings.llmBackend === "apple" ? "Apple のオンデバイスモデル" : "Ollama"} です。Apple は macOS 27.2 以上で使えるときだけ選べ、選んでも既定のモデル名は変わりません。{apple?.message ? ` ${apple.message}` : ""} 軽い代替は qwen3:4b。
             {installedSize != null && installedSize > 0 ? ` 入っているサイズは ${formatBytes(installedSize)} です。` : ""}
             {models.length > 0
               ? ` 導入済み: ${models.join("、")}。上の欄で選べます。`

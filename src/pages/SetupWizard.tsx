@@ -184,6 +184,9 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
             {appleAvailable && !usingApple && (
               <p className="meta">この Mac では Apple のオンデバイスモデルも使えます。選ぶと、Ollama のモデルは取得しません。既定は {defaultModel} のままです。</p>
             )}
+            {!checking && apple && !appleAvailable && apple.message && (
+              <p className="meta">{apple.message}</p>
+            )}
             {usingApple && <p className="meta">分類は Apple のオンデバイスモデルです。Ollama の取得は飛ばします。</p>}
             {message && <p className="meta">{message}</p>}
             <div className="row-actions">

@@ -21,17 +21,12 @@ struct BoothExtraction {
 
 @main
 struct AfmMain {
-    static func main() {
-        let sema = DispatchSemaphore(value: 0)
-        Task {
-            if CommandLine.arguments.contains("--availability") {
-                await printAvailability()
-            } else {
-                await serve()
-            }
-            sema.signal()
+    static func main() async {
+        if CommandLine.arguments.contains("--availability") {
+            await printAvailability()
+        } else {
+            await serve()
         }
-        sema.wait()
     }
 }
 
@@ -85,7 +80,7 @@ private func generate(
     guard case .available = model.availability else {
         return ["ok": false, "error": "unavailable", "message": "Apple のオンデバイスモデルは今は使えません"]
     }
-    let body = clip(model: model, instructions: instructions, title: title, description: description)
+    let body = await clip(model: model, instructions: instructions, title: title, description: description)
     let user = "タイトル: \(title)\n説明文:\n\(body)"
     let session = LanguageModelSession(model: model, instructions: instructions)
     let options = GenerationOptions(samplingMode: .greedy, temperature: 0.1)
@@ -113,13 +108,13 @@ private func clip(
     instructions: String,
     title: String,
     description: String
-) -> String {
+) async -> String {
     let reserve = 768
     let budget = max(512, model.contextSize - reserve)
     var body = description
     while true {
         let whole = instructions + "\nタイトル: " + title + "\n説明文:\n" + body
-        let count = (try? model.tokenCount(for: whole)) ?? whole.count
+        let count = (try? await model.tokenCount(for: whole)) ?? whole.count
         if count <= budget || body.isEmpty {
             return body
         }
@@ -132,12 +127,15 @@ private func clip(
 }
 
 private func errorCode(_ error: Error) -> String {
-    let text = String(describing: error)
-    if text.range(of: "guardrail", options: .caseInsensitive) != nil {
-        return "guardrailViolation"
-    }
-    if text.range(of: "context", options: .caseInsensitive) != nil {
-        return "contextWindow"
+    if let typed = error as? LanguageModelError {
+        switch typed {
+        case .guardrailViolation(_):
+            return "guardrailViolation"
+        case .contextSizeExceeded(_):
+            return "contextWindow"
+        default:
+            break
+        }
     }
     return "failed"
 }

@@ -142,6 +142,51 @@ pub fn explicit_dedication_pieces(title: &str) -> Vec<String> {
     names
 }
 
+/// A known avatar written in the title with a version, such as 「クルミ ver1.2」,
+/// stays as that whole string even when the model omits the version.
+fn is_name_separator(ch: char) -> bool {
+    matches!(
+        ch,
+        ' ' | '　' | '/' | '／' | '、' | '【' | '】' | '「' | '」' | '(' | ')' | '（' | '）' | '_'
+    )
+}
+
+pub fn versioned_known_names(title: &str, avatars: &[Avatar]) -> Vec<String> {
+    let mut names = Vec::new();
+    let pattern = Regex::new(r"(?i)ver\.?\s*\d+(?:\.\d+)*").expect("version pattern");
+    let chars: Vec<(usize, char)> = title.char_indices().collect();
+    for found in pattern.find_iter(title) {
+        let Some(ver_index) = chars.iter().position(|(index, _)| *index == found.start()) else {
+            continue;
+        };
+        let mut cursor = ver_index;
+        while cursor > 0 && matches!(chars[cursor - 1].1, ' ' | '　' | '_') {
+            cursor -= 1;
+        }
+        let name_end = cursor;
+        while cursor > 0 && !is_name_separator(chars[cursor - 1].1) {
+            cursor -= 1;
+        }
+        if name_end == 0 || cursor >= name_end {
+            continue;
+        }
+        let base = title[chars[cursor].0..chars[name_end].0].trim().trim_matches('_');
+        if base.chars().count() < 2 || known_names_in(base, avatars).is_empty() {
+            continue;
+        }
+        let full = title[chars[cursor].0..found.end()]
+            .trim()
+            .trim_matches('_')
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        if !full.is_empty() && !names.iter().any(|existing: &String| existing == &full) {
+            names.push(full);
+        }
+    }
+    names
+}
+
 pub fn names_for_extraction(
     title: &str,
     description: &str,
@@ -166,6 +211,9 @@ pub fn names_for_extraction(
     }
     for name in &hints {
         push(name);
+    }
+    for name in versioned_known_names(title, avatars) {
+        push(&name);
     }
     if listed.is_empty() {
         for name in llm_names {
@@ -804,6 +852,15 @@ Avatar
         let clipped = clip_description(&description, 500);
         assert!(clipped.contains("ライム_ver1.00"));
         assert!(clipped.chars().count() < description.chars().count());
+    }
+
+    #[test]
+    fn a_known_avatar_keeps_the_version_written_in_the_title() {
+        let avatars = vec![avatar("kurumi", "クルミ")];
+        let names = names_for_extraction("クルミ ver1.2 対応のワンピース", "", &[], &avatars);
+        assert!(names.iter().any(|name| name == "クルミ ver1.2"));
+        assert!(names.iter().any(|name| name == "クルミ"));
+        assert!(versioned_known_names("見知らぬ子 ver1.2", &avatars).is_empty());
     }
 
     #[test]
