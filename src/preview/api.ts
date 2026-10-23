@@ -750,7 +750,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     case "extract_products":
       desktopOnly();
     case "test_ollama":
-      return { models: [], modelReady: false } as T;
+      return { models: [], modelReady: false, modelSizeBytes: null } as T;
     case "catalog_info":
       return {
         count: 932,
@@ -765,7 +765,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       return {
         complete: store.setupComplete,
         model: store.settings.ollamaModel,
-        modelSizeHint: "約 8GB",
+        defaultModel: "gemma4:12b",
       } as T;
     case "complete_setup":
       store.setupComplete = true;

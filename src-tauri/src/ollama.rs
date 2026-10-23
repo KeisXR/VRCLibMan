@@ -73,16 +73,53 @@ pub fn validate_model_name(value: &str) -> Result<String, String> {
     Ok(name.to_string())
 }
 
-pub fn model_ready(models: &[String], wanted: &str) -> bool {
-    models.iter().any(|name| {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstalledModel {
+    pub name: String,
+    pub size_bytes: u64,
+}
+
+pub fn model_ready(models: &[InstalledModel], wanted: &str) -> bool {
+    selected_model(models, wanted).is_some()
+}
+
+pub fn selected_model<'a>(models: &'a [InstalledModel], wanted: &str) -> Option<&'a InstalledModel> {
+    let matches = |name: &str| {
         name == wanted
             || name
                 .strip_prefix(wanted)
                 .is_some_and(|rest| rest.is_empty() || rest.starts_with(':'))
-    })
+    };
+    models
+        .iter()
+        .find(|model| model.name == wanted)
+        .or_else(|| models.iter().find(|model| matches(&model.name)))
 }
 
-pub async fn list_models(client: &reqwest::Client, base: &str) -> Result<Vec<String>, String> {
+pub fn installed_size(models: &[InstalledModel], wanted: &str) -> Option<u64> {
+    selected_model(models, wanted)
+        .map(|model| model.size_bytes)
+        .filter(|size| *size > 0)
+}
+
+pub fn parse_installed_models(text: &str) -> Result<Vec<InstalledModel>, String> {
+    let parsed: TagsResponse =
+        serde_json::from_str(text).map_err(|_| "Ollamaの応答を解釈できません".to_string())?;
+    let mut models = Vec::new();
+    for model in parsed.models.unwrap_or_default() {
+        let Some(name) = model.name.filter(|name| !name.is_empty()) else {
+            continue;
+        };
+        models.push(InstalledModel {
+            name,
+            size_bytes: model.size.unwrap_or(0),
+        });
+    }
+    models.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(models)
+}
+
+pub async fn list_models(client: &reqwest::Client, base: &str) -> Result<Vec<InstalledModel>, String> {
     let base = validate_base_url(base)?;
     let response = client
         .get(format!("{base}/api/tags"))
@@ -94,16 +131,7 @@ pub async fn list_models(client: &reqwest::Client, base: &str) -> Result<Vec<Str
     if !status.is_success() {
         return Err(format!("Ollamaのモデル一覧を取得できません: {status}"));
     }
-    let parsed: TagsResponse =
-        serde_json::from_str(&text).map_err(|_| "Ollamaの応答を解釈できません".to_string())?;
-    let mut names = Vec::new();
-    for model in parsed.models.unwrap_or_default() {
-        if let Some(name) = model.name {
-            names.push(name);
-        }
-    }
-    names.sort();
-    Ok(names)
+    parse_installed_models(&text)
 }
 
 pub async fn extract_product(
@@ -367,11 +395,31 @@ struct TagsResponse {
 #[derive(Deserialize)]
 struct TagModel {
     name: Option<String>,
+    size: Option<u64>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn installed_size_comes_from_the_selected_model() {
+        let parsed = parse_installed_models(
+            r#"{"models":[
+                {"name":"qwen3:4b","size":2497295778},
+                {"name":"gemma4:12b","size":8147483648},
+                {"name":"other:latest","size":0}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(installed_size(&parsed, "qwen3:4b"), Some(2497295778));
+        assert_eq!(installed_size(&parsed, "gemma4:12b"), Some(8147483648));
+        assert_eq!(installed_size(&parsed, "gemma4"), Some(8147483648));
+        assert_eq!(installed_size(&parsed, "missing:7b"), None);
+        assert_eq!(installed_size(&parsed, "other:latest"), None);
+        assert!(model_ready(&parsed, "qwen3:4b"));
+        assert!(!model_ready(&parsed, "missing:7b"));
+    }
 
     #[test]
     fn parses_fenced_and_thinking_output() {

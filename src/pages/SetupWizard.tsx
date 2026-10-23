@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, listenProgress, openExternal } from "../api";
+import { DEFAULT_OLLAMA_MODEL } from "../types";
 import type { ExtensionLink, JobProgress, OllamaStatus, SetupStatus } from "../types";
+import { formatBytes } from "../media";
 import { errorText } from "../ui";
 
 const LIBRARY_URL = "https://accounts.booth.pm/library";
@@ -83,9 +85,12 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
     onDone();
   }
 
-  const model = status?.model ?? "gemma4:12b";
+  const model = status?.model || DEFAULT_OLLAMA_MODEL;
+  const defaultModel = status?.defaultModel || DEFAULT_OLLAMA_MODEL;
   const ready = Boolean(ollama?.modelReady);
   const connected = ollama != null && ollamaError === "";
+  const installedSize =
+    ollama?.modelSizeBytes != null && ollama.modelSizeBytes > 0 ? formatBytes(ollama.modelSizeBytes) : null;
   const percent = progress && progress.total > 0 ? Math.min(100, (progress.current / progress.total) * 100) : 0;
 
   return (
@@ -96,18 +101,23 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
         {step === "model" && (
           <>
             <p>
-              商品名の整理には、この PC の Ollama とモデル {model} を使います。目安は {status?.modelSizeHint ?? "約 8GB"} です。
+              既定のモデルは {defaultModel} です。今の設定は {model} です。
+              商品名の整理には、この PC の Ollama と今の設定を使います。
+              {installedSize ? `入っているサイズは ${installedSize} です。` : ""}
               ダウンロードはここでの確認のあとだけ行い、あとから設定でも変えられます。
             </p>
             {checking && <p className="meta">Ollama を確認しています</p>}
             {!checking && !connected && (
               <p className="meta">Ollama にはまだつながっていません。{ollamaError}</p>
             )}
-            {!checking && connected && ready && <p className="meta">{model} は入っています。</p>}
-            {!checking && connected && !ready && (
+            {!checking && connected && ready && (
               <p className="meta">
-                {model} はまだありません。取得しますか？サイズの目安は {status?.modelSizeHint ?? "約 8GB"} です。
+                {model} は入っています。
+                {installedSize ? `サイズは ${installedSize} です。` : ""}
               </p>
+            )}
+            {!checking && connected && !ready && (
+              <p className="meta">{model} はまだありません。取得しますか？</p>
             )}
             {pulling && (
               <div className="progress">

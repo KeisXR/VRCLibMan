@@ -196,6 +196,7 @@ pub struct SettingsInput {
 pub struct OllamaStatus {
     pub models: Vec<String>,
     pub model_ready: bool,
+    pub model_size_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -223,7 +224,7 @@ pub struct CatalogRefresh {
 pub struct SetupStatus {
     pub complete: bool,
     pub model: String,
-    pub model_size_hint: String,
+    pub default_model: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

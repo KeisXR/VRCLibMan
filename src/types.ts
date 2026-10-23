@@ -199,9 +199,12 @@ export interface ExtractReport {
   errors: string[];
 }
 
+export const DEFAULT_OLLAMA_MODEL = "gemma4:12b";
+
 export interface OllamaStatus {
   models: string[];
   modelReady: boolean;
+  modelSizeBytes: number | null;
 }
 
 export interface CatalogInfo {
@@ -223,7 +226,7 @@ export interface CatalogRefresh {
 export interface SetupStatus {
   complete: boolean;
   model: string;
-  modelSizeHint: string;
+  defaultModel: string;
 }
 
 export interface AvatarCandidate {

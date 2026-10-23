@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, openExternal } from "../api";
 import { useShell } from "../App";
+import { formatBytes } from "../media";
+import { DEFAULT_OLLAMA_MODEL } from "../types";
 import type { AvatarRecord, BaseBody, CatalogInfo, ExtensionLink, Knowledge, Settings } from "../types";
 import { errorText } from "../ui";
 
@@ -22,6 +24,7 @@ export function SettingsPage() {
   const [filter, setFilter] = useState("");
   const [status, setStatus] = useState("");
   const [models, setModels] = useState<string[]>([]);
+  const [installedSize, setInstalledSize] = useState<number | null>(null);
   const [link, setLink] = useState<ExtensionLink | null>(null);
   const [catalog, setCatalog] = useState<CatalogInfo | null>(null);
 
@@ -29,10 +32,14 @@ export function SettingsPage() {
     let cancelled = false;
     api.testOllama().then(
       (result) => {
-        if (!cancelled) setModels(result.models);
+        if (cancelled) return;
+        setModels(result.models);
+        setInstalledSize(result.modelSizeBytes);
       },
       () => {
-        if (!cancelled) setModels([]);
+        if (cancelled) return;
+        setModels([]);
+        setInstalledSize(null);
       },
     );
     Promise.all([api.settings(), api.knowledge(), api.extensionLink(), api.catalogInfo()]).then(
@@ -97,8 +104,10 @@ export function SettingsPage() {
       try {
         const result = await api.testOllama();
         setModels(result.models);
+        setInstalledSize(result.modelSizeBytes);
       } catch {
         setModels([]);
+        setInstalledSize(null);
       }
     } catch (err) {
       fail(errorText(err));
@@ -108,12 +117,16 @@ export function SettingsPage() {
   async function testOllama() {
     try {
       const result = await api.testOllama();
+      setModels(result.models);
+      setInstalledSize(result.modelSizeBytes);
+      const size = result.modelSizeBytes != null && result.modelSizeBytes > 0 ? formatBytes(result.modelSizeBytes) : "";
       setStatus(
         result.modelReady
-          ? `接続できました。設定中のモデルがあります（${result.models.length} 件）`
+          ? `接続できました。設定中のモデルがあります（${result.models.length} 件）${size ? `。サイズは ${size}` : ""}`
           : `接続できましたが、設定中のモデルが見つかりません。導入済み: ${result.models.join(", ") || "なし"}`,
       );
     } catch (err) {
+      setInstalledSize(null);
       setStatus(errorText(err));
     }
   }
@@ -392,7 +405,8 @@ export function SettingsPage() {
           </div>
           {status && <p className="meta">{status}</p>}
           <p className="meta">
-            初期モデルは gemma4:12b です（目安 8GB の VRAM）。軽い代替は qwen3:4b。
+            既定のモデルは {DEFAULT_OLLAMA_MODEL} です。今の設定は {settings.ollamaModel} です。軽い代替は qwen3:4b。
+            {installedSize != null && installedSize > 0 ? ` 入っているサイズは ${formatBytes(installedSize)} です。` : ""}
             {models.length > 0
               ? ` 導入済み: ${models.join("、")}。上の欄で選べます。`
               : " 「接続を試す」で導入済みのモデルを候補に出します。"}

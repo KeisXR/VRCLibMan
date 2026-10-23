@@ -8,7 +8,6 @@ pub const TERMS_URL: &str =
     "https://github.com/eringiriri/mochifitter_list/blob/main/terms.html";
 pub const AUTHOR: &str = "えりんぎ";
 pub const CREDIT: &str = "もちふぃった～プロファイル一覧";
-pub const MODEL_SIZE_HINT: &str = "約 8GB";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CatalogEntry {

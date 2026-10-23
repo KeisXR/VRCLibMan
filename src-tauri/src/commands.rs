@@ -402,11 +402,15 @@ pub async fn test_ollama(state: State<'_, AppState>) -> Result<OllamaStatus, Str
         db::settings(&mut connection)?
     };
     let client = ollama::probe_client()?;
-    let models = ollama::list_models(&client, &settings.ollama_base_url).await?;
-    let ready = model_ready(&models, &settings.ollama_model);
+    let installed = ollama::list_models(&client, &settings.ollama_base_url).await?;
+    let ready = model_ready(&installed, &settings.ollama_model);
+    let model_size_bytes = ollama::installed_size(&installed, &settings.ollama_model);
+    let mut models: Vec<String> = installed.into_iter().map(|model| model.name).collect();
+    models.sort();
     Ok(OllamaStatus {
         models,
         model_ready: ready,
+        model_size_bytes,
     })
 }
 

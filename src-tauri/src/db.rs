@@ -196,6 +196,21 @@ fn ensure_ready(connection: &Connection) -> Result<(), String> {
         set_setting(connection, "initialized", "1")?;
     }
     close_unavailable_products(connection)?;
+    skip_setup_for_existing_use(connection)?;
+    Ok(())
+}
+
+fn skip_setup_for_existing_use(connection: &Connection) -> Result<(), String> {
+    if setting(connection, "setup_complete")?.is_some() {
+        return Ok(());
+    }
+    let products: i64 = connection
+        .query_row("SELECT COUNT(*) FROM products", [], |row| row.get(0))
+        .sql()?;
+    let paired = extension_origin(connection)?.is_some();
+    if products > 0 || paired {
+        set_setting(connection, "setup_complete", "1")?;
+    }
     Ok(())
 }
 
@@ -1755,7 +1770,7 @@ pub(crate) fn setup_status(connection: &Connection) -> Result<SetupStatus, Strin
     Ok(SetupStatus {
         complete: setting(connection, "setup_complete")?.as_deref() == Some("1"),
         model: settings.ollama_model,
-        model_size_hint: crate::catalog::MODEL_SIZE_HINT.into(),
+        default_model: crate::model::DEFAULT_OLLAMA_MODEL.into(),
     })
 }
 
@@ -2780,6 +2795,36 @@ mod tests {
         ensure_ready(&connection).unwrap();
         assert_eq!(settings(&connection).unwrap().ollama_model, "qwen3:4b");
         assert!(!settings(&connection).unwrap().builtin_browser);
+        assert!(!setup_status(&connection).unwrap().complete);
+    }
+
+    #[test]
+    fn existing_library_or_pairing_skips_setup_until_reopened() {
+        let connection = open_memory().unwrap();
+        assert!(setting(&connection, "setup_complete").unwrap().is_none());
+        connection
+            .execute(
+                "INSERT INTO products (booth_id, title, imported_at, updated_at) VALUES ('4242', '架空の服', 't', 't')",
+                [],
+            )
+            .unwrap();
+        ensure_ready(&connection).unwrap();
+        assert!(setup_status(&connection).unwrap().complete);
+        set_setup_complete(&connection, false).unwrap();
+        ensure_ready(&connection).unwrap();
+        assert!(!setup_status(&connection).unwrap().complete);
+
+        let paired = open_memory().unwrap();
+        set_extension_origin(
+            &paired,
+            "chrome-extension://abcdefghijklmnopabcdefghijklmnop",
+        )
+        .unwrap();
+        ensure_ready(&paired).unwrap();
+        assert!(setup_status(&paired).unwrap().complete);
+        let status = setup_status(&paired).unwrap();
+        assert_eq!(status.default_model, "gemma4:12b");
+        assert_eq!(status.model, "gemma4:12b");
     }
 
     #[test]
