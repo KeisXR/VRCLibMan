@@ -2,6 +2,7 @@ const status = document.querySelector("#status");
 const linkStatus = document.querySelector("#link-status");
 const button = document.querySelector("#export");
 const allButton = document.querySelector("#export-all");
+const newButton = document.querySelector("#export-new");
 const saveTokenButton = document.querySelector("#save-token");
 const openLibraryButton = document.querySelector("#open-library");
 const tokenInput = document.querySelector("#token");
@@ -69,7 +70,7 @@ function parseHtml(html, href) {
   return { doc, products: api().extractPage(doc, href) };
 }
 
-async function readLibraryPages(startUrl) {
+async function readLibraryPages(startUrl, knownIds) {
   const firstUrl = api().libraryPageUrl(startUrl, 1);
   setStatus("ライブラリ 1 ページ目を読んでいます");
   const firstResponse = await fetchWithBackoff(firstUrl, { credentials: "include" });
@@ -77,10 +78,13 @@ async function readLibraryPages(startUrl) {
     throw new Error(`ライブラリを読めませんでした (${firstResponse.status})`);
   }
   const first = parseHtml(await firstResponse.text(), firstUrl);
-  let products = api().dedupeProducts(first.products);
+  let taken = api().takeUntilKnown(first.products, knownIds);
+  let products = api().dedupeProducts(taken.products);
+  let stopped = taken.stopped;
   const lastPage = api().libraryLastPage(first.doc, firstUrl);
   try {
-    for (let page = 2; page <= lastPage; page += 1) {
+    for (let page = 2; page <= lastPage && !stopped; page += 1) {
+      await sleep(250);
       setStatus(`ライブラリ ${page}/${lastPage} ページを読んでいます（${products.length} 件）`);
       const pageUrl = api().libraryPageUrl(startUrl, page);
       const response = await fetchWithBackoff(pageUrl, { credentials: "include" });
@@ -89,14 +93,16 @@ async function readLibraryPages(startUrl) {
       }
       const parsed = parseHtml(await response.text(), pageUrl);
       if (parsed.products.length === 0) break;
-      products = api().dedupeProducts(products.concat(parsed.products));
+      taken = api().takeUntilKnown(parsed.products, knownIds);
+      products = api().dedupeProducts(products.concat(taken.products));
+      stopped = taken.stopped;
     }
   } catch (error) {
     error.partialProducts = products;
     error.libraryPages = lastPage;
     throw error;
   }
-  return { products, lastPage };
+  return { products, lastPage, stopped };
 }
 
 function needsDetail(product) {
@@ -143,6 +149,7 @@ async function enrich(products) {
 function setBusy(busy) {
   button.disabled = busy;
   allButton.disabled = busy;
+  newButton.disabled = busy;
   saveTokenButton.disabled = busy;
 }
 
@@ -185,6 +192,44 @@ async function refreshLink() {
   linkStatus.textContent = reachable
     ? "ペアリング済み。アプリは起動しています"
     : "ペアリング済み。アプリは起動していません";
+}
+
+async function fetchKnownIds(token) {
+  let response;
+  try {
+    response = await fetch(`${LOCAL_BASE}/known-ids`, {
+      method: "GET",
+      credentials: "omit",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch {
+    throw unreachableError();
+  }
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || `取り込み済みの確認ができませんでした (${response.status})`);
+  }
+  return new Set((Array.isArray(data.ids) ? data.ids : []).map((id) => String(id)));
+}
+
+async function knownIdsWithWake(token) {
+  try {
+    return await fetchKnownIds(token);
+  } catch (error) {
+    if (!isUnreachable(error)) throw error;
+  }
+  setStatus("アプリを起動しています");
+  await wakeApp();
+  const started = Date.now();
+  while (Date.now() - started < WAKE_WAIT_MS) {
+    await sleep(400);
+    try {
+      return await fetchKnownIds(token);
+    } catch (error) {
+      if (!isUnreachable(error)) throw error;
+    }
+  }
+  throw new Error("アプリを起動できませんでした。更新モードは、取り込み済みかをアプリに確認します");
 }
 
 async function postImport(token, payload) {
@@ -299,7 +344,7 @@ button.addEventListener("click", async () => {
   }
 });
 
-allButton.addEventListener("click", async () => {
+async function sendLibrary(updateMode) {
   setBusy(true);
   let products = [];
   try {
@@ -308,28 +353,40 @@ allButton.addEventListener("click", async () => {
       setStatus("ライブラリのページを開いてから実行してください");
       return;
     }
-    const collected = await readLibraryPages(tab.url);
+    let knownIds = null;
+    if (updateMode) {
+      const token = await savedToken();
+      if (!token) {
+        setStatus("更新モードにはペアリングコードが必要です。アプリの設定のコードを貼ってください");
+        return;
+      }
+      knownIds = await knownIdsWithWake(token);
+    }
+    const collected = await readLibraryPages(tab.url, knownIds);
     products = collected.products;
     if (products.length === 0) {
-      setStatus("ライブラリから商品を見つけられませんでした");
+      setStatus(updateMode && collected.stopped ? "新しい購入はありません" : "ライブラリから商品を見つけられませんでした");
       return;
     }
+    const source = updateMode ? "library-update" : "library";
     try {
       await enrich(products);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      setStatus(`${await deliver(products, "library")}。${reason}`);
+      setStatus(`${await deliver(products, source)}。${reason}`);
       await refreshLink();
       return;
     }
-    setStatus(`${await deliver(products, "library")}（${collected.lastPage} ページ分）`);
+    const stopNote = updateMode && collected.stopped ? "。取り込み済みの商品があったので、そこまでで止めました" : "";
+    setStatus(`${await deliver(products, source)}（${collected.lastPage} ページ分）${stopNote}`);
     await refreshLink();
   } catch (error) {
     const partial = error instanceof Error && Array.isArray(error.partialProducts) ? error.partialProducts : products;
     const reason = error instanceof Error ? error.message : String(error);
+    const source = updateMode ? "library-update" : "library";
     if (partial.length > 0) {
       try {
-        setStatus(`${await deliver(partial, "library")}。${reason}`);
+        setStatus(`${await deliver(partial, source)}。${reason}`);
         await refreshLink();
       } catch (sendError) {
         setStatus(sendError instanceof Error ? sendError.message : reason);
@@ -340,7 +397,10 @@ allButton.addEventListener("click", async () => {
   } finally {
     setBusy(false);
   }
-});
+}
+
+allButton.addEventListener("click", () => sendLibrary(false));
+newButton.addEventListener("click", () => sendLibrary(true));
 
 saveTokenButton.addEventListener("click", async () => {
   await chrome.storage.local.set({ pairingToken: tokenInput.value.trim() });

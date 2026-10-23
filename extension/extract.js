@@ -386,6 +386,17 @@
     return product;
   }
 
+  function takeUntilKnown(products, knownIds) {
+    if (!knownIds) return { products: products || [], stopped: false };
+    const fresh = [];
+    for (const product of products || []) {
+      const id = product && product.boothId ? String(product.boothId) : "";
+      if (id && knownIds.has(id)) return { products: fresh, stopped: true };
+      fresh.push(product);
+    }
+    return { products: fresh, stopped: false };
+  }
+
   function dedupeProducts(products) {
     const seen = new Set();
     const unique = [];
@@ -409,6 +420,7 @@
     libraryPageUrl,
     libraryLastPage,
     dedupeProducts,
+    takeUntilKnown,
     noteIfUnpublished,
     UNAVAILABLE_TEXT,
   };

@@ -76,6 +76,7 @@ pub struct AvatarCard {
     pub aliases: Vec<String>,
     pub is_builtin: bool,
     pub is_placeholder: bool,
+    pub owned: bool,
     pub thumbnail_path: Option<String>,
     pub thumbnail_url: Option<String>,
     pub outfit_count: u32,
@@ -95,6 +96,7 @@ pub struct AvatarDetail {
     pub aliases: Vec<String>,
     pub is_builtin: bool,
     pub is_placeholder: bool,
+    pub owned: bool,
     pub siblings: Vec<Sibling>,
     pub owned_products: Vec<OwnedBody>,
     pub sections: Vec<Section>,
@@ -159,10 +161,9 @@ struct Classified {
 }
 
 pub fn avatar_cards(snapshot: &Snapshot) -> Vec<AvatarCard> {
-    let owned = owned_avatar_ids(snapshot);
     let mut cards = Vec::new();
     for avatar in &snapshot.avatars {
-        if !owned.contains(&avatar.id) {
+        if !avatar.owned && !referenced_only(snapshot, &avatar.id) {
             continue;
         }
         let classified = classify(snapshot, avatar);
@@ -174,6 +175,7 @@ pub fn avatar_cards(snapshot: &Snapshot) -> Vec<AvatarCard> {
             aliases: avatar.aliases.clone(),
             is_builtin: avatar.is_builtin,
             is_placeholder: avatar.id.starts_with("owned-"),
+            owned: avatar.owned,
             thumbnail_path: classified.thumbnail_path,
             thumbnail_url: classified.thumbnail_url,
             outfit_count: section_len(&classified.sections, "outfit"),
@@ -188,15 +190,10 @@ pub fn avatar_cards(snapshot: &Snapshot) -> Vec<AvatarCard> {
 pub fn avatar_detail(snapshot: &Snapshot, id: &str) -> Option<AvatarDetail> {
     let avatar = snapshot.avatars.iter().find(|avatar| avatar.id == id)?;
     let classified = classify(snapshot, avatar);
-    let owned = owned_avatar_ids(snapshot);
     let mut siblings: Vec<Sibling> = snapshot
         .avatars
         .iter()
-        .filter(|other| {
-            other.id != avatar.id
-                && owned.contains(&other.id)
-                && shared_base(avatar, other)
-        })
+        .filter(|other| other.id != avatar.id && other.owned && shared_base(avatar, other))
         .map(|other| Sibling {
             id: other.id.clone(),
             display_name: other.display_name.clone(),
@@ -216,6 +213,7 @@ pub fn avatar_detail(snapshot: &Snapshot, id: &str) -> Option<AvatarDetail> {
         aliases: avatar.aliases.clone(),
         is_builtin: avatar.is_builtin,
         is_placeholder: avatar.id.starts_with("owned-"),
+        owned: avatar.owned,
         siblings,
         owned_products: classified.owned,
         sections: classified.sections,
@@ -330,7 +328,7 @@ pub fn library_stats(snapshot: &Snapshot, model: &str) -> LibraryStats {
         .count() as u32;
     LibraryStats {
         products: snapshot.products.len() as u32,
-        owned_avatars: avatar_cards(snapshot).len() as u32,
+        owned_avatars: snapshot.avatars.iter().filter(|avatar| avatar.owned).count() as u32,
         unextracted,
         needs_review,
         queue_count: unextracted + needs_review,
@@ -478,19 +476,13 @@ fn family_ids(snapshot: &Snapshot, avatar: &Avatar) -> HashSet<String> {
     ids
 }
 
-fn owned_avatar_ids(snapshot: &Snapshot) -> HashSet<String> {
-    let bodies: HashSet<&str> = snapshot
-        .products
-        .iter()
-        .filter(|product| product.category == Some(Category::Avatar))
-        .map(|product| product.booth_id.as_str())
-        .collect();
-    snapshot
-        .links
-        .iter()
-        .filter(|link| bodies.contains(link.product_id.as_str()))
-        .map(|link| link.avatar_id.clone())
-        .collect()
+fn referenced_only(snapshot: &Snapshot, avatar_id: &str) -> bool {
+    snapshot.links.iter().any(|link| {
+        link.avatar_id == avatar_id
+            && snapshot.products.iter().any(|product| {
+                product.booth_id == link.product_id && product.category != Some(Category::Avatar)
+            })
+    })
 }
 
 fn shared_base(left: &Avatar, right: &Avatar) -> bool {
@@ -552,6 +544,7 @@ mod tests {
             base_body: base.map(str::to_string),
             aliases: Vec::new(),
             is_builtin: true,
+            owned: matches!(id, "lime" | "plum" | "manuka"),
             notes: String::new(),
         }
     }
@@ -603,7 +596,9 @@ mod tests {
         let snapshot = sample();
         let cards = avatar_cards(&snapshot);
         let ids: HashSet<_> = cards.iter().map(|card| card.id.as_str()).collect();
-        assert_eq!(ids, HashSet::from(["lime", "plum", "manuka"]));
+        assert_eq!(ids, HashSet::from(["lime", "plum", "manuka", "shinano"]));
+        assert!(cards.iter().find(|card| card.id == "lime").unwrap().owned);
+        assert!(!cards.iter().find(|card| card.id == "shinano").unwrap().owned);
 
         let lime = avatar_detail(&snapshot, "lime").unwrap();
         assert!(lime.sections.iter().any(|section| {

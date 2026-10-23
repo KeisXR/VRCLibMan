@@ -24,6 +24,6 @@ test("popup sends the export to the app and can wake it", () => {
   assert.match(popup, /https:\/\/accounts\.booth\.pm\/library/);
   assert.equal(popup.includes("chrome.cookies"), false);
   assert.equal(manifest.permissions.includes("cookies"), false);
-  assert.equal(manifest.version, "0.1.6");
+  assert.equal(manifest.version, "0.1.7");
   assert.deepEqual(config.plugins["deep-link"].desktop.schemes, ["vrclibman"]);
 });

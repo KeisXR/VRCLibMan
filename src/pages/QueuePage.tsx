@@ -3,7 +3,7 @@ import { api, openExternal, openLocal } from "../api";
 import { useShell } from "../App";
 import { confidenceLabel, formatBytes } from "../media";
 import { CATEGORIES, CATEGORY_LABEL } from "../types";
-import type { Knowledge, ProductOption, QueueFile, QueuePage as QueueData, QueueProduct } from "../types";
+import type { AvatarCandidate, Knowledge, ProductOption, QueueFile, QueuePage as QueueData, QueueProduct } from "../types";
 import { Thumb, errorText } from "../ui";
 
 type Kind = "unextracted" | "review" | "files";
@@ -22,6 +22,8 @@ export function QueuePage() {
   const [loadedKind, setLoadedKind] = useState<Kind | null>(null);
   const [knowledge, setKnowledge] = useState<Knowledge | null>(null);
   const [options, setOptions] = useState<ProductOption[]>([]);
+  const [candidates, setCandidates] = useState<AvatarCandidate[]>([]);
+  const [aliasTarget, setAliasTarget] = useState<Record<string, string>>({});
 
   function choose(next: Kind) {
     setChoseTab(true);
@@ -30,12 +32,13 @@ export function QueuePage() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([api.queue(kind), api.knowledge(), api.productOptions()]).then(
-      ([queue, known, products]) => {
+    Promise.all([api.queue(kind), api.knowledge(), api.productOptions(), api.avatarCandidates()]).then(
+      ([queue, known, products, nextCandidates]) => {
         if (cancelled) return;
         setPage(queue);
         setKnowledge(known);
         setOptions(products);
+        setCandidates(nextCandidates);
         setLoadedKind(kind);
       },
       (err: unknown) => {
@@ -55,6 +58,31 @@ export function QueuePage() {
   }, [page, choseTab, kind, loadedKind]);
 
   const visible = loadedKind === kind ? page : null;
+
+  async function registerCandidate(name: string) {
+    try {
+      await api.registerAvatarCandidate(name);
+      notify(`${name} をアバターとして登録しました`);
+      refresh();
+    } catch (err) {
+      fail(errorText(err));
+    }
+  }
+
+  async function aliasCandidate(name: string) {
+    const avatarId = aliasTarget[name];
+    if (!avatarId) {
+      fail("別名を足すアバターを選んでください");
+      return;
+    }
+    try {
+      await api.aliasAvatarCandidate(name, avatarId);
+      notify(`${name} を別名にしました`);
+      refresh();
+    } catch (err) {
+      fail(errorText(err));
+    }
+  }
 
   return (
     <section>
@@ -77,6 +105,41 @@ export function QueuePage() {
       </div>
       {visible && kind !== "files" && visible.products.length === 0 && <p className="empty">この一覧は空です。</p>}
       {visible && kind === "files" && visible.files.length === 0 && <p className="empty">未突合のファイルはありません。</p>}
+      {kind === "review" && candidates.length > 0 && (
+        <div className="panel" style={{ marginBottom: 16 }}>
+          <h2>新しいアバター候補</h2>
+          <p className="meta">
+            商品名の【対応】から拾った、対応表にない名前です。件数はその名前が付いている商品の数です。
+          </p>
+          <div className="stack">
+            {candidates.map((candidate) => (
+              <div className="candidate" key={candidate.name}>
+                <strong>{candidate.name}</strong>
+                <span className="meta">{candidate.productCount} 件</span>
+                <button className="button primary" type="button" onClick={() => void registerCandidate(candidate.name)}>
+                  アバターとして登録
+                </button>
+                <select
+                  value={aliasTarget[candidate.name] ?? ""}
+                  onChange={(event) =>
+                    setAliasTarget((current) => ({ ...current, [candidate.name]: event.target.value }))
+                  }
+                >
+                  <option value="">既存のアバター</option>
+                  {(knowledge?.avatars ?? []).map((avatar) => (
+                    <option key={avatar.id} value={avatar.id}>
+                      {avatar.displayName}
+                    </option>
+                  ))}
+                </select>
+                <button className="button" type="button" onClick={() => void aliasCandidate(candidate.name)}>
+                  この別名にする
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="stack">
         {visible && kind !== "files" &&
           visible.products.map((product) => (
@@ -228,6 +291,25 @@ function ProductEditor({
         </div>
       </label>
       <div className="row-actions">
+        {(product.category === "avatar" || /オリジナル3dモデル/i.test(product.title)) && (
+          <button
+            className="button primary"
+            type="button"
+            onClick={() => {
+              if (!window.confirm("この商品を、持っているアバター本体として記録します。")) return;
+              void (async () => {
+                try {
+                  await api.markOwnedAvatar(product.boothId);
+                  onDone("所持アバターにしました");
+                } catch (err) {
+                  onError(errorText(err));
+                }
+              })();
+            }}
+          >
+            所持アバターにする
+          </button>
+        )}
         <button className="button" type="button" onClick={() => void save(false)}>
           保存
         </button>

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { api } from "../api";
+import { api, openExternal } from "../api";
 import { useShell } from "../App";
-import type { AvatarRecord, BaseBody, ExtensionLink, Knowledge, Settings } from "../types";
+import type { AvatarRecord, BaseBody, CatalogInfo, ExtensionLink, Knowledge, Settings } from "../types";
 import { errorText } from "../ui";
 
 const emptyAvatar = {
@@ -23,6 +23,7 @@ export function SettingsPage() {
   const [status, setStatus] = useState("");
   const [models, setModels] = useState<string[]>([]);
   const [link, setLink] = useState<ExtensionLink | null>(null);
+  const [catalog, setCatalog] = useState<CatalogInfo | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -34,10 +35,11 @@ export function SettingsPage() {
         if (!cancelled) setModels([]);
       },
     );
-    Promise.all([api.settings(), api.knowledge(), api.extensionLink()]).then(
-      ([nextSettings, nextKnowledge, nextLink]) => {
+    Promise.all([api.settings(), api.knowledge(), api.extensionLink(), api.catalogInfo()]).then(
+      ([nextSettings, nextKnowledge, nextLink, nextCatalog]) => {
         if (cancelled) return;
         setSettings(nextSettings);
+        setCatalog(nextCatalog);
         setKnowledge(nextKnowledge);
         setLink(nextLink);
       },
@@ -195,6 +197,28 @@ export function SettingsPage() {
     }
   }
 
+  async function refreshCatalog() {
+    setStatus("プロファイル一覧を取得しています");
+    try {
+      const report = await api.refreshAvatarCatalog();
+      notify(`対応表を更新しました。新しく ${report.added} 件、合計 ${report.total} 件です`);
+      refresh();
+    } catch (err) {
+      fail(errorText(err));
+    } finally {
+      setStatus("");
+    }
+  }
+
+  async function reopenSetup() {
+    try {
+      await api.reopenSetup();
+      refresh();
+    } catch (err) {
+      fail(errorText(err));
+    }
+  }
+
   async function reresolve() {
     try {
       const changed = await api.reresolve();
@@ -205,11 +229,12 @@ export function SettingsPage() {
     }
   }
 
-  const avatars = (knowledge?.avatars ?? []).filter((record) => {
+  const matched = (knowledge?.avatars ?? []).filter((record) => {
     const needle = filter.trim().toLowerCase();
     if (!needle) return true;
     return [record.displayName, ...record.aliases].join(" ").toLowerCase().includes(needle);
   });
+  const avatars = matched.slice(0, 80);
 
   return (
     <section>
@@ -285,6 +310,37 @@ export function SettingsPage() {
           </div>
         </div>
       )}
+      {catalog && (
+        <div className="panel" style={{ padding: 16, marginBottom: 16 }}>
+          <h2>アバター対応表</h2>
+          <p className="meta">
+            初期の対応表は {catalog.credit}（{catalog.author}）です。{catalog.count} 件を同梱しています。
+            取得日 {catalog.fetchedOn || "未記録"}
+            {catalog.upstreamUpdated ? `、上流の更新 ${catalog.upstreamUpdated}` : ""}。
+            定期的には取りに行きません。ボタンを押したときだけ GitHub から1回取得します。
+          </p>
+          <p className="meta">
+            出典は{" "}
+            <button className="button" type="button" onClick={() => void openExternal(catalog.sourceUrl)}>
+              リポジトリ
+            </button>{" "}
+            と{" "}
+            <button className="button" type="button" onClick={() => void openExternal(catalog.termsUrl)}>
+              利用規約
+            </button>
+            。規約ではコピー、保存、二次利用、商用利用が許されています。正確性の保証はなく、アバターの著作権は各作者にあります。
+            共通素体シート（スペキュラム合金さん）はライセンスが不明なので入れていません。
+          </p>
+          <div className="row-actions">
+            <button className="button primary" type="button" onClick={() => void refreshCatalog()}>
+              対応表を更新
+            </button>
+            <button className="button" type="button" onClick={() => void reopenSetup()}>
+              セットアップを再表示
+            </button>
+          </div>
+        </div>
+      )}
       {settings && (
         <div className="panel" style={{ padding: 16, marginBottom: 16 }}>
           <div className="form-grid">
@@ -357,6 +413,9 @@ export function SettingsPage() {
       <div className="knowledge">
         <div>
           <input className="search" value={filter} placeholder="対応表を検索" onChange={(event) => setFilter(event.target.value)} />
+          <p className="meta">
+            {knowledge?.avatars.length ?? 0} 件中 {avatars.length} 件を表示しています。名前の一部で絞れます。
+          </p>
           <div className="list">
             {avatars.map((record) => (
               <button

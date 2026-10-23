@@ -57,8 +57,13 @@ pub fn title_avatar_hints(title: &str, avatars: &[Avatar]) -> Vec<String> {
         let cleaned = name
             .trim()
             .trim_matches(|ch: char| ch.is_whitespace() || is_punct(ch));
-        if cleaned.chars().count() < 2 || is_blocked_avatar_label(cleaned) {
-            return;
+        if cleaned.is_empty() || is_blocked_avatar_label(cleaned) {
+            if !(cleaned.chars().count() == 1 && cleaned.chars().all(crate::normalize::is_cjk)) {
+                return;
+            }
+            if crate::resolve::resolve_name(cleaned, avatars).is_none() {
+                return;
+            }
         }
         if !names.iter().any(|existing: &String| existing == cleaned) {
             names.push(cleaned.to_string());
@@ -82,6 +87,9 @@ pub fn title_avatar_hints(title: &str, avatars: &[Avatar]) -> Vec<String> {
                         push(&variant);
                     }
                 }
+                for piece in name.split(|ch| matches!(ch, '/' | '／' | '、' | '&' | '＆')) {
+                    push(piece);
+                }
             }
         }
     }
@@ -90,6 +98,46 @@ pub fn title_avatar_hints(title: &str, avatars: &[Avatar]) -> Vec<String> {
     // is already an avatar, and those promo avatars are not matchable.
     for name in known_names_in(title, avatars) {
         push(&name);
+    }
+    names
+}
+
+/// Names written in 【桔梗/萌対応】. One-character names stay so a known avatar can match.
+pub fn explicit_dedication_pieces(title: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut push = |name: &str| {
+        let cleaned = name
+            .trim()
+            .trim_matches(|ch: char| ch.is_whitespace() || is_punct(ch));
+        if cleaned.is_empty()
+            || cleaned.contains('/')
+            || cleaned.contains('／')
+            || cleaned.contains('、')
+        {
+            return;
+        }
+        let short = cleaned.chars().count() == 1 && cleaned.chars().all(crate::normalize::is_cjk);
+        if !short && is_blocked_avatar_label(cleaned) {
+            return;
+        }
+        if short || !is_blocked_avatar_label(cleaned) {
+            if !names.iter().any(|existing: &String| existing == cleaned) {
+                names.push(cleaned.to_string());
+            }
+        }
+    };
+    for inner in bracket_inners(title) {
+        let Some(name) = crate::normalize::dedication_inside(&inner) else {
+            continue;
+        };
+        for variant in crate::normalize::label_variants(&name) {
+            if !variant.contains('(') {
+                push(&variant);
+            }
+        }
+        for piece in name.split(|ch| matches!(ch, '/' | '／' | '、' | '&' | '＆')) {
+            push(piece);
+        }
     }
     names
 }
@@ -105,7 +153,8 @@ pub fn names_for_extraction(
     let mut names = Vec::new();
     let mut push = |name: &str| {
         let trimmed = name.trim();
-        if trimmed.is_empty() || is_blocked_avatar_label(trimmed) {
+        let one_character = trimmed.chars().count() == 1 && trimmed.chars().all(crate::normalize::is_cjk);
+        if trimmed.is_empty() || (is_blocked_avatar_label(trimmed) && !one_character) {
             return;
         }
         if !names.iter().any(|existing: &String| existing == trimmed) {
@@ -531,6 +580,7 @@ mod tests {
             base_body: None,
             aliases: Vec::new(),
             is_builtin: true,
+            owned: false,
             notes: String::new(),
         }
     }
@@ -727,6 +777,7 @@ Avatar
             base_body: None,
             aliases: vec!["Kipfel".into()],
             is_builtin: false,
+            owned: false,
             notes: String::new(),
         });
         assert_eq!(

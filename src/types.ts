@@ -22,6 +22,7 @@ export interface AvatarCard {
   aliases: string[];
   isBuiltin: boolean;
   isPlaceholder: boolean;
+  owned: boolean;
   thumbnailPath: string | null;
   thumbnailUrl: string | null;
   outfitCount: number;
@@ -82,6 +83,7 @@ export interface AvatarDetail {
   aliases: string[];
   isBuiltin: boolean;
   isPlaceholder: boolean;
+  owned: boolean;
   siblings: Sibling[];
   ownedProducts: OwnedBody[];
   sections: Section[];
@@ -135,6 +137,7 @@ export interface AvatarRecord {
   baseBody: string | null;
   aliases: string[];
   isBuiltin: boolean;
+  owned: boolean;
   notes: string;
 }
 
@@ -199,6 +202,33 @@ export interface ExtractReport {
 export interface OllamaStatus {
   models: string[];
   modelReady: boolean;
+}
+
+export interface CatalogInfo {
+  count: number;
+  fetchedOn: string;
+  upstreamUpdated: string;
+  sourceUrl: string;
+  termsUrl: string;
+  author: string;
+  credit: string;
+}
+
+export interface CatalogRefresh {
+  added: number;
+  total: number;
+  upstreamUpdated: string;
+}
+
+export interface SetupStatus {
+  complete: boolean;
+  model: string;
+  modelSizeHint: string;
+}
+
+export interface AvatarCandidate {
+  name: string;
+  productCount: number;
 }
 
 export interface JobProgress {

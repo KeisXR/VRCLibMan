@@ -6,6 +6,7 @@ import { ImportPage } from "./pages/ImportPage";
 import { QueuePage } from "./pages/QueuePage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { BrowserPage } from "./pages/BrowserPage";
+import { SetupWizard } from "./pages/SetupWizard";
 import type { JobProgress, LibraryStats } from "./types";
 import { errorText } from "./ui";
 
@@ -50,6 +51,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const [builtinBrowser, setBuiltinBrowser] = useState(false);
+  const [setupComplete, setSetupComplete] = useState<boolean | null>(null);
   const route = useMemo(() => parseRoute(hash), [hash]);
 
   const refresh = useCallback(() => setRevision((value) => value + 1), []);
@@ -97,6 +99,14 @@ export default function App() {
       },
       () => {
         if (!cancelled) setBuiltinBrowser(false);
+      },
+    );
+    api.setupStatus().then(
+      (value) => {
+        if (!cancelled) setSetupComplete(value.complete);
+      },
+      () => {
+        if (!cancelled) setSetupComplete(true);
       },
     );
     return () => {
@@ -148,6 +158,7 @@ export default function App() {
 
   return (
     <ShellContext.Provider value={shell}>
+      {setupComplete === false && <SetupWizard onDone={() => setSetupComplete(true)} />}
       <div className="app">
         <aside className="rail">
           <div className="brand">

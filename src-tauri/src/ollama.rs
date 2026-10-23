@@ -202,6 +202,64 @@ pub fn extraction_client() -> Result<reqwest::Client, String> {
         .map_err(|err| format!("HTTPクライアントを初期化できません: {err}"))
 }
 
+pub async fn pull_model(
+    client: &reqwest::Client,
+    base: &str,
+    model: &str,
+    mut on_progress: impl FnMut(u64, u64, &str),
+) -> Result<(), String> {
+    let base = validate_base_url(base)?;
+    let model = validate_model_name(model)?;
+    let mut response = client
+        .post(format!("{base}/api/pull"))
+        .json(&serde_json::json!({ "model": model, "stream": true }))
+        .send()
+        .await
+        .map_err(connection_error)?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(ollama_status_error(status, &body));
+    }
+    let mut pending = String::new();
+    while let Some(chunk) = response.chunk().await.map_err(connection_error)? {
+        pending.push_str(&String::from_utf8_lossy(&chunk));
+        while let Some(newline) = pending.find('\n') {
+            let line: String = pending.drain(..=newline).collect();
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let Ok(value) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
+            if let Some(error) = value.get("error").and_then(Value::as_str) {
+                return Err(format!("モデルを取得できません: {error}"));
+            }
+            let status = value.get("status").and_then(Value::as_str).unwrap_or("取得中");
+            let completed = value.get("completed").and_then(Value::as_u64).unwrap_or(0);
+            let total = value.get("total").and_then(Value::as_u64).unwrap_or(0);
+            on_progress(completed, total, status);
+        }
+    }
+    Ok(())
+}
+
+pub fn pull_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|err| format!("HTTPクライアントを初期化できません: {err}"))
+}
+
+pub fn catalog_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(60))
+        .build()
+        .map_err(|err| format!("HTTPクライアントを初期化できません: {err}"))
+}
+
 pub fn probe_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(3))
