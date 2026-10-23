@@ -186,6 +186,13 @@ const store: Store = {
       descriptionSnippet: "どのアバターでも使えるギミックです。",
     }),
     product({
+      boothId: "8800120",
+      title: "瞳のテクスチャ集",
+      shop: "サンプル工房",
+      category: "texture",
+      confidence: 1,
+    }),
+    product({
       boothId: "8800104",
       title: "架空ちゃん対応パーカー",
       shop: "サンプル工房",
@@ -225,6 +232,7 @@ const store: Store = {
     { productId: "8800111", avatarId: "lime" },
     { productId: "8800112", avatarId: "lime" },
     { productId: "8800102", avatarId: "manuka" },
+    { productId: "8800120", avatarId: "lime" },
     { productId: "8800106", avatarId: "owned-8800106" },
   ],
   files: [
@@ -279,6 +287,24 @@ const store: Store = {
       localPath: null,
       remotePath: null,
     },
+    {
+      boothId: "8800120",
+      variation: "",
+      filename: "eye_base.zip",
+      sizeBytes: 4096,
+      state: "local",
+      localPath: "C:\\Assets\\Lime\\eye_base.zip",
+      remotePath: null,
+    },
+    ...["8187247", "8187248", "8187253", "8187254", "8187260"].map((id) => ({
+      boothId: "8800120",
+      variation: "",
+      filename: id,
+      sizeBytes: null,
+      state: "missing" as const,
+      localPath: null,
+      remotePath: null,
+    })),
   ],
   remoteReachable: true,
   remoteChecked: false,
@@ -650,6 +676,23 @@ function textOf(value: unknown): string {
   return "";
 }
 
+function unnamedIn(items: unknown[]): number {
+  let count = 0;
+  for (const raw of items) {
+    if (!raw || typeof raw !== "object") continue;
+    const row = raw as Record<string, unknown>;
+    const list = Array.isArray(row.downloads) ? row.downloads : Array.isArray(row.files) ? row.files : [];
+    for (const item of list) {
+      if (!item || typeof item !== "object") continue;
+      const file = item as Record<string, unknown>;
+      const name = textOf(file.filename || file.name);
+      const id = textOf(file.downloadableId || file.downloadable_id);
+      if (!name || name === id || /^\d{4,12}$/.test(name)) count += 1;
+    }
+  }
+  return count;
+}
+
 function importExport(json: string): ImportReport {
   let parsed: unknown;
   try {
@@ -749,7 +792,16 @@ function importExport(json: string): ImportReport {
       "バリエーションもダウンロードも 0 件です。ファイルの有無は分かりません。拡張の「解析結果をコピー」で構造を確認するか、ライブラリを取り込み直すか、フォルダを調べてください",
     );
   }
-  return { inserted, updated, unchanged, skipped, variations, downloads, warnings: warnings.slice(0, 8) };
+  return {
+    inserted,
+    updated,
+    unchanged,
+    skipped,
+    variations,
+    downloads,
+    unnamedDownloads: unnamedIn(items),
+    warnings: warnings.slice(0, 8),
+  };
 }
 
 function slug(name: string): string {

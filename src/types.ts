@@ -210,6 +210,7 @@ export interface ImportReport {
   skipped: number;
   variations: number;
   downloads: number;
+  unnamedDownloads: number;
   warnings: string[];
 }
 

@@ -224,35 +224,7 @@ function ItemCard({ item }: { item: ItemView }) {
             <p className="meta">リモートのフォルダを確認できません。接続してからもう一度開いてください。</p>
           )}
           {item.downloads.length > 0 && (
-            <ul className="file-list">
-              {item.downloads.map((file) => (
-                <li key={`${file.variation}:${file.filename}`} className={`download-row ${file.state}`}>
-                  <div>
-                    <span className="download-name">{file.filename}</span>
-                    {file.variation ? <span className="meta"> {file.variation}</span> : null}
-                    <span className={`meta state-${file.state}`}> {placeLabel(file, item)}</span>
-                    {file.sizeBytes != null && file.sizeBytes > 0 ? <span className="meta"> {formatBytes(file.sizeBytes)}</span> : null}
-                  </div>
-                  <div className="row-actions">
-                    {file.state === "local" && file.localPath && (
-                      <button type="button" onClick={() => void revealInFolder(file.localPath || "")}>
-                        保存先を開く
-                      </button>
-                    )}
-                    {file.state === "local" && item.remoteConfigured && item.remoteReachable && (
-                      <button type="button" disabled={busy === file.filename} onClick={() => void push(file)}>
-                        {busy === file.filename ? "コピー中" : "リモートに送る"}
-                      </button>
-                    )}
-                    {file.state === "remote" && item.remoteChecked && (
-                      <button type="button" disabled={busy === file.filename} onClick={() => void pull(file)}>
-                        {busy === file.filename ? "コピー中" : "ローカルに取ってくる"}
-                      </button>
-                    )}
-                  </div>
-                </li>
-              ))}
-            </ul>
+            <DownloadFiles item={item} busy={busy} pull={(file) => void pull(file)} push={(file) => void push(file)} />
           )}
           {item.localFileCount > 0 && (
             <ul className="file-list">
@@ -281,6 +253,94 @@ function ItemCard({ item }: { item: ItemView }) {
 function avatarNeedsRemoteProbe(detail: AvatarDetail): boolean {
   const items = [...detail.sections.flatMap((section) => section.items), ...detail.genericItems];
   return items.some((item) => item.remoteConfigured && !item.remoteChecked);
+}
+
+function hasRealFileName(filename: string): boolean {
+  return !/^\d{4,12}$/.test(filename);
+}
+
+function DownloadFiles({
+  item,
+  busy,
+  pull,
+  push,
+}: {
+  item: ItemView;
+  busy: string;
+  pull: (file: DownloadView) => void;
+  push: (file: DownloadView) => void;
+}) {
+  const present = item.downloads.filter((file) => file.state !== "missing");
+  const missing = item.downloads.filter((file) => file.state === "missing");
+  const foldMissing = missing.length >= 4;
+  const unnamed = item.downloads.some((file) => !hasRealFileName(file.filename));
+  const row = (file: DownloadView) => (
+    <DownloadRow key={`${file.variation}:${file.filename}:${file.state}`} file={file} item={item} busy={busy} pull={pull} push={push} />
+  );
+  return (
+    <>
+      {unnamed && (
+        <p className="meta">
+          ファイル名がない行は番号だけ出しています。拡張を更新してライブラリを取り込み直すと、名前が付きます。
+        </p>
+      )}
+      <ul className="file-list">
+        {present.map(row)}
+        {foldMissing ? (
+          <li className="download-fold">
+            <details>
+              <summary>未ダウンロード {missing.length}件</summary>
+              <ul className="file-list">{missing.map(row)}</ul>
+            </details>
+          </li>
+        ) : (
+          missing.map(row)
+        )}
+      </ul>
+    </>
+  );
+}
+
+function DownloadRow({
+  file,
+  item,
+  busy,
+  pull,
+  push,
+}: {
+  file: DownloadView;
+  item: ItemView;
+  busy: string;
+  pull: (file: DownloadView) => void;
+  push: (file: DownloadView) => void;
+}) {
+  return (
+    <li className={`download-row ${file.state}`}>
+      <div>
+        <span className="download-name">{file.filename}</span>
+        {file.variation ? <span className="meta"> {file.variation}</span> : null}
+        <span className={`meta state-${file.state}`}> {placeLabel(file, item)}</span>
+        {file.sizeBytes != null && file.sizeBytes > 0 ? <span className="meta"> {formatBytes(file.sizeBytes)}</span> : null}
+      </div>
+      <div className="row-actions">
+        {file.state === "local" && file.localPath && (
+          <button type="button" onClick={() => void revealInFolder(file.localPath || "")}>
+            保存先を開く
+          </button>
+        )}
+        {file.state === "local" && item.remoteConfigured && item.remoteReachable && (
+          <button type="button" disabled={busy === file.filename} onClick={() => push(file)}>
+            {busy === file.filename ? "コピー中" : "リモートに送る"}
+          </button>
+        )}
+        {file.state === "remote" && item.remoteChecked && (
+          <button type="button" disabled={busy === file.filename} onClick={() => pull(file)}>
+            {busy === file.filename ? "コピー中" : "ローカルに取ってくる"}
+          </button>
+        )}
+      </div>
+    </li>
+  );
 }
 
 function placeLabel(file: DownloadView, item: ItemView): string {

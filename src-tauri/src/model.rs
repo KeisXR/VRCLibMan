@@ -229,6 +229,7 @@ pub struct ImportReport {
     pub skipped: u32,
     pub variations: u32,
     pub downloads: u32,
+    pub unnamed_downloads: u32,
     pub warnings: Vec<String>,
 }
 

@@ -474,6 +474,17 @@ pub(crate) fn import_products(
         .iter()
         .map(|product| product.downloads.len() as u32)
         .sum();
+    let unnamed_downloads = parsed
+        .products
+        .iter()
+        .flat_map(|product| &product.downloads)
+        .filter(|download| {
+            filename_is_placeholder(
+                &download.filename,
+                &clean_downloadable_id(&download.downloadable_id),
+            )
+        })
+        .count() as u32;
     let mut warnings = parsed.warnings.clone();
     if !parsed.products.is_empty() && variations == 0 && downloads == 0 {
         warnings.push(
@@ -488,6 +499,7 @@ pub(crate) fn import_products(
         skipped: parsed.skipped,
         variations,
         downloads,
+        unnamed_downloads,
         warnings,
     })
 }
@@ -711,6 +723,15 @@ fn clean_downloadable_id(value: &str) -> String {
     }
 }
 
+fn filename_is_placeholder(filename: &str, downloadable_id: &str) -> bool {
+    let name = filename.trim();
+    if name.is_empty() || (!downloadable_id.is_empty() && name == downloadable_id) {
+        return true;
+    }
+    let bytes = name.as_bytes();
+    (4..=12).contains(&bytes.len()) && bytes.iter().all(|byte| byte.is_ascii_digit())
+}
+
 fn merge_download(
     connection: &Connection,
     booth_id: &str,
@@ -733,11 +754,27 @@ fn merge_download(
             )
             .optional()
             .sql()?;
-        if let Some((old_variation, old_filename)) = existing {
-            let new_filename = if filename != downloadable_id {
-                filename
-            } else {
+        let placeholder = if existing.is_none() && !downloadable_id.is_empty() {
+            connection
+                .query_row(
+                    "SELECT variation, filename FROM product_files
+                     WHERE booth_id = ?1
+                       AND (downloadable_id IS NULL OR downloadable_id = '' OR downloadable_id = ?2)
+                       AND (filename = ?2 OR filename = '')
+                     LIMIT 1",
+                    params![booth_id, downloadable_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()
+                .sql()?
+        } else {
+            None
+        };
+        if let Some((old_variation, old_filename)) = existing.or(placeholder) {
+            let new_filename = if filename_is_placeholder(&filename, &downloadable_id) {
                 old_filename.clone()
+            } else {
+                filename.clone()
             };
             let new_variation = if variation.is_empty() {
                 old_variation.clone()
@@ -750,21 +787,46 @@ fn merge_download(
                     .query_row(
                         "SELECT COUNT(*) FROM product_files
                          WHERE booth_id = ?1 AND variation = ?2 AND filename = ?3
-                           AND IFNULL(downloadable_id, '') != ?4",
-                        params![booth_id, new_variation, new_filename, downloadable_id],
+                           AND NOT (variation = ?4 AND filename = ?5)",
+                        params![
+                            booth_id,
+                            new_variation,
+                            new_filename,
+                            old_variation,
+                            old_filename
+                        ],
                         |row| row.get(0),
                     )
                     .sql()?;
                 if clash == 0 {
                     let updated = connection
                         .execute(
-                            "UPDATE product_files SET variation = ?1, filename = ?2
-                             WHERE booth_id = ?3 AND downloadable_id = ?4",
-                            params![new_variation, new_filename, booth_id, downloadable_id],
+                            "UPDATE product_files
+                             SET variation = ?1, filename = ?2, downloadable_id = ?3
+                             WHERE booth_id = ?4 AND variation = ?5 AND filename = ?6",
+                            params![
+                                new_variation,
+                                new_filename,
+                                downloadable_id,
+                                booth_id,
+                                old_variation,
+                                old_filename
+                            ],
                         )
                         .sql()?;
                     changed |= updated > 0;
                 }
+            }
+            if !changed {
+                let updated = connection
+                    .execute(
+                        "UPDATE product_files SET downloadable_id = ?1
+                         WHERE booth_id = ?2 AND variation = ?3 AND filename = ?4
+                           AND (downloadable_id IS NULL OR downloadable_id = '')",
+                        params![downloadable_id, booth_id, old_variation, old_filename],
+                    )
+                    .sql()?;
+                changed |= updated > 0;
             }
             if let Some(size) = download.size_bytes {
                 let updated = connection
@@ -4405,6 +4467,46 @@ mod tests {
             )
             .unwrap();
         assert_eq!(filename, "body.unitypackage");
+        assert_eq!(report.unnamed_downloads, 0);
+        let count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM product_files WHERE booth_id = '424242'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn a_legacy_id_filename_is_replaced_on_the_same_row() {
+        let mut connection = open_memory().unwrap();
+        let legacy = r#"{"boothId":"424242","title":"架空の服","downloads":[{"filename":"2336025","variation":"通常"}]}"#;
+        let first = import_products(&mut connection, &parse_export(legacy).unwrap()).unwrap();
+        assert_eq!(first.downloads, 1);
+        assert_eq!(first.unnamed_downloads, 1);
+        let named = r#"{"boothId":"424242","title":"架空の服","downloads":[{"filename":"body.unitypackage","downloadableId":"2336025","variation":"通常"}]}"#;
+        let second = import_products(&mut connection, &parse_export(named).unwrap()).unwrap();
+        assert_eq!(second.unnamed_downloads, 0);
+        let (filename, id): (String, String) = connection
+            .query_row(
+                "SELECT filename, downloadable_id FROM product_files WHERE booth_id = '424242'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(filename, "body.unitypackage");
+        assert_eq!(id, "2336025");
+        let again = r#"{"boothId":"424242","title":"架空の服","downloads":[{"filename":"2336025","downloadableId":"2336025","variation":"通常"}]}"#;
+        import_products(&mut connection, &parse_export(again).unwrap()).unwrap();
+        let kept: String = connection
+            .query_row(
+                "SELECT filename FROM product_files WHERE booth_id = '424242'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(kept, "body.unitypackage");
         let count: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM product_files WHERE booth_id = '424242'",

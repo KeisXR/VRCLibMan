@@ -168,9 +168,10 @@
   }
 
   const DOWNLOAD_LABEL = /^(ダウンロード|無料ダウンロード|download|その他のdl方法|その他のダウンロード|ブラウザでダウンロード|ダウンロード商品)$/i;
-  const FILE_EXT = /\.[A-Za-z0-9]{1,12}$/;
-  const EXT_ONLY = /^\.[A-Za-z0-9]{1,12}$/;
+  const FILE_EXT = /\.[A-Za-z0-9]{1,16}$/;
+  const EXT_ONLY = /^\.[A-Za-z0-9]{1,16}$/;
   const VARIATION_NOISE = /^(ダウンロード商品|無料|有料|デジタル|ファイル|file|download)$/i;
+  const NAME_BREAK = /[\s　/\\:*?"<>|\u0000()（）[\]【】]/;
 
   function downloadableIdFrom(value) {
     const match = String(value || "").match(/\/downloadables\/(\d{1,12})(?:[/?#]|$)/i);
@@ -195,9 +196,39 @@
 
   function fileNameFromText(value) {
     const text = clean(value);
-    if (!text || text.length > 180 || DOWNLOAD_LABEL.test(text)) return "";
+    if (!text || text.length > 180 || DOWNLOAD_LABEL.test(text) || EXT_ONLY.test(text)) return "";
+    if (/\s\.[A-Za-z0-9]{1,16}$/.test(text)) return "";
     if (!FILE_EXT.test(text)) return "";
     return safeFileName(text);
+  }
+
+  function filenameTokens(value) {
+    const text = String(value || "");
+    const found = [];
+    const pattern = /\.[A-Za-z0-9]{1,16}(?=$|[\s　)）\]])/g;
+    let match;
+    while ((match = pattern.exec(text)) !== null) {
+      let start = match.index;
+      while (start > 0 && !NAME_BREAK.test(text[start - 1])) start -= 1;
+      while (start > 1 && text[start - 1] === " ") {
+        let probe = start - 2;
+        while (probe >= 0 && text[probe] !== " " && !NAME_BREAK.test(text[probe])) probe -= 1;
+        if (probe === start - 2) break;
+        start = probe + 1;
+      }
+      const named = fileNameFromText(text.slice(start, match.index + match[0].length));
+      if (named && !found.includes(named)) found.push(named);
+      if (match.index === pattern.lastIndex) pattern.lastIndex += 1;
+    }
+    return found;
+  }
+
+  function longestName(names) {
+    let best = "";
+    for (const name of names) {
+      if (name && name.length > best.length) best = name;
+    }
+    return best;
   }
 
   function directText(node) {
@@ -230,13 +261,21 @@
     return "";
   }
 
+  function visibleText(node) {
+    if (!node) return "";
+    if (downloadControlCount(node) > 0 || (node.querySelector && node.querySelector("a[href*='/items/']"))) {
+      return directText(node);
+    }
+    return clean(node.textContent);
+  }
+
   function joinedExtensionName(row) {
     if (!row || !row.querySelectorAll) return "";
-    for (const node of row.querySelectorAll("div, span")) {
+    for (const node of row.querySelectorAll("*")) {
       const ext = directText(node);
       if (!EXT_ONLY.test(ext)) continue;
-      const stem = safeFileName(directText(node.previousElementSibling));
-      if (!stem || FILE_EXT.test(stem) || DOWNLOAD_LABEL.test(stem)) continue;
+      const stem = safeFileName(visibleText(node.previousElementSibling));
+      if (!stem || FILE_EXT.test(stem) || DOWNLOAD_LABEL.test(stem) || EXT_ONLY.test(stem)) continue;
       const named = safeFileName(`${stem}${ext}`);
       if (named && FILE_EXT.test(named)) return named;
     }
@@ -301,15 +340,27 @@
     return downloadControls(scope).length + (isDownloadControl(scope) ? 1 : 0);
   }
 
+  function downloadableIdsIn(scope) {
+    const ids = new Set();
+    const controls = downloadControls(scope);
+    if (isDownloadControl(scope) && !controls.includes(scope)) controls.push(scope);
+    for (const control of controls) {
+      const found = idsOf(control);
+      if (found.length === 0) ids.add(`anon:${ids.size}`);
+      for (const id of found) ids.add(id);
+    }
+    return ids;
+  }
+
   function fileSearchRoot(node) {
     const variation = node.closest && node.closest(".variation-item, [data-variation]");
-    if (variation) return variation;
+    if (variation && downloadableIdsIn(variation).size <= 1) return variation;
     let current = node;
     while (current && current.parentElement) {
       const parent = current.parentElement;
-      if (parent.matches && parent.matches("body, main")) break;
-      if (downloadControlCount(parent) > downloadControlCount(current)) break;
-      if (parent.querySelector && parent.querySelector("a[href*='/items/']")) break;
+      if (parent.matches && parent.matches("body, main, html")) break;
+      if (downloadableIdsIn(parent).size > 1) break;
+      if (parent.querySelector && parent.querySelector("a[href*='/items/']") && current !== node) break;
       current = parent;
     }
     return current || node;
@@ -334,18 +385,70 @@
     return nodes;
   }
 
+  function attributeFileName(element) {
+    if (!element || !element.getAttribute) return "";
+    for (const key of ["title", "data-filename", "data-file-name", "aria-label", "download"]) {
+      const named = fileNameFromText(element.getAttribute(key));
+      if (named) return named;
+    }
+    return "";
+  }
+
+  function fileNameInContainer(root, control) {
+    if (!root) return "";
+    const texts = [];
+    const attributes = [];
+    const tokens = [];
+    const elements = root.querySelectorAll ? [root, ...root.querySelectorAll("*")] : [root];
+    for (const element of elements) {
+      if (!element || element === control) continue;
+      if (control && control.contains && control.contains(element)) continue;
+      if (element.closest && element.closest("a[href*='/items/']")) continue;
+      const fromAttribute = attributeFileName(element);
+      if (fromAttribute) attributes.push(fromAttribute);
+      if (isDownloadControl(element)) continue;
+      if (downloadControlCount(element) > 0) continue;
+      if (element.querySelector && element.querySelector("a[href*='/items/']")) continue;
+      const text = clean(element.textContent);
+      const whole = fileNameFromText(text);
+      if (whole) texts.push(whole);
+      else tokens.push(...filenameTokens(text));
+    }
+    const joined = joinedExtensionName(root);
+    if (joined) texts.push(joined);
+    return shortestName(texts) || longestName(attributes) || longestName(tokens);
+  }
+
+  function shortestName(names) {
+    let best = "";
+    for (const name of names) {
+      if (name && (!best || name.length < best.length)) best = name;
+    }
+    return best;
+  }
+
   function fileNameNear(node) {
     const fromControl = fileNameFromLink(node);
     if (fromControl) return fromControl;
-    for (const root of nearbyNodes(node)) {
-      const nodes = root.querySelectorAll ? [root, ...root.querySelectorAll("a, div, span, p, li, h3, h4, strong")] : [root];
-      for (const candidate of nodes) {
-        if (candidate.closest && candidate.closest("a[href*='/items/']")) continue;
-        const named = fileNameFromText(directText(candidate)) || fileNameFromLink(candidate);
-        if (named) return named;
+    const root = fileSearchRoot(node);
+    const named = fileNameInContainer(root, node);
+    if (named) return named;
+    const scopes = [];
+    let prev = root.previousElementSibling;
+    while (prev) {
+      if (downloadableIdsIn(prev).size > 0) break;
+      if (prev.querySelector && prev.querySelector("a[href*='/items/']")) break;
+      if (prev.matches && prev.matches(
+        ".text-text-gray600, .item-card__shop-name, .item-card__shop-name-anchor",
+      )) {
+        break;
       }
-      const joined = joinedExtensionName(root);
-      if (joined) return joined;
+      scopes.push(prev);
+      prev = prev.previousElementSibling;
+    }
+    for (const scope of scopes) {
+      const found = fileNameInContainer(scope, node);
+      if (found) return found;
     }
     return "";
   }
@@ -365,7 +468,8 @@
         if (label.matches && label.matches(".text-text-gray600, .item-card__shop-name, .item-card__shop-name-anchor")) continue;
         const text = limitedName(directText(label), 40);
         if (!text || DOWNLOAD_LABEL.test(text) || VARIATION_NOISE.test(text)) continue;
-        if (fileNameFromText(text) || EXT_ONLY.test(text)) continue;
+        if (fileNameFromText(text) || EXT_ONLY.test(text) || filenameTokens(text).length > 0) continue;
+        if (text.includes("…") || text.includes("...")) continue;
         if (/^[¥￥]/.test(text) || /^\(?\d+(?:\.\d+)?\s*(?:B|KB|MB|GB)\)?$/i.test(text)) continue;
         if (text === "R-18" || text === "R18") continue;
         return text;
@@ -863,9 +967,11 @@
     const products = extractPage(document, href || "https://booth.pm/library");
     let variationCount = 0;
     let filenameCount = 0;
+    let downloadCount = 0;
     for (const product of products) {
       variationCount += (product.variations || []).length;
       for (const download of product.downloads || []) {
+        downloadCount += 1;
         if (fileNameFromText(download.filename)) filenameCount += 1;
       }
     }
@@ -912,6 +1018,7 @@
       variationCount,
       downloadLinkCount,
       filenameCount,
+      missingFilenameCount: downloadCount - filenameCount,
       selectorHits,
       hrefShapes,
     };
