@@ -320,6 +320,51 @@ if (typeof location !== "undefined" && new URLSearchParams(location.search).get(
   store.remoteReachable = false;
 }
 
+store.products.push(
+  product({
+    boothId: "8901001",
+    title: "見本のワールド小物",
+    shop: "見本",
+    category: "world",
+    descriptionSnippet: "ワールドに置く小物です。",
+  }),
+);
+for (let index = 1; index <= 12; index += 1) {
+  const name = `サンプル候補${String(index).padStart(2, "0")}`;
+  store.products.push(
+    product({
+      boothId: String(8902000 + index),
+      title: `${name}の小物`,
+      shop: "見本",
+      category: "gimmick",
+      needsReview: true,
+      confidence: 0.4,
+      unresolvedNames: [name],
+      descriptionSnippet: "確認キューの見本です。",
+    }),
+  );
+}
+store.avatars.push(
+  {
+    id: "sample-north",
+    displayName: "北の見本",
+    aliases: ["North"],
+    baseBody: null,
+    notes: "",
+    isBuiltin: false,
+    owned: false,
+  },
+  {
+    id: "sample-south",
+    displayName: "南の見本",
+    aliases: ["South"],
+    baseBody: null,
+    notes: "",
+    isBuiltin: false,
+    owned: false,
+  },
+);
+
 if (typeof location !== "undefined" && new URLSearchParams(location.search).get("browser") === "1") {
   store.settings.builtinBrowser = true;
   store.settings.routeDownloads = true;
@@ -469,6 +514,8 @@ function classify(avatar: AvatarRecord): {
         key: item.category ?? "uncategorized",
         item: itemView(item, !linked.has(avatar.id)),
       });
+    } else if (item.category === "world" && linked.size === 0) {
+      specific.push({ key: "world", item: itemView(item, false) });
     } else if (item.isGeneric && linked.size === 0) {
       generic.push(itemView(item, false));
     }
@@ -511,6 +558,7 @@ function cards(): AvatarCard[] {
         outfitCount: sectionCount(view.sections, "outfit"),
         hairCount: sectionCount(view.sections, "hair"),
         gimmickCount: sectionCount(view.sections, "gimmick"),
+        worldCount: sectionCount(view.sections, "world"),
         genericCount: view.generic.length,
       };
     });

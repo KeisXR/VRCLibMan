@@ -28,6 +28,7 @@ export interface AvatarCard {
   outfitCount: number;
   hairCount: number;
   gimmickCount: number;
+  worldCount: number;
   genericCount: number;
 }
 

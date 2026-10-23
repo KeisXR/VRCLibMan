@@ -1,4 +1,4 @@
-import { memo, useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { api, openExternal, openLocal } from "../api";
 import { useShell } from "../App";
 import { confidenceLabel, formatBytes } from "../media";
@@ -57,6 +57,23 @@ function bigrams(text: string): string[] {
   const grams: string[] = [];
   for (let index = 0; index < chars.length - 1; index += 1) grams.push(chars[index] + chars[index + 1]);
   return grams;
+}
+
+function matchingAvatars(index: readonly AvatarHit[], query: string): AvatarHit[] {
+  const needle = query.trim().toLowerCase();
+  const ranked = index.map((hit) => {
+    if (!needle) return { hit, score: 1 };
+    const name = hit.displayName.toLowerCase();
+    const included = name.includes(needle) || hit.haystack.includes(needle);
+    const score = Math.max(bigramScore(needle, name), bigramScore(needle, hit.haystack), included ? 0.8 : 0);
+    return { hit, score };
+  });
+  const visible = needle ? ranked.filter((row) => row.score > 0) : ranked;
+  visible.sort(
+    (left, right) =>
+      right.score - left.score || left.hit.displayName.localeCompare(right.hit.displayName, "ja"),
+  );
+  return visible.slice(0, 80).map((row) => row.hit);
 }
 
 function rankAvatars(index: readonly AvatarHit[], query: string, limit: number): AvatarHit[] {
@@ -235,6 +252,11 @@ const CandidateList = memo(function CandidateList({
   onError: (message: string) => void;
 }) {
   const [editing, setEditing] = useState<string | null>(null);
+  const selectedRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    selectedRef.current?.scrollIntoView({ block: "nearest" });
+  }, [editing]);
 
   const register = useCallback(
     async (name: string) => {
@@ -252,7 +274,7 @@ const CandidateList = memo(function CandidateList({
     async (name: string, avatarId: string) => {
       try {
         await api.aliasAvatarCandidate(name, avatarId);
-        setEditing(null);
+        setEditing((current) => (current === name ? null : current));
         onDone(`${name} を別名にしました`);
       } catch (err) {
         onError(errorText(err));
@@ -269,53 +291,123 @@ const CandidateList = memo(function CandidateList({
       <p className="meta">
         商品名の【対応】から拾った、対応表にない名前です。件数はその名前が付いている商品の数です。
       </p>
-      <div className="stack">
-        {candidates.map((candidate) => (
-          <div className="candidate" key={candidate.name}>
-            <strong>{candidate.name}</strong>
-            <span className="meta">{candidate.productCount} 件</span>
-            <button className="button primary" type="button" onClick={() => void register(candidate.name)}>
-              アバターとして登録
-            </button>
-            <button className="button" type="button" onClick={() => setEditing(candidate.name)}>
-              既存の別名にする
-            </button>
-          </div>
-        ))}
+      <div className="stack queue-candidate-list">
+        {candidates.map((candidate) => {
+          const selected = editing === candidate.name;
+          return (
+            <div
+              className={selected ? "candidate-block is-selected" : "candidate-block"}
+              key={candidate.name}
+              ref={selected ? selectedRef : undefined}
+            >
+              <div className="candidate">
+                <strong>{candidate.name}</strong>
+                <span className="meta">{candidate.productCount} 件</span>
+                <button className="button primary" type="button" onClick={() => void register(candidate.name)}>
+                  アバターとして登録
+                </button>
+                <button
+                  className="button"
+                  type="button"
+                  aria-expanded={selected}
+                  onClick={() => setEditing(selected ? null : candidate.name)}
+                >
+                  既存の別名にする
+                </button>
+              </div>
+              {selected && (
+                <AliasCombo
+                  suggestion={candidate.name}
+                  avatarIndex={avatarIndex}
+                  onApply={(avatarId) => void alias(candidate.name, avatarId)}
+                />
+              )}
+            </div>
+          );
+        })}
       </div>
-      {editing && (
-        <AvatarSearch
-          seed={editing}
-          avatarIndex={avatarIndex}
-          onPick={(avatarId) => void alias(editing, avatarId)}
-        />
-      )}
     </div>
   );
 });
 
-function AvatarSearch({
-  seed,
+function AliasCombo({
+  suggestion,
   avatarIndex,
-  onPick,
+  onApply,
 }: {
-  seed: string;
+  suggestion: string;
   avatarIndex: readonly AvatarHit[];
-  onPick: (avatarId: string) => void;
+  onApply: (avatarId: string) => void;
 }) {
-  const [query, setQuery] = useState(seed);
-  const deferred = useDeferredValue(query);
-  const hits = useMemo(
-    () => rankAvatars(avatarIndex, deferred.trim() || seed, 30),
-    [avatarIndex, deferred, seed],
+  const [query, setQuery] = useState("");
+  const [cursor, setCursor] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const activeRef = useRef<HTMLButtonElement>(null);
+  const hits = useMemo(() => matchingAvatars(avatarIndex, query), [avatarIndex, query]);
+  const safeCursor = hits.length === 0 ? 0 : Math.min(cursor, hits.length - 1);
+  const pending = hits[safeCursor];
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    setCursor(0);
+  }, [query]);
+
+  useEffect(() => {
+    activeRef.current?.scrollIntoView({ block: "nearest" });
+  }, [safeCursor, query]);
+
+  const apply = useCallback(
+    (avatarId: string | undefined) => {
+      if (avatarId) onApply(avatarId);
+    },
+    [onApply],
   );
 
   return (
-    <div className="picker">
-      <input className="search" value={query} placeholder="既存のアバターを検索" onChange={(event) => setQuery(event.target.value)} />
-      <div className="stack">
-        {hits.map((avatar) => (
-          <button key={avatar.id} className="button" type="button" onClick={() => onPick(avatar.id)}>
+    <div className="alias-combo">
+      <input
+        ref={inputRef}
+        className="search"
+        value={query}
+        placeholder="別名を絞り込む"
+        role="combobox"
+        aria-expanded="true"
+        aria-autocomplete="list"
+        onChange={(event) => setQuery(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowDown") {
+            event.preventDefault();
+            setCursor((current) => Math.min(current + 1, Math.max(hits.length - 1, 0)));
+          } else if (event.key === "ArrowUp") {
+            event.preventDefault();
+            setCursor((current) => Math.max(current - 1, 0));
+          } else if (event.key === "Enter") {
+            event.preventDefault();
+            apply(hits[safeCursor]?.id);
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            setQuery("");
+          }
+        }}
+      />
+      <p className="meta alias-preview">
+        {pending ? `${suggestion} → ${pending.displayName}` : `${suggestion} → 一致する別名がありません`}
+      </p>
+      <div className="alias-options" role="listbox">
+        {hits.map((avatar, index) => (
+          <button
+            key={avatar.id}
+            className={index === safeCursor ? "alias-option is-active" : "alias-option"}
+            type="button"
+            role="option"
+            aria-selected={index === safeCursor}
+            ref={index === safeCursor ? activeRef : undefined}
+            onMouseEnter={() => setCursor(index)}
+            onClick={() => onApply(avatar.id)}
+          >
             {avatar.displayName}
           </button>
         ))}

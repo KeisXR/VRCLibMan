@@ -931,8 +931,13 @@ pub(crate) fn apply_extraction(
         &extraction.compatible_avatars,
         &avatars,
     );
-    let category = decide_category(&existing, extraction.category);
-    let is_generic = generic_without_avatars(category, &names, extraction.is_generic);
+    let category = decide_category(&existing, extraction.category, extraction.confidence);
+    let model_generic = if category == Some(Category::World) {
+        false
+    } else {
+        extraction.is_generic
+    };
+    let is_generic = generic_without_avatars(category, &names, model_generic);
     let output = resolve_product(
         &ResolveInput {
             booth_id: existing.booth_id.as_str(),
@@ -1643,11 +1648,7 @@ fn booth_id_in_path(path: &str, ids: &HashSet<String>) -> Option<String> {
             found.push(id.clone());
         }
     }
-    if found.len() == 1 {
-        found.pop()
-    } else {
-        None
-    }
+    if found.len() == 1 { found.pop() } else { None }
 }
 
 fn sync_scanned_downloads(connection: &Connection) -> Result<(), String> {
@@ -1659,9 +1660,7 @@ fn sync_scanned_downloads(connection: &Connection) -> Result<(), String> {
         .sql()?;
     drop(id_query);
     let mut statement = connection
-        .prepare(
-            "SELECT path, filename, size, linked_product_id FROM local_files WHERE is_dir = 0",
-        )
+        .prepare("SELECT path, filename, size, linked_product_id FROM local_files WHERE is_dir = 0")
         .sql()?;
     let rows = statement
         .query_map([], |row| {
@@ -3001,7 +3000,7 @@ fn tokyo_date() -> String {
         .to_string()
 }
 
-fn decide_category(existing: &Product, llm: Category) -> Option<Category> {
+fn decide_category(existing: &Product, llm: Category, confidence: f64) -> Option<Category> {
     if existing.category_locked {
         return existing.category;
     }
@@ -3010,6 +3009,14 @@ fn decide_category(existing: &Product, llm: Category) -> Option<Category> {
     }
     if llm == Category::Avatar && crate::normalize::is_avatar_count_title(&existing.title) {
         return Some(Category::Other);
+    }
+    if crate::compat::world_hint_overrides(
+        &existing.title,
+        &existing.description_snippet,
+        llm,
+        confidence,
+    ) {
+        return Some(Category::World);
     }
     Some(llm)
 }
@@ -3453,7 +3460,9 @@ fn normalize_path_key(path: &str) -> String {
 
 fn normalize_path_key_os(path: &str, windows: bool) -> String {
     if windows {
-        path.replace('/', "\\").trim_end_matches('\\').to_lowercase()
+        path.replace('/', "\\")
+            .trim_end_matches('\\')
+            .to_lowercase()
     } else {
         path.trim_end_matches('/').to_string()
     }
@@ -4729,14 +4738,24 @@ mod tests {
         let report = import_products(&mut connection, &parse_export(empty).unwrap()).unwrap();
         assert_eq!(report.variations, 0);
         assert_eq!(report.downloads, 0);
-        assert!(report.warnings.iter().any(|warning| warning.contains("0 件")));
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("0 件"))
+        );
         let placeholder = r#"{"boothId":"424242","title":"架空の服","variations":[{"name":"通常","owned":true}],"downloads":[{"filename":"2336025","downloadableId":"2336025","variation":"通常"}]}"#;
         import_products(&mut connection, &parse_export(placeholder).unwrap()).unwrap();
         let named = r#"{"boothId":"424242","title":"架空の服","downloads":[{"filename":"body.unitypackage","downloadableId":"2336025","variation":"通常","sizeBytes":12}]}"#;
         let report = import_products(&mut connection, &parse_export(named).unwrap()).unwrap();
         assert_eq!(report.downloads, 1);
         assert_eq!(report.variations, 0);
-        assert!(report.warnings.iter().all(|warning| !warning.contains("0 件")));
+        assert!(
+            report
+                .warnings
+                .iter()
+                .all(|warning| !warning.contains("0 件"))
+        );
         let filename: String = connection
             .query_row(
                 "SELECT filename FROM product_files WHERE booth_id = '424242' AND downloadable_id = '2336025'",
@@ -5158,6 +5177,115 @@ mod tests {
             .unwrap();
         assert!(!title.is_empty());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn opening_the_database_keeps_generic_rows_until_extract() {
+        struct Temp(std::path::PathBuf);
+        impl Drop for Temp {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let dir = Temp(std::env::temp_dir().join(format!(
+            "vrclibman-world-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        )));
+        std::fs::create_dir_all(&dir.0).unwrap();
+        let db_path = dir.0.join("library.sqlite");
+        let json = r#"{
+            "products": [
+                {"boothId":"9101","title":"見本の小物","shop":"見本","description":"どのアバターでも使える小物です"},
+                {"boothId":"9102","title":"見本のワールド小物","shop":"見本","description":"ワールドに置く小物です"},
+                {"boothId":"9103","title":"表情ギミック","shop":"見本","description":"アバターに付けるギミックです"}
+            ]
+        }"#;
+        {
+            let mut connection = open(&db_path).unwrap();
+            import_products(&mut connection, &parse_export(json).unwrap()).unwrap();
+            apply_extraction(
+                &mut connection,
+                "9101",
+                &extraction(Category::Gimmick, &[], true, 0.9),
+                0.6,
+            )
+            .unwrap();
+            connection
+                .execute(
+                    "UPDATE products SET category = 'gimmick', is_generic = 1, extracted_at = 't',
+                     needs_review = 0 WHERE booth_id = '9102'",
+                    [],
+                )
+                .unwrap();
+            let _ = connection.execute_batch("PRAGMA wal_checkpoint(FULL);");
+        }
+        {
+            let connection = open(&db_path).unwrap();
+            let snapshot = load_snapshot(&connection).unwrap();
+            for id in ["9101", "9102"] {
+                let product = snapshot
+                    .products
+                    .iter()
+                    .find(|product| product.booth_id == id)
+                    .unwrap();
+                assert_eq!(product.category, Some(Category::Gimmick), "{id}");
+                assert!(product.is_generic, "{id}");
+            }
+            let untouched = snapshot
+                .products
+                .iter()
+                .find(|product| product.booth_id == "9103")
+                .unwrap();
+            assert!(untouched.category.is_none());
+        }
+        let mut connection = open(&db_path).unwrap();
+        apply_extraction(
+            &mut connection,
+            "9102",
+            &extraction(Category::Gimmick, &[], true, 0.84),
+            0.6,
+        )
+        .unwrap();
+        apply_extraction(
+            &mut connection,
+            "9101",
+            &extraction(Category::Gimmick, &[], true, 0.9),
+            0.6,
+        )
+        .unwrap();
+        apply_extraction(
+            &mut connection,
+            "9103",
+            &extraction(Category::Gimmick, &[], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        let snapshot = load_snapshot(&connection).unwrap();
+        let world = snapshot
+            .products
+            .iter()
+            .find(|product| product.booth_id == "9102")
+            .unwrap();
+        assert_eq!(world.category, Some(Category::World));
+        assert!(!world.is_generic);
+        let generic = snapshot
+            .products
+            .iter()
+            .find(|product| product.booth_id == "9101")
+            .unwrap();
+        assert_eq!(generic.category, Some(Category::Gimmick));
+        assert!(generic.is_generic);
+        let gimmick = snapshot
+            .products
+            .iter()
+            .find(|product| product.booth_id == "9103")
+            .unwrap();
+        assert_eq!(gimmick.category, Some(Category::Gimmick));
+        assert!(!gimmick.is_generic);
     }
 
     fn section_items(detail: &crate::view::AvatarDetail, category: &str) -> Vec<(String, bool)> {
