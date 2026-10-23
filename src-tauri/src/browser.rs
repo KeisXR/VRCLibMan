@@ -7,6 +7,7 @@ use url::Url;
 
 pub const WINDOW_LABEL: &str = "booth";
 pub const LIBRARY_URL: &str = "https://accounts.booth.pm/library";
+#[cfg(any(not(target_os = "macos"), test))]
 const SESSION_DIR_NAME: &str = "booth-browser";
 /// Fixed WKWebsiteDataStore id so the BOOTH window does not share cookies with the main window.
 /// macOS 14 and later. Windows keeps using a separate WebView2 folder instead.
@@ -14,10 +15,12 @@ pub const BOOTH_DATA_STORE_ID: [u8; 16] = *b"vrclibman-booth!";
 
 const EXTRACT_JS: &str = include_str!("../../extension/extract.js");
 
+#[cfg(any(not(target_os = "macos"), test))]
 pub fn session_dir(local_data: &Path) -> PathBuf {
     local_data.join(SESSION_DIR_NAME)
 }
 
+#[cfg(any(not(target_os = "macos"), test))]
 pub fn session_dir_is_safe(local_data: &Path, dir: &Path) -> bool {
     dir != local_data
         && dir.file_name().and_then(|name| name.to_str()) == Some(SESSION_DIR_NAME)
@@ -121,6 +124,7 @@ fn browser_enabled(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(any(not(target_os = "macos"), test))]
 fn local_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_local_data_dir()
@@ -319,6 +323,7 @@ mod tests {
 
     #[test]
     fn session_directory_stays_beside_the_library_database() {
+        let _linked: fn(&AppHandle) -> Result<PathBuf, String> = local_data_dir;
         let root = Path::new("/tmp/vrclibman-local");
         let dir = session_dir(root);
         assert!(session_dir_is_safe(root, &dir));

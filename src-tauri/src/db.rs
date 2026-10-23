@@ -2345,15 +2345,26 @@ fn parse_list(value: &str) -> Vec<String> {
 }
 
 fn normalize_path_key(path: &str) -> String {
-    path.replace('/', "\\")
-        .trim_end_matches('\\')
-        .to_lowercase()
+    normalize_path_key_os(path, cfg!(windows))
+}
+
+fn normalize_path_key_os(path: &str, windows: bool) -> String {
+    if windows {
+        path.replace('/', "\\").trim_end_matches('\\').to_lowercase()
+    } else {
+        path.trim_end_matches('/').to_string()
+    }
 }
 
 fn is_under(path: &str, root: &str) -> bool {
-    let path = normalize_path_key(path);
-    let root = normalize_path_key(root);
-    path.starts_with(&(root + "\\"))
+    is_under_os(path, root, cfg!(windows))
+}
+
+fn is_under_os(path: &str, root: &str, windows: bool) -> bool {
+    let path = normalize_path_key_os(path, windows);
+    let root = normalize_path_key_os(root, windows);
+    let separator = if windows { "\\" } else { "/" };
+    path.starts_with(&(root + separator))
 }
 
 #[derive(serde::Deserialize)]
@@ -2385,6 +2396,43 @@ mod tests {
     use super::*;
     use crate::import_data::parse_export;
     use crate::view::{avatar_cards, avatar_detail, queue_page};
+
+    #[test]
+    fn path_compare_folds_case_only_on_windows() {
+        assert_eq!(
+            normalize_path_key_os("/Users/A/VRCLibMan/File.ZIP", false),
+            "/Users/A/VRCLibMan/File.ZIP"
+        );
+        assert!(is_under_os(
+            "/Users/A/VRCLibMan/File.ZIP",
+            "/Users/A/VRCLibMan",
+            false
+        ));
+        assert!(!is_under_os(
+            "/Users/A/VRCLibMan/File.ZIP",
+            "/users/a/vrclibman",
+            false
+        ));
+        assert!(!is_under_os(
+            "/Users/A/Library/a.txt",
+            "/Users/A/Lib",
+            false
+        ));
+        assert_eq!(
+            normalize_path_key_os("C:/Users/A/VRCLibMan/File.ZIP", true),
+            "c:\\users\\a\\vrclibman\\file.zip"
+        );
+        assert!(is_under_os(
+            "C:/Users/A/Lib/a.txt",
+            "c:\\users\\a\\lib",
+            true
+        ));
+        assert!(!is_under_os(
+            "C:/Users/A/Library/a.txt",
+            "C:/Users/A/Lib",
+            true
+        ));
+    }
 
     const SAMPLE: &str = r#"{
         "products": [
