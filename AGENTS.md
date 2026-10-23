@@ -79,7 +79,8 @@ VRCLibMan を変更するときは、このファイルを先に読む。元の�
 - 説明は 8000 字まで。超えるときは「利用規約」を落とし、対応・素体・衣装・髪・ギミック・アバター・モデル・同梱を含む塊を優先する。
 - 書き出し形式は `vrclibman.booth-export` version 1。取り込みはラッパー、配列、単一オブジェクトを受ける。ID は 4〜12 桁。説明の別名は `description` も可。
 - 拡張のスクリプトは classic script。ファイル名は `extract.js`。Chrome のコンテンツスクリプトは `.cjs` を読めない。中身は IIFE で、Node テストは `createRequire` で読む。テスト用 HTML に Booth の商品文を丸ごと入れない。
-- 拡張の版は `0.1.7`。アプリの版とは別である。
+- 拡張の版は `0.1.8`。アプリの版とは別である。
+- バリエーションとダウンロード欄は、今見えているページからだけ読む。ライブラリのバリエーションは購入済み。商品ページではダウンロードリンクがあるものだけ購入済みで、無い名前は未購入。未購入の一覧は商品ページを開いて送ったときだけ入る。`downloads` 権限は、アプリ不在時の JSON 保存と、設定がオンのときの保存先の提案に使う。サービスワーカーは `onDeterminingFilename` で `Downloads/VRCLibMan/<商品ID>/` を提案するだけで、`chrome.downloads.download` は JSON の保存ダイアログ以外に使わない。BOOTH のファイルを拡張が取り始めることはしない。既定はオフ。
 
 ### 拡張からアプリへの受信
 
@@ -89,7 +90,8 @@ VRCVideoCacher の拡張が手元のアプリへ POST するのと同じ運び�
 - 初回起動で 8 文字のペアリングコードを作り、設定に `XXXX-XXXX` で出す。保存先は `settings.extension_token`。拡張は `chrome.storage.local` に一度貼った値を置き、`Authorization: Bearer` で毎回送る。コードが無い、または違うリクエストは 401。同じ Origin で 401 が 5 回続くと 30 秒 429 にする。
 - `Origin` は `chrome-extension://` に続く 32 文字（`a`–`p`）だけを受ける。ウェブページの Origin は、コードが合っていても 403。コードが合って最初に届いた Origin を `settings.extension_origin` に固定し、別の拡張は 403。コードを作り直すとその固定を外す。ブラウザが Origin を偽装できないことが、ウェブページを止める境界である。
 - CORS のプリフライト（`OPTIONS`）だけはコードを持たない。Origin が拡張のときだけ 204 と `Access-Control-Allow-Private-Network: true` を返す。GET と POST はコードが必要。
-- `POST /import` の本文は、ファイル取り込みと同じ `import_export_json` に渡す。確認に残す規則はそこから変わらない。`GET /health` は到達確認だけ。
+- `POST /import` の本文は、ファイル取り込みと同じ `import_export_json` に渡す。確認に残す規則はそこから変わらない。`GET /health` は到達確認だけ。`GET/POST /route-downloads` は振り分け設定の同期。`POST /download-finished` は、振り分けがオンで、パスが絶対パスかつ `VRCLibMan` を含み `..` が無いときだけ、ライブラリのフォルダへ移して記録する。オフのときは移動しない。
+- ファイルの状態はローカル、リモートのみ、未ダウンロード。リモートは設定フォルダで、切れた共有の `metadata` は別スレッドで待ち、1.5 秒で打ち切る。コピーは「取ってくる」「送る」を押したファイルだけ。アプリは BOOTH のファイル URL を取りに行かない。購入済みバリエーションは、後から未購入と届いても戻さない。省略された `isFree` / `isAdult` は既存の値を消さない。無料でライブラリに無い商品は、ページ送信、振り分け時の通知、URL の貼り付けで項目にする。URL の貼り付けは HTTP をしない。
 - 届かないときは拡張が `vrclibman://import` を開き、8 秒送り直す。それでも届かなければ、これまでどおり JSON を保存する。
 - `tauri-plugin-single-instance`（`deep-link` feature）を最初のプラグインにし、既に起動しているアプリへ URL を渡す。深いリンクは既存のウィンドウを前面にするだけで、二つ目のウィンドウは作らない。
 - NSIS の `currentUser` は `vrclibman` スキームを `HKCU\Software\Classes\vrclibman` に書き、アンインストール時に、そのコマンドがこのインストールを指していれば消す。`windows/hooks.nsh` はインストール先の `HKCU\Software\VRCLibMan` だけを消し、スキームもアプリデータも消さない。
@@ -168,7 +170,7 @@ Windows の実ライブラリ（約 110 件、`gemma4:12b`、新しい一時 DB�
 
 ### 再検証
 
-同じ 110 件を見るときは新しい一時 DB を使う。GPU を使う計測は、同じ PC で VRChat を動かさない。拡張の版は `0.1.7`。この節の分類契約は Rust 側で、拡張の版上げは受信口を足したときのもの。
+同じ 110 件を見るときは新しい一時 DB を使う。GPU を使う計測は、同じ PC で VRChat を動かさない。拡張の版は `0.1.8`。この節の分類契約は Rust 側である。
 
 ## 知識と名前解決
 

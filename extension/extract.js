@@ -153,15 +153,156 @@
     return output.slice(0, 8000);
   }
 
+  function limitedName(value, max) {
+    const text = clean(value);
+    if (!text || text.length > max) return "";
+    if (/[\\/\u0000]/.test(text)) return "";
+    return text;
+  }
+
+  function safeFileName(value) {
+    const text = clean(value);
+    if (!text || text.length > 180 || text === "." || text === "..") return "";
+    if (/[\\/:*?"<>|\u0000]/.test(text)) return "";
+    return text;
+  }
+
+  function fileNameFromLink(link) {
+    const attr = safeFileName(link.getAttribute("download"));
+    if (attr) return attr;
+    const text = clean(link.textContent);
+    if (text && /\.[A-Za-z0-9]{1,12}$/.test(text)) {
+      const named = safeFileName(text);
+      if (named) return named;
+    }
+    try {
+      const url = new URL(link.getAttribute("href") || link.href || "", "https://booth.pm");
+      const base = decodeURIComponent(url.pathname.split("/").filter(Boolean).pop() || "");
+      if (/\.[A-Za-z0-9]{1,12}$/.test(base)) return safeFileName(base);
+    } catch {
+      return "";
+    }
+    return "";
+  }
+
+  function sizeFromLink(link) {
+    if (!link.hasAttribute("data-size")) return null;
+    const size = Number(link.getAttribute("data-size"));
+    if (!Number.isFinite(size) || size < 0) return null;
+    return size;
+  }
+
+  function inRecommendation(node, skipCards) {
+    return Boolean(skipCards && node.closest && node.closest(".item-card"));
+  }
+
+  function variationNodes(scope, skipCards) {
+    if (!scope || !scope.querySelectorAll) return [];
+    return [...scope.querySelectorAll("[data-variation], .variation-item")].filter((node) => {
+      if (inRecommendation(node, skipCards)) return false;
+      const parent = node.parentElement && node.parentElement.closest("[data-variation], .variation-item");
+      return !parent;
+    });
+  }
+
+  function downloadAnchors(scope, skipCards) {
+    if (!scope || !scope.querySelectorAll) return [];
+    return [...scope.querySelectorAll("a[href], a[download]")].filter((link) => {
+      if (inRecommendation(link, skipCards)) return false;
+      const href = String(link.getAttribute("href") || link.href || "");
+      return link.hasAttribute("download") || /download/i.test(href);
+    });
+  }
+
+  function pushVariation(variations, name, owned) {
+    const cleaned = limitedName(name, 80);
+    if (!cleaned) return;
+    const existing = variations.find((row) => row.name === cleaned);
+    if (existing) {
+      if (owned) existing.owned = true;
+      return;
+    }
+    variations.push({ name: cleaned, owned: Boolean(owned) });
+  }
+
+  function readVariations(scope, fromLibrary) {
+    const variations = [];
+    const downloads = [];
+    const seen = new Set();
+    const skipCards = !fromLibrary;
+    for (const node of variationNodes(scope, skipCards)) {
+      const named = node.querySelector && node.querySelector(".variation-name");
+      const name = limitedName((named && named.textContent) || node.getAttribute("data-variation") || "", 80);
+      const links = downloadAnchors(node, false);
+      const marked = node.getAttribute("data-owned");
+      let owned = false;
+      if (fromLibrary) owned = true;
+      else if (marked === "true" || marked === "1") owned = true;
+      else owned = links.length > 0;
+      if (name) pushVariation(variations, name, owned);
+      for (const link of links) {
+        seen.add(link);
+        const filename = fileNameFromLink(link);
+        if (!filename) continue;
+        downloads.push({ filename, sizeBytes: sizeFromLink(link), variation: name });
+      }
+    }
+    for (const link of downloadAnchors(scope, skipCards)) {
+      if (seen.has(link)) continue;
+      const filename = fileNameFromLink(link);
+      if (!filename) continue;
+      downloads.push({ filename, sizeBytes: sizeFromLink(link), variation: "" });
+    }
+    if (fromLibrary && scope.querySelectorAll) {
+      for (const node of scope.querySelectorAll(".variation-name")) {
+        if (node.closest && node.closest("[data-variation], .variation-item")) continue;
+        pushVariation(variations, node.textContent, true);
+      }
+    }
+    return { variations, downloads };
+  }
+
+  function readFree(scope, skipCards) {
+    if (!scope || !scope.querySelector) return null;
+    const flagged = [...scope.querySelectorAll("[data-free='true']")].find((node) => !inRecommendation(node, skipCards));
+    if (flagged) return true;
+    const price = [...scope.querySelectorAll("[data-price], .price, .item-price")].find(
+      (node) => !inRecommendation(node, skipCards),
+    );
+    if (!price) return null;
+    const text = clean(price.textContent);
+    if (!text) return null;
+    if (text.includes("無料") || /^[¥￥]\s*0(?:\D|$)/.test(text)) return true;
+    if (/[1-9]/.test(text)) return false;
+    return null;
+  }
+
+  function readAdult(scope, skipCards) {
+    if (!scope || !scope.querySelector) return null;
+    const flagged = [...scope.querySelectorAll("[data-adult='true']")].find((node) => !inRecommendation(node, skipCards));
+    if (flagged) return true;
+    const badge = [...scope.querySelectorAll(".adult-badge, [data-rating]")].find(
+      (node) => !inRecommendation(node, skipCards),
+    );
+    const text = clean(badge && badge.textContent);
+    if (text === "R-18" || text === "R18") return true;
+    return null;
+  }
+
   function makeProduct(fields) {
-    return {
+    const product = {
       boothId: fields.boothId,
       title: fields.title,
       shop: fields.shop || "",
       descriptionSnippet: trimDescription(fields.description || ""),
       url: fields.url || `https://booth.pm/ja/items/${fields.boothId}`,
       thumbnailUrl: cardImage(fields.image),
+      variations: fields.variations || [],
+      downloads: fields.downloads || [],
     };
+    if (fields.isFree === true || fields.isFree === false) product.isFree = fields.isFree;
+    if (fields.isAdult === true) product.isAdult = true;
+    return product;
   }
 
   function extractItem(document, href) {
@@ -175,6 +316,7 @@
     const description = detail.length > 0 ? detail.join("\n\n") : clean(linked && linked.description);
     const og = document.querySelector('meta[property="og:image"]');
     const image = imageUrl(linked && linked.image) || (og && og.getAttribute("content")) || "";
+    const facts = readVariations(document, false);
     return makeProduct({
       boothId,
       title,
@@ -182,6 +324,10 @@
       description,
       url: absoluteUrl(href, "https://booth.pm"),
       image,
+      variations: facts.variations,
+      downloads: facts.downloads,
+      isFree: readFree(document, true),
+      isAdult: readAdult(document, true) === true ? true : null,
     });
   }
 
@@ -248,6 +394,7 @@
     );
     const imageNode = scope.querySelector && scope.querySelector("img");
     const image = imageNode ? imageNode.getAttribute("src") || imageNode.src || "" : "";
+    const facts = readVariations(scope, true);
     return makeProduct({
       boothId,
       title: title.slice(0, 300),
@@ -255,6 +402,10 @@
       description: "",
       url: href,
       image,
+      variations: facts.variations,
+      downloads: facts.downloads,
+      isFree: readFree(scope, false),
+      isAdult: readAdult(scope, false) === true ? true : null,
     });
   }
 
@@ -271,6 +422,7 @@
     const shopNode = card.querySelector(
       ".text-text-gray600, .item-card__shop-name-anchor, .item-card__shop-name",
     );
+    const facts = readVariations(card, true);
     return makeProduct({
       boothId,
       title: title.slice(0, 300),
@@ -278,6 +430,10 @@
       description: "",
       url: href,
       image: image.getAttribute("src") || image.src || "",
+      variations: facts.variations,
+      downloads: facts.downloads,
+      isFree: readFree(card, false),
+      isAdult: readAdult(card, false) === true ? true : null,
     });
   }
 

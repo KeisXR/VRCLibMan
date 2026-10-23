@@ -99,8 +99,19 @@ export const api = {
   aliasAvatarCandidate: (name: string, avatarId: string) =>
     call<void>("alias_avatar_candidate", { name, avatarId }),
   markOwnedAvatar: (boothId: string) => call<string>("mark_owned_avatar", { boothId }),
+  addFreeProduct: (url: string) => call<string>("add_free_product", { url }),
+  pullRemoteFile: (boothId: string, variation: string, filename: string) =>
+    call<void>("pull_remote_file", { boothId, variation, filename }),
+  pushRemoteFile: (boothId: string, variation: string, filename: string) =>
+    call<void>("push_remote_file", { boothId, variation, filename }),
   cacheThumbnails: () => call<number>("cache_thumbnails"),
 };
+
+export async function revealInFolder(path: string): Promise<void> {
+  if (!isTauri()) return;
+  const { revealItemInDir } = await import("@tauri-apps/plugin-opener");
+  await revealItemInDir(path);
+}
 
 export async function chooseFolder(): Promise<string | null> {
   if (!isTauri()) {

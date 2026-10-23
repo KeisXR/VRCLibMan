@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { api, openExternal, openLocal } from "../api";
+import { api, openExternal, openLocal, revealInFolder } from "../api";
 import { useShell } from "../App";
 import { confidenceLabel, formatBytes } from "../media";
 import { CATEGORY_LABEL } from "../types";
-import type { AvatarDetail, ItemView, Knowledge } from "../types";
+import type { AvatarDetail, DownloadView, ItemView, Knowledge } from "../types";
 import { Thumb, errorText } from "../ui";
 
 export function AvatarDetailPage({ id }: { id: string }) {
@@ -139,17 +139,99 @@ export function AvatarDetailPage({ id }: { id: string }) {
 }
 
 function ItemCard({ item }: { item: ItemView }) {
+  const { refresh, notify, fail } = useShell();
+  const [busy, setBusy] = useState("");
+
+  async function pull(file: DownloadView) {
+    setBusy(file.filename);
+    try {
+      await api.pullRemoteFile(item.boothId, file.variation, file.filename);
+      notify(`${file.filename} を手元のフォルダへコピーしました`);
+      refresh();
+    } catch (err) {
+      fail(errorText(err));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function push(file: DownloadView) {
+    setBusy(file.filename);
+    try {
+      await api.pushRemoteFile(item.boothId, file.variation, file.filename);
+      notify(`${file.filename} をリモートへコピーしました`);
+      refresh();
+    } catch (err) {
+      fail(errorText(err));
+    } finally {
+      setBusy("");
+    }
+  }
+
   return (
     <article className="item">
       <Thumb path={item.thumbnailPath} url={item.thumbnailUrl} name={item.title} small />
       <div>
-        <h3>{item.title}</h3>
+        <h3>
+          {item.title}
+          {item.isFree && <span className="badge">無料</span>}
+          {item.isAdult && <span className="badge adult">R-18</span>}
+        </h3>
         <div className="meta">
           {item.shop}
           {item.viaBaseBody ? " ・ 同じ素体" : ""}
           {item.isGeneric ? " ・ 汎用" : ""}
           {` ・ 確信度 ${confidenceLabel(item.confidence)}`}
         </div>
+        {item.isAdult && item.descriptionSnippet && (
+          <details className="adult-note">
+            <summary>説明を表示</summary>
+            <p>{item.descriptionSnippet}</p>
+          </details>
+        )}
+        {item.variations.length > 0 && (
+          <div className="variations">
+            {item.variations.map((variation) => (
+              <span key={variation.name} className={variation.owned ? "variation-chip" : "variation-chip off"}>
+                {variation.owned ? variation.name : `${variation.name}（未購入）`}
+              </span>
+            ))}
+          </div>
+        )}
+        {item.downloads.length > 0 && item.remoteConfigured && !item.remoteReachable && (
+          <p className="meta">リモートのフォルダを確認できません。接続してからもう一度開いてください。</p>
+        )}
+        {item.downloads.length > 0 && (
+          <ul className="file-list">
+            {item.downloads.map((file) => (
+              <li key={`${file.variation}:${file.filename}`} className={`download-row ${file.state}`}>
+                <div>
+                  <span className="download-name">{file.filename}</span>
+                  {file.variation ? <span className="meta"> {file.variation}</span> : null}
+                  <span className="meta"> {placeLabel(file.state)}</span>
+                  {file.sizeBytes != null && file.sizeBytes > 0 ? <span className="meta"> {formatBytes(file.sizeBytes)}</span> : null}
+                </div>
+                <div className="row-actions">
+                  {file.state === "local" && file.localPath && (
+                    <button type="button" onClick={() => void revealInFolder(file.localPath || "")}>
+                      保存先を開く
+                    </button>
+                  )}
+                  {file.state === "local" && item.remoteConfigured && item.remoteReachable && (
+                    <button type="button" disabled={busy === file.filename} onClick={() => void push(file)}>
+                      リモートに送る
+                    </button>
+                  )}
+                  {file.state === "remote" && (
+                    <button type="button" disabled={busy === file.filename} onClick={() => void pull(file)}>
+                      ローカルに取ってくる
+                    </button>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
         {item.localFileCount > 0 && (
           <ul className="file-list">
             {item.localFiles.map((file) => (
@@ -171,4 +253,10 @@ function ItemCard({ item }: { item: ItemView }) {
       </button>
     </article>
   );
+}
+
+function placeLabel(state: DownloadView["state"]): string {
+  if (state === "local") return "ローカルにある";
+  if (state === "remote") return "リモートにだけある";
+  return "未ダウンロード";
 }

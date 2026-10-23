@@ -64,5 +64,8 @@ input {
   background: var(--surface);
   color: var(--text);
 }
+label.check { display: flex; gap: 8px; align-items: flex-start; color: var(--text); }
+label.check input { width: auto; margin: 3px 0 0; }
+.hint { font-size: 12px; }
 #link-status { color: var(--text); }
 #status { min-height: 2.5em; }

@@ -115,6 +115,21 @@ pub struct Link {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct IncomingVariation {
+    pub name: String,
+    pub owned: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IncomingDownload {
+    pub filename: String,
+    pub size_bytes: Option<u64>,
+    pub variation: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct IncomingProduct {
     pub booth_id: String,
     pub title: String,
@@ -122,6 +137,77 @@ pub struct IncomingProduct {
     pub description_snippet: String,
     pub url: String,
     pub thumbnail_url: Option<String>,
+    pub variations: Vec<IncomingVariation>,
+    pub downloads: Vec<IncomingDownload>,
+    /// Missing means this payload does not know. It must not clear a stored flag.
+    pub is_free: Option<bool>,
+    pub is_adult: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VariationFact {
+    pub booth_id: String,
+    pub name: String,
+    pub owned: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadFact {
+    pub booth_id: String,
+    pub variation: String,
+    pub filename: String,
+    pub size_bytes: Option<u64>,
+    pub downloaded: bool,
+    pub local_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductFlag {
+    pub booth_id: String,
+    pub is_free: Option<bool>,
+    pub is_adult: Option<bool>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FilePlace {
+    Local,
+    Remote,
+    Missing,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlacedDownload {
+    pub booth_id: String,
+    pub variation: String,
+    pub filename: String,
+    pub size_bytes: Option<u64>,
+    pub state: FilePlace,
+    pub local_path: Option<String>,
+    pub remote_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadFinished {
+    pub booth_id: String,
+    pub path: String,
+    #[serde(default)]
+    pub filename: String,
+    #[serde(default)]
+    pub size: Option<u64>,
+    #[serde(default)]
+    pub is_free: Option<bool>,
+    #[serde(default)]
+    pub is_adult: Option<bool>,
+    #[serde(default)]
+    pub variation: String,
+    #[serde(default)]
+    pub title: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -178,6 +264,8 @@ pub struct Settings {
     pub confidence_threshold: f64,
     pub library_folder: String,
     pub builtin_browser: bool,
+    pub remote_library_folder: String,
+    pub route_downloads: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -189,6 +277,10 @@ pub struct SettingsInput {
     pub library_folder: String,
     #[serde(default)]
     pub builtin_browser: bool,
+    #[serde(default)]
+    pub remote_library_folder: String,
+    #[serde(default)]
+    pub route_downloads: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -1,5 +1,6 @@
 use crate::model::{
-    Avatar, BaseBody, Category, LibraryStats, Link, LocalFile, Product,
+    Avatar, BaseBody, Category, DownloadFact, FilePlace, LibraryStats, Link, LocalFile, PlacedDownload,
+    Product, ProductFlag, VariationFact,
 };
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -11,6 +12,12 @@ pub struct Snapshot {
     pub avatars: Vec<Avatar>,
     pub base_bodies: Vec<BaseBody>,
     pub links: Vec<Link>,
+    pub variations: Vec<VariationFact>,
+    pub download_rows: Vec<DownloadFact>,
+    pub placed_downloads: Vec<PlacedDownload>,
+    pub product_flags: Vec<ProductFlag>,
+    pub remote_configured: bool,
+    pub remote_reachable: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -21,6 +28,24 @@ pub struct FileBrief {
     pub is_dir: bool,
     pub size: u64,
     pub match_score: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VariationView {
+    pub name: String,
+    pub owned: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadView {
+    pub variation: String,
+    pub filename: String,
+    pub size_bytes: Option<u64>,
+    pub state: FilePlace,
+    pub local_path: Option<String>,
+    pub remote_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -39,6 +64,12 @@ pub struct ItemView {
     pub via_base_body: bool,
     pub local_files: Vec<FileBrief>,
     pub local_file_count: u32,
+    pub variations: Vec<VariationView>,
+    pub downloads: Vec<DownloadView>,
+    pub is_free: bool,
+    pub is_adult: bool,
+    pub remote_configured: bool,
+    pub remote_reachable: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -440,8 +471,15 @@ fn item_view(snapshot: &Snapshot, product: &Product, via_base_body: bool) -> Ite
             match_score: file.match_score,
         })
         .collect();
+    let downloads = download_views(snapshot, &product.booth_id);
+    let download_names: HashSet<&str> = downloads.iter().map(|file| file.filename.as_str()).collect();
+    files.retain(|file| !download_names.contains(file.filename.as_str()));
     let local_file_count = files.len() as u32;
     files.truncate(8);
+    let flag = snapshot
+        .product_flags
+        .iter()
+        .find(|flag| flag.booth_id == product.booth_id);
     ItemView {
         booth_id: product.booth_id.clone(),
         title: product.title.clone(),
@@ -460,7 +498,65 @@ fn item_view(snapshot: &Snapshot, product: &Product, via_base_body: bool) -> Ite
         via_base_body,
         local_files: files,
         local_file_count,
+        variations: variation_views(snapshot, &product.booth_id),
+        downloads,
+        is_free: flag.and_then(|flag| flag.is_free).unwrap_or(false),
+        is_adult: flag.and_then(|flag| flag.is_adult).unwrap_or(false),
+        remote_configured: snapshot.remote_configured,
+        remote_reachable: snapshot.remote_reachable,
     }
+}
+
+fn variation_views(snapshot: &Snapshot, booth_id: &str) -> Vec<VariationView> {
+    let mut rows: Vec<VariationView> = snapshot
+        .variations
+        .iter()
+        .filter(|row| row.booth_id == booth_id)
+        .map(|row| VariationView {
+            name: row.name.clone(),
+            owned: row.owned,
+        })
+        .collect();
+    rows.sort_by(|left, right| {
+        right
+            .owned
+            .cmp(&left.owned)
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    rows
+}
+
+fn download_views(snapshot: &Snapshot, booth_id: &str) -> Vec<DownloadView> {
+    let mut rows: Vec<DownloadView> = snapshot
+        .placed_downloads
+        .iter()
+        .filter(|row| row.booth_id == booth_id)
+        .map(|row| DownloadView {
+            variation: row.variation.clone(),
+            filename: row.filename.clone(),
+            size_bytes: row.size_bytes,
+            state: row.state,
+            local_path: row.local_path.clone(),
+            remote_path: row.remote_path.clone(),
+        })
+        .collect();
+    if rows.is_empty() {
+        rows = snapshot
+            .download_rows
+            .iter()
+            .filter(|row| row.booth_id == booth_id)
+            .map(|row| DownloadView {
+                variation: row.variation.clone(),
+                filename: row.filename.clone(),
+                size_bytes: row.size_bytes,
+                state: FilePlace::Missing,
+                local_path: row.local_path.clone(),
+                remote_path: None,
+            })
+            .collect();
+    }
+    rows.sort_by(|left, right| left.filename.cmp(&right.filename));
+    rows
 }
 
 fn family_ids(snapshot: &Snapshot, avatar: &Avatar) -> HashSet<String> {
@@ -588,6 +684,12 @@ mod tests {
                 link("6", "shinano"),
                 link("7", "shinano"),
             ],
+            variations: Vec::new(),
+            download_rows: Vec::new(),
+            placed_downloads: Vec::new(),
+            product_flags: Vec::new(),
+            remote_configured: false,
+            remote_reachable: false,
         }
     }
 

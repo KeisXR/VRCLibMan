@@ -199,6 +199,54 @@ test("update mode keeps newer purchases and stops at a known id", () => {
   assert.equal(full.products.length, 4);
 });
 
+test("item page records purchased variations and leaves the others unpurchased", () => {
+  const html = `<!doctype html><body>
+    <h2>架空の服</h2>
+    <span class="price">無料</span>
+    <span data-adult="true"></span>
+    <div data-variation="通常">
+      <span class="variation-name">通常</span>
+      <a href="https://booth.pm/downloads/424242/file" download="body.unitypackage" data-size="12">body.unitypackage</a>
+    </div>
+    <div class="variation-item" data-owned="false">
+      <span class="variation-name">特典</span>
+    </div>
+    <div class="item-card"><a href="/ja/items/9990001" download="other.unitypackage">other.unitypackage</a></div>
+  </body>`;
+  const { document } = parseHTML(html);
+  const products = extractPage(document, "https://booth.pm/ja/items/424242");
+  assert.equal(products.length, 1);
+  assert.equal(products[0].isFree, true);
+  assert.equal(products[0].isAdult, true);
+  assert.deepEqual(
+    products[0].variations.map((row) => [row.name, row.owned]),
+    [["通常", true], ["特典", false]],
+  );
+  assert.deepEqual(products[0].downloads, [
+    { filename: "body.unitypackage", sizeBytes: 12, variation: "通常" },
+  ]);
+});
+
+test("library cards treat listed variations as purchased and keep download names", () => {
+  const { document } = parseHTML(LIBRARY_HTML);
+  const products = extractPage(document, "https://booth.pm/library");
+  assert.deepEqual(products[0].downloads, [
+    { filename: "manuka.zip", sizeBytes: null, variation: "" },
+  ]);
+  assert.equal(products[0].isFree, undefined);
+  const html = `<!doctype html><body>
+    <div class="bg-white">
+      <img class="l-library-item-thumbnail" alt="" src="https://booth.pximg.net/c/72x72/a.jpg" />
+      <a href="/ja/items/424242">架空の服</a>
+      <span class="variation-name">通常</span>
+      <span class="price">¥1,200</span>
+    </div>
+  </body>`;
+  const priced = extractPage(parseHTML(html).document, "https://booth.pm/library");
+  assert.deepEqual(priced[0].variations, [{ name: "通常", owned: true }]);
+  assert.equal(priced[0].isFree, false);
+});
+
 test("card images use a pximg size the CDN serves", () => {
   assert.equal(
     cardImage("https://booth.pximg.net/abcdef/i/4876459/base.jpg"),

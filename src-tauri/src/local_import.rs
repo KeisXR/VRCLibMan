@@ -133,7 +133,15 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
             guard.record_failure(&origin_key, now);
         }
     }
-    if matches!(gate, Gate::Health | Gate::Import | Gate::KnownIds) {
+    if matches!(
+        gate,
+        Gate::Health
+            | Gate::Import
+            | Gate::KnownIds
+            | Gate::DownloadFinished
+            | Gate::RouteRead
+            | Gate::RouteWrite
+    ) {
         if let Ok(mut guard) = state.import_guard.lock() {
             guard.record_success(&origin_key);
         }
@@ -172,13 +180,43 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
             }
         };
         let body = serde_json::json!({ "ids": ids }).to_string();
-        let mut response = Response::from_string(body).with_status_code(StatusCode(200));
-        if let Some(origin) = origin.as_deref() {
-            response = add_cors(response, origin);
-        }
-        return response;
+        return cors_json(origin.as_deref(), 200, body);
     }
-    if !matches!(gate, Gate::Import) {
+    if matches!(gate, Gate::RouteRead) {
+        discard_body(request);
+        let enabled = {
+            let connection = match state.db.lock() {
+                Ok(connection) => connection,
+                Err(_) => {
+                    return response_for(
+                        origin.as_deref(),
+                        Gate::reject(500, "データベースをロックできません"),
+                        None,
+                    );
+                }
+            };
+            match db::settings(&connection) {
+                Ok(settings) => settings.route_downloads,
+                Err(err) => {
+                    return response_for(
+                        origin.as_deref(),
+                        Gate::Reject {
+                            status: 500,
+                            message: "",
+                            message_owned: Some(err),
+                        },
+                        None,
+                    );
+                }
+            }
+        };
+        return cors_json(
+            origin.as_deref(),
+            200,
+            serde_json::json!({ "enabled": enabled }).to_string(),
+        );
+    }
+    if !matches!(gate, Gate::Import | Gate::DownloadFinished | Gate::RouteWrite) {
         discard_body(request);
         return response_for(origin.as_deref(), gate, None);
     }
@@ -209,6 +247,161 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
             );
         }
     };
+    if matches!(gate, Gate::RouteWrite) {
+        let enabled = match serde_json::from_str::<RouteUpdate>(&text) {
+            Ok(update) => update.enabled,
+            Err(_) => {
+                return response_for(
+                    origin.as_deref(),
+                    Gate::reject(400, "設定を読めません"),
+                    None,
+                );
+            }
+        };
+        let saved = {
+            let connection = match state.db.lock() {
+                Ok(connection) => connection,
+                Err(_) => {
+                    return response_for(
+                        origin.as_deref(),
+                        Gate::reject(500, "データベースをロックできません"),
+                        None,
+                    );
+                }
+            };
+            match db::settings(&connection).and_then(|settings| {
+                db::save_settings(
+                    &connection,
+                    &crate::model::SettingsInput {
+                        ollama_base_url: settings.ollama_base_url,
+                        ollama_model: settings.ollama_model,
+                        confidence_threshold: settings.confidence_threshold,
+                        library_folder: settings.library_folder,
+                        builtin_browser: settings.builtin_browser,
+                        remote_library_folder: settings.remote_library_folder,
+                        route_downloads: enabled,
+                    },
+                )
+            }) {
+                Ok(()) => enabled,
+                Err(err) => {
+                    return response_for(
+                        origin.as_deref(),
+                        Gate::Reject {
+                            status: 500,
+                            message: "",
+                            message_owned: Some(err),
+                        },
+                        None,
+                    );
+                }
+            }
+        };
+        return cors_json(
+            origin.as_deref(),
+            200,
+            serde_json::json!({ "enabled": saved }).to_string(),
+        );
+    }
+    if matches!(gate, Gate::DownloadFinished) {
+        let notice = match serde_json::from_str::<crate::model::DownloadFinished>(&text) {
+            Ok(notice) => notice,
+            Err(_) => {
+                return response_for(
+                    origin.as_deref(),
+                    Gate::reject(400, "ダウンロードの通知を読めません"),
+                    None,
+                );
+            }
+        };
+        let plan = {
+            let mut connection = match state.db.lock() {
+                Ok(connection) => connection,
+                Err(_) => {
+                    return response_for(
+                        origin.as_deref(),
+                        Gate::reject(500, "データベースをロックできません"),
+                        None,
+                    );
+                }
+            };
+            match db::prepare_download(&mut connection, &notice) {
+                Ok(plan) => plan,
+                Err(err) => {
+                    return response_for(
+                        origin.as_deref(),
+                        Gate::Reject {
+                            status: 400,
+                            message: "",
+                            message_owned: Some(err),
+                        },
+                        None,
+                    );
+                }
+            }
+        };
+        let placed = match crate::library_files::place_into_library(
+            &plan.source,
+            plan.library.as_deref(),
+            &plan.booth_id,
+        ) {
+            Ok(path) => path,
+            Err(err) => {
+                return response_for(
+                    origin.as_deref(),
+                    Gate::Reject {
+                        status: 400,
+                        message: "",
+                        message_owned: Some(err),
+                    },
+                    None,
+                );
+            }
+        };
+        let recorded = {
+            let connection = match state.db.lock() {
+                Ok(connection) => connection,
+                Err(_) => {
+                    return response_for(
+                        origin.as_deref(),
+                        Gate::reject(500, "データベースをロックできません"),
+                        None,
+                    );
+                }
+            };
+            db::record_placed_download(
+                &connection,
+                &plan.booth_id,
+                &plan.variation,
+                &placed,
+                notice.size,
+            )
+        };
+        return match recorded {
+            Ok(()) => {
+                let _ = app.emit("library-changed", ());
+                cors_json(
+                    origin.as_deref(),
+                    200,
+                    serde_json::json!({
+                        "ok": true,
+                        "boothId": plan.booth_id,
+                        "path": placed.display().to_string(),
+                    })
+                    .to_string(),
+                )
+            }
+            Err(err) => response_for(
+                origin.as_deref(),
+                Gate::Reject {
+                    status: 500,
+                    message: "",
+                    message_owned: Some(err),
+                },
+                None,
+            ),
+        };
+    }
     let imported = {
         let mut connection = match state.db.lock() {
             Ok(connection) => connection,
@@ -239,6 +432,23 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
     }
 }
 
+#[derive(serde::Deserialize)]
+struct RouteUpdate {
+    enabled: bool,
+}
+
+fn cors_json(
+    origin: Option<&str>,
+    status: u16,
+    body: String,
+) -> Response<std::io::Cursor<Vec<u8>>> {
+    let mut response = Response::from_string(body).with_status_code(StatusCode(status));
+    if let Some(origin) = origin.filter(|origin| is_extension_origin(origin)) {
+        response = add_cors(response, origin);
+    }
+    response
+}
+
 struct RequestView<'a> {
     method: &'a str,
     path: &'a str,
@@ -251,6 +461,9 @@ enum Gate {
     Health,
     Import,
     KnownIds,
+    DownloadFinished,
+    RouteRead,
+    RouteWrite,
     Reject {
         status: u16,
         message: &'static str,
@@ -300,6 +513,15 @@ fn classify(request: RequestView<'_>, access: Access<'_>) -> Gate {
     if request.method.eq_ignore_ascii_case("GET") && path == "/known-ids" {
         return Gate::KnownIds;
     }
+    if request.method.eq_ignore_ascii_case("POST") && path == "/download-finished" {
+        return Gate::DownloadFinished;
+    }
+    if request.method.eq_ignore_ascii_case("GET") && path == "/route-downloads" {
+        return Gate::RouteRead;
+    }
+    if request.method.eq_ignore_ascii_case("POST") && path == "/route-downloads" {
+        return Gate::RouteWrite;
+    }
     if !matches!(request.method.to_ascii_uppercase().as_str(), "GET" | "POST") {
         return Gate::reject(405, "受け付けないメソッドです");
     }
@@ -322,6 +544,7 @@ fn response_for(
         Gate::Preflight => (204, String::new()),
         Gate::Health => (200, r#"{"ok":true}"#.to_string()),
         Gate::KnownIds => (200, r#"{"ids":[]}"#.to_string()),
+        Gate::DownloadFinished | Gate::RouteRead | Gate::RouteWrite => (200, "{}".to_string()),
         Gate::Import => (
             200,
             serde_json::to_string(&report.expect("import report")).unwrap_or_else(|_| "{}".into()),
@@ -603,6 +826,37 @@ mod tests {
         assert!(matches!(
             gate("GET", "/known-ids", Some(EXTENSION), Some("Bearer ABCD-2345")),
             Gate::KnownIds
+        ));
+        assert!(matches!(
+            gate(
+                "POST",
+                "/download-finished",
+                Some(EXTENSION),
+                Some("Bearer ABCD-2345")
+            ),
+            Gate::DownloadFinished
+        ));
+        assert!(matches!(
+            gate(
+                "GET",
+                "/route-downloads",
+                Some(EXTENSION),
+                Some("Bearer ABCD-2345")
+            ),
+            Gate::RouteRead
+        ));
+        assert!(matches!(
+            gate(
+                "POST",
+                "/route-downloads",
+                Some(EXTENSION),
+                Some("Bearer ABCD-2345")
+            ),
+            Gate::RouteWrite
+        ));
+        assert!(matches!(
+            gate("POST", "/download-finished", Some(EXTENSION), None),
+            Gate::Reject { status: 401, .. }
         ));
         assert!(matches!(
             gate("GET", "/known-ids", Some(EXTENSION), None),

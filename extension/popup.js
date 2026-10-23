@@ -6,6 +6,7 @@ const newButton = document.querySelector("#export-new");
 const saveTokenButton = document.querySelector("#save-token");
 const openLibraryButton = document.querySelector("#open-library");
 const tokenInput = document.querySelector("#token");
+const routeInput = document.querySelector("#route-downloads");
 const api = () => globalThis.VrcLibManExtract;
 const LOCAL_PORT = 17321;
 const LOCAL_BASE = `http://127.0.0.1:${LOCAL_PORT}`;
@@ -181,9 +182,15 @@ async function probe(token) {
   }
 }
 
+async function storedRoute() {
+  const stored = await chrome.storage.local.get({ routeDownloads: false });
+  return stored.routeDownloads === true;
+}
+
 async function refreshLink() {
   const token = await savedToken();
   tokenInput.value = token;
+  routeInput.checked = await storedRoute();
   if (!token) {
     linkStatus.textContent = "未ペアリング。アプリの設定に出るコードを貼ってください";
     return;
@@ -192,6 +199,21 @@ async function refreshLink() {
   linkStatus.textContent = reachable
     ? "ペアリング済み。アプリは起動しています"
     : "ペアリング済み。アプリは起動していません";
+  if (!reachable) return;
+  try {
+    const response = await fetch(`${LOCAL_BASE}/route-downloads`, {
+      method: "GET",
+      credentials: "omit",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) return;
+    const data = await response.json();
+    const enabled = data.enabled === true;
+    routeInput.checked = enabled;
+    await chrome.storage.local.set({ routeDownloads: enabled });
+  } catch {
+    // アプリの設定が読めないときは、拡張に保存した値のままにする。
+  }
 }
 
 async function fetchKnownIds(token) {
@@ -409,6 +431,29 @@ saveTokenButton.addEventListener("click", async () => {
 
 openLibraryButton.addEventListener("click", () => {
   chrome.tabs.create({ url: LIBRARY_URL });
+});
+
+routeInput.addEventListener("change", async () => {
+  const enabled = routeInput.checked === true;
+  await chrome.storage.local.set({ routeDownloads: enabled });
+  const token = await savedToken();
+  if (!token) return;
+  try {
+    const response = await fetch(`${LOCAL_BASE}/route-downloads`, {
+      method: "POST",
+      credentials: "omit",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ enabled }),
+    });
+    if (!response.ok) {
+      setStatus("振り分け設定をアプリへ保存できませんでした");
+    }
+  } catch {
+    setStatus("アプリが起動していないので、拡張側だけ覚えました");
+  }
 });
 
 refreshLink();

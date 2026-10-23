@@ -4,6 +4,7 @@ mod commands;
 mod compat;
 mod db;
 mod import_data;
+mod library_files;
 mod local_import;
 mod matching;
 mod model;
@@ -129,6 +130,9 @@ pub fn run() {
             commands::register_avatar_candidate,
             commands::alias_avatar_candidate,
             commands::mark_owned_avatar,
+            commands::add_free_product,
+            commands::pull_remote_file,
+            commands::push_remote_file,
             commands::cache_thumbnails,
             commands::open_booth_browser,
             commands::show_booth_library,

@@ -10,6 +10,7 @@ export function ImportPage() {
   const [extractAfter, setExtractAfter] = useState(isTauri());
   const [report, setReport] = useState<ImportReport | null>(null);
   const [busy, setBusy] = useState(false);
+  const [freeUrl, setFreeUrl] = useState("");
 
   async function importText(json: string) {
     setBusy(true);
@@ -138,6 +139,40 @@ export function ImportPage() {
           取り込んだあと、未抽出の商品を Ollama で分類する
         </span>
       </label>
+      <form
+        className="panel"
+        style={{ padding: 14, marginTop: 16 }}
+        onSubmit={(event) => {
+          event.preventDefault();
+          const url = freeUrl.trim();
+          if (!url) return;
+          setBusy(true);
+          void api.addFreeProduct(url).then(
+            (id) => {
+              notify(`無料の商品 ${id} を追加しました。確認タブの未抽出に出ます`);
+              setFreeUrl("");
+              refresh();
+            },
+            (err: unknown) => fail(errorText(err)),
+          ).finally(() => setBusy(false));
+        }}
+      >
+        <h2 style={{ marginTop: 0 }}>ライブラリにない無料商品</h2>
+        <p className="meta">
+          商品ページの URL を貼ると項目だけ作ります。ページは取りに行きません。拡張でそのページを送るか、無料のファイルを自分でダウンロードしたときも、同じ項目に足せます。
+        </p>
+        <label className="field">
+          <span>商品 URL</span>
+          <input
+            value={freeUrl}
+            placeholder="https://booth.pm/ja/items/1234567"
+            onChange={(event) => setFreeUrl(event.target.value)}
+          />
+        </label>
+        <button className="button" type="submit" disabled={busy || freeUrl.trim() === ""}>
+          無料の項目を追加
+        </button>
+      </form>
       {report && (
         <p className="meta">
           追加 {report.inserted} / 更新 {report.updated} / 変化なし {report.unchanged} / スキップ {report.skipped}

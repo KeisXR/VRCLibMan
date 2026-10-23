@@ -98,8 +98,13 @@ pub fn list_avatars(state: State<'_, AppState>) -> Result<Vec<AvatarCard>, Strin
 
 #[tauri::command]
 pub fn get_avatar(state: State<'_, AppState>, id: String) -> Result<AvatarDetail, String> {
-    let mut connection = db(&state)?;
-    let snapshot = db::load_snapshot(&mut connection)?;
+    let (mut snapshot, remote) = {
+        let mut connection = db(&state)?;
+        let snapshot = db::load_snapshot(&mut connection)?;
+        let remote = db::settings(&mut connection)?.remote_library_folder;
+        (snapshot, remote)
+    };
+    crate::library_files::fill_places(&mut snapshot, &remote);
     view::avatar_detail(&snapshot, &id).ok_or_else(|| "アバターが見つかりません".into())
 }
 
@@ -155,8 +160,70 @@ pub fn save_settings(state: State<'_, AppState>, settings: SettingsInput) -> Res
             confidence_threshold: settings.confidence_threshold,
             library_folder: settings.library_folder,
             builtin_browser: settings.builtin_browser,
+            remote_library_folder: settings.remote_library_folder,
+            route_downloads: settings.route_downloads,
         },
     )
+}
+
+#[tauri::command]
+pub fn add_free_product(state: State<'_, AppState>, url: String) -> Result<String, String> {
+    let mut connection = db(&state)?;
+    db::add_free_product(&mut connection, &url)
+}
+
+#[tauri::command]
+pub fn pull_remote_file(
+    state: State<'_, AppState>,
+    booth_id: String,
+    variation: String,
+    filename: String,
+) -> Result<(), String> {
+    let (remote, library) = {
+        let connection = db(&state)?;
+        db::require_download(&connection, &booth_id, &variation, &filename)?;
+        let settings = db::settings(&connection)?;
+        if settings.remote_library_folder.trim().is_empty() {
+            return Err("リモートのフォルダが未設定です".into());
+        }
+        if settings.library_folder.trim().is_empty() {
+            return Err("先にフォルダを調べて、ライブラリの場所を決めてください".into());
+        }
+        (settings.remote_library_folder, settings.library_folder)
+    };
+    let dest = crate::library_files::pull_file(
+        Path::new(remote.trim()),
+        Path::new(library.trim()),
+        &booth_id,
+        &filename,
+    )?;
+    let connection = db(&state)?;
+    db::note_downloaded_file(&connection, &booth_id, &variation, &filename, &dest)
+}
+
+#[tauri::command]
+pub fn push_remote_file(
+    state: State<'_, AppState>,
+    booth_id: String,
+    variation: String,
+    filename: String,
+) -> Result<(), String> {
+    let (source, remote) = {
+        let connection = db(&state)?;
+        let source = db::local_source_for(&connection, &booth_id, &variation, &filename)?;
+        let settings = db::settings(&connection)?;
+        if settings.remote_library_folder.trim().is_empty() {
+            return Err("リモートのフォルダが未設定です".into());
+        }
+        (source, settings.remote_library_folder)
+    };
+    crate::library_files::push_file(
+        &source,
+        Path::new(remote.trim()),
+        &booth_id,
+        &filename,
+    )?;
+    Ok(())
 }
 
 #[tauri::command]

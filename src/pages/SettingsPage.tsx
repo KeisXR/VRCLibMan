@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, openExternal } from "../api";
+import { api, chooseFolder, openExternal } from "../api";
 import { useShell } from "../App";
 import { formatBytes } from "../media";
 import { DEFAULT_OLLAMA_MODEL } from "../types";
@@ -394,6 +394,43 @@ export function SettingsPage() {
               <span>最後に調べたフォルダ</span>
               <input value={settings.libraryFolder} readOnly />
             </label>
+            <label className="field span-2">
+              <span>リモートのフォルダ</span>
+              <input
+                value={settings.remoteLibraryFolder}
+                placeholder="ネットワークドライブやマウントしたフォルダ"
+                onChange={(event) => setSettings({ ...settings, remoteLibraryFolder: event.target.value })}
+              />
+            </label>
+            <div className="row-actions span-2">
+              <button
+                className="button"
+                type="button"
+                onClick={() => {
+                  void chooseFolder().then(
+                    (path) => {
+                      if (path) setSettings({ ...settings, remoteLibraryFolder: path });
+                    },
+                    (err: unknown) => fail(errorText(err)),
+                  );
+                }}
+              >
+                リモートのフォルダを選ぶ
+              </button>
+            </div>
+            <label className="field span-2">
+              <span>
+                <input
+                  type="checkbox"
+                  checked={settings.routeDownloads}
+                  onChange={(event) => setSettings({ ...settings, routeDownloads: event.target.checked })}
+                />{" "}
+                BOOTH の Unity / VRChat 用ファイルを、ダウンロード時に VRCLibMan へ振り分ける
+              </span>
+            </label>
+            <p className="meta span-2">
+              振り分けは既定でオフです。オンにすると、拡張は自分で押したダウンロードだけを Downloads/VRCLibMan/商品ID に置き、アプリが上のライブラリへ移します。アプリから一括では取りません。リモートにあるだけのファイルは薄く、未ダウンロードはグレーで出します。送る・取ってくるは押したファイルだけをコピーし、同じ名前があれば上書きします。切れている共有先では待たずに未ダウンロードとして表示します。
+            </p>
           </div>
           <div className="row-actions">
             <button className="button primary" type="button" onClick={() => void saveSettings()}>
