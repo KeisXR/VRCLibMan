@@ -1,39 +1,68 @@
-body {
-  width: 320px;
-  margin: 0;
-  padding: 14px;
-  font: 13px/1.5 "Segoe UI", "Yu Gothic UI", sans-serif;
-  background: #1c1713;
-  color: #f6efe6;
+:root {
+  color-scheme: light;
+  --bg: #f4f4f5;
+  --surface: #ffffff;
+  --text: #171717;
+  --muted: #6b6b6b;
+  --accent: #0f766e;
+  --accent-ink: #ffffff;
+  --line: rgba(23, 23, 23, 0.08);
+  --hover: rgba(23, 23, 23, 0.05);
+  --font: "Segoe UI", "Yu Gothic UI", "Hiragino Sans", "Noto Sans JP", "Meiryo", sans-serif;
 }
-h1 { margin: 0 0 6px; font-size: 16px; }
-p { margin: 0 0 12px; color: #b5a496; }
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #1c1c1c;
+    --surface: #262626;
+    --text: #f3f3f3;
+    --muted: #a3a3a3;
+    --accent: #2dd4bf;
+    --accent-ink: #042f2e;
+    --line: rgba(255, 255, 255, 0.08);
+    --hover: rgba(255, 255, 255, 0.06);
+  }
+}
+
+body {
+  width: 300px;
+  margin: 0;
+  padding: 16px;
+  font: 13px/1.55 var(--font);
+  background: var(--bg);
+  color: var(--text);
+}
+h1 { margin: 0 0 6px; font-size: 16px; font-weight: 650; }
+p { margin: 0 0 12px; color: var(--muted); }
 button {
   width: 100%;
   border: 0;
-  border-radius: 8px;
-  padding: 8px 10px;
-  background: #e8a15a;
-  color: #2b1708;
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: var(--accent);
+  color: var(--accent-ink);
   font-weight: 650;
 }
 button.secondary {
   margin-top: 8px;
   background: transparent;
-  color: #f6efe6;
-  border: 1px solid #6a5848;
+  color: var(--text);
+  font-weight: 500;
 }
-button:disabled { opacity: 0.55; }
-label { display: block; margin-bottom: 8px; color: #b5a496; }
+button.secondary:hover { background: var(--hover); }
+button:disabled { opacity: 0.45; }
+label { display: block; margin-bottom: 8px; color: var(--muted); }
 input {
   width: 100%;
   box-sizing: border-box;
   margin-top: 4px;
-  padding: 6px 8px;
-  border-radius: 8px;
-  border: 1px solid #6a5848;
-  background: #2a231c;
-  color: #f6efe6;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 0;
+  box-shadow: inset 0 0 0 1px var(--line);
+  background: var(--surface);
+  color: var(--text);
 }
-#link-status { color: #f6efe6; }
+#link-status { color: var(--text); }
 #status { min-height: 2.5em; }
