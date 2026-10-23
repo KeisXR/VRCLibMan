@@ -1,41 +1,170 @@
-import { useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { api, openExternal, openLocal } from "../api";
 import { useShell } from "../App";
 import { confidenceLabel, formatBytes } from "../media";
 import { CATEGORIES, CATEGORY_LABEL } from "../types";
-import type { Knowledge, ProductOption, QueueFile, QueuePage as QueueData, QueueProduct } from "../types";
+import type { AvatarCandidate, ProductOption, QueueFile, QueueProduct } from "../types";
 import { Thumb, errorText } from "../ui";
 
 type Kind = "unextracted" | "review" | "files";
 
-function queueCount(page: QueueData, kind: Kind): number {
-  if (kind === "unextracted") return page.unextracted;
-  if (kind === "files") return page.unlinkedFiles;
-  return page.needsReview;
+type AvatarHit = {
+  id: string;
+  displayName: string;
+  haystack: string;
+};
+
+type OptionHit = ProductOption & { haystack: string };
+
+type Counts = {
+  unextracted: number;
+  needsReview: number;
+  unlinkedFiles: number;
+};
+
+const EMPTY_COUNTS: Counts = { unextracted: 0, needsReview: 0, unlinkedFiles: 0 };
+
+function initialKind(counts: Counts): Kind {
+  if (counts.unextracted > 0) return "unextracted";
+  if (counts.needsReview > 0) return "review";
+  if (counts.unlinkedFiles > 0) return "files";
+  return "unextracted";
+}
+
+function bigramScore(query: string, name: string): number {
+  if (!query || !name) return 0;
+  if (name === query) return 1;
+  if (name.startsWith(query) || query.startsWith(name)) return 0.92;
+  if (name.includes(query) || query.includes(name)) return 0.75;
+  const left = bigrams(query);
+  const right = bigrams(name);
+  if (left.length === 0 || right.length === 0) return 0;
+  const counts = new Map<string, number>();
+  for (const gram of right) counts.set(gram, (counts.get(gram) ?? 0) + 1);
+  let overlap = 0;
+  for (const gram of left) {
+    const have = counts.get(gram) ?? 0;
+    if (have > 0) {
+      overlap += 1;
+      counts.set(gram, have - 1);
+    }
+  }
+  return (2 * overlap) / (left.length + right.length);
+}
+
+function bigrams(text: string): string[] {
+  const chars = [...text];
+  const grams: string[] = [];
+  for (let index = 0; index < chars.length - 1; index += 1) grams.push(chars[index] + chars[index + 1]);
+  return grams;
+}
+
+function rankAvatars(index: readonly AvatarHit[], query: string, limit: number): AvatarHit[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return [];
+  const ranked = index.map((hit) => ({
+    hit,
+    score: Math.max(bigramScore(needle, hit.displayName.toLowerCase()), bigramScore(needle, hit.haystack)),
+  }));
+  ranked.sort((left, right) => right.score - left.score || left.hit.displayName.localeCompare(right.hit.displayName, "ja"));
+  return ranked.slice(0, limit).map((item) => item.hit);
 }
 
 export function QueuePage() {
   const { revision, refresh, notify, fail } = useShell();
-  const [kind, setKind] = useState<Kind>("unextracted");
+  const [kind, setKind] = useState<Kind | null>(null);
   const [choseTab, setChoseTab] = useState(false);
-  const [page, setPage] = useState<QueueData | null>(null);
+  const [counts, setCounts] = useState<Counts>(EMPTY_COUNTS);
+  const [products, setProducts] = useState<QueueProduct[]>([]);
+  const [files, setFiles] = useState<QueueFile[]>([]);
   const [loadedKind, setLoadedKind] = useState<Kind | null>(null);
-  const [knowledge, setKnowledge] = useState<Knowledge | null>(null);
-  const [options, setOptions] = useState<ProductOption[]>([]);
+  const [avatarIndex, setAvatarIndex] = useState<AvatarHit[]>([]);
+  const [nameById, setNameById] = useState<ReadonlyMap<string, string>>(() => new Map());
+  const [options, setOptions] = useState<OptionHit[]>([]);
+  const [candidates, setCandidates] = useState<AvatarCandidate[]>([]);
 
-  function choose(next: Kind) {
+  const choose = useCallback((next: Kind) => {
     setChoseTab(true);
     setKind(next);
-  }
+  }, []);
+
+  const onDone = useCallback(
+    (message: string) => {
+      notify(message);
+      refresh();
+    },
+    [notify, refresh],
+  );
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([api.queue(kind), api.knowledge(), api.productOptions()]).then(
-      ([queue, known, products]) => {
+    Promise.all([api.knowledge(), api.productOptions(), api.avatarCandidates()]).then(
+      ([known, productOptions, nextCandidates]) => {
         if (cancelled) return;
-        setPage(queue);
-        setKnowledge(known);
-        setOptions(products);
+        const index = known.avatars.map((avatar) => ({
+          id: avatar.id,
+          displayName: avatar.displayName,
+          haystack: [avatar.displayName, ...avatar.aliases].join(" ").toLowerCase(),
+        }));
+        const names = new Map<string, string>();
+        for (const avatar of index) names.set(avatar.id, avatar.displayName);
+        setAvatarIndex(index);
+        setNameById(names);
+        setOptions(
+          productOptions.map((option) => ({
+            ...option,
+            haystack: `${option.title} ${option.shop} ${option.boothId}`.toLowerCase(),
+          })),
+        );
+        setCandidates(nextCandidates);
+      },
+      (err: unknown) => {
+        if (!cancelled) fail(errorText(err));
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [revision, fail]);
+
+  useEffect(() => {
+    if (choseTab) return;
+    let cancelled = false;
+    api.stats().then(
+      (stats) => {
+        if (cancelled) return;
+        const nextCounts = {
+          unextracted: stats.unextracted,
+          needsReview: stats.needsReview,
+          unlinkedFiles: stats.unlinkedFiles,
+        };
+        setCounts(nextCounts);
+        setKind(initialKind(nextCounts));
+      },
+      (err: unknown) => {
+        if (cancelled) return;
+        fail(errorText(err));
+        setKind("unextracted");
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [revision, choseTab, fail]);
+
+  useEffect(() => {
+    if (!kind) return;
+    let cancelled = false;
+    api.queue(kind).then(
+      (queue) => {
+        if (cancelled) return;
+        setCounts({
+          unextracted: queue.unextracted,
+          needsReview: queue.needsReview,
+          unlinkedFiles: queue.unlinkedFiles,
+        });
+        setProducts(queue.products);
+        setFiles(queue.files);
         setLoadedKind(kind);
       },
       (err: unknown) => {
@@ -47,14 +176,7 @@ export function QueuePage() {
     };
   }, [kind, revision, fail]);
 
-  useEffect(() => {
-    if (!page || choseTab || loadedKind !== kind) return;
-    if (queueCount(page, kind) > 0) return;
-    const next = (["unextracted", "review", "files"] as Kind[]).find((item) => queueCount(page, item) > 0);
-    if (next && next !== kind) setKind(next);
-  }, [page, choseTab, kind, loadedKind]);
-
-  const visible = loadedKind === kind ? page : null;
+  const visible = loadedKind === kind;
 
   return (
     <section>
@@ -66,109 +188,227 @@ export function QueuePage() {
       </div>
       <div className="tabs">
         <button className={kind === "unextracted" ? "tab active" : "tab"} type="button" onClick={() => choose("unextracted")}>
-          未抽出 {page ? page.unextracted : "–"}
+          未抽出 {counts.unextracted}
         </button>
         <button className={kind === "review" ? "tab active" : "tab"} type="button" onClick={() => choose("review")}>
-          要確認 {page ? page.needsReview : "–"}
+          要確認 {counts.needsReview}
         </button>
         <button className={kind === "files" ? "tab active" : "tab"} type="button" onClick={() => choose("files")}>
-          未突合 {page ? page.unlinkedFiles : "–"}
+          未突合 {counts.unlinkedFiles}
         </button>
       </div>
-      {visible && kind !== "files" && visible.products.length === 0 && <p className="empty">この一覧は空です。</p>}
-      {visible && kind === "files" && visible.files.length === 0 && <p className="empty">未突合のファイルはありません。</p>}
+      {visible && kind !== "files" && products.length === 0 && <p className="empty">この一覧は空です。</p>}
+      {visible && kind === "files" && files.length === 0 && <p className="empty">未突合のファイルはありません。</p>}
+      {kind === "review" && (
+        <CandidateList candidates={candidates} avatarIndex={avatarIndex} onDone={onDone} onError={fail} />
+      )}
       <div className="stack">
         {visible && kind !== "files" &&
-          visible.products.map((product) => (
+          products.map((product) => (
             <ProductEditor
               key={product.boothId}
               product={product}
-              knowledge={knowledge}
-              onDone={(message) => {
-                notify(message);
-                refresh();
-              }}
+              avatarIndex={avatarIndex}
+              nameById={nameById}
+              onDone={onDone}
               onError={fail}
             />
           ))}
         {visible && kind === "files" &&
-          visible.files.map((file) => (
-            <FileEditor
-              key={file.path}
-              file={file}
-              options={options}
-              onDone={(message) => {
-                notify(message);
-                refresh();
-              }}
-              onError={fail}
-            />
+          files.map((file) => (
+            <FileEditor key={file.path} file={file} options={options} onDone={onDone} onError={fail} />
           ))}
       </div>
     </section>
   );
 }
 
-function ProductEditor({
+const CandidateList = memo(function CandidateList({
+  candidates,
+  avatarIndex,
+  onDone,
+  onError,
+}: {
+  candidates: AvatarCandidate[];
+  avatarIndex: readonly AvatarHit[];
+  onDone: (message: string) => void;
+  onError: (message: string) => void;
+}) {
+  const [editing, setEditing] = useState<string | null>(null);
+
+  const register = useCallback(
+    async (name: string) => {
+      try {
+        await api.registerAvatarCandidate(name);
+        onDone(`${name} をアバターとして登録しました`);
+      } catch (err) {
+        onError(errorText(err));
+      }
+    },
+    [onDone, onError],
+  );
+
+  const alias = useCallback(
+    async (name: string, avatarId: string) => {
+      try {
+        await api.aliasAvatarCandidate(name, avatarId);
+        setEditing(null);
+        onDone(`${name} を別名にしました`);
+      } catch (err) {
+        onError(errorText(err));
+      }
+    },
+    [onDone, onError],
+  );
+
+  if (candidates.length === 0) return null;
+
+  return (
+    <div className="panel" style={{ marginBottom: 16 }}>
+      <h2>新しいアバター候補</h2>
+      <p className="meta">
+        商品名の【対応】から拾った、対応表にない名前です。件数はその名前が付いている商品の数です。
+      </p>
+      <div className="stack">
+        {candidates.map((candidate) => (
+          <div className="candidate" key={candidate.name}>
+            <strong>{candidate.name}</strong>
+            <span className="meta">{candidate.productCount} 件</span>
+            <button className="button primary" type="button" onClick={() => void register(candidate.name)}>
+              アバターとして登録
+            </button>
+            <button className="button" type="button" onClick={() => setEditing(candidate.name)}>
+              既存の別名にする
+            </button>
+          </div>
+        ))}
+      </div>
+      {editing && (
+        <AvatarSearch
+          seed={editing}
+          avatarIndex={avatarIndex}
+          onPick={(avatarId) => void alias(editing, avatarId)}
+        />
+      )}
+    </div>
+  );
+});
+
+function AvatarSearch({
+  seed,
+  avatarIndex,
+  onPick,
+}: {
+  seed: string;
+  avatarIndex: readonly AvatarHit[];
+  onPick: (avatarId: string) => void;
+}) {
+  const [query, setQuery] = useState(seed);
+  const deferred = useDeferredValue(query);
+  const hits = useMemo(
+    () => rankAvatars(avatarIndex, deferred.trim() || seed, 30),
+    [avatarIndex, deferred, seed],
+  );
+
+  return (
+    <div className="picker">
+      <input className="search" value={query} placeholder="既存のアバターを検索" onChange={(event) => setQuery(event.target.value)} />
+      <div className="stack">
+        {hits.map((avatar) => (
+          <button key={avatar.id} className="button" type="button" onClick={() => onPick(avatar.id)}>
+            {avatar.displayName}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const ProductEditor = memo(function ProductEditor({
   product,
-  knowledge,
+  avatarIndex,
+  nameById,
   onDone,
   onError,
 }: {
   product: QueueProduct;
-  knowledge: Knowledge | null;
+  avatarIndex: readonly AvatarHit[];
+  nameById: ReadonlyMap<string, string>;
   onDone: (message: string) => void;
   onError: (message: string) => void;
 }) {
   const [category, setCategory] = useState(product.category ?? "");
   const [generic, setGeneric] = useState(product.isGeneric);
-  const [selected, setSelected] = useState<string[]>(product.linkedAvatarIds);
+  const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set(product.linkedAvatarIds));
   const [filter, setFilter] = useState("");
-  const avatars = useMemo(() => {
-    const needle = filter.trim().toLowerCase();
-    return (knowledge?.avatars ?? []).filter((avatar) => {
-      if (!needle) return true;
-      return [avatar.displayName, ...avatar.aliases].join(" ").toLowerCase().includes(needle);
+  const deferred = useDeferredValue(filter);
+  const hits = useMemo(() => rankAvatars(avatarIndex, deferred, 30), [avatarIndex, deferred]);
+
+  const toggle = useCallback((id: string) => {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
     });
-  }, [knowledge, filter]);
+  }, []);
 
-  function toggle(id: string) {
-    setSelected((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
-  }
+  const save = useCallback(
+    async (confirm: boolean) => {
+      if (!category) {
+        onError("カテゴリを選んでから保存してください");
+        return;
+      }
+      try {
+        await api.updateProduct({
+          boothId: product.boothId,
+          category,
+          isGeneric: generic,
+          avatarIds: [...selected],
+          confirm,
+        });
+        onDone(confirm ? "確認済みにしました" : "修正を保存しました");
+      } catch (err) {
+        onError(errorText(err));
+      }
+    },
+    [category, generic, onDone, onError, product.boothId, selected],
+  );
 
-  async function save(confirm: boolean) {
-    if (!category) {
-      onError("カテゴリを選んでから保存してください");
-      return;
-    }
+  const addAlias = useCallback(
+    async (name: string) => {
+      try {
+        const id = await api.saveAvatar({
+          displayName: name,
+          aliases: [name],
+          notes: "",
+          baseBody: null,
+        });
+        setSelected((current) => {
+          if (current.has(id)) return current;
+          const next = new Set(current);
+          next.add(id);
+          return next;
+        });
+        onDone(`「${name}」を対応表に追加しました。保存するとこの商品に結び付きます。`);
+      } catch (err) {
+        onError(errorText(err));
+      }
+    },
+    [onDone, onError],
+  );
+
+  const markOwned = useCallback(async () => {
+    if (!window.confirm("この商品を、持っているアバター本体として記録します。")) return;
     try {
-      await api.updateProduct({
-        boothId: product.boothId,
-        category,
-        isGeneric: generic,
-        avatarIds: selected,
-        confirm,
-      });
-      onDone(confirm ? "確認済みにしました" : "修正を保存しました");
+      await api.markOwnedAvatar(product.boothId);
+      onDone("所持アバターにしました");
     } catch (err) {
       onError(errorText(err));
     }
-  }
+  }, [onDone, onError, product.boothId]);
 
-  async function addAlias(name: string) {
-    try {
-      const id = await api.saveAvatar({
-        displayName: name,
-        aliases: [name],
-        notes: "",
-        baseBody: null,
-      });
-      setSelected((current) => (current.includes(id) ? current : [...current, id]));
-      onDone(`「${name}」を対応表に追加しました。保存するとこの商品に結び付きます。`);
-    } catch (err) {
-      onError(errorText(err));
-    }
-  }
+  const showOwn = product.category === "avatar" || /オリジナル3dモデル/i.test(product.title);
 
   return (
     <article className="queue-card">
@@ -211,23 +451,38 @@ function ProductEditor({
           <input type="checkbox" checked={generic} onChange={(event) => setGeneric(event.target.checked)} />
         </label>
       </div>
-      <label className="field">
+      <div className="field">
         <span>対応アバター</span>
-        <input className="search" value={filter} placeholder="対応表を検索" onChange={(event) => setFilter(event.target.value)} />
-        <div className="checks">
-          {avatars.map((avatar) => (
-            <label key={avatar.id}>
-              <input
-                type="checkbox"
-                checked={selected.includes(avatar.id)}
-                onChange={() => toggle(avatar.id)}
-              />
-              {avatar.displayName}
-            </label>
+        <div className="pills">
+          {[...selected].map((id) => (
+            <button key={id} className="chip" type="button" onClick={() => toggle(id)}>
+              {nameById.get(id) ?? id} ×
+            </button>
           ))}
         </div>
-      </label>
+        <input
+          className="search"
+          value={filter}
+          placeholder="名前を入力すると候補が出ます"
+          onChange={(event) => setFilter(event.target.value)}
+        />
+        {hits.length > 0 && (
+          <div className="picker">
+            {hits.map((avatar) => (
+              <label key={avatar.id}>
+                <input type="checkbox" checked={selected.has(avatar.id)} onChange={() => toggle(avatar.id)} />
+                {avatar.displayName}
+              </label>
+            ))}
+          </div>
+        )}
+      </div>
       <div className="row-actions">
+        {showOwn && (
+          <button className="button primary" type="button" onClick={() => void markOwned()}>
+            所持アバターにする
+          </button>
+        )}
         <button className="button" type="button" onClick={() => void save(false)}>
           保存
         </button>
@@ -237,35 +492,45 @@ function ProductEditor({
       </div>
     </article>
   );
-}
+});
 
-function FileEditor({
+const FileEditor = memo(function FileEditor({
   file,
   options,
   onDone,
   onError,
 }: {
   file: QueueFile;
-  options: ProductOption[];
+  options: readonly OptionHit[];
   onDone: (message: string) => void;
   onError: (message: string) => void;
 }) {
   const [query, setQuery] = useState("");
+  const deferred = useDeferredValue(query);
   const [productId, setProductId] = useState(file.candidateProductId ?? "");
-  const visible = options.filter((option) => {
-    const needle = query.trim().toLowerCase();
-    if (!needle) return true;
-    return `${option.title} ${option.shop} ${option.boothId}`.toLowerCase().includes(needle);
-  }).slice(0, 80);
-
-  async function link(id: string | null) {
-    try {
-      await api.linkFile(file.path, id);
-      onDone(id ? "ファイルを商品に結び付けました" : "結びつきを外しました");
-    } catch (err) {
-      onError(errorText(err));
+  const visible = useMemo(() => {
+    const needle = deferred.trim().toLowerCase();
+    if (!needle) return options.slice(0, 30);
+    const matched: OptionHit[] = [];
+    for (const option of options) {
+      if (!option.haystack.includes(needle)) continue;
+      matched.push(option);
+      if (matched.length >= 30) break;
     }
-  }
+    return matched;
+  }, [deferred, options]);
+
+  const link = useCallback(
+    async (id: string | null) => {
+      try {
+        await api.linkFile(file.path, id);
+        onDone(id ? "ファイルを商品に結び付けました" : "結びつきを外しました");
+      } catch (err) {
+        onError(errorText(err));
+      }
+    },
+    [file.path, onDone, onError],
+  );
 
   return (
     <article className="queue-card">
@@ -299,4 +564,4 @@ function FileEditor({
       </button>
     </article>
   );
-}
+});

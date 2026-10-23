@@ -1,8 +1,9 @@
 use crate::AppState;
 use crate::db::{self, ExtractJob};
 use crate::model::{
-    AvatarInput, BaseBodyInput, ExtractReport, ImportReport, JobProgress, Knowledge, LibraryStats,
-    OllamaStatus, ProductUpdate, ScanReport, Settings, SettingsInput,
+    AvatarCandidate, AvatarInput, BaseBodyInput, CatalogInfo, CatalogRefresh, ExtractReport,
+    ImportReport, JobProgress, Knowledge, LibraryStats, OllamaStatus, ProductUpdate, ScanReport,
+    Settings, SettingsInput, SetupStatus,
 };
 use crate::ollama::{self, model_ready};
 use crate::scan;
@@ -326,6 +327,14 @@ pub async fn extract_products(
             processed += 1;
             continue;
         }
+        let settled = {
+            let mut connection = db(&state)?;
+            db::skip_model(&mut connection, &job.booth_id)?
+        };
+        if settled {
+            processed += 1;
+            continue;
+        }
         match ollama::extract_product(
             &client,
             &settings.ollama_base_url,
@@ -393,12 +402,140 @@ pub async fn test_ollama(state: State<'_, AppState>) -> Result<OllamaStatus, Str
         db::settings(&mut connection)?
     };
     let client = ollama::probe_client()?;
-    let models = ollama::list_models(&client, &settings.ollama_base_url).await?;
-    let ready = model_ready(&models, &settings.ollama_model);
+    let installed = ollama::list_models(&client, &settings.ollama_base_url).await?;
+    let ready = model_ready(&installed, &settings.ollama_model);
+    let model_size_bytes = ollama::installed_size(&installed, &settings.ollama_model);
+    let mut models: Vec<String> = installed.into_iter().map(|model| model.name).collect();
+    models.sort();
     Ok(OllamaStatus {
         models,
         model_ready: ready,
+        model_size_bytes,
     })
+}
+
+#[tauri::command]
+pub fn catalog_info(state: State<'_, AppState>) -> Result<CatalogInfo, String> {
+    let connection = db(&state)?;
+    db::catalog_info(&connection)
+}
+
+#[tauri::command]
+pub async fn refresh_avatar_catalog(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<CatalogRefresh, String> {
+    emit_progress(&app, "catalog", 0, 0, "プロファイル一覧を取得しています");
+    let client = ollama::catalog_client()?;
+    let response = client
+        .get(crate::catalog::DATA_URL)
+        .header("user-agent", "VRCLibMan")
+        .send()
+        .await
+        .map_err(|err| format!("プロファイル一覧を取得できません: {err}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "プロファイル一覧を取得できません: {}",
+            response.status()
+        ));
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|err| format!("プロファイル一覧を読めません: {err}"))?;
+    if bytes.len() > 8_000_000 {
+        return Err("プロファイル一覧が大きすぎます".into());
+    }
+    let text = String::from_utf8(bytes.to_vec())
+        .map_err(|_| "プロファイル一覧の文字コードを読めません".to_string())?;
+    let parsed = crate::catalog::parse_catalog_json(&text)?;
+    let mut connection = db(&state)?;
+    let report = db::install_catalog(&mut connection, &parsed)?;
+    emit_progress(
+        &app,
+        "catalog",
+        report.total,
+        report.total,
+        format!("対応表を更新しました（{} 件）", report.total),
+    );
+    let _ = app.emit("library-changed", ());
+    Ok(report)
+}
+
+#[tauri::command]
+pub fn setup_status(state: State<'_, AppState>) -> Result<SetupStatus, String> {
+    let connection = db(&state)?;
+    db::setup_status(&connection)
+}
+
+#[tauri::command]
+pub fn complete_setup(state: State<'_, AppState>) -> Result<(), String> {
+    let connection = db(&state)?;
+    db::set_setup_complete(&connection, true)
+}
+
+#[tauri::command]
+pub fn reopen_setup(state: State<'_, AppState>) -> Result<(), String> {
+    let connection = db(&state)?;
+    db::set_setup_complete(&connection, false)
+}
+
+#[tauri::command]
+pub async fn pull_ollama_model(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let settings = {
+        let connection = db(&state)?;
+        db::settings(&connection)?
+    };
+    let client = ollama::pull_client()?;
+    let app_progress = app.clone();
+    ollama::pull_model(
+        &client,
+        &settings.ollama_base_url,
+        &settings.ollama_model,
+        |completed, total, status| {
+            let current = (completed / 1_000_000) as u32;
+            let whole = (total / 1_000_000) as u32;
+            let message = if total > 0 {
+                format!("{status}（{current} / {whole} MB）")
+            } else {
+                status.to_string()
+            };
+            emit_progress(&app_progress, "pull", current, whole, message);
+        },
+    )
+    .await?;
+    emit_progress(&app, "pull", 1, 1, "モデルを取得しました");
+    Ok(())
+}
+
+#[tauri::command]
+pub fn avatar_candidates(state: State<'_, AppState>) -> Result<Vec<AvatarCandidate>, String> {
+    let connection = db(&state)?;
+    db::avatar_candidates(&connection)
+}
+
+#[tauri::command]
+pub fn register_avatar_candidate(state: State<'_, AppState>, name: String) -> Result<String, String> {
+    let mut connection = db(&state)?;
+    db::register_candidate(&mut connection, &name)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn mark_owned_avatar(state: State<'_, AppState>, boothId: String) -> Result<String, String> {
+    let mut connection = db(&state)?;
+    db::mark_owned_body(&mut connection, &boothId)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn alias_avatar_candidate(
+    state: State<'_, AppState>,
+    name: String,
+    avatarId: String,
+) -> Result<(), String> {
+    let mut connection = db(&state)?;
+    db::alias_candidate(&mut connection, &name, &avatarId)
 }
 
 #[tauri::command]

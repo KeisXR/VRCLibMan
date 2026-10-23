@@ -133,7 +133,7 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
             guard.record_failure(&origin_key, now);
         }
     }
-    if matches!(gate, Gate::Health | Gate::Import) {
+    if matches!(gate, Gate::Health | Gate::Import | Gate::KnownIds) {
         if let Ok(mut guard) = state.import_guard.lock() {
             guard.record_success(&origin_key);
         }
@@ -142,6 +142,41 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
                 let _ = db::set_extension_origin(&connection, &origin_key);
             }
         }
+    }
+    if matches!(gate, Gate::KnownIds) {
+        discard_body(request);
+        let ids = {
+            let connection = match state.db.lock() {
+                Ok(connection) => connection,
+                Err(_) => {
+                    return response_for(
+                        origin.as_deref(),
+                        Gate::reject(500, "データベースをロックできません"),
+                        None,
+                    );
+                }
+            };
+            match db::known_booth_ids(&connection) {
+                Ok(ids) => ids,
+                Err(err) => {
+                    return response_for(
+                        origin.as_deref(),
+                        Gate::Reject {
+                            status: 500,
+                            message: "",
+                            message_owned: Some(err),
+                        },
+                        None,
+                    );
+                }
+            }
+        };
+        let body = serde_json::json!({ "ids": ids }).to_string();
+        let mut response = Response::from_string(body).with_status_code(StatusCode(200));
+        if let Some(origin) = origin.as_deref() {
+            response = add_cors(response, origin);
+        }
+        return response;
     }
     if !matches!(gate, Gate::Import) {
         discard_body(request);
@@ -215,6 +250,7 @@ enum Gate {
     Preflight,
     Health,
     Import,
+    KnownIds,
     Reject {
         status: u16,
         message: &'static str,
@@ -261,6 +297,9 @@ fn classify(request: RequestView<'_>, access: Access<'_>) -> Gate {
     if request.method.eq_ignore_ascii_case("POST") && path == "/import" {
         return Gate::Import;
     }
+    if request.method.eq_ignore_ascii_case("GET") && path == "/known-ids" {
+        return Gate::KnownIds;
+    }
     if !matches!(request.method.to_ascii_uppercase().as_str(), "GET" | "POST") {
         return Gate::reject(405, "受け付けないメソッドです");
     }
@@ -282,6 +321,7 @@ fn response_for(
     let (status, body) = match gate {
         Gate::Preflight => (204, String::new()),
         Gate::Health => (200, r#"{"ok":true}"#.to_string()),
+        Gate::KnownIds => (200, r#"{"ids":[]}"#.to_string()),
         Gate::Import => (
             200,
             serde_json::to_string(&report.expect("import report")).unwrap_or_else(|_| "{}".into()),
@@ -559,6 +599,14 @@ mod tests {
         assert!(matches!(
             gate("POST", "/import", Some(EXTENSION), Some("Bearer ABCD-2345")),
             Gate::Import
+        ));
+        assert!(matches!(
+            gate("GET", "/known-ids", Some(EXTENSION), Some("Bearer ABCD-2345")),
+            Gate::KnownIds
+        ));
+        assert!(matches!(
+            gate("GET", "/known-ids", Some(EXTENSION), None),
+            Gate::Reject { status: 401, .. }
         ));
         assert!(token_ok(Some("Bearer ABCD-2345"), expected));
         assert!(token_ok(Some("bearer abcd2345"), expected));

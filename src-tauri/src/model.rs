@@ -93,6 +93,7 @@ pub struct Avatar {
     pub base_body: Option<String>,
     pub aliases: Vec<String>,
     pub is_builtin: bool,
+    pub owned: bool,
     pub notes: String,
 }
 
@@ -195,6 +196,42 @@ pub struct SettingsInput {
 pub struct OllamaStatus {
     pub models: Vec<String>,
     pub model_ready: bool,
+    pub model_size_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogInfo {
+    pub count: u32,
+    pub fetched_on: String,
+    pub upstream_updated: String,
+    pub source_url: String,
+    pub terms_url: String,
+    pub author: String,
+    pub credit: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogRefresh {
+    pub added: u32,
+    pub total: u32,
+    pub upstream_updated: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetupStatus {
+    pub complete: bool,
+    pub model: String,
+    pub default_model: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AvatarCandidate {
+    pub name: String,
+    pub product_count: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]

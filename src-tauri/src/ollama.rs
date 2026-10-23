@@ -73,16 +73,53 @@ pub fn validate_model_name(value: &str) -> Result<String, String> {
     Ok(name.to_string())
 }
 
-pub fn model_ready(models: &[String], wanted: &str) -> bool {
-    models.iter().any(|name| {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstalledModel {
+    pub name: String,
+    pub size_bytes: u64,
+}
+
+pub fn model_ready(models: &[InstalledModel], wanted: &str) -> bool {
+    selected_model(models, wanted).is_some()
+}
+
+pub fn selected_model<'a>(models: &'a [InstalledModel], wanted: &str) -> Option<&'a InstalledModel> {
+    let matches = |name: &str| {
         name == wanted
             || name
                 .strip_prefix(wanted)
                 .is_some_and(|rest| rest.is_empty() || rest.starts_with(':'))
-    })
+    };
+    models
+        .iter()
+        .find(|model| model.name == wanted)
+        .or_else(|| models.iter().find(|model| matches(&model.name)))
 }
 
-pub async fn list_models(client: &reqwest::Client, base: &str) -> Result<Vec<String>, String> {
+pub fn installed_size(models: &[InstalledModel], wanted: &str) -> Option<u64> {
+    selected_model(models, wanted)
+        .map(|model| model.size_bytes)
+        .filter(|size| *size > 0)
+}
+
+pub fn parse_installed_models(text: &str) -> Result<Vec<InstalledModel>, String> {
+    let parsed: TagsResponse =
+        serde_json::from_str(text).map_err(|_| "Ollamaの応答を解釈できません".to_string())?;
+    let mut models = Vec::new();
+    for model in parsed.models.unwrap_or_default() {
+        let Some(name) = model.name.filter(|name| !name.is_empty()) else {
+            continue;
+        };
+        models.push(InstalledModel {
+            name,
+            size_bytes: model.size.unwrap_or(0),
+        });
+    }
+    models.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(models)
+}
+
+pub async fn list_models(client: &reqwest::Client, base: &str) -> Result<Vec<InstalledModel>, String> {
     let base = validate_base_url(base)?;
     let response = client
         .get(format!("{base}/api/tags"))
@@ -94,16 +131,7 @@ pub async fn list_models(client: &reqwest::Client, base: &str) -> Result<Vec<Str
     if !status.is_success() {
         return Err(format!("Ollamaのモデル一覧を取得できません: {status}"));
     }
-    let parsed: TagsResponse =
-        serde_json::from_str(&text).map_err(|_| "Ollamaの応答を解釈できません".to_string())?;
-    let mut names = Vec::new();
-    for model in parsed.models.unwrap_or_default() {
-        if let Some(name) = model.name {
-            names.push(name);
-        }
-    }
-    names.sort();
-    Ok(names)
+    parse_installed_models(&text)
 }
 
 pub async fn extract_product(
@@ -198,6 +226,64 @@ pub fn extraction_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(180))
+        .build()
+        .map_err(|err| format!("HTTPクライアントを初期化できません: {err}"))
+}
+
+pub async fn pull_model(
+    client: &reqwest::Client,
+    base: &str,
+    model: &str,
+    mut on_progress: impl FnMut(u64, u64, &str),
+) -> Result<(), String> {
+    let base = validate_base_url(base)?;
+    let model = validate_model_name(model)?;
+    let mut response = client
+        .post(format!("{base}/api/pull"))
+        .json(&serde_json::json!({ "model": model, "stream": true }))
+        .send()
+        .await
+        .map_err(connection_error)?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(ollama_status_error(status, &body));
+    }
+    let mut pending = String::new();
+    while let Some(chunk) = response.chunk().await.map_err(connection_error)? {
+        pending.push_str(&String::from_utf8_lossy(&chunk));
+        while let Some(newline) = pending.find('\n') {
+            let line: String = pending.drain(..=newline).collect();
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let Ok(value) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
+            if let Some(error) = value.get("error").and_then(Value::as_str) {
+                return Err(format!("モデルを取得できません: {error}"));
+            }
+            let status = value.get("status").and_then(Value::as_str).unwrap_or("取得中");
+            let completed = value.get("completed").and_then(Value::as_u64).unwrap_or(0);
+            let total = value.get("total").and_then(Value::as_u64).unwrap_or(0);
+            on_progress(completed, total, status);
+        }
+    }
+    Ok(())
+}
+
+pub fn pull_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|err| format!("HTTPクライアントを初期化できません: {err}"))
+}
+
+pub fn catalog_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(60))
         .build()
         .map_err(|err| format!("HTTPクライアントを初期化できません: {err}"))
 }
@@ -309,11 +395,31 @@ struct TagsResponse {
 #[derive(Deserialize)]
 struct TagModel {
     name: Option<String>,
+    size: Option<u64>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn installed_size_comes_from_the_selected_model() {
+        let parsed = parse_installed_models(
+            r#"{"models":[
+                {"name":"qwen3:4b","size":2497295778},
+                {"name":"gemma4:12b","size":8147483648},
+                {"name":"other:latest","size":0}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(installed_size(&parsed, "qwen3:4b"), Some(2497295778));
+        assert_eq!(installed_size(&parsed, "gemma4:12b"), Some(8147483648));
+        assert_eq!(installed_size(&parsed, "gemma4"), Some(8147483648));
+        assert_eq!(installed_size(&parsed, "missing:7b"), None);
+        assert_eq!(installed_size(&parsed, "other:latest"), None);
+        assert!(model_ready(&parsed, "qwen3:4b"));
+        assert!(!model_ready(&parsed, "missing:7b"));
+    }
 
     #[test]
     fn parses_fenced_and_thinking_output() {

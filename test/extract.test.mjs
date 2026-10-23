@@ -13,6 +13,7 @@ const {
   libraryLastPage,
   libraryPageUrl,
   dedupeProducts,
+  takeUntilKnown,
   isLibraryUrl,
   quietHtml,
   noteIfUnpublished,
@@ -178,6 +179,24 @@ test("long descriptions keep compatibility notes and drop terms", () => {
   assert.ok(trimmed.length <= 8000);
   assert.match(trimmed, /ライム対応/);
   assert.equal(trimmed.includes("利用規約"), false);
+});
+
+test("update mode keeps newer purchases and stops at a known id", () => {
+  const page = [
+    { boothId: "9003", title: "新しい服" },
+    { boothId: "9002", title: "その次" },
+    { boothId: "9001", title: "取り込み済み" },
+    { boothId: "9000", title: "もっと古い" },
+  ];
+  const stopped = takeUntilKnown(page, new Set(["9001"]));
+  assert.deepEqual(stopped.products.map((item) => item.boothId), ["9003", "9002"]);
+  assert.equal(stopped.stopped, true);
+  const open = takeUntilKnown(page, new Set(["8999"]));
+  assert.equal(open.stopped, false);
+  assert.equal(open.products.length, 4);
+  const full = takeUntilKnown(page, null);
+  assert.equal(full.stopped, false);
+  assert.equal(full.products.length, 4);
 });
 
 test("card images use a pximg size the CDN serves", () => {

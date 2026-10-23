@@ -47,7 +47,8 @@ pub struct ResolveOutput {
 }
 
 pub fn resolve_name<'a>(raw: &str, avatars: &'a [Avatar]) -> Option<&'a Avatar> {
-    if raw.trim().is_empty() || is_blocked_avatar_label(raw) {
+    let single_cjk = raw.chars().count() == 1 && raw.chars().all(is_cjk);
+    if raw.trim().is_empty() || (is_blocked_avatar_label(raw) && !single_cjk) {
         return None;
     }
     let mut hits = Vec::new();
@@ -558,7 +559,9 @@ fn mashed_known_names(raw: &str, avatars: &[Avatar]) -> bool {
 }
 
 fn avatar_matchable(avatar: &Avatar) -> bool {
-    !is_promo_name(&avatar.display_name) && !is_blocked_avatar_label(&avatar.display_name)
+    let single_cjk =
+        avatar.display_name.chars().count() == 1 && avatar.display_name.chars().all(is_cjk);
+    single_cjk || (!is_promo_name(&avatar.display_name) && !is_blocked_avatar_label(&avatar.display_name))
 }
 
 pub fn links_grounded(ids: &[String], avatars: &[Avatar], title: &str, description: &str) -> bool {
@@ -572,7 +575,9 @@ pub fn links_grounded(ids: &[String], avatars: &[Avatar], title: &str, descripti
         };
         name_forms(avatar).iter().any(|form| {
             let needle = nfkc(form).to_lowercase();
-            needle.chars().count() >= 2 && find_bounded(&haystack, &needle)
+            let count = needle.chars().count();
+            (count >= 2 || (count == 1 && needle.chars().all(crate::normalize::is_cjk)))
+                && find_bounded(&haystack, &needle)
         })
     })
 }
@@ -590,7 +595,10 @@ fn name_keys(avatar: &Avatar) -> Vec<String> {
     name_forms(avatar)
         .into_iter()
         .map(|form| normalize_label(&form))
-        .filter(|key| key.chars().count() >= 2)
+        .filter(|key| {
+            let count = key.chars().count();
+            count >= 2 || (count == 1 && key.chars().all(crate::normalize::is_cjk))
+        })
         .collect()
 }
 
@@ -696,6 +704,7 @@ mod tests {
             base_body: base.map(str::to_string),
             aliases: aliases.iter().map(|alias| (*alias).to_string()).collect(),
             is_builtin: true,
+            owned: false,
             notes: String::new(),
         }
     }

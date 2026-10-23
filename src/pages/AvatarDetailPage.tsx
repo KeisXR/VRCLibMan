@@ -55,7 +55,8 @@ export function AvatarDetailPage({ id }: { id: string }) {
         <div>
           <h1>{detail.displayName}</h1>
           <p>
-            {detail.aliases.length > 0 ? `別名 ${detail.aliases.join(" / ")}` : "別名はまだありません"}
+            {detail.owned ? "所持アバター" : "衣装の対応先。所持アバターとしては記録していません。"}
+            {detail.aliases.length > 0 ? ` ・ 別名 ${detail.aliases.join(" / ")}` : ""}
             {detail.baseBodyName ? ` ・ ${detail.baseBodyName}` : ""}
           </p>
         </div>

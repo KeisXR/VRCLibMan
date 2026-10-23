@@ -57,6 +57,7 @@ interface Store {
   baseBodies: BaseBody[];
   links: { productId: string; avatarId: string }[];
   settings: Settings;
+  setupComplete: boolean;
 }
 
 function product(partial: Partial<Product> & Pick<Product, "boothId" | "title" | "category">): Product {
@@ -94,6 +95,7 @@ const store: Store = {
     libraryFolder: "",
     builtinBrowser: false,
   },
+  setupComplete: false,
   baseBodies: [
     {
       id: "komado",
@@ -102,17 +104,17 @@ const store: Store = {
     },
   ],
   avatars: [
-    { id: "lime", displayName: "ライム", baseBody: "komado", aliases: ["Lime"], isBuiltin: true, notes: "" },
-    { id: "plum", displayName: "プラム", baseBody: "komado", aliases: ["Plum"], isBuiltin: true, notes: "" },
-    { id: "chiffon", displayName: "シフォン", baseBody: "komado", aliases: ["Chiffon"], isBuiltin: true, notes: "" },
-    { id: "chocolat", displayName: "ショコラ", baseBody: "komado", aliases: ["Chocolat"], isBuiltin: true, notes: "" },
-    { id: "manuka", displayName: "マヌカ", baseBody: null, aliases: ["Manuka", "MANUKA", "마누카"], isBuiltin: true, notes: "" },
-    { id: "shinano", displayName: "しなの", baseBody: null, aliases: ["Shinano"], isBuiltin: true, notes: "" },
-    { id: "celestia", displayName: "セレスティア", baseBody: null, aliases: ["Celestia", "Selestia"], isBuiltin: true, notes: "" },
-    { id: "milltina", displayName: "ミルティナ", baseBody: null, aliases: ["Milltina"], isBuiltin: true, notes: "" },
-    { id: "kikyo", displayName: "桔梗", baseBody: null, aliases: [], isBuiltin: true, notes: "" },
-    { id: "rurune", displayName: "ルルネ", baseBody: null, aliases: ["rurune", "Rurune"], isBuiltin: true, notes: "" },
-    { id: "owned-8800106", displayName: "架空ちゃん", baseBody: null, aliases: [], isBuiltin: false, notes: "" },
+    { id: "lime", displayName: "ライム", baseBody: "komado", aliases: ["Lime"], isBuiltin: true, owned: true, notes: "" },
+    { id: "plum", displayName: "プラム", baseBody: "komado", aliases: ["Plum"], isBuiltin: true, owned: true, notes: "" },
+    { id: "chiffon", displayName: "シフォン", baseBody: "komado", aliases: ["Chiffon"], isBuiltin: true, owned: false, notes: "" },
+    { id: "chocolat", displayName: "ショコラ", baseBody: "komado", aliases: ["Chocolat"], isBuiltin: true, owned: false, notes: "" },
+    { id: "manuka", displayName: "マヌカ", baseBody: null, aliases: ["Manuka", "MANUKA", "마누카"], isBuiltin: true, owned: true, notes: "" },
+    { id: "shinano", displayName: "しなの", baseBody: null, aliases: ["Shinano"], isBuiltin: true, owned: false, notes: "" },
+    { id: "celestia", displayName: "セレスティア", baseBody: null, aliases: ["Celestia", "Selestia"], isBuiltin: true, owned: false, notes: "" },
+    { id: "milltina", displayName: "ミルティナ", baseBody: null, aliases: ["Milltina"], isBuiltin: true, owned: false, notes: "" },
+    { id: "kikyo", displayName: "桔梗", baseBody: null, aliases: [], isBuiltin: true, owned: false, notes: "" },
+    { id: "rurune", displayName: "ルルネ", baseBody: null, aliases: ["rurune", "Rurune"], isBuiltin: true, owned: false, notes: "" },
+    { id: "owned-8800106", displayName: "架空ちゃん", baseBody: null, aliases: [], isBuiltin: false, owned: false, notes: "" },
   ],
   products: [
     product({
@@ -218,6 +220,44 @@ const store: Store = {
   ],
 };
 
+const stressPreview =
+  typeof location !== "undefined" && new URLSearchParams(location.search).has("stress");
+
+if (stressPreview) {
+  store.setupComplete = true;
+  for (let index = store.avatars.length; index < 1000; index += 1) {
+    store.avatars.push({
+      id: `stress-${index}`,
+      displayName: `対応表${index}`,
+      aliases: index % 5 === 0 ? [`Alias${index}`] : [],
+      baseBody: null,
+      notes: "",
+      isBuiltin: true,
+      owned: false,
+    });
+  }
+  for (let index = 0; index < 50; index += 1) {
+    store.products.push(
+      product({
+        boothId: String(900000 + index),
+        title: `要確認の商品 ${index}`,
+        shop: "計測工房",
+        category: "outfit",
+        needsReview: true,
+        unresolvedNames: [`候補${index * 2}`, `候補${index * 2 + 1}`],
+        descriptionSnippet: "計測用の説明です。",
+      }),
+    );
+  }
+}
+
+function notePreviewCall(command: string) {
+  if (!stressPreview || typeof window === "undefined") return;
+  const target = window as Window & { __vrclibCalls?: string[] };
+  target.__vrclibCalls ??= [];
+  target.__vrclibCalls.push(command);
+}
+
 function linksOf(boothId: string): string[] {
   return store.links.filter((link) => link.productId === boothId).map((link) => link.avatarId);
 }
@@ -229,15 +269,6 @@ function familyOf(avatar: AvatarRecord): Set<string> {
     if (other.baseBody === avatar.baseBody) ids.add(other.id);
   }
   return ids;
-}
-
-function ownedIds(): Set<string> {
-  const bodies = new Set(
-    store.products.filter((item) => item.category === "avatar").map((item) => item.boothId),
-  );
-  return new Set(
-    store.links.filter((link) => bodies.has(link.productId)).map((link) => link.avatarId),
-  );
 }
 
 function filesFor(boothId: string): FileBrief[] {
@@ -326,9 +357,8 @@ function sectionCount(sections: Section[], key: string): number {
 }
 
 function cards(): AvatarCard[] {
-  const owned = ownedIds();
   return store.avatars
-    .filter((avatar) => owned.has(avatar.id))
+    .filter((avatar) => avatar.owned || referencedOnly(avatar.id))
     .map((avatar) => {
       const view = classify(avatar);
       const body = store.baseBodies.find((item) => item.id === avatar.baseBody);
@@ -340,6 +370,7 @@ function cards(): AvatarCard[] {
         aliases: avatar.aliases,
         isBuiltin: avatar.isBuiltin,
         isPlaceholder: avatar.id.startsWith("owned-"),
+        owned: avatar.owned,
         thumbnailPath: view.thumbnailPath,
         thumbnailUrl: view.thumbnailUrl,
         outfitCount: sectionCount(view.sections, "outfit"),
@@ -350,17 +381,24 @@ function cards(): AvatarCard[] {
     });
 }
 
+function referencedOnly(avatarId: string): boolean {
+  return store.links.some((link) => {
+    if (link.avatarId !== avatarId) return false;
+    const product = store.products.find((item) => item.boothId === link.productId);
+    return product != null && product.category !== "avatar";
+  });
+}
+
 function detail(id: string): AvatarDetail {
   const avatar = store.avatars.find((item) => item.id === id);
   if (!avatar) throw new Error("アバターが見つかりません");
   const view = classify(avatar);
-  const owned = ownedIds();
   const body = store.baseBodies.find((item) => item.id === avatar.baseBody);
   const siblings = store.avatars
     .filter(
       (other) =>
         other.id !== avatar.id &&
-        owned.has(other.id) &&
+        other.owned &&
         Boolean(avatar.baseBody) &&
         other.baseBody === avatar.baseBody,
     )
@@ -374,11 +412,24 @@ function detail(id: string): AvatarDetail {
     aliases: avatar.aliases,
     isBuiltin: avatar.isBuiltin,
     isPlaceholder: avatar.id.startsWith("owned-"),
+    owned: avatar.owned,
     siblings,
     ownedProducts: view.owned,
     sections: view.sections,
     genericItems: view.generic,
   };
+}
+
+function candidates() {
+  const counts = new Map<string, number>();
+  for (const product of store.products) {
+    for (const name of product.unresolvedNames) {
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .map(([name, productCount]) => ({ name, productCount }))
+    .sort((left, right) => right.productCount - left.productCount || left.name.localeCompare(right.name, "ja"));
 }
 
 function queue(kind: string): QueuePage {
@@ -426,7 +477,7 @@ function stats(): LibraryStats {
   const page = queue("review");
   return {
     products: store.products.length,
-    ownedAvatars: cards().length,
+    ownedAvatars: store.avatars.filter((avatar) => avatar.owned).length,
     unextracted: page.unextracted,
     needsReview: page.needsReview,
     queueCount: page.unextracted + page.needsReview,
@@ -626,6 +677,7 @@ function saveAvatar(input: AvatarInput): string {
     baseBody: input.baseBody ?? null,
     notes: input.notes,
     isBuiltin: false,
+    owned: false,
   });
   return id;
 }
@@ -635,6 +687,7 @@ function desktopOnly(): never {
 }
 
 export async function dispatch<T>(command: string, args: Record<string, unknown>): Promise<T> {
+  notePreviewCall(command);
   switch (command) {
     case "library_stats":
       return stats() as T;
@@ -734,7 +787,91 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       return undefined as T;
     case "scan_library":
     case "extract_products":
+      desktopOnly();
     case "test_ollama":
+      return { models: [], modelReady: false, modelSizeBytes: null } as T;
+    case "catalog_info":
+      return {
+        count: 932,
+        fetchedOn: "2026-10-23",
+        upstreamUpdated: "2026-02-12 18:36:02 JST",
+        sourceUrl: "https://github.com/eringiriri/mochifitter_list",
+        termsUrl: "https://github.com/eringiriri/mochifitter_list/blob/main/terms.html",
+        author: "えりんぎ",
+        credit: "もちふぃった～プロファイル一覧",
+      } as T;
+    case "setup_status":
+      return {
+        complete: store.setupComplete,
+        model: store.settings.ollamaModel,
+        defaultModel: "gemma4:12b",
+      } as T;
+    case "complete_setup":
+      store.setupComplete = true;
+      return undefined as T;
+    case "reopen_setup":
+      store.setupComplete = false;
+      return undefined as T;
+    case "avatar_candidates":
+      return candidates() as T;
+    case "mark_owned_avatar": {
+      const boothId = String(args.boothId ?? "");
+      const product = store.products.find((item) => item.boothId === boothId);
+      if (!product) throw new Error("商品が見つかりません");
+      if (product.category && product.category !== "avatar") {
+        throw new Error("この商品はアバター本体ではない分類です");
+      }
+      let avatarId = store.links.find((link) => link.productId === boothId)?.avatarId;
+      if (!avatarId) {
+        avatarId = `owned-${boothId}`;
+        store.avatars.push({
+          id: avatarId,
+          displayName: product.title,
+          aliases: [],
+          baseBody: null,
+          notes: "",
+          isBuiltin: false,
+          owned: true,
+        });
+        store.links.push({ productId: boothId, avatarId });
+      }
+      const avatar = store.avatars.find((item) => item.id === avatarId);
+      if (avatar) avatar.owned = true;
+      product.category = "avatar";
+      product.needsReview = false;
+      product.userConfirmed = true;
+      return avatarId as T;
+    }
+    case "register_avatar_candidate": {
+      const name = String(args.name ?? "").trim();
+      if (!store.avatars.some((avatar) => avatar.displayName === name)) {
+        store.avatars.push({
+          id: slug(name),
+          displayName: name,
+          aliases: [],
+          baseBody: null,
+          notes: "",
+          isBuiltin: false,
+          owned: false,
+        });
+      }
+      for (const product of store.products) {
+        product.unresolvedNames = product.unresolvedNames.filter((item) => item !== name);
+      }
+      return slug(name) as T;
+    }
+    case "alias_avatar_candidate": {
+      const name = String(args.name ?? "").trim();
+      const avatar = store.avatars.find((item) => item.id === String(args.avatarId ?? ""));
+      if (!avatar) throw new Error("アバターが見つかりません");
+      if (!avatar.aliases.includes(name) && avatar.displayName !== name) avatar.aliases.push(name);
+      for (const product of store.products) {
+        product.unresolvedNames = product.unresolvedNames.filter((item) => item !== name);
+      }
+      return undefined as T;
+    }
+    case "refresh_avatar_catalog":
+    case "pull_ollama_model":
     case "open_booth_browser":
     case "show_booth_library":
     case "browse_booth_history":

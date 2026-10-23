@@ -1,4 +1,5 @@
 mod browser;
+mod catalog;
 mod commands;
 mod compat;
 mod db;
@@ -118,6 +119,16 @@ pub fn run() {
             commands::extract_products,
             commands::cancel_extract,
             commands::test_ollama,
+            commands::catalog_info,
+            commands::refresh_avatar_catalog,
+            commands::setup_status,
+            commands::complete_setup,
+            commands::reopen_setup,
+            commands::pull_ollama_model,
+            commands::avatar_candidates,
+            commands::register_avatar_candidate,
+            commands::alias_avatar_candidate,
+            commands::mark_owned_avatar,
             commands::cache_thumbnails,
             commands::open_booth_browser,
             commands::show_booth_library,
