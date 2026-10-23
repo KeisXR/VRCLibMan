@@ -171,6 +171,26 @@ fn same_path(left: &Path, right: &Path) -> bool {
     path_keys(left).ok() == path_keys(right).ok()
 }
 
+/// Windows `canonicalize` returns `\\?\` verbatim paths. `path_keys` already
+/// ignores that prefix when it compares paths. The download target needs the
+/// plain form, because WebView2 mishandles the verbatim prefix.
+///
+/// `\\?\C:\...` becomes `C:\...`, and `\\?\UNC\server\share\...` becomes
+/// `\\server\share\...`. A path without that prefix is unchanged, so this is a
+/// no-op for ordinary Linux canonical paths.
+fn without_verbatim_prefix(path: &Path) -> PathBuf {
+    let Some(text) = path.to_str() else {
+        return path.to_path_buf();
+    };
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    if let Some(rest) = text.strip_prefix(r"\\?\") {
+        return PathBuf::from(rest);
+    }
+    path.to_path_buf()
+}
+
 fn normal_names(path: &Path) -> Result<Vec<std::ffi::OsString>, ()> {
     let mut names = Vec::new();
     for component in path.components() {
@@ -269,7 +289,8 @@ pub(crate) fn prepare_staging_dir(downloads: &Path, booth_id: &str) -> Result<Pa
     }
     let root = std::fs::canonicalize(downloads).map_err(|_| staged_path_error())?;
     let staging = ensure_real_dir(&root, "VRCLibMan")?;
-    ensure_real_dir(&staging, booth_id)
+    let product = ensure_real_dir(&staging, booth_id)?;
+    Ok(without_verbatim_prefix(&product))
 }
 
 fn ensure_real_dir(parent: &Path, name: &str) -> Result<PathBuf, String> {
@@ -1006,6 +1027,24 @@ mod tests {
         assert!(prepare_staging_dir(&downloads, "42").is_err());
         assert!(prepare_staging_dir(Path::new("Downloads"), "424242").is_err());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn windows_verbatim_prefix_normalizes_without_canonicalize() {
+        assert_eq!(
+            without_verbatim_prefix(Path::new(
+                r"\\?\C:\Users\someone\Downloads\VRCLibMan\424242"
+            )),
+            PathBuf::from(r"C:\Users\someone\Downloads\VRCLibMan\424242")
+        );
+        assert_eq!(
+            without_verbatim_prefix(Path::new(r"\\?\UNC\server\share\VRCLibMan\424242")),
+            PathBuf::from(r"\\server\share\VRCLibMan\424242")
+        );
+        let plain = PathBuf::from(r"C:\Users\someone\Downloads\VRCLibMan\424242");
+        assert_eq!(without_verbatim_prefix(&plain), plain);
+        let unix = PathBuf::from("/tmp/Downloads/VRCLibMan/424242");
+        assert_eq!(without_verbatim_prefix(&unix), unix);
     }
 
     #[cfg(unix)]
