@@ -73,6 +73,7 @@ pub fn os_supports_apple_fm() -> bool {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
 pub fn version_at_least(text: &str, major: u32, minor: u32) -> bool {
     let mut parts = text.trim().split('.');
     let got_major = parts.next().unwrap_or("0").parse::<u32>().unwrap_or(0);
