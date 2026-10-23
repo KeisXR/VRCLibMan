@@ -58,8 +58,12 @@ pub(crate) fn clean_variation(value: &str) -> Option<String> {
     Some(name)
 }
 
-const STAGED_PATH_ERROR: &str =
-    "移動できるのは、ダウンロードフォルダの VRCLibMan\\商品ID\\ファイル名 だけです";
+fn staged_path_error() -> String {
+    format!(
+        "移動できるのは、ダウンロードフォルダの VRCLibMan{0}商品ID{0}ファイル名 だけです",
+        std::path::MAIN_SEPARATOR
+    )
+}
 
 #[cfg(test)]
 std::thread_local! {
@@ -136,6 +140,14 @@ fn known_downloads_folder() -> Result<PathBuf, String> {
     Ok(PathBuf::from(home).join("Downloads"))
 }
 
+fn component_key(text: &str) -> String {
+    if cfg!(windows) {
+        text.to_lowercase()
+    } else {
+        text.to_string()
+    }
+}
+
 fn path_keys(path: &Path) -> Result<Vec<String>, ()> {
     let mut keys = Vec::new();
     for component in path.components() {
@@ -143,13 +155,13 @@ fn path_keys(path: &Path) -> Result<Vec<String>, ()> {
             Component::CurDir | Component::ParentDir => return Err(()),
             Component::RootDir => {}
             Component::Prefix(prefix) => {
-                let text = prefix.as_os_str().to_string_lossy().to_lowercase();
-                let text = text.trim_start_matches(r"\\?\").to_string();
+                let raw = prefix.as_os_str().to_string_lossy();
+                let text = raw.trim_start_matches(r"\\?\");
                 if !text.is_empty() {
-                    keys.push(text);
+                    keys.push(component_key(text));
                 }
             }
-            Component::Normal(name) => keys.push(name.to_string_lossy().to_lowercase()),
+            Component::Normal(name) => keys.push(component_key(&name.to_string_lossy())),
         }
     }
     Ok(keys)
@@ -176,25 +188,25 @@ fn normal_names(path: &Path) -> Result<Vec<std::ffi::OsString>, ()> {
 fn open_child(parent: &Path, name: &std::ffi::OsStr, directory: bool) -> Result<PathBuf, String> {
     let text = name.to_string_lossy();
     if name.is_empty() || text == "." || text == ".." || text.contains(['/', '\\']) {
-        return Err(STAGED_PATH_ERROR.into());
+        return Err(staged_path_error());
     }
     let joined = parent.join(name);
-    let meta = std::fs::symlink_metadata(&joined).map_err(|_| STAGED_PATH_ERROR.to_string())?;
+    let meta = std::fs::symlink_metadata(&joined).map_err(|_| staged_path_error())?;
     if meta.file_type().is_symlink() {
         return Err("シンボリックリンクは移動しません".into());
     }
     if directory && !meta.is_dir() {
-        return Err(STAGED_PATH_ERROR.into());
+        return Err(staged_path_error());
     }
     if !directory && !meta.is_file() {
         return Err("ダウンロードしたファイルが見つかりません".into());
     }
-    let canon = std::fs::canonicalize(&joined).map_err(|_| STAGED_PATH_ERROR.to_string())?;
+    let canon = std::fs::canonicalize(&joined).map_err(|_| staged_path_error())?;
     let Some(canon_parent) = canon.parent() else {
-        return Err(STAGED_PATH_ERROR.into());
+        return Err(staged_path_error());
     };
     if !same_path(canon_parent, parent) {
-        return Err(STAGED_PATH_ERROR.into());
+        return Err(staged_path_error());
     }
     Ok(canon)
 }
@@ -220,28 +232,28 @@ pub(crate) fn staged_download_ok(
             .unwrap_or(""),
     )
     .ok_or_else(|| "ファイル名を読めません".to_string())?;
-    let source_keys = path_keys(source).map_err(|_| STAGED_PATH_ERROR.to_string())?;
-    let root_keys = path_keys(downloads).map_err(|_| STAGED_PATH_ERROR.to_string())?;
+    let source_keys = path_keys(source).map_err(|_| staged_path_error())?;
+    let root_keys = path_keys(downloads).map_err(|_| staged_path_error())?;
     let tail = [
-        "vrclibman".to_string(),
-        booth_id.to_string(),
-        filename.to_lowercase(),
+        component_key("VRCLibMan"),
+        component_key(booth_id),
+        component_key(&filename),
     ];
     if source_keys.len() != root_keys.len() + tail.len()
         || source_keys[..root_keys.len()] != root_keys[..]
         || source_keys[root_keys.len()..] != tail[..]
     {
-        return Err(STAGED_PATH_ERROR.into());
+        return Err(staged_path_error());
     }
-    let source_names = normal_names(source).map_err(|_| STAGED_PATH_ERROR.to_string())?;
-    let root_names = normal_names(downloads).map_err(|_| STAGED_PATH_ERROR.to_string())?;
-    let root = std::fs::canonicalize(downloads).map_err(|_| STAGED_PATH_ERROR.to_string())?;
+    let source_names = normal_names(source).map_err(|_| staged_path_error())?;
+    let root_names = normal_names(downloads).map_err(|_| staged_path_error())?;
+    let root = std::fs::canonicalize(downloads).map_err(|_| staged_path_error())?;
     let staging = open_child(&root, &source_names[root_names.len()], true)?;
     let product_dir = open_child(&staging, &source_names[root_names.len() + 1], true)?;
     let file = open_child(&product_dir, &source_names[root_names.len() + 2], false)?;
-    let source_canon = std::fs::canonicalize(source).map_err(|_| STAGED_PATH_ERROR.to_string())?;
+    let source_canon = std::fs::canonicalize(source).map_err(|_| staged_path_error())?;
     if !same_path(&source_canon, &file) {
-        return Err(STAGED_PATH_ERROR.into());
+        return Err(staged_path_error());
     }
     Ok(file)
 }
@@ -710,6 +722,31 @@ mod tests {
         assert!(documents.exists());
         assert!(executable.exists());
         assert!(place_into_library(&good, None, "900001").is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn lowercase_vrclibman_folder_matches_only_on_windows() {
+        let root = fixture_root("case");
+        let downloads = root.join("Downloads");
+        let lower = downloads
+            .join("vrclibman")
+            .join("900001")
+            .join("body.unitypackage");
+        write_file(&lower, b"pkg");
+        let result = staged_download_ok(&lower, &downloads, "900001");
+        if cfg!(windows) {
+            assert!(result.is_ok(), "{}", result.unwrap_err());
+        } else {
+            assert!(result.is_err());
+            assert!(lower.exists());
+        }
+        let exact = downloads
+            .join("VRCLibMan")
+            .join("900001")
+            .join("Body.unitypackage");
+        write_file(&exact, b"Exact");
+        assert!(staged_download_ok(&exact, &downloads, "900001").is_ok());
         let _ = std::fs::remove_dir_all(&root);
     }
 
