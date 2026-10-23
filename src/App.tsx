@@ -160,6 +160,12 @@ export default function App() {
   );
   const percent =
     progress && progress.total > 0 ? Math.min(100, (progress.current / progress.total) * 100) : 0;
+  const density =
+    route.page === "settings"
+      ? "density-roomy"
+      : route.page === "avatars" || route.page === "avatar" || route.page === "queue"
+        ? "density-compact"
+        : "";
 
   return (
     <ShellContext.Provider value={shell}>
@@ -210,7 +216,7 @@ export default function App() {
               </div>
             )}
           </div>
-          <main className="content">
+          <main className={`content ${density}`}>
             {route.page === "avatars" && <AvatarsPage />}
             {route.page === "avatar" && route.id && (
               <AvatarDetailPage id={route.id} fileBoothId={route.fileBoothId} />

@@ -274,7 +274,7 @@ export function SettingsPage() {
         </div>
       </div>
       {link && (
-        <div className="panel" style={{ padding: 16, marginBottom: 16 }}>
+        <div className="panel" >
           <h2>拡張との接続</h2>
           <p className="meta">
             拡張は今開いている Booth のページだけを読み、この PC の 127.0.0.1:{link.port} に送ります。
@@ -300,7 +300,7 @@ export function SettingsPage() {
         </div>
       )}
       {settings && (
-        <div className="panel" style={{ padding: 16, marginBottom: 16 }}>
+        <div className="panel" >
           <h2>内蔵ブラウザ</h2>
           <p className="meta">
             既定は拡張機能です。内蔵ブラウザは、自分でログインして今開いているライブラリのページだけを取り込む別のモードです。
@@ -340,7 +340,7 @@ export function SettingsPage() {
         </div>
       )}
       {catalog && (
-        <div className="panel" style={{ padding: 16, marginBottom: 16 }}>
+        <div className="panel" >
           <h2>アバター対応表</h2>
           <p className="meta">
             初期の対応表は {catalog.credit}（{catalog.author}）です。{catalog.count} 件を同梱しています。
@@ -371,7 +371,7 @@ export function SettingsPage() {
         </div>
       )}
       {settings && (
-        <div className="panel" style={{ padding: 16, marginBottom: 16 }}>
+        <div className="panel" >
           <div className="form-grid">
             <label className="field">
               <span>Ollama の URL</span>
@@ -531,7 +531,7 @@ export function SettingsPage() {
           </p>
         </div>
       )}
-      <div className="row-actions" style={{ marginBottom: 16 }}>
+      <div className="row-actions">
         <button className="button" type="button" onClick={() => void restore()}>
           初期データを追加
         </button>
@@ -568,8 +568,8 @@ export function SettingsPage() {
           </div>
         </div>
         <div className="stack">
-          <div className="panel" style={{ padding: 16 }}>
-            <h2 style={{ marginTop: 0 }}>{avatar.id ? "アバターを編集" : "アバターを追加"}</h2>
+          <div className="panel" >
+            <h2 >{avatar.id ? "アバターを編集" : "アバターを追加"}</h2>
             <label className="field">
               <span>表示名</span>
               <input value={avatar.displayName} onChange={(event) => setAvatar({ ...avatar, displayName: event.target.value })} />
@@ -605,8 +605,8 @@ export function SettingsPage() {
               </button>
             </div>
           </div>
-          <div className="panel" style={{ padding: 16 }}>
-            <h2 style={{ marginTop: 0 }}>{body.id ? "素体を編集" : "素体を追加"}</h2>
+          <div className="panel" >
+            <h2 >{body.id ? "素体を編集" : "素体を追加"}</h2>
             <label className="field">
               <span>表示名</span>
               <input value={body.displayName} onChange={(event) => setBody({ ...body, displayName: event.target.value })} />
