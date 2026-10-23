@@ -220,6 +220,44 @@ const store: Store = {
   ],
 };
 
+const stressPreview =
+  typeof location !== "undefined" && new URLSearchParams(location.search).has("stress");
+
+if (stressPreview) {
+  store.setupComplete = true;
+  for (let index = store.avatars.length; index < 1000; index += 1) {
+    store.avatars.push({
+      id: `stress-${index}`,
+      displayName: `対応表${index}`,
+      aliases: index % 5 === 0 ? [`Alias${index}`] : [],
+      baseBody: null,
+      notes: "",
+      isBuiltin: true,
+      owned: false,
+    });
+  }
+  for (let index = 0; index < 50; index += 1) {
+    store.products.push(
+      product({
+        boothId: String(900000 + index),
+        title: `要確認の商品 ${index}`,
+        shop: "計測工房",
+        category: "outfit",
+        needsReview: true,
+        unresolvedNames: [`候補${index * 2}`, `候補${index * 2 + 1}`],
+        descriptionSnippet: "計測用の説明です。",
+      }),
+    );
+  }
+}
+
+function notePreviewCall(command: string) {
+  if (!stressPreview || typeof window === "undefined") return;
+  const target = window as Window & { __vrclibCalls?: string[] };
+  target.__vrclibCalls ??= [];
+  target.__vrclibCalls.push(command);
+}
+
 function linksOf(boothId: string): string[] {
   return store.links.filter((link) => link.productId === boothId).map((link) => link.avatarId);
 }
@@ -649,6 +687,7 @@ function desktopOnly(): never {
 }
 
 export async function dispatch<T>(command: string, args: Record<string, unknown>): Promise<T> {
+  notePreviewCall(command);
   switch (command) {
     case "library_stats":
       return stats() as T;

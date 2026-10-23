@@ -319,6 +319,8 @@ details.generic summary { cursor: pointer; color: var(--muted); }
   align-items: center;
 }
 .candidate select, .candidate .button { width: auto; }
+.picker { display: flex; flex-direction: column; gap: 4px; max-height: 240px; overflow: auto; margin-top: var(--space-2); }
+.picker label { display: flex; gap: 6px; align-items: center; font-size: 13px; }
 .ownership { margin-top: var(--space-5); }
 .ownership-title { margin: 0 0 var(--space-2); font-size: 20px; }
 @media (max-width: 860px) {
