@@ -326,6 +326,11 @@ pub async fn close_booth_browser(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn booth_browser_log(app: tauri::AppHandle) -> Result<crate::browser::BrowserDiagnostic, String> {
+    crate::browser::diagnostic(&app)
+}
+
+#[tauri::command]
 pub fn update_product(state: State<'_, AppState>, update: ProductUpdate) -> Result<(), String> {
     let mut connection = db(&state)?;
     db::update_product(&mut connection, &update)

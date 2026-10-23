@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useShell } from "../App";
 import type { ImportReport } from "../types";
@@ -8,6 +8,23 @@ export function BrowserPage({ enabled }: { enabled: boolean }) {
   const { refresh, notify, fail } = useShell();
   const [busy, setBusy] = useState(false);
   const [report, setReport] = useState<ImportReport | null>(null);
+  const [logPath, setLogPath] = useState("");
+  const [logText, setLogText] = useState("");
+
+  async function refreshLog() {
+    try {
+      const diagnostic = await api.boothBrowserLog();
+      setLogPath(diagnostic.path);
+      setLogText(diagnostic.text);
+    } catch (err) {
+      setLogText(errorText(err));
+    }
+  }
+
+  useEffect(() => {
+    if (!enabled) return;
+    void refreshLog();
+  }, [enabled]);
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -17,6 +34,7 @@ export function BrowserPage({ enabled }: { enabled: boolean }) {
       fail(errorText(err));
     } finally {
       setBusy(false);
+      if (enabled) void refreshLog();
     }
   }
 
@@ -92,6 +110,16 @@ export function BrowserPage({ enabled }: { enabled: boolean }) {
               {report.warnings.length > 0 ? `。${report.warnings[0]}` : ""}
             </p>
           )}
+          <div className="row-actions" style={{ marginTop: 12 }}>
+            <button className="button" type="button" disabled={busy} onClick={() => void refreshLog()}>
+              診断を更新
+            </button>
+          </div>
+          <p className="meta">
+            記録にパスワードやページのクエリは入れません。
+            {logPath ? ` ファイルは ${logPath} です。` : ""}
+          </p>
+          <pre className="browser-log">{logText || "まだ記録はありません"}</pre>
         </div>
       )}
     </section>

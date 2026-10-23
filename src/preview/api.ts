@@ -1056,6 +1056,8 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     }
     case "refresh_avatar_catalog":
     case "pull_ollama_model":
+    case "booth_browser_log":
+      return { path: "", text: "見本では記録はありません" } as T;
     case "open_booth_browser":
     case "show_booth_library":
     case "browse_booth_history":

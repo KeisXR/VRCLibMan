@@ -8,6 +8,7 @@ import type {
   CatalogRefresh,
   ExtractReport,
   ExtensionLink,
+  BrowserDiagnostic,
   ImportReport,
   JobProgress,
   Knowledge,
@@ -72,6 +73,7 @@ export const api = {
   importBoothPage: () => call<ImportReport>("import_booth_page"),
   clearBoothSession: () => call<void>("clear_booth_session"),
   closeBoothBrowser: () => call<void>("close_booth_browser"),
+  boothBrowserLog: () => call<BrowserDiagnostic>("booth_browser_log"),
   importExport: (json: string) => call<ImportReport>("import_export", { json }),
   updateProduct: (update: ProductUpdate) => call<void>("update_product", { update }),
   linkFile: (path: string, productId: string | null) =>
