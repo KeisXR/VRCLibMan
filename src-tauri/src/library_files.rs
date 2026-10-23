@@ -102,7 +102,7 @@ fn known_downloads_folder() -> Result<PathBuf, String> {
         data4: [0x91, 0x64, 0x39, 0xC4, 0x92, 0x5E, 0x46, 0x7B],
     };
     #[link(name = "shell32")]
-    extern "system" {
+    unsafe extern "system" {
         fn SHGetKnownFolderPath(
             rfid: *const Guid,
             flags: u32,
@@ -111,7 +111,7 @@ fn known_downloads_folder() -> Result<PathBuf, String> {
         ) -> i32;
     }
     #[link(name = "ole32")]
-    extern "system" {
+    unsafe extern "system" {
         fn CoTaskMemFree(pointer: *mut std::ffi::c_void);
     }
     // SAFETY: SHGetKnownFolderPath writes a CoTaskMem-allocated wide string on success.
