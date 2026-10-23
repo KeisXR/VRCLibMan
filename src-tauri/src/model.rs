@@ -126,6 +126,7 @@ pub struct IncomingDownload {
     pub filename: String,
     pub size_bytes: Option<u64>,
     pub variation: String,
+    pub downloadable_id: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -226,6 +227,8 @@ pub struct ImportReport {
     pub updated: u32,
     pub unchanged: u32,
     pub skipped: u32,
+    pub variations: u32,
+    pub downloads: u32,
     pub warnings: Vec<String>,
 }
 

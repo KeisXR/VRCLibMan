@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { mediaSrc } from "./media";
+import { FILE_PRESENCE_LABEL, mediaSrc } from "./media";
+import type { FilePresence } from "./media";
 
 export function Thumb({
   path,
@@ -27,6 +28,34 @@ export function Thumb({
       onError={() => setFailed(true)}
     />
   );
+}
+
+export function FileMark({
+  presence,
+  href,
+  onClick,
+}: {
+  presence: FilePresence;
+  href?: string;
+  onClick?: () => void;
+}) {
+  const className = `presence presence-${presence}`;
+  const label = FILE_PRESENCE_LABEL[presence];
+  if (href) {
+    return (
+      <a className={className} href={href}>
+        {label}
+      </a>
+    );
+  }
+  if (onClick) {
+    return (
+      <button className={className} type="button" onClick={onClick}>
+        {label}
+      </button>
+    );
+  }
+  return <span className={className}>{label}</span>;
 }
 
 export function errorText(err: unknown): string {

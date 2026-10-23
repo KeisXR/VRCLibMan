@@ -4,7 +4,7 @@ import { useShell } from "../App";
 import { confidenceLabel, formatBytes } from "../media";
 import { CATEGORIES, CATEGORY_LABEL } from "../types";
 import type { AvatarCandidate, ProductOption, QueueFile, QueueProduct } from "../types";
-import { Thumb, errorText } from "../ui";
+import { FileMark, Thumb, errorText } from "../ui";
 
 type Kind = "unextracted" | "review" | "files";
 
@@ -415,7 +415,17 @@ const ProductEditor = memo(function ProductEditor({
       <div className="queue-main">
         <Thumb path={product.thumbnailPath} url={product.thumbnailUrl} name={product.title} />
         <div>
-          <h2 className="card-title">{product.title}</h2>
+          <h2 className="card-title">
+            {product.title}
+            <FileMark
+              presence={product.filePresence}
+              href={
+                product.category !== "avatar" && product.linkedAvatarIds[0]
+                  ? `#/avatar/${encodeURIComponent(product.linkedAvatarIds[0])}/files/${encodeURIComponent(product.boothId)}`
+                  : undefined
+              }
+            />
+          </h2>
           <div className="meta">
             {product.shop || "ショップ不明"} ・ 確信度 {confidenceLabel(product.confidence)}
           </div>

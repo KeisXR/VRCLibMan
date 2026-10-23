@@ -153,6 +153,8 @@ pub struct QueueProduct {
     pub unresolved_names: Vec<String>,
     pub linked_avatar_ids: Vec<String>,
     pub user_confirmed: bool,
+    /// local, partial, missing, or unknown. Remote is filled on the avatar page after a probe.
+    pub file_presence: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -254,6 +256,40 @@ pub fn avatar_detail(snapshot: &Snapshot, id: &str) -> Option<AvatarDetail> {
     })
 }
 
+fn file_presence(snapshot: &Snapshot, booth_id: &str) -> String {
+    let rows: Vec<&DownloadFact> = snapshot
+        .download_rows
+        .iter()
+        .filter(|row| row.booth_id == booth_id)
+        .collect();
+    let names: HashSet<&str> = rows.iter().map(|row| row.filename.as_str()).collect();
+    let extra_local = snapshot
+        .files
+        .iter()
+        .filter(|file| {
+            !file.is_dir
+                && file.linked_product_id.as_deref() == Some(booth_id)
+                && !names.contains(file.filename.as_str())
+        })
+        .count();
+    let local_rows = rows
+        .iter()
+        .filter(|row| row.downloaded || row.local_path.is_some())
+        .count();
+    let missing = rows.len().saturating_sub(local_rows);
+    let has_local = local_rows > 0 || extra_local > 0;
+    if rows.is_empty() && extra_local == 0 {
+        return "unknown".into();
+    }
+    if has_local && missing > 0 {
+        return "partial".into();
+    }
+    if has_local {
+        return "local".into();
+    }
+    "missing".into()
+}
+
 pub fn queue_page(snapshot: &Snapshot, kind: &str, offset: u32, limit: u32) -> QueuePage {
     let unextracted = snapshot
         .products
@@ -336,6 +372,7 @@ pub fn queue_page(snapshot: &Snapshot, kind: &str, offset: u32, limit: u32) -> Q
                     .map(|link| link.avatar_id.clone())
                     .collect(),
                 user_confirmed: product.user_confirmed,
+                file_presence: file_presence(snapshot, &product.booth_id),
             })
             .collect();
     }

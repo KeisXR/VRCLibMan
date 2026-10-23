@@ -152,9 +152,15 @@ fn parse_downloads(value: Option<&Value>) -> Vec<IncomingDownload> {
         let Some(map) = item.as_object() else {
             continue;
         };
-        let Some(filename) =
-            crate::library_files::safe_filename(&first_text(map, &["filename", "name"]))
-        else {
+        let downloadable_id = clean_downloadable_id(&first_text(
+            map,
+            &["downloadableId", "downloadable_id"],
+        ));
+        let Some(filename) = crate::library_files::safe_filename(&first_text(
+            map,
+            &["filename", "name"],
+        ))
+        .or_else(|| crate::library_files::safe_filename(&downloadable_id)) else {
             continue;
         };
         let variation = crate::library_files::clean_variation(&first_text(
@@ -170,19 +176,34 @@ fn parse_downloads(value: Option<&Value>) -> Vec<IncomingDownload> {
                 Value::String(text) => text.trim().parse().ok(),
                 _ => None,
             });
-        if downloads
-            .iter()
-            .any(|row| row.filename == filename && row.variation == variation)
-        {
+        if downloads.iter().any(|row| {
+            if !downloadable_id.is_empty() && row.downloadable_id == downloadable_id {
+                return true;
+            }
+            downloadable_id.is_empty()
+                && row.downloadable_id.is_empty()
+                && row.filename == filename
+                && row.variation == variation
+        }) {
             continue;
         }
         downloads.push(IncomingDownload {
             filename,
             size_bytes,
             variation,
+            downloadable_id,
         });
     }
     downloads
+}
+
+fn clean_downloadable_id(value: &str) -> String {
+    let id = value.trim();
+    if (1..=12).contains(&id.len()) && id.bytes().all(|byte| byte.is_ascii_digit()) {
+        id.to_string()
+    } else {
+        String::new()
+    }
 }
 
 fn optional_bool(map: &Map<String, Value>, keys: &[&str]) -> Option<bool> {

@@ -128,6 +128,7 @@ export interface QueueProduct {
   unresolvedNames: string[];
   linkedAvatarIds: string[];
   userConfirmed: boolean;
+  filePresence: "local" | "partial" | "remote" | "missing" | "unknown";
 }
 
 export interface QueueFile {
@@ -207,6 +208,8 @@ export interface ImportReport {
   updated: number;
   unchanged: number;
   skipped: number;
+  variations: number;
+  downloads: number;
   warnings: string[];
 }
 

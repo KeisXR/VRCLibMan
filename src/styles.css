@@ -320,6 +320,29 @@ nav { display: flex; flex-direction: column; gap: 2px; }
   vertical-align: 1px;
 }
 .badge.adult { color: var(--warn); }
+.presence {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--sunken);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.7;
+  vertical-align: 1px;
+  cursor: pointer;
+}
+button.presence, span.presence { font-size: 12px; font-weight: 650; }
+span.presence { cursor: default; }
+a.presence { text-decoration: none; }
+a.presence:hover, button.presence:hover { background: var(--hover); text-decoration: none; }
+.presence-local { color: var(--good); }
+.presence-partial { color: var(--warn); }
+.presence-remote { color: var(--muted); }
+.presence-missing, .presence-unknown { color: var(--faint); }
 .adult-note { margin-top: var(--space-2); font-size: 13px; }
 .download-row .row-actions { margin: 0; }
 details.generic { margin-top: var(--space-2); }

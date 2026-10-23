@@ -108,6 +108,12 @@ export const api = {
   cacheThumbnails: () => call<number>("cache_thumbnails"),
 };
 
+export async function saveLibraryAndScan(folder: string, settings?: Settings): Promise<ScanReport> {
+  const current = settings ?? (await api.settings());
+  await api.saveSettings({ ...current, libraryFolder: folder });
+  return api.scanLibrary(folder);
+}
+
 export async function revealInFolder(path: string): Promise<void> {
   if (!isTauri()) return;
   const { revealItemInDir } = await import("@tauri-apps/plugin-opener");

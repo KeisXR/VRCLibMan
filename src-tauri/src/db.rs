@@ -1,5 +1,5 @@
 use crate::import_data::ParsedExport;
-use crate::matching::{LabelScore, choose_match, score_label};
+use crate::matching::{LabelScore, choose_match, contains_booth_id, score_label};
 use crate::model::{
     Avatar, AvatarCandidate, AvatarInput, BaseBody, BaseBodyInput, CatalogInfo, CatalogRefresh,
     Category, DownloadFact, DownloadFinished, Extraction, ImportReport, IncomingDownload,
@@ -178,6 +178,12 @@ fn migrate(connection: &Connection) -> Result<(), String> {
             );",
         )
         .sql()?;
+    ensure_column(
+        connection,
+        "product_files",
+        "downloadable_id",
+        "ALTER TABLE product_files ADD COLUMN downloadable_id TEXT",
+    )?;
     Ok(())
 }
 
@@ -458,12 +464,31 @@ pub(crate) fn import_products(
         apply_listed_compatibility(connection, &booth_id)?;
     }
     settle_dictionary(connection)?;
+    let variations = parsed
+        .products
+        .iter()
+        .map(|product| product.variations.len() as u32)
+        .sum();
+    let downloads = parsed
+        .products
+        .iter()
+        .map(|product| product.downloads.len() as u32)
+        .sum();
+    let mut warnings = parsed.warnings.clone();
+    if !parsed.products.is_empty() && variations == 0 && downloads == 0 {
+        warnings.push(
+            "バリエーションもダウンロードも 0 件です。ファイルの有無は分かりません。拡張の「解析結果をコピー」で構造を確認するか、ライブラリを取り込み直すか、フォルダを調べてください"
+                .into(),
+        );
+    }
     Ok(ImportReport {
         inserted,
         updated,
         unchanged,
         skipped: parsed.skipped,
-        warnings: parsed.warnings.clone(),
+        variations,
+        downloads,
+        warnings,
     })
 }
 
@@ -677,24 +702,105 @@ fn merge_variation(
     Ok(changed > 0)
 }
 
+fn clean_downloadable_id(value: &str) -> String {
+    let id = value.trim();
+    if (1..=12).contains(&id.len()) && id.bytes().all(|byte| byte.is_ascii_digit()) {
+        id.to_string()
+    } else {
+        String::new()
+    }
+}
+
 fn merge_download(
     connection: &Connection,
     booth_id: &str,
     download: &IncomingDownload,
 ) -> Result<bool, String> {
-    let Some(filename) = crate::library_files::safe_filename(&download.filename) else {
+    let downloadable_id = clean_downloadable_id(&download.downloadable_id);
+    let Some(filename) = crate::library_files::safe_filename(&download.filename)
+        .or_else(|| crate::library_files::safe_filename(&downloadable_id))
+    else {
         return Ok(false);
     };
     let variation = crate::library_files::clean_variation(&download.variation).unwrap_or_default();
+    if !downloadable_id.is_empty() {
+        let existing: Option<(String, String)> = connection
+            .query_row(
+                "SELECT variation, filename FROM product_files
+                 WHERE booth_id = ?1 AND downloadable_id = ?2",
+                params![booth_id, downloadable_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .sql()?;
+        if let Some((old_variation, old_filename)) = existing {
+            let new_filename = if filename != downloadable_id {
+                filename
+            } else {
+                old_filename.clone()
+            };
+            let new_variation = if variation.is_empty() {
+                old_variation.clone()
+            } else {
+                variation
+            };
+            let mut changed = false;
+            if new_filename != old_filename || new_variation != old_variation {
+                let clash: i64 = connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM product_files
+                         WHERE booth_id = ?1 AND variation = ?2 AND filename = ?3
+                           AND IFNULL(downloadable_id, '') != ?4",
+                        params![booth_id, new_variation, new_filename, downloadable_id],
+                        |row| row.get(0),
+                    )
+                    .sql()?;
+                if clash == 0 {
+                    let updated = connection
+                        .execute(
+                            "UPDATE product_files SET variation = ?1, filename = ?2
+                             WHERE booth_id = ?3 AND downloadable_id = ?4",
+                            params![new_variation, new_filename, booth_id, downloadable_id],
+                        )
+                        .sql()?;
+                    changed |= updated > 0;
+                }
+            }
+            if let Some(size) = download.size_bytes {
+                let updated = connection
+                    .execute(
+                        "UPDATE product_files SET size_bytes = ?1
+                         WHERE booth_id = ?2 AND downloadable_id = ?3 AND size_bytes IS NOT ?1",
+                        params![size as i64, booth_id, downloadable_id],
+                    )
+                    .sql()?;
+                changed |= updated > 0;
+            }
+            return Ok(changed);
+        }
+    }
+    let id_value = if downloadable_id.is_empty() {
+        None
+    } else {
+        Some(downloadable_id)
+    };
     let changed = connection
         .execute(
-            "INSERT INTO product_files (booth_id, variation, filename, size_bytes, downloaded, local_path)
-             VALUES (?1, ?2, ?3, ?4, 0, NULL)
+            "INSERT INTO product_files (
+                booth_id, variation, filename, size_bytes, downloaded, local_path, downloadable_id
+             ) VALUES (?1, ?2, ?3, ?4, 0, NULL, ?5)
              ON CONFLICT(booth_id, variation, filename) DO UPDATE SET
-               size_bytes = COALESCE(excluded.size_bytes, product_files.size_bytes)
-             WHERE excluded.size_bytes IS NOT NULL
-               AND product_files.size_bytes IS NOT excluded.size_bytes",
-            params![booth_id, variation, filename, download.size_bytes.map(|size| size as i64)],
+               size_bytes = COALESCE(excluded.size_bytes, product_files.size_bytes),
+               downloadable_id = COALESCE(product_files.downloadable_id, excluded.downloadable_id)
+             WHERE (excluded.size_bytes IS NOT NULL AND product_files.size_bytes IS NOT excluded.size_bytes)
+                OR (product_files.downloadable_id IS NULL AND excluded.downloadable_id IS NOT NULL)",
+            params![
+                booth_id,
+                variation,
+                filename,
+                download.size_bytes.map(|size| size as i64),
+                id_value
+            ],
         )
         .sql()?;
     Ok(changed > 0)
@@ -1434,11 +1540,43 @@ fn load_product_flags(connection: &Connection) -> Result<Vec<ProductFlag>, Strin
     rows.collect::<Result<Vec<_>, _>>().sql()
 }
 
+fn booth_id_in_path(path: &str, ids: &HashSet<String>) -> Option<String> {
+    let parts: Vec<&str> = path
+        .split(['/', '\\'])
+        .filter(|part| !part.is_empty())
+        .collect();
+    let dirs = if parts.len() > 1 {
+        &parts[..parts.len() - 1]
+    } else {
+        &parts[..]
+    };
+    if let Some(exact) = dirs.iter().rev().find(|part| ids.contains(**part)) {
+        return Some((*exact).to_string());
+    }
+    let mut found = Vec::new();
+    for id in ids {
+        if contains_booth_id(path, id) {
+            found.push(id.clone());
+        }
+    }
+    if found.len() == 1 {
+        found.pop()
+    } else {
+        None
+    }
+}
+
 fn sync_scanned_downloads(connection: &Connection) -> Result<(), String> {
+    let mut id_query = connection.prepare("SELECT booth_id FROM products").sql()?;
+    let product_ids: HashSet<String> = id_query
+        .query_map([], |row| row.get(0))
+        .sql()?
+        .collect::<Result<HashSet<_>, _>>()
+        .sql()?;
+    drop(id_query);
     let mut statement = connection
         .prepare(
-            "SELECT path, filename, linked_product_id FROM local_files
-             WHERE is_dir = 0 AND linked_product_id IS NOT NULL",
+            "SELECT path, filename, size, linked_product_id FROM local_files WHERE is_dir = 0",
         )
         .sql()?;
     let rows = statement
@@ -1446,22 +1584,51 @@ fn sync_scanned_downloads(connection: &Connection) -> Result<(), String> {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, Option<String>>(3)?,
             ))
         })
         .sql()?
         .collect::<Result<Vec<_>, _>>()
         .sql()?;
     drop(statement);
-    for (path, filename, booth_id) in rows {
-        connection
-            .execute(
-                "UPDATE product_files SET downloaded = 1, local_path = ?1
-                 WHERE booth_id = ?2 AND filename = ?3
-                   AND (downloaded = 0 OR local_path IS NULL)",
-                params![path, booth_id, filename],
+    for (path, filename, size, linked) in rows {
+        let Some(filename) = crate::library_files::safe_filename(&filename) else {
+            continue;
+        };
+        let booth_id = linked
+            .filter(|id| product_ids.contains(id))
+            .or_else(|| booth_id_in_path(&path, &product_ids));
+        let Some(booth_id) = booth_id else {
+            continue;
+        };
+        let existing: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM product_files WHERE booth_id = ?1 AND filename = ?2",
+                params![booth_id, filename],
+                |row| row.get(0),
             )
             .sql()?;
+        if existing > 0 {
+            connection
+                .execute(
+                    "UPDATE product_files SET downloaded = 1, local_path = ?1,
+                       size_bytes = COALESCE(size_bytes, ?2)
+                     WHERE booth_id = ?3 AND filename = ?4
+                       AND (downloaded = 0 OR local_path IS NULL OR size_bytes IS NULL)",
+                    params![path, size, booth_id, filename],
+                )
+                .sql()?;
+        } else {
+            connection
+                .execute(
+                    "INSERT INTO product_files (
+                        booth_id, variation, filename, size_bytes, downloaded, local_path
+                     ) VALUES (?1, '', ?2, ?3, 1, ?4)",
+                    params![booth_id, filename, size, path],
+                )
+                .sql()?;
+        }
     }
     Ok(())
 }
@@ -4213,6 +4380,101 @@ mod tests {
             )
             .unwrap();
         assert_eq!(free, Some(0));
+    }
+
+    #[test]
+    fn an_import_without_files_warns_and_a_downloadable_id_keeps_its_row() {
+        let mut connection = open_memory().unwrap();
+        let empty = r#"{"boothId":"424242","title":"架空の服"}"#;
+        let report = import_products(&mut connection, &parse_export(empty).unwrap()).unwrap();
+        assert_eq!(report.variations, 0);
+        assert_eq!(report.downloads, 0);
+        assert!(report.warnings.iter().any(|warning| warning.contains("0 件")));
+        let placeholder = r#"{"boothId":"424242","title":"架空の服","variations":[{"name":"通常","owned":true}],"downloads":[{"filename":"2336025","downloadableId":"2336025","variation":"通常"}]}"#;
+        import_products(&mut connection, &parse_export(placeholder).unwrap()).unwrap();
+        let named = r#"{"boothId":"424242","title":"架空の服","downloads":[{"filename":"body.unitypackage","downloadableId":"2336025","variation":"通常","sizeBytes":12}]}"#;
+        let report = import_products(&mut connection, &parse_export(named).unwrap()).unwrap();
+        assert_eq!(report.downloads, 1);
+        assert_eq!(report.variations, 0);
+        assert!(report.warnings.iter().all(|warning| !warning.contains("0 件")));
+        let filename: String = connection
+            .query_row(
+                "SELECT filename FROM product_files WHERE booth_id = '424242' AND downloadable_id = '2336025'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(filename, "body.unitypackage");
+        let count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM product_files WHERE booth_id = '424242'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn a_folder_scan_creates_local_file_rows_from_product_ids() {
+        let mut connection = open_memory().unwrap();
+        let json = r#"{"boothId":"424242","title":"架空の服","downloads":[{"filename":"known.unitypackage"}]}"#;
+        import_products(&mut connection, &parse_export(json).unwrap()).unwrap();
+        let outcome = crate::scan::ScanOutcome {
+            truncated: false,
+            entries: vec![
+                crate::scan::ScanEntry {
+                    path: "/library/424242/known.unitypackage".into(),
+                    filename: "known.unitypackage".into(),
+                    is_dir: false,
+                    size: 12,
+                    labels: vec!["known".into(), "424242".into()],
+                },
+                crate::scan::ScanEntry {
+                    path: "/library/clothes/pack-424242/bonus.zip".into(),
+                    filename: "bonus.zip".into(),
+                    is_dir: false,
+                    size: 4,
+                    labels: vec!["bonus".into()],
+                },
+                crate::scan::ScanEntry {
+                    path: "/library/other/note.txt".into(),
+                    filename: "note.txt".into(),
+                    is_dir: false,
+                    size: 1,
+                    labels: vec!["note".into()],
+                },
+            ],
+        };
+        apply_scan(&mut connection, "/library", &outcome).unwrap();
+        let known: (i64, String) = connection
+            .query_row(
+                "SELECT downloaded, local_path FROM product_files
+                 WHERE booth_id = '424242' AND filename = 'known.unitypackage'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(known.0, 1);
+        assert_eq!(known.1, "/library/424242/known.unitypackage");
+        let bonus: (i64, String) = connection
+            .query_row(
+                "SELECT downloaded, local_path FROM product_files
+                 WHERE booth_id = '424242' AND filename = 'bonus.zip'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(bonus.0, 1);
+        assert!(bonus.1.contains("bonus.zip"));
+        let note: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM product_files WHERE filename = 'note.txt'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(note, 0);
     }
 
     #[test]

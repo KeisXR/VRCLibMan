@@ -1,3 +1,4 @@
+import { filePresence } from "../media";
 import type {
   AvatarCard,
   AvatarDetail,
@@ -527,6 +528,18 @@ function candidates() {
     .sort((left, right) => right.productCount - left.productCount || left.name.localeCompare(right.name, "ja"));
 }
 
+function queuePresence(boothId: string): ReturnType<typeof filePresence> {
+  const downloads = store.downloads.filter((row) => row.boothId === boothId);
+  const names = new Set(downloads.map((row) => row.filename));
+  const extra = store.files.filter(
+    (file) => file.linkedProductId === boothId && !file.isDir && !names.has(file.filename),
+  ).length;
+  return filePresence(
+    downloads.map((row) => ({ state: row.state })),
+    extra,
+  );
+}
+
 function queue(kind: string): QueuePage {
   const unextracted = store.products.filter((item) => item.category == null).length;
   const needsReview = store.products.filter((item) => item.needsReview && item.category != null).length;
@@ -548,6 +561,7 @@ function queue(kind: string): QueuePage {
       unresolvedNames: item.unresolvedNames,
       linkedAvatarIds: linksOf(item.boothId),
       userConfirmed: item.userConfirmed,
+      filePresence: queuePresence(item.boothId),
     }));
   const files: QueueFile[] = unlinked.map((file) => ({
     path: file.path,
@@ -654,6 +668,8 @@ function importExport(json: string): ImportReport {
   let updated = 0;
   let unchanged = 0;
   let skipped = 0;
+  let variations = 0;
+  let downloads = 0;
   const warnings: string[] = [];
   for (const raw of items) {
     if (!raw || typeof raw !== "object") {
@@ -667,6 +683,8 @@ function importExport(json: string): ImportReport {
       boothId = match?.[1] ?? "";
     }
     const title = textOf(row.title || row.name).slice(0, 300);
+    variations += Array.isArray(row.variations) ? row.variations.length : 0;
+    downloads += Array.isArray(row.downloads) ? row.downloads.length : Array.isArray(row.files) ? row.files.length : 0;
     if (!/^\d{4,12}$/.test(boothId) || !title) {
       skipped += 1;
       warnings.push("商品IDかタイトルがないデータをスキップしました");
@@ -726,7 +744,12 @@ function importExport(json: string): ImportReport {
     }
     updated += 1;
   }
-  return { inserted, updated, unchanged, skipped, warnings: warnings.slice(0, 8) };
+  if (inserted + updated + unchanged > 0 && variations === 0 && downloads === 0) {
+    warnings.push(
+      "バリエーションもダウンロードも 0 件です。ファイルの有無は分かりません。拡張の「解析結果をコピー」で構造を確認するか、ライブラリを取り込み直すか、フォルダを調べてください",
+    );
+  }
+  return { inserted, updated, unchanged, skipped, variations, downloads, warnings: warnings.slice(0, 8) };
 }
 
 function slug(name: string): string {

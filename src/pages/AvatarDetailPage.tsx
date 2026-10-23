@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { api, openExternal, openLocal, revealInFolder } from "../api";
 import { useShell } from "../App";
-import { confidenceLabel, formatBytes } from "../media";
+import { confidenceLabel, filePresence, formatBytes } from "../media";
 import { CATEGORY_LABEL } from "../types";
 import type { AvatarDetail, DownloadView, ItemView, Knowledge } from "../types";
-import { Thumb, errorText } from "../ui";
+import { FileMark, Thumb, errorText } from "../ui";
 
-export function AvatarDetailPage({ id }: { id: string }) {
+export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?: string }) {
   const { revision, refresh, notify, fail } = useShell();
   const [detail, setDetail] = useState<AvatarDetail | null>(null);
   const [knowledge, setKnowledge] = useState<Knowledge | null>(null);
@@ -41,6 +41,11 @@ export function AvatarDetailPage({ id }: { id: string }) {
       cancelled = true;
     };
   }, [id, revision, fail]);
+
+  useEffect(() => {
+    if (!detail || !fileBoothId) return;
+    document.getElementById(`files-${fileBoothId}`)?.scrollIntoView({ block: "start" });
+  }, [detail, fileBoothId]);
 
   async function merge() {
     if (!detail || !intoId) return;
@@ -185,6 +190,10 @@ function ItemCard({ item }: { item: ItemView }) {
           {item.title}
           {item.isFree && <span className="badge">無料</span>}
           {item.isAdult && <span className="badge adult">R-18</span>}
+          <FileMark
+            presence={filePresence(item.downloads, item.localFileCount)}
+            onClick={() => document.getElementById(`files-${item.boothId}`)?.scrollIntoView({ block: "nearest" })}
+          />
         </h3>
         <div className="meta">
           {item.shop}
@@ -207,55 +216,60 @@ function ItemCard({ item }: { item: ItemView }) {
             ))}
           </div>
         )}
-        {item.downloads.length > 0 && item.remoteConfigured && item.remoteChecked && !item.remoteReachable && (
-          <p className="meta">リモートのフォルダを確認できません。接続してからもう一度開いてください。</p>
-        )}
-        {item.downloads.length > 0 && (
-          <ul className="file-list">
-            {item.downloads.map((file) => (
-              <li key={`${file.variation}:${file.filename}`} className={`download-row ${file.state}`}>
-                <div>
-                  <span className="download-name">{file.filename}</span>
-                  {file.variation ? <span className="meta"> {file.variation}</span> : null}
-                  <span className="meta"> {placeLabel(file, item)}</span>
-                  {file.sizeBytes != null && file.sizeBytes > 0 ? <span className="meta"> {formatBytes(file.sizeBytes)}</span> : null}
-                </div>
-                <div className="row-actions">
-                  {file.state === "local" && file.localPath && (
-                    <button type="button" onClick={() => void revealInFolder(file.localPath || "")}>
-                      保存先を開く
-                    </button>
-                  )}
-                  {file.state === "local" && item.remoteConfigured && item.remoteReachable && (
-                    <button type="button" disabled={busy === file.filename} onClick={() => void push(file)}>
-                      {busy === file.filename ? "コピー中" : "リモートに送る"}
-                    </button>
-                  )}
-                  {file.state === "remote" && item.remoteChecked && (
-                    <button type="button" disabled={busy === file.filename} onClick={() => void pull(file)}>
-                      {busy === file.filename ? "コピー中" : "ローカルに取ってくる"}
-                    </button>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-        {item.localFileCount > 0 && (
-          <ul className="file-list">
-            {item.localFiles.map((file) => (
-              <li key={file.path}>
-                <button type="button" onClick={() => void openLocal(file.path)}>
-                  {file.isDir ? "フォルダ" : "ファイル"} {file.filename}
-                </button>
-                <span>{formatBytes(file.size)}</span>
-              </li>
-            ))}
-            {item.localFileCount > item.localFiles.length && (
-              <li>ほか {item.localFileCount - item.localFiles.length} 件</li>
-            )}
-          </ul>
-        )}
+        <div id={`files-${item.boothId}`}>
+          {item.downloads.length === 0 && item.localFileCount === 0 && (
+            <p className="meta">ファイル情報はまだありません。取り込み直すか、フォルダを調べてください</p>
+          )}
+          {item.downloads.length > 0 && item.remoteConfigured && item.remoteChecked && !item.remoteReachable && (
+            <p className="meta">リモートのフォルダを確認できません。接続してからもう一度開いてください。</p>
+          )}
+          {item.downloads.length > 0 && (
+            <ul className="file-list">
+              {item.downloads.map((file) => (
+                <li key={`${file.variation}:${file.filename}`} className={`download-row ${file.state}`}>
+                  <div>
+                    <span className="download-name">{file.filename}</span>
+                    {file.variation ? <span className="meta"> {file.variation}</span> : null}
+                    <span className="meta"> {placeLabel(file, item)}</span>
+                    {file.sizeBytes != null && file.sizeBytes > 0 ? <span className="meta"> {formatBytes(file.sizeBytes)}</span> : null}
+                  </div>
+                  <div className="row-actions">
+                    {file.state === "local" && file.localPath && (
+                      <button type="button" onClick={() => void revealInFolder(file.localPath || "")}>
+                        保存先を開く
+                      </button>
+                    )}
+                    {file.state === "local" && item.remoteConfigured && item.remoteReachable && (
+                      <button type="button" disabled={busy === file.filename} onClick={() => void push(file)}>
+                        {busy === file.filename ? "コピー中" : "リモートに送る"}
+                      </button>
+                    )}
+                    {file.state === "remote" && item.remoteChecked && (
+                      <button type="button" disabled={busy === file.filename} onClick={() => void pull(file)}>
+                        {busy === file.filename ? "コピー中" : "ローカルに取ってくる"}
+                      </button>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          {item.localFileCount > 0 && (
+            <ul className="file-list">
+              {item.localFiles.map((file) => (
+                <li key={file.path}>
+                  <button type="button" onClick={() => void openLocal(file.path)}>
+                    {file.isDir ? "フォルダ" : "ファイル"} {file.filename}
+                  </button>
+                  <span>{formatBytes(file.size)}</span>
+                </li>
+              ))}
+              {item.localFileCount > item.localFiles.length && (
+                <li>ほか {item.localFileCount - item.localFiles.length} 件</li>
+              )}
+            </ul>
+          )}
+        </div>
       </div>
       <button className="button" type="button" onClick={() => void openExternal(item.url)}>
         Booth

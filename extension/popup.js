@@ -5,6 +5,8 @@ const allButton = document.querySelector("#export-all");
 const newButton = document.querySelector("#export-new");
 const saveTokenButton = document.querySelector("#save-token");
 const openLibraryButton = document.querySelector("#open-library");
+const diagnoseButton = document.querySelector("#diagnose");
+const diagnosisBox = document.querySelector("#diagnosis");
 const tokenInput = document.querySelector("#token");
 const routeInput = document.querySelector("#route-downloads");
 const api = () => globalThis.VrcLibManExtract;
@@ -325,6 +327,9 @@ function sentText(report, products) {
     `${products.length} 件を送りました。新規 ${report.inserted ?? 0}、更新 ${report.updated ?? 0}、変更なし ${report.unchanged ?? 0}`,
   ];
   if (report.skipped) parts.push(`スキップ ${report.skipped}`);
+  if (typeof report.variations === "number" || typeof report.downloads === "number") {
+    parts.push(`バリエーション ${report.variations ?? 0}、ダウンロード ${report.downloads ?? 0}`);
+  }
   if (Array.isArray(report.warnings) && report.warnings.length > 0) parts.push(report.warnings[0]);
   return parts.join("。");
 }
@@ -431,6 +436,28 @@ saveTokenButton.addEventListener("click", async () => {
 
 openLibraryButton.addEventListener("click", () => {
   chrome.tabs.create({ url: LIBRARY_URL });
+});
+
+diagnoseButton.addEventListener("click", async () => {
+  try {
+    const tab = await currentTab();
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["extract.js"] });
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => globalThis.VrcLibManExtract.diagnose(document, location.href),
+    });
+    const text = JSON.stringify(result?.result ?? {}, null, 2);
+    diagnosisBox.hidden = false;
+    diagnosisBox.value = text;
+    try {
+      await navigator.clipboard.writeText(text);
+      setStatus("解析結果をコピーしました。商品名やファイル名は含めていません");
+    } catch {
+      setStatus("解析結果を下の欄に出しました。商品名やファイル名は含めていません");
+    }
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : String(error));
+  }
 });
 
 routeInput.addEventListener("change", async () => {

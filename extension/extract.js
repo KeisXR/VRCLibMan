@@ -167,20 +167,209 @@
     return text;
   }
 
+  const DOWNLOAD_LABEL = /^(ダウンロード|無料ダウンロード|download|その他のdl方法|その他のダウンロード|ブラウザでダウンロード|ダウンロード商品)$/i;
+  const FILE_EXT = /\.[A-Za-z0-9]{1,12}$/;
+  const EXT_ONLY = /^\.[A-Za-z0-9]{1,12}$/;
+  const VARIATION_NOISE = /^(ダウンロード商品|無料|有料|デジタル|ファイル|file|download)$/i;
+
+  function downloadableIdFrom(value) {
+    const match = String(value || "").match(/\/downloadables\/(\d{1,12})(?:[/?#]|$)/i);
+    return match ? match[1] : "";
+  }
+
+  function hrefShape(value) {
+    let text = String(value || "").trim();
+    if (!text) return "";
+    try {
+      const url = new URL(text, "https://booth.pm");
+      const keys = [...url.searchParams.keys()].sort();
+      const query = keys.length
+        ? `?${keys.map((key) => `${key.replace(/[0-9]+/g, "#")}=#`).join("&")}`
+        : "";
+      text = `${url.origin}${url.pathname}${query}`;
+    } catch {
+      text = text.split("#")[0];
+    }
+    return text.replace(/[0-9]+/g, "#").slice(0, 200);
+  }
+
+  function fileNameFromText(value) {
+    const text = clean(value);
+    if (!text || text.length > 180 || DOWNLOAD_LABEL.test(text)) return "";
+    if (!FILE_EXT.test(text)) return "";
+    return safeFileName(text);
+  }
+
+  function directText(node) {
+    if (!node || !node.childNodes) return "";
+    let text = "";
+    for (const child of node.childNodes) {
+      if (child.nodeType === 3) text += child.textContent || "";
+    }
+    return clean(text);
+  }
+
   function fileNameFromLink(link) {
-    const attr = safeFileName(link.getAttribute("download"));
+    if (!link || !link.getAttribute) return "";
+    const attr = fileNameFromText(link.getAttribute("download"));
     if (attr) return attr;
-    const text = clean(link.textContent);
-    if (text && /\.[A-Za-z0-9]{1,12}$/.test(text)) {
-      const named = safeFileName(text);
+    for (const key of ["title", "data-filename", "data-file-name", "aria-label"]) {
+      const named = fileNameFromText(link.getAttribute(key));
       if (named) return named;
     }
+    const own = fileNameFromText(directText(link));
+    if (own) return own;
     try {
       const url = new URL(link.getAttribute("href") || link.href || "", "https://booth.pm");
       const base = decodeURIComponent(url.pathname.split("/").filter(Boolean).pop() || "");
-      if (/\.[A-Za-z0-9]{1,12}$/.test(base)) return safeFileName(base);
+      const named = fileNameFromText(base);
+      if (named) return named;
     } catch {
       return "";
+    }
+    return "";
+  }
+
+  function joinedExtensionName(row) {
+    if (!row || !row.querySelectorAll) return "";
+    for (const node of row.querySelectorAll("div, span")) {
+      const ext = directText(node);
+      if (!EXT_ONLY.test(ext)) continue;
+      const stem = safeFileName(directText(node.previousElementSibling));
+      if (!stem || FILE_EXT.test(stem) || DOWNLOAD_LABEL.test(stem)) continue;
+      const named = safeFileName(`${stem}${ext}`);
+      if (named && FILE_EXT.test(named)) return named;
+    }
+    return "";
+  }
+
+  function urlsOf(node) {
+    const urls = [];
+    if (!node || !node.getAttribute) return urls;
+    for (const key of ["href", "data-href"]) {
+      const value = node.getAttribute(key);
+      if (value) urls.push(value);
+    }
+    const raw = node.getAttribute("data-dropdown-items");
+    if (!raw) return urls;
+    try {
+      const items = JSON.parse(raw);
+      if (!Array.isArray(items)) return urls;
+      for (const item of items) {
+        if (!item || typeof item !== "object") continue;
+        for (const key of ["fallbackUrl", "deeplinkDownloadableUrl", "url", "href"]) {
+          if (item[key]) urls.push(String(item[key]));
+        }
+      }
+    } catch {
+      // 壊れた JSON はリンクとして数えない。
+    }
+    return urls;
+  }
+
+  function idsOf(node) {
+    const ids = [];
+    for (const url of urlsOf(node)) {
+      const id = downloadableIdFrom(url);
+      if (id && !ids.includes(id)) ids.push(id);
+    }
+    return ids;
+  }
+
+  function isDownloadControl(node) {
+    if (!node || !node.getAttribute) return false;
+    if (node.closest) {
+      const parentButton = node.closest("[data-dropdown-items], .js-download-button, .js-download-free-button");
+      if (parentButton && parentButton !== node) return false;
+    }
+    if (node.hasAttribute("data-dropdown-items") || node.hasAttribute("download")) return true;
+    if (node.classList && (node.classList.contains("js-download-button") || node.classList.contains("js-download-free-button"))) {
+      return true;
+    }
+    const href = String(node.getAttribute("href") || node.getAttribute("data-href") || "");
+    return /download/i.test(href);
+  }
+
+  function downloadControls(scope) {
+    if (!scope || !scope.querySelectorAll) return [];
+    return [...scope.querySelectorAll(
+      "a[href], a[download], [data-href], [data-dropdown-items], .js-download-button, .js-download-free-button",
+    )].filter(isDownloadControl);
+  }
+
+  function downloadControlCount(scope) {
+    return downloadControls(scope).length + (isDownloadControl(scope) ? 1 : 0);
+  }
+
+  function fileSearchRoot(node) {
+    const variation = node.closest && node.closest(".variation-item, [data-variation]");
+    if (variation) return variation;
+    let current = node;
+    while (current && current.parentElement) {
+      const parent = current.parentElement;
+      if (parent.matches && parent.matches("body, main")) break;
+      if (downloadControlCount(parent) > downloadControlCount(current)) break;
+      if (parent.querySelector && parent.querySelector("a[href*='/items/']")) break;
+      current = parent;
+    }
+    return current || node;
+  }
+
+  function nearbyNodes(node) {
+    const root = fileSearchRoot(node);
+    if (root !== node) return [root];
+    const nodes = [node];
+    let prev = node.previousElementSibling;
+    while (prev) {
+      if (prev.matches && prev.matches(
+        "a[href*='/items/'], .text-text-gray600, .item-card__shop-name, .item-card__shop-name-anchor",
+      )) {
+        break;
+      }
+      if (prev.querySelector && prev.querySelector("a[href*='/items/']")) break;
+      if (downloadControlCount(prev) > 0) break;
+      nodes.push(prev);
+      prev = prev.previousElementSibling;
+    }
+    return nodes;
+  }
+
+  function fileNameNear(node) {
+    const fromControl = fileNameFromLink(node);
+    if (fromControl) return fromControl;
+    for (const root of nearbyNodes(node)) {
+      const nodes = root.querySelectorAll ? [root, ...root.querySelectorAll("a, div, span, p, li, h3, h4, strong")] : [root];
+      for (const candidate of nodes) {
+        if (candidate.closest && candidate.closest("a[href*='/items/']")) continue;
+        const named = fileNameFromText(directText(candidate)) || fileNameFromLink(candidate);
+        if (named) return named;
+      }
+      const joined = joinedExtensionName(root);
+      if (joined) return joined;
+    }
+    return "";
+  }
+
+  function variationFromRow(node) {
+    for (const row of nearbyNodes(node)) {
+      if (!row || !row.querySelector) continue;
+      const named = row.querySelector(".variation-name");
+      const marked = limitedName((named && directText(named)) || (named && named.textContent) || row.getAttribute("data-variation") || "", 80);
+      if (marked && !DOWNLOAD_LABEL.test(marked)) return marked;
+      const labels = row.querySelectorAll ? row.querySelectorAll("div, span, h3, h4, strong, p") : [];
+      for (const label of labels) {
+        if (label.closest && label.closest("a[href*='downloadables'], a[download], .js-download-button, .js-download-free-button, .variation-price, .price")) {
+          continue;
+        }
+        if (label.querySelector && label.querySelector("a[href*='/items/']")) continue;
+        if (label.matches && label.matches(".text-text-gray600, .item-card__shop-name, .item-card__shop-name-anchor")) continue;
+        const text = limitedName(directText(label), 40);
+        if (!text || DOWNLOAD_LABEL.test(text) || VARIATION_NOISE.test(text)) continue;
+        if (fileNameFromText(text) || EXT_ONLY.test(text)) continue;
+        if (/^[¥￥]/.test(text) || /^\(?\d+(?:\.\d+)?\s*(?:B|KB|MB|GB)\)?$/i.test(text)) continue;
+        if (text === "R-18" || text === "R18") continue;
+        return text;
+      }
     }
     return "";
   }
@@ -205,15 +394,6 @@
     });
   }
 
-  function downloadAnchors(scope, skipCards) {
-    if (!scope || !scope.querySelectorAll) return [];
-    return [...scope.querySelectorAll("a[href], a[download]")].filter((link) => {
-      if (inRecommendation(link, skipCards)) return false;
-      const href = String(link.getAttribute("href") || link.href || "");
-      return link.hasAttribute("download") || /download/i.test(href);
-    });
-  }
-
   function pushVariation(variations, name, owned) {
     const cleaned = limitedName(name, 80);
     if (!cleaned) return;
@@ -225,6 +405,27 @@
     variations.push({ name: cleaned, owned: Boolean(owned) });
   }
 
+  function pushDownload(downloads, seen, fields) {
+    const id = fields.downloadableId || "";
+    const filename = safeFileName(fields.filename || id);
+    if (!filename) return;
+    const variation = limitedName(fields.variation, 80) || "";
+    const key = id ? `id:${id}` : `file:${variation}\0${filename}`;
+    const existing = id
+      ? downloads.find((row) => row.downloadableId === id)
+      : downloads.find((row) => !row.downloadableId && row.filename === filename && row.variation === variation);
+    if (seen.has(key) || existing) {
+      if (existing && fileNameFromText(filename) && !fileNameFromText(existing.filename)) existing.filename = filename;
+      if (existing && !existing.variation && variation) existing.variation = variation;
+      if (existing && existing.sizeBytes == null && fields.sizeBytes != null) existing.sizeBytes = fields.sizeBytes;
+      return;
+    }
+    seen.add(key);
+    const row = { filename, sizeBytes: fields.sizeBytes ?? null, variation };
+    if (id) row.downloadableId = id;
+    downloads.push(row);
+  }
+
   function readVariations(scope, fromLibrary) {
     const variations = [];
     const downloads = [];
@@ -233,25 +434,33 @@
     for (const node of variationNodes(scope, skipCards)) {
       const named = node.querySelector && node.querySelector(".variation-name");
       const name = limitedName((named && named.textContent) || node.getAttribute("data-variation") || "", 80);
-      const links = downloadAnchors(node, false);
       const marked = node.getAttribute("data-owned");
+      const controls = downloadControls(node);
       let owned = false;
       if (fromLibrary) owned = true;
       else if (marked === "true" || marked === "1") owned = true;
-      else owned = links.length > 0;
-      if (name) pushVariation(variations, name, owned);
-      for (const link of links) {
-        seen.add(link);
-        const filename = fileNameFromLink(link);
-        if (!filename) continue;
-        downloads.push({ filename, sizeBytes: sizeFromLink(link), variation: name });
-      }
+      else owned = controls.length > 0;
+      if (name && !DOWNLOAD_LABEL.test(name)) pushVariation(variations, name, owned);
     }
-    for (const link of downloadAnchors(scope, skipCards)) {
-      if (seen.has(link)) continue;
-      const filename = fileNameFromLink(link);
-      if (!filename) continue;
-      downloads.push({ filename, sizeBytes: sizeFromLink(link), variation: "" });
+    const controls = downloadControls(scope).filter((control) => !inRecommendation(control, skipCards));
+    for (const control of controls) {
+      const ids = idsOf(control);
+      const filename = fileNameNear(control);
+      const variation = variationFromRow(control);
+      const sizeBytes = sizeFromLink(control);
+      if (variation && (fromLibrary || filename || ids.length > 0)) pushVariation(variations, variation, true);
+      if (ids.length === 0) {
+        if (filename) pushDownload(downloads, seen, { filename, variation, sizeBytes, downloadableId: "" });
+        continue;
+      }
+      for (const downloadableId of ids) {
+        pushDownload(downloads, seen, {
+          filename: filename || downloadableId,
+          variation,
+          sizeBytes,
+          downloadableId,
+        });
+      }
     }
     if (fromLibrary && scope.querySelectorAll) {
       for (const node of scope.querySelectorAll(".variation-name")) {
@@ -266,7 +475,7 @@
     if (!scope || !scope.querySelector) return null;
     const flagged = [...scope.querySelectorAll("[data-free='true']")].find((node) => !inRecommendation(node, skipCards));
     if (flagged) return true;
-    const price = [...scope.querySelectorAll("[data-price], .price, .item-price")].find(
+    const price = [...scope.querySelectorAll("[data-price], .price, .item-price, .variation-price")].find(
       (node) => !inRecommendation(node, skipCards),
     );
     if (!price) return null;
@@ -301,7 +510,7 @@
       downloads: fields.downloads || [],
     };
     if (fields.isFree === true || fields.isFree === false) product.isFree = fields.isFree;
-    if (fields.isAdult === true) product.isAdult = true;
+    if (fields.isAdult === true || fields.isAdult === false) product.isAdult = fields.isAdult;
     return product;
   }
 
@@ -331,11 +540,74 @@
     });
   }
 
+  function bytesFromFileSize(value) {
+    if (typeof value === "number" && Number.isFinite(value) && value >= 0) return Math.round(value);
+    return null;
+  }
+
+  function priceIsFree(price) {
+    if (typeof price === "number") return price === 0;
+    const text = clean(price);
+    if (!text) return null;
+    if (text.includes("無料")) return true;
+    if (!/[¥￥]|JPY|円/.test(text)) return null;
+    const digits = text.replace(/[^\d]/g, "");
+    if (!digits) return null;
+    return Number(digits) === 0;
+  }
+
+  function filesFromDownloadable(downloadable, variation) {
+    const lists = [];
+    if (Array.isArray(downloadable)) lists.push(downloadable);
+    else if (downloadable && typeof downloadable === "object") {
+      for (const key of ["no_musics", "noMusics", "musics", "files"]) {
+        if (Array.isArray(downloadable[key])) lists.push(downloadable[key]);
+      }
+    }
+    const files = [];
+    for (const list of lists) {
+      for (const file of list) {
+        if (!file || typeof file !== "object") continue;
+        const extension = clean(file.file_extension || file.fileExtension);
+        const stem = clean(file.file_name || file.fileName);
+        const suffix = extension ? (extension.startsWith(".") ? extension : `.${extension}`) : "";
+        const composed = stem && suffix && !FILE_EXT.test(stem) ? `${stem}${suffix}` : stem;
+        const filename = fileNameFromText(file.name) || fileNameFromText(composed);
+        const id = downloadableIdFrom(file.url);
+        if (!filename && !id) continue;
+        files.push({
+          filename: filename || id,
+          downloadableId: id,
+          sizeBytes: bytesFromFileSize(file.file_size ?? file.fileSize),
+          variation,
+        });
+      }
+    }
+    return files;
+  }
+
   function detailFromItemJson(data, boothId) {
     if (!data || typeof data !== "object") return null;
     const id = String(data.id || boothId || "");
     if (!validId(id)) return null;
     const shop = data.shop && typeof data.shop === "object" ? data.shop.name : "";
+    const variations = [];
+    const downloads = [];
+    const rows = Array.isArray(data.variations) ? data.variations : [];
+    for (const row of rows) {
+      if (!row || typeof row !== "object") continue;
+      const name = limitedName(row.name, 80);
+      const status = String(row.status || "");
+      const owned = status === "free_download" || status === "downloadable" || status === "owned";
+      if (name && owned) pushVariation(variations, name, true);
+      for (const file of filesFromDownloadable(row.downloadable, name || "")) downloads.push(file);
+    }
+    for (const file of filesFromDownloadable(data.downloadable, "")) downloads.push(file);
+    let isFree = priceIsFree(data.price);
+    if (isFree == null && rows.some((row) => row && row.status === "free_download")) isFree = true;
+    let isAdult = null;
+    if (data.is_adult === true || data.isAdult === true) isAdult = true;
+    else if (data.is_adult === false || data.isAdult === false) isAdult = false;
     return makeProduct({
       boothId: id,
       title: clean(data.name) || `item ${id}`,
@@ -343,7 +615,33 @@
       description: typeof data.description === "string" ? data.description : "",
       url: clean(data.url) || `https://booth.pm/ja/items/${id}`,
       image: "",
+      variations,
+      downloads,
+      isFree,
+      isAdult,
     });
+  }
+
+  function mergeDownload(downloads, file) {
+    const id = file.downloadableId || "";
+    const existing = downloads.find((row) =>
+      (id && row.downloadableId === id)
+      || (row.filename === file.filename && (row.variation || "") === (file.variation || "")),
+    );
+    if (!existing) {
+      const row = {
+        filename: file.filename,
+        sizeBytes: file.sizeBytes ?? null,
+        variation: file.variation || "",
+      };
+      if (id) row.downloadableId = id;
+      downloads.push(row);
+      return;
+    }
+    if (fileNameFromText(file.filename) && !fileNameFromText(existing.filename)) existing.filename = file.filename;
+    if (!existing.downloadableId && id) existing.downloadableId = id;
+    if (existing.sizeBytes == null && file.sizeBytes != null) existing.sizeBytes = file.sizeBytes;
+    if (!existing.variation && file.variation) existing.variation = file.variation;
   }
 
   function mergeDetail(product, detail) {
@@ -353,6 +651,14 @@
     }
     if (!product.shop && detail.shop) product.shop = detail.shop;
     if (!product.thumbnailUrl && detail.thumbnailUrl) product.thumbnailUrl = detail.thumbnailUrl;
+    if (product.isFree == null && (detail.isFree === true || detail.isFree === false)) product.isFree = detail.isFree;
+    if (product.isAdult == null && (detail.isAdult === true || detail.isAdult === false)) product.isAdult = detail.isAdult;
+    product.variations = product.variations || [];
+    for (const variation of detail.variations || []) {
+      if (variation && variation.owned) pushVariation(product.variations, variation.name, true);
+    }
+    product.downloads = product.downloads || [];
+    for (const download of detail.downloads || []) mergeDownload(product.downloads, download);
     return product;
   }
 
@@ -553,6 +859,64 @@
     return { products: fresh, stopped: false };
   }
 
+  function diagnose(document, href) {
+    const products = extractPage(document, href || "https://booth.pm/library");
+    let variationCount = 0;
+    let filenameCount = 0;
+    for (const product of products) {
+      variationCount += (product.variations || []).length;
+      for (const download of product.downloads || []) {
+        if (fileNameFromText(download.filename)) filenameCount += 1;
+      }
+    }
+    const selectors = [
+      "img.l-library-item-thumbnail",
+      "a[href*='/items/']",
+      ".bg-white",
+      ".variation-item",
+      ".variations",
+      ".variation-name",
+      "[data-variation]",
+      "a[href*='downloadables']",
+      ".js-download-button",
+      ".js-download-free-button",
+      "[data-dropdown-items]",
+      "[data-href*='downloadables']",
+      "a[download]",
+      ".variation-price",
+    ];
+    const selectorHits = {};
+    for (const selector of selectors) {
+      try {
+        selectorHits[selector] = document.querySelectorAll(selector).length;
+      } catch {
+        selectorHits[selector] = 0;
+      }
+    }
+    const hrefShapes = {};
+    let downloadLinkCount = 0;
+    const nodes = document.querySelectorAll
+      ? document.querySelectorAll("a[href], [data-href], [data-dropdown-items]")
+      : [];
+    for (const node of nodes) {
+      for (const url of urlsOf(node)) {
+        if (!/download/i.test(url)) continue;
+        const shape = hrefShape(url);
+        if (!shape) continue;
+        downloadLinkCount += 1;
+        hrefShapes[shape] = (hrefShapes[shape] || 0) + 1;
+      }
+    }
+    return {
+      productCount: products.length,
+      variationCount,
+      downloadLinkCount,
+      filenameCount,
+      selectorHits,
+      hrefShapes,
+    };
+  }
+
   function dedupeProducts(products) {
     const seen = new Set();
     const unique = [];
@@ -578,6 +942,7 @@
     dedupeProducts,
     takeUntilKnown,
     noteIfUnpublished,
+    diagnose,
     UNAVAILABLE_TEXT,
   };
 });

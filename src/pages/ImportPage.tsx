@@ -1,16 +1,30 @@
-import { useState } from "react";
-import { api, chooseFolder, isTauri } from "../api";
+import { useEffect, useState } from "react";
+import { api, chooseFolder, isTauri, saveLibraryAndScan } from "../api";
 import { useShell } from "../App";
 import type { ImportReport } from "../types";
 import { errorText } from "../ui";
 
 export function ImportPage() {
-  const { refresh, notify, fail } = useShell();
+  const { revision, refresh, notify, fail } = useShell();
+  const [libraryFolder, setLibraryFolder] = useState("");
   const [over, setOver] = useState(false);
   const [extractAfter, setExtractAfter] = useState(isTauri());
   const [report, setReport] = useState<ImportReport | null>(null);
   const [busy, setBusy] = useState(false);
   const [freeUrl, setFreeUrl] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    api.settings().then(
+      (value) => {
+        if (!cancelled) setLibraryFolder(value.libraryFolder);
+      },
+      () => undefined,
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [revision]);
 
   async function importText(json: string) {
     setBusy(true);
@@ -47,9 +61,10 @@ export function ImportPage() {
       const path = await chooseFolder();
       if (!path) return;
       setBusy(true);
-      const result = await api.scanLibrary(path);
+      const result = await saveLibraryAndScan(path);
+      setLibraryFolder(path);
       notify(
-        `${result.indexed} 件を調べ、${result.linked} 件を商品と結び付けました${result.truncated ? "。上限に達したため途中です" : ""}`,
+        `設定と同じライブラリのフォルダを保存し、${result.indexed} 件を調べ、${result.linked} 件を商品と結び付けました${result.truncated ? "。上限に達したため途中です" : ""}`,
       );
       refresh();
     } catch (err) {
@@ -174,11 +189,16 @@ export function ImportPage() {
         </button>
       </form>
       {report && (
-        <p className="meta">
+        <p className={report.variations === 0 && report.downloads === 0 ? "meta warn-text" : "meta"}>
           追加 {report.inserted} / 更新 {report.updated} / 変化なし {report.unchanged} / スキップ {report.skipped}
+          {" / "}バリエーション {report.variations} / ダウンロード {report.downloads}
           {report.warnings.length > 0 ? `。${report.warnings.slice(0, 3).join(" ")}` : ""}
         </p>
       )}
+      <p className="meta">
+        フォルダは設定のライブラリのフォルダと同じです。選ぶと、その場で保存して中を調べます。
+        {libraryFolder ? ` 今のフォルダは ${libraryFolder} です。` : " まだ選んでいません。"}
+      </p>
       <div className="row-actions">
         <button className="button primary" type="button" disabled={busy} onClick={() => void extract(false)}>
           未抽出を分類
