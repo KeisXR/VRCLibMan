@@ -1883,6 +1883,188 @@ pub(crate) fn record_placed_download(
     Ok(())
 }
 
+pub(crate) const BROWSER_OFF_MESSAGE: &str =
+    "内蔵ブラウザはオフです。拡張のダウンロードを使ってください";
+pub(crate) const BROWSER_LOGIN_MESSAGE: &str =
+    "ログインの期限が切れています。内蔵ブラウザでログインしてから、もう一度押してください";
+pub(crate) const BROWSER_AGE_MESSAGE: &str =
+    "年齢確認は自動では通過しません。内蔵ブラウザで自分で確認してから、もう一度押してください";
+pub(crate) const BROWSER_DOWNLOAD_FAILED: &str =
+    "ダウンロードできませんでした。内蔵ブラウザでログインしているか確認してください";
+pub(crate) const BROWSER_BUSY_MESSAGE: &str = "別のファイルを受け取っています";
+pub(crate) const BROWSER_MISSING_ID_MESSAGE: &str =
+    "この行にはダウンロード番号がありません。拡張を更新して取り込み直してください";
+
+#[derive(Debug, Clone)]
+pub(crate) struct BrowserFilePlan {
+    pub booth_id: String,
+    pub variation: String,
+    pub filename: String,
+    pub downloadable_id: String,
+}
+
+pub(crate) fn plan_browser_download(
+    connection: &Connection,
+    booth_id: &str,
+    variation: &str,
+    filename: &str,
+) -> Result<BrowserFilePlan, String> {
+    let booth_id = booth_id.trim();
+    if !crate::library_files::valid_booth_id(booth_id) {
+        return Err("商品IDを特定できません".into());
+    }
+    let saved = settings(connection)?;
+    if !saved.builtin_browser {
+        return Err(BROWSER_OFF_MESSAGE.into());
+    }
+    if !saved.route_downloads {
+        return Err("ダウンロードの振り分けはオフです".into());
+    }
+    if saved.library_folder.trim().is_empty() {
+        return Err("ライブラリのフォルダを選んでから、振り分けをオンにしてください".into());
+    }
+    let variation = crate::library_files::clean_variation(variation).unwrap_or_default();
+    let filename = crate::library_files::safe_filename(filename)
+        .ok_or_else(|| "ファイル名を読めません".to_string())?;
+    let stored: Option<Option<String>> = connection
+        .query_row(
+            "SELECT downloadable_id FROM product_files
+             WHERE booth_id = ?1 AND variation = ?2 AND filename = ?3",
+            params![booth_id, variation, filename],
+            |row| row.get(0),
+        )
+        .optional()
+        .sql()?;
+    let Some(stored) = stored else {
+        return Err("ダウンロード項目がありません".into());
+    };
+    let downloadable_id = stored
+        .as_deref()
+        .filter(|id| crate::library_files::valid_booth_id(id))
+        .map(str::to_string)
+        .or_else(|| {
+            crate::library_files::filename_is_number(&filename).then(|| filename.clone())
+        })
+        .ok_or_else(|| BROWSER_MISSING_ID_MESSAGE.to_string())?;
+    Ok(BrowserFilePlan {
+        booth_id: booth_id.to_string(),
+        variation,
+        filename,
+        downloadable_id,
+    })
+}
+
+/// A number-only row takes the real filename. A real filename is left as it is.
+pub(crate) fn adopt_download_filename(
+    connection: &Connection,
+    booth_id: &str,
+    variation: &str,
+    old_filename: &str,
+    new_filename: &str,
+    downloadable_id: &str,
+) -> Result<(), String> {
+    let variation = crate::library_files::clean_variation(variation).unwrap_or_default();
+    let old_filename = crate::library_files::safe_filename(old_filename)
+        .ok_or_else(|| "ファイル名を読めません".to_string())?;
+    let new_filename = crate::library_files::safe_filename(new_filename)
+        .ok_or_else(|| "ファイル名を読めません".to_string())?;
+    let downloadable_id = if crate::library_files::valid_booth_id(downloadable_id) {
+        downloadable_id.to_string()
+    } else {
+        String::new()
+    };
+    let mut target = old_filename.clone();
+    if old_filename != new_filename
+        && filename_is_placeholder(&old_filename, &downloadable_id)
+        && !filename_is_placeholder(&new_filename, &downloadable_id)
+    {
+        let clash: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM product_files
+                 WHERE booth_id = ?1 AND variation = ?2 AND filename = ?3
+                   AND NOT (variation = ?2 AND filename = ?4)",
+                params![booth_id, variation, new_filename, old_filename],
+                |row| row.get(0),
+            )
+            .sql()?;
+        if clash == 0 {
+            connection
+                .execute(
+                    "UPDATE product_files
+                     SET filename = ?1, downloadable_id = COALESCE(NULLIF(?2, ''), downloadable_id)
+                     WHERE booth_id = ?3 AND variation = ?4 AND filename = ?5",
+                    params![new_filename, downloadable_id, booth_id, variation, old_filename],
+                )
+                .sql()?;
+            target = new_filename;
+        }
+    }
+    if !downloadable_id.is_empty() {
+        connection
+            .execute(
+                "UPDATE product_files SET downloadable_id = ?1
+                 WHERE booth_id = ?2 AND variation = ?3 AND filename = ?4
+                   AND (downloadable_id IS NULL OR downloadable_id = '')",
+                params![downloadable_id, booth_id, variation, target],
+            )
+            .sql()?;
+    }
+    Ok(())
+}
+
+pub(crate) fn commit_browser_download(
+    connection: &mut Connection,
+    plan: &BrowserFilePlan,
+    source: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
+    let downloads = crate::library_files::downloads_folder()?;
+    let source = crate::library_files::staged_download_ok(source, &downloads, &plan.booth_id)?;
+    if crate::library_files::file_looks_like_login_page(&source) {
+        let _ = std::fs::remove_file(&source);
+        return Err(BROWSER_LOGIN_MESSAGE.into());
+    }
+    let actual = crate::library_files::safe_filename(
+        source
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(""),
+    )
+    .ok_or_else(|| "ファイル名を読めません".to_string())?;
+    if !crate::library_files::is_packaged_asset(&actual) {
+        let _ = std::fs::remove_file(&source);
+        return Err(BROWSER_DOWNLOAD_FAILED.into());
+    }
+    adopt_download_filename(
+        connection,
+        &plan.booth_id,
+        &plan.variation,
+        &plan.filename,
+        &actual,
+        &plan.downloadable_id,
+    )?;
+    let notice = crate::model::DownloadFinished {
+        booth_id: plan.booth_id.clone(),
+        path: source.display().to_string(),
+        filename: actual,
+        size: std::fs::metadata(&source).ok().map(|meta| meta.len()),
+        is_free: None,
+        is_adult: None,
+        variation: plan.variation.clone(),
+        title: String::new(),
+    };
+    let ready = prepare_download(connection, &notice)?;
+    let placed =
+        crate::library_files::place_into_library(&ready.source, ready.library.as_deref(), &ready.booth_id)?;
+    record_placed_download(
+        connection,
+        &ready.booth_id,
+        &ready.variation,
+        &placed,
+        notice.size,
+    )?;
+    Ok(placed)
+}
+
 pub(crate) fn require_download(
     connection: &Connection,
     booth_id: &str,
@@ -4748,6 +4930,134 @@ mod tests {
             )
             .unwrap();
         assert_eq!(stored_size, 5);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn browser_settings(
+        connection: &Connection,
+        library: &std::path::Path,
+        browser: bool,
+        route: bool,
+    ) -> Result<(), String> {
+        save_settings(
+            connection,
+            &SettingsInput {
+                ollama_base_url: "http://127.0.0.1:11434".into(),
+                ollama_model: "gemma4:12b".into(),
+                confidence_threshold: 0.6,
+                library_folder: library.display().to_string(),
+                builtin_browser: browser,
+                remote_library_folder: String::new(),
+                route_downloads: route,
+            },
+        )
+    }
+
+    #[test]
+    fn browser_download_needs_the_opt_in_and_routing_before_any_file_moves() {
+        let mut connection = open_memory().unwrap();
+        let root = std::env::temp_dir().join(format!("vrclibman-browser-dl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let library = root.join("library");
+        let downloads = root.join("Downloads");
+        std::fs::create_dir_all(&library).unwrap();
+        std::fs::create_dir_all(&downloads).unwrap();
+        let payload = r#"{"boothId":"424242","title":"架空の服","downloads":[{"filename":"2336025","variation":"通常","downloadableId":"2336025"},{"filename":"note.txt","variation":"","downloadableId":""}]}"#;
+        import_products(&mut connection, &parse_export(payload).unwrap()).unwrap();
+        assert!(plan_browser_download(&connection, "424242", "通常", "2336025")
+            .unwrap_err()
+            .contains("オフです。拡張"));
+        browser_settings(&connection, &library, true, false).unwrap();
+        assert!(plan_browser_download(&connection, "424242", "通常", "2336025")
+            .unwrap_err()
+            .contains("振り分けはオフ"));
+        browser_settings(&connection, &library, true, true).unwrap();
+        assert!(plan_browser_download(&connection, "424242", "", "note.txt")
+            .unwrap_err()
+            .contains("ダウンロード番号"));
+        let plan = plan_browser_download(&connection, "424242", "通常", "2336025").unwrap();
+        assert_eq!(plan.downloadable_id, "2336025");
+        let legacy = r#"{"boothId":"515151","title":"架空の服","downloads":[{"filename":"8187247","variation":""}]}"#;
+        import_products(&mut connection, &parse_export(legacy).unwrap()).unwrap();
+        let legacy = plan_browser_download(&connection, "515151", "", "8187247").unwrap();
+        assert_eq!(legacy.downloadable_id, "8187247");
+
+        struct ClearDownloads;
+        impl Drop for ClearDownloads {
+            fn drop(&mut self) {
+                crate::library_files::set_test_downloads(None);
+            }
+        }
+        let _clear = ClearDownloads;
+        crate::library_files::set_test_downloads(Some(downloads.clone()));
+        let staging = crate::library_files::prepare_staging_dir(&downloads, "424242").unwrap();
+        let html = staging.join("login.html");
+        std::fs::write(&html, b"<!doctype html><html><head><title>login</title></head></html>").unwrap();
+        let html_plan = BrowserFilePlan {
+            filename: "2336025".into(),
+            ..plan.clone()
+        };
+        let refused = commit_browser_download(&mut connection, &html_plan, &html).unwrap_err();
+        assert!(refused.contains("ログイン"));
+        assert!(!html.exists());
+        let still: String = connection
+            .query_row(
+                "SELECT filename FROM product_files WHERE booth_id = '424242' AND variation = '通常'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(still, "2336025");
+
+        let packed = staging.join("body.unitypackage");
+        std::fs::write(&packed, b"PK\x03\x04dummy").unwrap();
+        let placed = commit_browser_download(&mut connection, &plan, &packed).unwrap();
+        assert_eq!(placed, library.join("424242").join("body.unitypackage"));
+        assert!(!packed.exists());
+        let (filename, downloaded, id): (String, i64, String) = connection
+            .query_row(
+                "SELECT filename, downloaded, downloadable_id FROM product_files
+                 WHERE booth_id = '424242' AND variation = '通常'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(filename, "body.unitypackage");
+        assert_eq!(downloaded, 1);
+        assert_eq!(id, "2336025");
+        let count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM product_files WHERE booth_id = '424242'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2);
+        adopt_download_filename(
+            &connection,
+            "424242",
+            "通常",
+            "body.unitypackage",
+            "2336025",
+            "2336025",
+        )
+        .unwrap();
+        let kept: String = connection
+            .query_row(
+                "SELECT filename FROM product_files WHERE booth_id = '424242' AND variation = '通常'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(kept, "body.unitypackage");
+        let title: String = connection
+            .query_row(
+                "SELECT title FROM products WHERE booth_id = '424242'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!title.is_empty());
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -10,6 +10,7 @@ import type {
   ExtensionLink,
   BrowserDiagnostic,
   ImportReport,
+  BoothFileStatus,
   JobProgress,
   Knowledge,
   LibraryStats,
@@ -43,6 +44,15 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
     return preview.dispatch<T>(command, args ?? {});
   }
   return invoke<T>(command, args);
+}
+
+export function listenBoothFile(onStatus: (status: BoothFileStatus) => void): Promise<() => void> {
+  if (!isTauri()) {
+    return Promise.resolve(() => undefined);
+  }
+  return import("@tauri-apps/api/event").then(({ listen }) =>
+    listen<BoothFileStatus>("booth-file-download", (event) => onStatus(event.payload)),
+  );
 }
 
 export function listenProgress(onProgress: (progress: JobProgress) => void): Promise<() => void> {
@@ -105,6 +115,8 @@ export const api = {
   addFreeProduct: (url: string) => call<string>("add_free_product", { url }),
   pullRemoteFile: (boothId: string, variation: string, filename: string) =>
     call<void>("pull_remote_file", { boothId, variation, filename }),
+  downloadBoothFile: (boothId: string, variation: string, filename: string) =>
+    call<void>("download_booth_file", { boothId, variation, filename }),
   pushRemoteFile: (boothId: string, variation: string, filename: string) =>
     call<void>("push_remote_file", { boothId, variation, filename }),
   cacheThumbnails: () => call<number>("cache_thumbnails"),

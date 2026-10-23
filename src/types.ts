@@ -275,6 +275,14 @@ export interface JobProgress {
   message: string;
 }
 
+export interface BoothFileStatus {
+  boothId: string;
+  variation: string;
+  filename: string;
+  phase: "receiving" | "error" | "done";
+  message: string;
+}
+
 export interface ProductUpdate {
   boothId: string;
   category?: string | null;

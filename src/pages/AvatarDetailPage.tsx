@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
-import { api, openExternal, openLocal, revealInFolder } from "../api";
+import { useEffect, useRef, useState } from "react";
+import { api, listenBoothFile, openExternal, openLocal, revealInFolder } from "../api";
 import { useShell } from "../App";
 import { confidenceLabel, filePresence, formatBytes } from "../media";
 import { CATEGORY_LABEL } from "../types";
-import type { AvatarDetail, DownloadView, ItemView, Knowledge } from "../types";
+import type { AvatarDetail, BoothFileStatus, DownloadView, ItemView, Knowledge } from "../types";
 import { FileMark, Thumb, errorText } from "../ui";
 
 export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?: string }) {
@@ -270,12 +270,81 @@ function DownloadFiles({
   pull: (file: DownloadView) => void;
   push: (file: DownloadView) => void;
 }) {
+  const { builtinBrowser, refresh, notify, fail } = useShell();
+  const [live, setLive] = useState<BoothFileStatus | null>(null);
+  const [receiving, setReceiving] = useState("");
+  const running = useRef(false);
+  useEffect(() => {
+    let stop = () => undefined as void;
+    let alive = true;
+    void listenBoothFile((status) => {
+      if (!alive || status.boothId !== item.boothId) return;
+      setLive(status);
+    }).then((unlisten) => {
+      stop = unlisten;
+    });
+    return () => {
+      alive = false;
+      stop();
+    };
+  }, [item.boothId]);
+
+  async function receive(file: DownloadView) {
+    if (running.current) return;
+    running.current = true;
+    const key = `${file.variation}:${file.filename}`;
+    setReceiving(key);
+    setLive({
+      boothId: item.boothId,
+      variation: file.variation,
+      filename: file.filename,
+      phase: "receiving",
+      message: "受け取っています",
+    });
+    try {
+      await api.downloadBoothFile(item.boothId, file.variation, file.filename);
+      setLive({
+        boothId: item.boothId,
+        variation: file.variation,
+        filename: file.filename,
+        phase: "done",
+        message: "ライブラリに移しました",
+      });
+      notify("ファイルをライブラリに移しました");
+      refresh();
+    } catch (err) {
+      const message = errorText(err);
+      setLive({
+        boothId: item.boothId,
+        variation: file.variation,
+        filename: file.filename,
+        phase: "error",
+        message,
+      });
+      fail(message);
+    } finally {
+      running.current = false;
+      setReceiving("");
+    }
+  }
+
   const present = item.downloads.filter((file) => file.state !== "missing");
   const missing = item.downloads.filter((file) => file.state === "missing");
   const foldMissing = missing.length >= 4;
   const unnamed = item.downloads.some((file) => !hasRealFileName(file.filename));
   const row = (file: DownloadView) => (
-    <DownloadRow key={`${file.variation}:${file.filename}:${file.state}`} file={file} item={item} busy={busy} pull={pull} push={push} />
+    <DownloadRow
+      key={`${file.variation}:${file.filename}:${file.state}`}
+      file={file}
+      item={item}
+      busy={busy}
+      receiving={receiving}
+      live={live}
+      canReceive={builtinBrowser}
+      pull={pull}
+      push={push}
+      receive={receive}
+    />
   );
   return (
     <>
@@ -305,24 +374,61 @@ function DownloadRow({
   file,
   item,
   busy,
+  receiving,
+  live,
+  canReceive,
   pull,
   push,
+  receive,
 }: {
   file: DownloadView;
   item: ItemView;
   busy: string;
+  receiving: string;
+  live: BoothFileStatus | null;
+  canReceive: boolean;
   pull: (file: DownloadView) => void;
   push: (file: DownloadView) => void;
+  receive: (file: DownloadView) => void;
 }) {
+  const key = `${file.variation}:${file.filename}`;
+  const status =
+    live &&
+    live.variation === file.variation &&
+    live.filename === file.filename &&
+    (file.state === "missing" || live.phase === "error")
+      ? live
+      : null;
+  const offer = file.state === "missing" && canReceive;
   return (
-    <li className={`download-row ${file.state}`}>
+    <li
+      className={`download-row ${file.state}${offer ? " can-receive" : ""}`}
+      onClick={() => {
+        if (offer) receive(file);
+      }}
+    >
       <div>
         <span className="download-name">{file.filename}</span>
         {file.variation ? <span className="meta"> {file.variation}</span> : null}
-        <span className={`meta state-${file.state}`}> {placeLabel(file, item)}</span>
+        <span className={status?.phase === "error" ? "meta warn-text" : `meta state-${file.state}`}>
+          {" "}
+          {status ? status.message : placeLabel(file, item)}
+        </span>
         {file.sizeBytes != null && file.sizeBytes > 0 ? <span className="meta"> {formatBytes(file.sizeBytes)}</span> : null}
       </div>
       <div className="row-actions">
+        {offer && (
+          <button
+            type="button"
+            disabled={receiving === key}
+            onClick={(event) => {
+              event.stopPropagation();
+              receive(file);
+            }}
+          >
+            {receiving === key ? "受け取っています" : "受け取る"}
+          </button>
+        )}
         {file.state === "local" && file.localPath && (
           <button type="button" onClick={() => void revealInFolder(file.localPath || "")}>
             保存先を開く

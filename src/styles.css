@@ -397,6 +397,8 @@ nav { display: flex; flex-direction: column; gap: 4px; }
 .download-row.remote { opacity: 0.55; }
 .download-row.missing,
 .download-row.missing .download-name { color: var(--faint); }
+.download-row.can-receive { cursor: pointer; }
+.download-row > div { min-width: 0; }
 .badge {
   display: inline-block;
   margin-left: var(--space-2);

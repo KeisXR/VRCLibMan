@@ -3,8 +3,10 @@ use crate::model::ImportReport;
 use serde::Serialize;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::Duration;
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::webview::DownloadEvent;
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use url::Url;
 
 const LOG_NAME: &str = "booth-browser.log";
@@ -175,14 +177,14 @@ pub fn open_in_same_window(url: &Url) -> bool {
 }
 
 fn open_popup_in_same_window(app: &AppHandle, url: Url) {
-    if open_in_same_window(&url) {
+    if should_follow_popup(&url, download_job_armed()) {
         browser_log(
             app,
             &format!("別窓の要求を今の窓で開きます {}", public_url(&url)),
         );
         if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
-            if let Err(err) = window.navigate(url) {
-                browser_log(app, &format!("別窓の移動に失敗しました: {err}"));
+            if window.navigate(url).is_err() {
+                browser_log(app, "別窓の移動に失敗しました");
             }
         }
         return;
@@ -191,6 +193,20 @@ fn open_popup_in_same_window(app: &AppHandle, url: Url) {
         app,
         &format!("別窓の要求は開きません {}", public_url(&url)),
     );
+}
+
+/// 受け取り中だけ、署名付きの別ホストも同じ窓で開く。クエリは記録しない。
+/// 年齢確認の URL は、受け取り中でも開かない。
+pub fn should_follow_popup(url: &Url, armed: bool) -> bool {
+    if open_in_same_window(url) {
+        return true;
+    }
+    if !armed || url.scheme() != "https" {
+        return false;
+    }
+    let path = url.path().to_ascii_lowercase();
+    let query = url.query().unwrap_or("").to_ascii_lowercase();
+    !is_age_gate(&path, &query)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -294,7 +310,8 @@ pub fn open_browser(app: &AppHandle) -> Result<(), String> {
         .on_new_window(move |url, _features| {
             open_popup_in_same_window(&for_popup, url);
             tauri::webview::NewWindowResponse::Deny
-        });
+        })
+        .on_download(|_webview, event| handle_booth_download(event));
     // WKWebView already sends a Safari user agent. Leave it unchanged unless Booth
     // starts rejecting the embedded login; then set one current Safari string here.
     #[cfg(not(target_os = "macos"))]
@@ -483,6 +500,469 @@ async fn clear_macos_data_store(app: &AppHandle) -> Result<(), String> {
     Err("ログイン状態を消せませんでした。ブラウザを閉じてからもう一度押してください".into())
 }
 
+const DOWNLOAD_START_WAIT: Duration = Duration::from_secs(20);
+const DOWNLOAD_FINISH_WAIT: Duration = Duration::from_secs(20 * 60);
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BoothFileStatus {
+    booth_id: String,
+    variation: String,
+    filename: String,
+    phase: String,
+    message: String,
+}
+
+enum DownloadSignal {
+    Started { host: String, destination: PathBuf },
+    Finished { success: bool, path: Option<PathBuf> },
+    Rejected { age_gate: bool },
+}
+
+struct ArmedDownload {
+    events: std::sync::mpsc::SyncSender<DownloadSignal>,
+    started: bool,
+    dir: PathBuf,
+    row_filename: String,
+}
+
+struct DownloadJob(Mutex<Option<ArmedDownload>>);
+
+static DOWNLOAD_JOB: DownloadJob = DownloadJob(Mutex::new(None));
+
+fn job_lock() -> std::sync::MutexGuard<'static, Option<ArmedDownload>> {
+    DOWNLOAD_JOB.0.lock().unwrap_or_else(|err| err.into_inner())
+}
+
+fn download_job_armed() -> bool {
+    job_lock().is_some()
+}
+
+struct JobGuard;
+
+impl Drop for JobGuard {
+    fn drop(&mut self) {
+        *job_lock() = None;
+    }
+}
+
+fn arm_download(job: ArmedDownload) -> Result<JobGuard, String> {
+    let mut slot = job_lock();
+    if slot.is_some() {
+        return Err(db::BROWSER_BUSY_MESSAGE.into());
+    }
+    *slot = Some(job);
+    Ok(JobGuard)
+}
+
+pub struct DownloadChoice {
+    pub started: bool,
+    pub dir: PathBuf,
+    pub row_filename: String,
+}
+
+#[derive(Debug)]
+pub enum DownloadChoiceResult {
+    AllowDefault,
+    Cancel,
+    Reject { age_gate: bool },
+    Save(PathBuf),
+}
+
+/// One armed click owns the next download. Anything else keeps the webview's own folder.
+pub fn decide_download(
+    job: Option<&DownloadChoice>,
+    url: &Url,
+    suggested: &Path,
+) -> DownloadChoiceResult {
+    let Some(job) = job else {
+        return DownloadChoiceResult::AllowDefault;
+    };
+    if job.started {
+        return DownloadChoiceResult::Cancel;
+    }
+    if !job.dir.is_absolute() {
+        return DownloadChoiceResult::Reject { age_gate: false };
+    }
+    if url.scheme() != "https" {
+        return DownloadChoiceResult::Reject { age_gate: false };
+    }
+    let path = url.path().to_ascii_lowercase();
+    let query = url.query().unwrap_or("").to_ascii_lowercase();
+    if is_age_gate(&path, &query) {
+        return DownloadChoiceResult::Reject { age_gate: true };
+    }
+    let suggested = suggested
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    let preferred = crate::library_files::choose_download_name(&job.row_filename, suggested);
+    let name = unique_staging_name(&job.dir, &preferred);
+    DownloadChoiceResult::Save(job.dir.join(name))
+}
+
+fn unique_staging_name(dir: &Path, preferred: &str) -> String {
+    let preferred = crate::library_files::safe_filename(preferred)
+        .unwrap_or_else(|| "received.bin".to_string());
+    if std::fs::symlink_metadata(dir.join(&preferred)).is_err() {
+        return preferred;
+    }
+    let path = Path::new(&preferred);
+    let stem = path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("file");
+    let extension = path.extension().and_then(|name| name.to_str());
+    for index in 2..50 {
+        let name = match extension {
+            Some(extension) => format!("{stem} ({index}).{extension}"),
+            None => format!("{stem} ({index})"),
+        };
+        if std::fs::symlink_metadata(dir.join(&name)).is_err() {
+            return name;
+        }
+    }
+    match extension {
+        Some(extension) => format!("{stem}-copy.{extension}"),
+        None => format!("{stem}-copy"),
+    }
+}
+
+fn handle_booth_download(event: DownloadEvent<'_>) -> bool {
+    match event {
+        DownloadEvent::Requested { url, destination } => {
+            let mut guard = job_lock();
+            let choice = guard.as_ref().map(|job| DownloadChoice {
+                started: job.started,
+                dir: job.dir.clone(),
+                row_filename: job.row_filename.clone(),
+            });
+            match decide_download(choice.as_ref(), &url, destination) {
+                DownloadChoiceResult::AllowDefault => true,
+                DownloadChoiceResult::Cancel => false,
+                DownloadChoiceResult::Reject { age_gate } => {
+                    if let Some(job) = guard.as_ref() {
+                        let _ = job.events.try_send(DownloadSignal::Rejected { age_gate });
+                    }
+                    false
+                }
+                DownloadChoiceResult::Save(path) => {
+                    let Some(job) = guard.as_mut() else {
+                        return true;
+                    };
+                    if job.started {
+                        return false;
+                    }
+                    job.started = true;
+                    *destination = path.clone();
+                    let host = url.host_str().unwrap_or("").to_string();
+                    let _ = job.events.try_send(DownloadSignal::Started {
+                        host,
+                        destination: path,
+                    });
+                    true
+                }
+            }
+        }
+        DownloadEvent::Finished { path, success, .. } => {
+            if let Some(job) = job_lock().as_ref() {
+                let _ = job.events.try_send(DownloadSignal::Finished { success, path });
+            }
+            true
+        }
+        _ => true,
+    }
+}
+
+pub fn downloadable_url(downloadable_id: &str) -> Result<Url, String> {
+    if !crate::library_files::valid_booth_id(downloadable_id) {
+        return Err(db::BROWSER_MISSING_ID_MESSAGE.into());
+    }
+    Url::parse(&format!("https://booth.pm/downloadables/{downloadable_id}"))
+        .map_err(|_| "ダウンロードのURLを作れません".to_string())
+}
+
+pub fn receipt_log(booth_id: &str, downloadable_id: &str) -> Option<String> {
+    if !crate::library_files::valid_booth_id(booth_id)
+        || !crate::library_files::valid_booth_id(downloadable_id)
+    {
+        return None;
+    }
+    Some(format!(
+        "ファイルの受け取りを開始しました 商品 {booth_id} 番号 {downloadable_id}"
+    ))
+}
+
+pub fn host_log(host: &str) -> String {
+    let ok = !host.is_empty()
+        && host.len() <= 253
+        && host
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'));
+    if ok {
+        format!("受け取り先ホスト {host}")
+    } else {
+        "受け取りを開始しました".to_string()
+    }
+}
+
+fn emit_file_status(
+    app: &AppHandle,
+    booth_id: &str,
+    variation: &str,
+    filename: &str,
+    phase: &str,
+    message: &str,
+) {
+    let _ = app.emit(
+        "booth-file-download",
+        BoothFileStatus {
+            booth_id: booth_id.to_string(),
+            variation: variation.to_string(),
+            filename: filename.to_string(),
+            phase: phase.to_string(),
+            message: message.to_string(),
+        },
+    );
+    let (current, total) = if phase == "done" { (1, 1) } else { (0, 0) };
+    let _ = app.emit(
+        "job-progress",
+        crate::model::JobProgress {
+            job: "download".to_string(),
+            current,
+            total,
+            message: message.to_string(),
+        },
+    );
+}
+
+fn focus_browser(app: &AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+    open_browser(app)
+}
+
+fn existing_download(signaled: Option<PathBuf>, destination: &Path) -> Option<PathBuf> {
+    for _ in 0..15 {
+        if let Some(path) = signaled.as_ref().filter(|path| path.is_file()) {
+            return Some(path.clone());
+        }
+        if destination.is_file() {
+            return Some(destination.to_path_buf());
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    None
+}
+
+/// クッキーは読まない。押した1件の URL へ、その窓のセッションのまま移動して受け取る。
+pub async fn download_one_file(
+    app: AppHandle,
+    booth_id: String,
+    variation: String,
+    filename: String,
+) -> Result<(), String> {
+    let app_for_plan = app.clone();
+    let booth_for_plan = booth_id.clone();
+    let variation_for_plan = variation.clone();
+    let filename_for_plan = filename.clone();
+    let plan = tauri::async_runtime::spawn_blocking(move || {
+        let request = {
+            let state = app_for_plan.state::<crate::AppState>();
+            let connection = state
+                .db
+                .lock()
+                .map_err(|_| "データベースをロックできません".to_string())?;
+            db::plan_browser_download(
+                &connection,
+                &booth_for_plan,
+                &variation_for_plan,
+                &filename_for_plan,
+            )?
+        };
+        let downloads = crate::library_files::downloads_folder()?;
+        let dir = crate::library_files::prepare_staging_dir(&downloads, &request.booth_id)?;
+        Ok::<_, String>((request, dir))
+    })
+    .await
+    .map_err(|err| format!("受け取りを準備できません: {err}"))??;
+    let (request, dir) = plan;
+    let url = downloadable_url(&request.downloadable_id)?;
+    emit_file_status(
+        &app,
+        &request.booth_id,
+        &request.variation,
+        &request.filename,
+        "receiving",
+        "受け取っています",
+    );
+    if let Some(line) = receipt_log(&request.booth_id, &request.downloadable_id) {
+        browser_log(&app, &line);
+    }
+    let (sender, receiver) = std::sync::mpsc::sync_channel(8);
+    let guard = arm_download(ArmedDownload {
+        events: sender,
+        started: false,
+        dir,
+        row_filename: request.filename.clone(),
+    })?;
+    let navigated = dispatch_ui(app.clone(), move |handle| {
+        open_browser(handle)?;
+        let window = handle
+            .get_webview_window(WINDOW_LABEL)
+            .ok_or_else(|| "ブラウザを開けません".to_string())?;
+        window
+            .navigate(url)
+            .map_err(|_| "ファイルのページを開けません".to_string())
+    })
+    .await;
+    if let Err(err) = navigated {
+        drop(guard);
+        emit_file_status(
+            &app,
+            &request.booth_id,
+            &request.variation,
+            &request.filename,
+            "error",
+            &err,
+        );
+        browser_log(&app, "受け取りの移動に失敗しました");
+        return Err(err);
+    }
+    let app_for_wait = app.clone();
+    let waited = tauri::async_runtime::spawn_blocking(move || wait_for_download(app_for_wait, receiver))
+        .await
+        .map_err(|err| format!("受け取りを待てません: {err}"))?;
+    drop(guard);
+    let source = match waited {
+        Waited::File(path) => path,
+        Waited::Login => {
+            let _ = dispatch_ui(app.clone(), |handle| focus_browser(handle)).await;
+            emit_file_status(
+                &app,
+                &request.booth_id,
+                &request.variation,
+                &request.filename,
+                "error",
+                db::BROWSER_LOGIN_MESSAGE,
+            );
+            browser_log(&app, "ログインが必要です");
+            return Err(db::BROWSER_LOGIN_MESSAGE.into());
+        }
+        Waited::AgeGate => {
+            emit_file_status(
+                &app,
+                &request.booth_id,
+                &request.variation,
+                &request.filename,
+                "error",
+                db::BROWSER_AGE_MESSAGE,
+            );
+            browser_log(&app, "年齢確認は自動では通過しません");
+            return Err(db::BROWSER_AGE_MESSAGE.into());
+        }
+        Waited::Failed => {
+            let _ = dispatch_ui(app.clone(), |handle| focus_browser(handle)).await;
+            emit_file_status(
+                &app,
+                &request.booth_id,
+                &request.variation,
+                &request.filename,
+                "error",
+                db::BROWSER_DOWNLOAD_FAILED,
+            );
+            browser_log(&app, "受け取りに失敗しました");
+            return Err(db::BROWSER_DOWNLOAD_FAILED.into());
+        }
+    };
+    emit_file_status(
+        &app,
+        &request.booth_id,
+        &request.variation,
+        &request.filename,
+        "receiving",
+        "ライブラリに移しています",
+    );
+    let app_for_commit = app.clone();
+    let committed = tauri::async_runtime::spawn_blocking(move || {
+        let state = app_for_commit.state::<crate::AppState>();
+        let mut connection = state
+            .db
+            .lock()
+            .map_err(|_| "データベースをロックできません".to_string())?;
+        db::commit_browser_download(&mut connection, &request, &source)
+    })
+    .await
+    .map_err(|err| format!("ファイルを移動できません: {err}"))?;
+    match committed {
+        Ok(_) => {
+            emit_file_status(
+                &app,
+                &booth_id,
+                &variation,
+                &filename,
+                "done",
+                "ライブラリに移しました",
+            );
+            browser_log(&app, "ファイルをライブラリへ移しました");
+            let _ = app.emit("library-changed", ());
+            Ok(())
+        }
+        Err(err) => {
+            if err == db::BROWSER_LOGIN_MESSAGE {
+                let _ = dispatch_ui(app.clone(), |handle| focus_browser(handle)).await;
+                browser_log(&app, "ログインが必要です");
+            } else {
+                browser_log(&app, "受け取りに失敗しました");
+            }
+            emit_file_status(&app, &booth_id, &variation, &filename, "error", &err);
+            Err(err)
+        }
+    }
+}
+
+enum Waited {
+    File(PathBuf),
+    Login,
+    AgeGate,
+    Failed,
+}
+
+fn wait_for_download(
+    app: AppHandle,
+    receiver: std::sync::mpsc::Receiver<DownloadSignal>,
+) -> Waited {
+    let destination = match receiver.recv_timeout(DOWNLOAD_START_WAIT) {
+        Ok(DownloadSignal::Started { host, destination }) => {
+            browser_log(&app, &host_log(&host));
+            destination
+        }
+        Ok(DownloadSignal::Rejected { age_gate: true }) => return Waited::AgeGate,
+        Ok(DownloadSignal::Rejected { age_gate: false }) => return Waited::Failed,
+        Ok(DownloadSignal::Finished { success, path }) => {
+            if success {
+                if let Some(path) = existing_download(path, Path::new("")) {
+                    return Waited::File(path);
+                }
+            }
+            return Waited::Failed;
+        }
+        Err(_) => return Waited::Login,
+    };
+    match receiver.recv_timeout(DOWNLOAD_FINISH_WAIT) {
+        Ok(DownloadSignal::Finished { success: true, path }) => {
+            existing_download(path, &destination).map_or(Waited::Failed, Waited::File)
+        }
+        Ok(DownloadSignal::Rejected { age_gate: true }) => Waited::AgeGate,
+        Ok(DownloadSignal::Rejected { age_gate: false }) => Waited::Failed,
+        _ => Waited::Failed,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -612,5 +1092,97 @@ mod tests {
         let quoted = serde_json::to_string(&serde_json::json!(raw)).unwrap();
         let (href, _) = parse_page_read(&quoted).unwrap();
         assert_eq!(href, "https://accounts.booth.pm/library");
+    }
+
+    #[test]
+    fn one_file_download_stays_inside_the_logged_in_window() {
+        let url = downloadable_url("2336025").unwrap();
+        assert_eq!(url.as_str(), "https://booth.pm/downloadables/2336025");
+        assert!(url.query().is_none());
+        assert!(downloadable_url("12").is_err());
+        assert!(downloadable_url("../2336025").is_err());
+        assert!(downloadable_url("2336025?token=secret").is_err());
+        assert!(downloadable_url("https://booth.pm/downloadables/2336025").is_err());
+        let line = receipt_log("424242", "2336025").unwrap();
+        assert!(!line.contains('?'));
+        assert!(!line.contains("http"));
+        assert_eq!(host_log("cdn.example.test"), "受け取り先ホスト cdn.example.test");
+        assert!(!host_log("cdn.example.test?token=secret").contains("token"));
+        assert!(!host_log("cdn.example.test?token=secret").contains('?'));
+
+        let commands = include_str!("commands.rs");
+        assert!(commands.contains("async fn download_booth_file"));
+        assert!(!commands.contains("pub fn download_booth_file"));
+        let source = include_str!("browser.rs");
+        let production = source.split("mod tests").next().unwrap();
+        assert!(production.contains("pub async fn download_one_file"));
+        assert!(production.contains("downloadable_url"));
+        assert!(production.contains(".navigate(url)"));
+        assert!(production.contains("dispatch_ui"));
+        assert!(production.contains("on_download"));
+        assert!(!production.contains("cookies_for_url"));
+        assert!(!production.contains("reqwest"));
+        assert!(!production.contains("document.cookie"));
+    }
+
+    #[test]
+    fn an_armed_download_accepts_one_https_file_and_skips_age_gates() {
+        let dir = std::env::temp_dir().join(format!("vrclibman-choice-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let job = DownloadChoice {
+            started: false,
+            dir: dir.clone(),
+            row_filename: "2336025".into(),
+        };
+        let signed = Url::parse("https://cdn.example.test/files/a?token=secret").unwrap();
+        let saved = decide_download(
+            Some(&job),
+            &signed,
+            Path::new("C:/Users/someone/Downloads/body.unitypackage"),
+        );
+        match saved {
+            DownloadChoiceResult::Save(path) => {
+                assert_eq!(path, dir.join("body.unitypackage"));
+                assert!(!path.display().to_string().contains("token"));
+            }
+            other => panic!("expected a save path, got {other:?}"),
+        }
+        assert!(!should_follow_popup(&signed, false));
+        assert!(should_follow_popup(&signed, true));
+        assert_eq!(public_url(&signed), "https://cdn.example.test/files/a");
+        let gate = Url::parse("https://cdn.example.test/age_verification?r18=1").unwrap();
+        assert!(!should_follow_popup(&gate, true));
+        assert!(matches!(
+            decide_download(Some(&job), &gate, Path::new("page.html")),
+            DownloadChoiceResult::Reject { age_gate: true }
+        ));
+        let plain = Url::parse("http://cdn.example.test/body.unitypackage").unwrap();
+        assert!(matches!(
+            decide_download(Some(&job), &plain, Path::new("body.unitypackage")),
+            DownloadChoiceResult::Reject { age_gate: false }
+        ));
+        let busy = DownloadChoice {
+            started: true,
+            dir: dir.clone(),
+            row_filename: "2336025".into(),
+        };
+        let file_url = Url::parse("https://booth.pm/downloadables/2336025").unwrap();
+        assert!(matches!(
+            decide_download(Some(&busy), &file_url, Path::new("body.unitypackage")),
+            DownloadChoiceResult::Cancel
+        ));
+        assert!(matches!(
+            decide_download(None, &file_url, Path::new("body.unitypackage")),
+            DownloadChoiceResult::AllowDefault
+        ));
+        std::fs::write(dir.join("body.unitypackage"), b"already").unwrap();
+        match decide_download(Some(&job), &file_url, Path::new("body.unitypackage")) {
+            DownloadChoiceResult::Save(path) => {
+                assert_eq!(path.file_name().and_then(|name| name.to_str()), Some("body (2).unitypackage"));
+            }
+            other => panic!("expected a unique name, got {other:?}"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

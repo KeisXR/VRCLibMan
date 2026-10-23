@@ -23,6 +23,7 @@ interface ShellValue {
   refresh: () => void;
   notify: (message: string) => void;
   fail: (message: string) => void;
+  builtinBrowser: boolean;
 }
 
 const ShellContext = createContext<ShellValue | null>(null);
@@ -155,8 +156,8 @@ export default function App() {
   }, []);
 
   const shell = useMemo<ShellValue>(
-    () => ({ revision, refresh, notify, fail }),
-    [revision, refresh, notify, fail],
+    () => ({ revision, refresh, notify, fail, builtinBrowser }),
+    [revision, refresh, notify, fail, builtinBrowser],
   );
   const percent =
     progress && progress.total > 0 ? Math.min(100, (progress.current / progress.total) * 100) : 0;

@@ -317,6 +317,12 @@ if (typeof location !== "undefined" && new URLSearchParams(location.search).get(
   store.remoteReachable = false;
 }
 
+if (typeof location !== "undefined" && new URLSearchParams(location.search).get("browser") === "1") {
+  store.settings.builtinBrowser = true;
+  store.settings.routeDownloads = true;
+  store.setupComplete = true;
+}
+
 if (stressPreview) {
   store.setupComplete = true;
   for (let index = store.avatars.length; index < 1000; index += 1) {
@@ -1017,6 +1023,31 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
         }),
       );
       return boothId as T;
+    }
+    case "download_booth_file": {
+      if (!store.settings.builtinBrowser) {
+        throw new Error("内蔵ブラウザはオフです。拡張のダウンロードを使ってください");
+      }
+      if (!store.settings.routeDownloads) {
+        throw new Error("ダウンロードの振り分けはオフです");
+      }
+      if (!store.settings.libraryFolder.trim()) {
+        throw new Error("ライブラリのフォルダを選んでから、振り分けをオンにしてください");
+      }
+      const boothId = String(args.boothId ?? "");
+      const variation = String(args.variation ?? "");
+      const filename = String(args.filename ?? "");
+      const row = store.downloads.find(
+        (item) => item.boothId === boothId && item.variation === variation && item.filename === filename,
+      );
+      if (!row) throw new Error("ダウンロード項目がありません");
+      const number = /^\d{4,12}$/.test(filename);
+      if (!number && !/\.(unitypackage|zip|rar|7z|vrm)$/i.test(filename)) {
+        throw new Error("この行にはダウンロード番号がありません。拡張を更新して取り込み直してください");
+      }
+      row.state = "local";
+      row.localPath = `${store.settings.libraryFolder}\\${boothId}\\${filename}`;
+      return undefined as T;
     }
     case "pull_remote_file": {
       const row = store.downloads.find(

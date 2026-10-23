@@ -331,6 +331,16 @@ pub fn booth_browser_log(app: tauri::AppHandle) -> Result<crate::browser::Browse
 }
 
 #[tauri::command]
+pub async fn download_booth_file(
+    app: tauri::AppHandle,
+    booth_id: String,
+    variation: String,
+    filename: String,
+) -> Result<(), String> {
+    crate::browser::download_one_file(app, booth_id, variation, filename).await
+}
+
+#[tauri::command]
 pub fn update_product(state: State<'_, AppState>, update: ProductUpdate) -> Result<(), String> {
     let mut connection = db(&state)?;
     db::update_product(&mut connection, &update)

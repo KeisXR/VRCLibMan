@@ -142,6 +142,7 @@ pub fn run() {
             commands::clear_booth_session,
             commands::close_booth_browser,
             commands::booth_browser_log,
+            commands::download_booth_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
