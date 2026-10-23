@@ -249,6 +249,7 @@ fn ensure_ready(connection: &Connection) -> Result<(), String> {
         ("builtin_browser", "0"),
         ("remote_library_folder", ""),
         ("route_downloads", "0"),
+        ("llm_backend", "ollama"),
     ] {
         connection
             .execute(
@@ -295,11 +296,26 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
         builtin_browser: setting(connection, "builtin_browser")?.as_deref() == Some("1"),
         remote_library_folder: setting(connection, "remote_library_folder")?.unwrap_or_default(),
         route_downloads: setting(connection, "route_downloads")?.as_deref() == Some("1"),
+        llm_backend: normalize_backend(
+            &setting(connection, "llm_backend")?.unwrap_or_else(|| "ollama".into()),
+        ),
     })
+}
+
+fn normalize_backend(value: &str) -> String {
+    if value.trim() == "apple" {
+        "apple".into()
+    } else {
+        "ollama".into()
+    }
 }
 
 pub(crate) fn save_settings(connection: &Connection, input: &SettingsInput) -> Result<(), String> {
     let library = input.library_folder.trim();
+    let backend = normalize_backend(&input.llm_backend);
+    if backend == "apple" && !crate::apple_fm::can_select(None) {
+        return Err("Apple のオンデバイスモデルは、今の Mac では使えません".into());
+    }
     if input.route_downloads && library.is_empty() {
         return Err("振り分けをオンにする前に、ライブラリのフォルダを選んでください".into());
     }
@@ -355,6 +371,7 @@ pub(crate) fn save_settings(connection: &Connection, input: &SettingsInput) -> R
         "route_downloads",
         if input.route_downloads { "1" } else { "0" },
     )?;
+    set_setting(connection, "llm_backend", &backend)?;
     Ok(())
 }
 
@@ -2558,7 +2575,37 @@ pub(crate) fn setup_status(connection: &Connection) -> Result<SetupStatus, Strin
         complete: setting(connection, "setup_complete")?.as_deref() == Some("1"),
         model: settings.ollama_model,
         default_model: crate::model::DEFAULT_OLLAMA_MODEL.into(),
+        backend: settings.llm_backend,
     })
+}
+
+pub(crate) fn protected_names(connection: &Connection) -> Result<Vec<String>, String> {
+    let mut names = Vec::new();
+    for avatar in load_avatars(connection)? {
+        if !avatar.display_name.trim().is_empty() {
+            names.push(avatar.display_name);
+        }
+        names.extend(avatar.aliases.into_iter().filter(|name| !name.trim().is_empty()));
+    }
+    Ok(names)
+}
+
+pub(crate) fn mark_guardrail_review(connection: &Connection, booth_id: &str) -> Result<(), String> {
+    let now = now_iso();
+    connection
+        .execute(
+            "UPDATE products SET
+               category = CASE WHEN category_locked = 1 THEN category ELSE COALESCE(category, 'other') END,
+               needs_review = 1,
+               confidence = 0.2,
+               user_confirmed = 0,
+               extracted_at = ?1,
+               updated_at = ?1
+             WHERE booth_id = ?2",
+            params![now, booth_id],
+        )
+        .sql()?;
+    Ok(())
 }
 
 pub(crate) fn set_setup_complete(connection: &Connection, complete: bool) -> Result<(), String> {
@@ -3649,6 +3696,7 @@ mod tests {
                 builtin_browser: false,
                 remote_library_folder: String::new(),
                 route_downloads: false,
+                llm_backend: "ollama".into(),
             },
         )
         .unwrap();
@@ -3702,6 +3750,7 @@ mod tests {
                 builtin_browser: true,
                 remote_library_folder: String::new(),
                 route_downloads: false,
+                llm_backend: "ollama".into(),
             },
         )
         .unwrap();
@@ -4544,6 +4593,7 @@ mod tests {
                 builtin_browser: false,
                 remote_library_folder: String::new(),
                 route_downloads: true,
+                llm_backend: "ollama".into(),
             },
         );
         assert!(refused.unwrap_err().contains("ライブラリ"));
@@ -4557,6 +4607,7 @@ mod tests {
                 builtin_browser: false,
                 remote_library_folder: String::new(),
                 route_downloads: true,
+                llm_backend: "ollama".into(),
             },
         )
         .unwrap();

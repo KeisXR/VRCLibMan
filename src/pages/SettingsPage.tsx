@@ -3,7 +3,7 @@ import { api, chooseFolder, openExternal, saveLibraryAndScan } from "../api";
 import { useShell } from "../App";
 import { formatBytes } from "../media";
 import { DEFAULT_OLLAMA_MODEL } from "../types";
-import type { AvatarRecord, BaseBody, CatalogInfo, ExtensionLink, Knowledge, Settings } from "../types";
+import type { AppleFmStatus, AvatarRecord, BaseBody, CatalogInfo, ExtensionLink, Knowledge, Settings } from "../types";
 import { errorText } from "../ui";
 
 const emptyAvatar = {
@@ -27,6 +27,7 @@ export function SettingsPage() {
   const [models, setModels] = useState<string[]>([]);
   const [installedSize, setInstalledSize] = useState<number | null>(null);
   const [link, setLink] = useState<ExtensionLink | null>(null);
+  const [apple, setApple] = useState<AppleFmStatus | null>(null);
   const [catalog, setCatalog] = useState<CatalogInfo | null>(null);
 
   useEffect(() => {
@@ -43,11 +44,12 @@ export function SettingsPage() {
         setInstalledSize(null);
       },
     );
-    Promise.all([api.settings(), api.knowledge(), api.extensionLink(), api.catalogInfo()]).then(
-      ([nextSettings, nextKnowledge, nextLink, nextCatalog]) => {
+    Promise.all([api.settings(), api.knowledge(), api.extensionLink(), api.catalogInfo(), api.appleFmStatus()]).then(
+      ([nextSettings, nextKnowledge, nextLink, nextCatalog, nextApple]) => {
         if (cancelled) return;
         setSettings(nextSettings);
         setSavedFolder(nextSettings.libraryFolder);
+        setApple(nextApple);
         setCatalog(nextCatalog);
         setKnowledge(nextKnowledge);
         setLink(nextLink);
@@ -381,6 +383,25 @@ export function SettingsPage() {
               />
             </label>
             <label className="field">
+              <span>分類</span>
+              <select
+                value={settings.llmBackend}
+                onChange={(event) =>
+                  setSettings({
+                    ...settings,
+                    llmBackend: event.target.value === "apple" ? "apple" : "ollama",
+                  })
+                }
+              >
+                <option value="ollama">Ollama（既定）</option>
+                {(apple?.availability === "available" || settings.llmBackend === "apple") && (
+                  <option value="apple" disabled={apple?.availability !== "available"}>
+                    Apple のオンデバイスモデル
+                  </option>
+                )}
+              </select>
+            </label>
+            <label className="field">
               <span>モデル名</span>
               <input
                 list="ollama-models"
@@ -520,7 +541,7 @@ export function SettingsPage() {
           </div>
           {status && <p className="meta">{status}</p>}
           <p className="meta">
-            既定のモデルは {DEFAULT_OLLAMA_MODEL} です。今の設定は {settings.ollamaModel} です。軽い代替は qwen3:4b。
+            既定のモデルは {DEFAULT_OLLAMA_MODEL} です。今の設定は {settings.ollamaModel} です。分類は {settings.llmBackend === "apple" ? "Apple のオンデバイスモデル" : "Ollama"} です。Apple は macOS で使えるときだけ選べ、選んでも既定のモデル名は変わりません。{apple?.message ? ` ${apple.message}` : ""} 軽い代替は qwen3:4b。
             {installedSize != null && installedSize > 0 ? ` 入っているサイズは ${formatBytes(installedSize)} です。` : ""}
             {models.length > 0
               ? ` 導入済み: ${models.join("、")}。上の欄で選べます。`

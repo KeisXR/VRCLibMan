@@ -106,6 +106,7 @@ const store: Store = {
     builtinBrowser: false,
     remoteLibraryFolder: "\\\\nas\\vrclibman",
     routeDownloads: false,
+    llmBackend: "ollama",
   },
   setupComplete: false,
   baseBodies: [
@@ -934,6 +935,14 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
         complete: store.setupComplete,
         model: store.settings.ollamaModel,
         defaultModel: "gemma4:12b",
+        backend: store.settings.llmBackend,
+      } as T;
+    case "apple_fm_status":
+      return {
+        availability: "available",
+        variant: "default",
+        contextSize: 8192,
+        message: "見本では Apple のオンデバイスモデルを選べます",
       } as T;
     case "complete_setup":
       store.setupComplete = true;

@@ -5,6 +5,8 @@ use crate::model::{
     ImportReport, JobProgress, Knowledge, LibraryStats, OllamaStatus, ProductUpdate, ScanReport,
     Settings, SettingsInput, SetupStatus,
 };
+use crate::apple_fm::{self, AppleError};
+use crate::model::Extraction;
 use crate::ollama::{self, model_ready};
 use crate::scan;
 use crate::view::{self, AvatarCard, AvatarDetail, ProductOption, QueuePage};
@@ -183,6 +185,7 @@ pub fn save_settings(state: State<'_, AppState>, settings: SettingsInput) -> Res
             builtin_browser: settings.builtin_browser,
             remote_library_folder: settings.remote_library_folder,
             route_downloads: settings.route_downloads,
+            llm_backend: settings.llm_backend,
         },
     )
 }
@@ -433,6 +436,19 @@ pub async fn extract_products(
         db::settings(&mut connection)?
     };
     let client = ollama::extraction_client()?;
+    let keep = {
+        let connection = db(&state)?;
+        db::protected_names(&connection)?
+    };
+    let lists = wordlist_dir(&app);
+    let ollama_ready = if settings.llm_backend == "apple" {
+        ollama::list_models(&client, &settings.ollama_base_url)
+            .await
+            .map(|models| model_ready(&models, &settings.ollama_model))
+            .unwrap_or(false)
+    } else {
+        false
+    };
     let total = jobs.len() as u32;
     let mut processed = 0;
     let mut failed = 0;
@@ -465,16 +481,8 @@ pub async fn extract_products(
             processed += 1;
             continue;
         }
-        match ollama::extract_product(
-            &client,
-            &settings.ollama_base_url,
-            &settings.ollama_model,
-            &job.title,
-            &job.description,
-        )
-        .await
-        {
-            Ok(extraction) => {
+        match classify_product(&client, &settings, job, &keep, &lists, ollama_ready).await {
+            Ok(Classified::Done(extraction)) => {
                 if state.cancel_extract.load(Ordering::Relaxed) {
                     cancelled = true;
                     break;
@@ -486,6 +494,11 @@ pub async fn extract_products(
                     &extraction,
                     settings.confidence_threshold,
                 )?;
+                processed += 1;
+            }
+            Ok(Classified::Review) => {
+                let connection = db(&state)?;
+                db::mark_guardrail_review(&connection, &job.booth_id)?;
                 processed += 1;
             }
             Err(err) => {
@@ -518,6 +531,97 @@ pub async fn extract_products(
         cancelled,
         errors,
     })
+}
+
+enum Classified {
+    Done(Extraction),
+    Review,
+}
+
+fn wordlist_dir(app: &AppHandle) -> std::path::PathBuf {
+    if let Ok(dir) = std::env::var("VRCLIBMAN_WORDLIST_DIR") {
+        return std::path::PathBuf::from(dir);
+    }
+    app.path()
+        .resource_dir()
+        .map(|dir| dir.join("wordlists"))
+        .unwrap_or_else(|_| crate::mask::wordlist_dir_from_env_or_manifest())
+}
+
+async fn classify_product(
+    client: &reqwest::Client,
+    settings: &Settings,
+    job: &ExtractJob,
+    keep: &[String],
+    lists: &std::path::Path,
+    ollama_ready: bool,
+) -> Result<Classified, String> {
+    if settings.llm_backend != "apple" {
+        let extraction = ollama::extract_product(
+            client,
+            &settings.ollama_base_url,
+            &settings.ollama_model,
+            &job.title,
+            &job.description,
+        )
+        .await?;
+        return Ok(Classified::Done(extraction));
+    }
+    let first = run_apple(
+        ollama::SYSTEM_PROMPT,
+        &job.title,
+        &job.description,
+    )
+    .await?;
+    match first {
+        Ok(extraction) => Ok(Classified::Done(extraction)),
+        Err(AppleError::Guardrail) => {
+            let title = crate::mask::mask_text(&job.title, keep, lists).unwrap_or_else(|_| job.title.clone());
+            let description = crate::mask::mask_text(&job.description, keep, lists)
+                .unwrap_or_else(|_| job.description.clone());
+            match run_apple(ollama::SYSTEM_PROMPT, &title, &description).await? {
+                Ok(extraction) => Ok(Classified::Done(extraction)),
+                Err(_) if ollama_ready => {
+                    let extraction = ollama::extract_product(
+                        client,
+                        &settings.ollama_base_url,
+                        &settings.ollama_model,
+                        &job.title,
+                        &job.description,
+                    )
+                    .await?;
+                    Ok(Classified::Done(extraction))
+                }
+                Err(_) => Ok(Classified::Review),
+            }
+        }
+        Err(AppleError::Message(message)) => Err(message),
+    }
+}
+
+async fn run_apple(
+    instructions: &str,
+    title: &str,
+    description: &str,
+) -> Result<Result<Extraction, AppleError>, String> {
+    let instructions = instructions.to_string();
+    let title = title.to_string();
+    let description = description.to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        apple_fm::extract_warm(
+            &instructions,
+            &title,
+            &description,
+            std::time::Duration::from_secs(60),
+        )
+    })
+    .await
+    .map_err(|_| "Apple のオンデバイスモデルを実行できません".to_string())
+}
+
+#[tauri::command]
+pub fn apple_fm_status() -> crate::apple_fm::AppleStatus {
+    apple_fm::status(None)
 }
 
 #[tauri::command]
