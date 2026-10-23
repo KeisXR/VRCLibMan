@@ -132,7 +132,33 @@ fn local_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|err| format!("保存先を読めません: {err}"))
 }
 
+/// Windows の WebView2 は再入できない。同期コマンドの中で
+/// `WebviewWindowBuilder::build` すると、新しい窓だけが応答しなくなる
+/// （メインの窓はメッセージを処理できるので生きたままに見える）。
+/// IPC のコールバックが返ったあと、メインスレッドで作る。
+/// https://github.com/tauri-apps/wry/issues/583
+pub async fn dispatch_ui<T, F>(app: AppHandle, work: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&AppHandle) -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(move || {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let handle = app.clone();
+        app.run_on_main_thread(move || {
+            let _ = sender.send(work(&handle));
+        })
+        .map_err(|err| format!("画面の処理を予約できません: {err}"))?;
+        receiver
+            .recv()
+            .map_err(|_| "画面の処理が返りませんでした".to_string())?
+    })
+    .await
+    .map_err(|err| format!("画面の処理を実行できません: {err}"))?
+}
+
 pub fn open_browser(app: &AppHandle) -> Result<(), String> {
+    // 設定の確認はここで終わらせ、データベースのロックを持ったまま窓を作らない。
     browser_enabled(app)?;
     if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
         let _ = window.show();
@@ -155,6 +181,8 @@ pub fn open_browser(app: &AppHandle) -> Result<(), String> {
         }
         std::fs::create_dir_all(&dir)
             .map_err(|err| format!("セッション用のフォルダを作れません: {err}"))?;
+        // メイン画面の EBWebView とは別フォルダ。同じ data_directory だと
+        // WebView2 がロックして、新しい窓だけが止まる。
         builder = builder.data_directory(dir);
     }
     #[cfg(target_os = "macos")]
@@ -195,6 +223,7 @@ pub fn browse_history(app: &AppHandle, forward: bool) -> Result<(), String> {
 }
 
 pub fn import_current_page(app: &AppHandle) -> Result<ImportReport, String> {
+    // ページの結果を待つ間、UI スレッドを止めない。待ちはコマンド側の spawn_blocking に置く。
     browser_enabled(app)?;
     let window = app
         .get_webview_window(WINDOW_LABEL)
@@ -232,15 +261,20 @@ pub async fn clear_session(app: &AppHandle) -> Result<(), String> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        clear_folder_session(app)
+        clear_folder_session(app).await
     }
 }
 
 #[cfg(not(target_os = "macos"))]
-fn clear_folder_session(app: &AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
-        let _ = window.destroy();
-    }
+async fn clear_folder_session(app: &AppHandle) -> Result<(), String> {
+    let handle = app.clone();
+    dispatch_ui(handle, |app| {
+        if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
+            let _ = window.destroy();
+        }
+        Ok(())
+    })
+    .await?;
     let root = local_data_dir(app)?;
     let dir = session_dir(&root);
     if !session_dir_is_safe(&root, &dir) {
@@ -320,6 +354,38 @@ mod tests {
         assert_eq!(BOOTH_DATA_STORE_ID.len(), 16);
         assert_ne!(BOOTH_DATA_STORE_ID, [0u8; 16]);
         assert_eq!(&BOOTH_DATA_STORE_ID, b"vrclibman-booth!");
+    }
+
+    #[test]
+    fn booth_window_is_created_after_the_ipc_callback_returns() {
+        let commands = include_str!("commands.rs");
+        for name in [
+            "open_booth_browser",
+            "show_booth_library",
+            "browse_booth_history",
+            "close_booth_browser",
+        ] {
+            let marker = format!("async fn {name}");
+            let start = commands.find(&marker).unwrap_or_else(|| panic!("{name} は async のままにする"));
+            let rest = &commands[start..];
+            let end = rest[marker.len()..]
+                .find("\n#[tauri::command]")
+                .map(|index| marker.len() + index)
+                .unwrap_or(rest.len());
+            let body = &rest[..end];
+            assert!(
+                body.contains("dispatch_ui"),
+                "{name} は IPC の外で窓を触る"
+            );
+            assert!(
+                !commands.contains(&format!("pub fn {name}")),
+                "{name} を同期コマンドに戻さない"
+            );
+        }
+        let browser = include_str!("browser.rs");
+        assert!(browser.contains("fn dispatch_ui"));
+        assert!(browser.contains("run_on_main_thread"));
+        assert!(browser.contains("https://github.com/tauri-apps/wry/issues/583"));
     }
 
     #[test]

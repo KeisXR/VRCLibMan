@@ -290,22 +290,26 @@ pub async fn push_remote_file(
 }
 
 #[tauri::command]
-pub fn open_booth_browser(app: tauri::AppHandle) -> Result<(), String> {
-    crate::browser::open_browser(&app)
+pub async fn open_booth_browser(app: tauri::AppHandle) -> Result<(), String> {
+    crate::browser::dispatch_ui(app, |handle| crate::browser::open_browser(handle)).await
 }
 
 #[tauri::command]
-pub fn show_booth_library(app: tauri::AppHandle) -> Result<(), String> {
-    crate::browser::show_library(&app)
+pub async fn show_booth_library(app: tauri::AppHandle) -> Result<(), String> {
+    crate::browser::dispatch_ui(app, |handle| crate::browser::show_library(handle)).await
 }
 
 #[tauri::command]
-pub fn browse_booth_history(app: tauri::AppHandle, forward: bool) -> Result<(), String> {
-    crate::browser::browse_history(&app, forward)
+pub async fn browse_booth_history(app: tauri::AppHandle, forward: bool) -> Result<(), String> {
+    crate::browser::dispatch_ui(app, move |handle| {
+        crate::browser::browse_history(handle, forward)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn import_booth_page(app: tauri::AppHandle) -> Result<ImportReport, String> {
+    // ページ読み取りの待ちを UI スレッドに載せない。
     tauri::async_runtime::spawn_blocking(move || crate::browser::import_current_page(&app))
         .await
         .map_err(|err| err.to_string())?
@@ -317,8 +321,8 @@ pub async fn clear_booth_session(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn close_booth_browser(app: tauri::AppHandle) -> Result<(), String> {
-    crate::browser::close_browser(&app)
+pub async fn close_booth_browser(app: tauri::AppHandle) -> Result<(), String> {
+    crate::browser::dispatch_ui(app, |handle| crate::browser::close_browser(handle)).await
 }
 
 #[tauri::command]
