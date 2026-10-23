@@ -316,6 +316,19 @@ pub async fn import_booth_page(app: tauri::AppHandle) -> Result<ImportReport, St
 }
 
 #[tauri::command]
+pub async fn import_booth_library(
+    app: tauri::AppHandle,
+) -> Result<crate::browser::LibraryWalkReport, String> {
+    // 移動と eval は import_library の中で dispatch_ui に渡す。
+    crate::browser::import_library(app).await
+}
+
+#[tauri::command]
+pub fn cancel_booth_library() {
+    crate::browser::request_library_walk_cancel();
+}
+
+#[tauri::command]
 pub async fn clear_booth_session(app: tauri::AppHandle) -> Result<(), String> {
     crate::browser::clear_session(&app).await
 }
@@ -326,7 +339,9 @@ pub async fn close_booth_browser(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn booth_browser_log(app: tauri::AppHandle) -> Result<crate::browser::BrowserDiagnostic, String> {
+pub fn booth_browser_log(
+    app: tauri::AppHandle,
+) -> Result<crate::browser::BrowserDiagnostic, String> {
     crate::browser::diagnostic(&app)
 }
 

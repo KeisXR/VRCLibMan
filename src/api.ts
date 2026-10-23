@@ -10,6 +10,7 @@ import type {
   ExtensionLink,
   BrowserDiagnostic,
   ImportReport,
+  LibraryWalkReport,
   BoothFileStatus,
   JobProgress,
   Knowledge,
@@ -57,7 +58,7 @@ export function listenBoothFile(onStatus: (status: BoothFileStatus) => void): Pr
 
 export function listenProgress(onProgress: (progress: JobProgress) => void): Promise<() => void> {
   if (!isTauri()) {
-    return Promise.resolve(() => undefined);
+    return import("./preview/api").then((preview) => preview.listenPreviewProgress(onProgress));
   }
   return import("@tauri-apps/api/event").then(({ listen }) =>
     listen<JobProgress>("job-progress", (event) => onProgress(event.payload)),
@@ -81,6 +82,8 @@ export const api = {
   showBoothLibrary: () => call<void>("show_booth_library"),
   browseBoothHistory: (forward: boolean) => call<void>("browse_booth_history", { forward }),
   importBoothPage: () => call<ImportReport>("import_booth_page"),
+  importBoothLibrary: () => call<LibraryWalkReport>("import_booth_library"),
+  cancelBoothLibrary: () => call<void>("cancel_booth_library"),
   clearBoothSession: () => call<void>("clear_booth_session"),
   closeBoothBrowser: () => call<void>("close_booth_browser"),
   boothBrowserLog: () => call<BrowserDiagnostic>("booth_browser_log"),

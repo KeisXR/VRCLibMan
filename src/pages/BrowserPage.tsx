@@ -1,13 +1,16 @@
 import { useEffect, useState } from "react";
-import { api } from "../api";
+import { api, listenProgress } from "../api";
 import { useShell } from "../App";
-import type { ImportReport } from "../types";
+import type { ImportReport, LibraryWalkReport } from "../types";
 import { errorText } from "../ui";
 
 export function BrowserPage({ enabled }: { enabled: boolean }) {
   const { refresh, notify, fail } = useShell();
   const [busy, setBusy] = useState(false);
+  const [walking, setWalking] = useState(false);
+  const [walkMessage, setWalkMessage] = useState("");
   const [report, setReport] = useState<ImportReport | null>(null);
+  const [walkReport, setWalkReport] = useState<LibraryWalkReport | null>(null);
   const [logPath, setLogPath] = useState("");
   const [logText, setLogText] = useState("");
 
@@ -23,7 +26,19 @@ export function BrowserPage({ enabled }: { enabled: boolean }) {
 
   useEffect(() => {
     if (!enabled) return;
+    let alive = true;
+    let stop = () => {};
     void refreshLog();
+    void listenProgress((progress) => {
+      if (alive && progress.job === "browser-library") setWalkMessage(progress.message);
+    }).then((unlisten) => {
+      if (!alive) unlisten();
+      else stop = unlisten;
+    });
+    return () => {
+      alive = false;
+      stop();
+    };
   }, [enabled]);
 
   async function run(action: () => Promise<void>) {
@@ -43,7 +58,7 @@ export function BrowserPage({ enabled }: { enabled: boolean }) {
       <div className="page-head">
         <div>
           <h1>ブラウザ</h1>
-          <p>自分で BOOTH にログインし、今見えているライブラリのページだけを取り込みます。</p>
+          <p>自分で BOOTH にログインし、今のページか、ライブラリとギフトを1ページずつ取り込みます。</p>
         </div>
       </div>
       {!enabled && (
@@ -54,8 +69,8 @@ export function BrowserPage({ enabled }: { enabled: boolean }) {
       {enabled && (
         <div className="panel">
           <p className="meta">
-            ブラウザは別ウィンドウで開きます。ログイン、ページ移動、年齢確認は自分で行ってください。
-            この画面はページを自動で辿りません。ダウンロードの記録は、次の段階です。
+            ブラウザは別ウィンドウで開きます。ログインと年齢確認は自分で行ってください。
+            「ライブラリ全取得」はライブラリのあとギフトを、1ページずつ間隔を空けて読みます。ファイルはダウンロードしません。
           </p>
           <div className="row-actions">
             <button className="button primary" type="button" disabled={busy} onClick={() => void run(() => api.openBoothBrowser())}>
@@ -88,6 +103,43 @@ export function BrowserPage({ enabled }: { enabled: boolean }) {
               今開いているページを取り込む
             </button>
             <button
+              className="button"
+              type="button"
+              disabled={busy}
+              onClick={() =>
+                void (async () => {
+                  setWalking(true);
+                  setBusy(true);
+                  setWalkReport(null);
+                  try {
+                    const result = await api.importBoothLibrary();
+                    setWalkReport(result);
+                    const counts = `商品 ${result.products}、ファイル ${result.files}、名前あり ${result.namedFiles}、名前なし ${result.unnamedFiles}`;
+                    if (result.notice) fail(`${counts}。${result.notice}`);
+                    else if (result.cancelled) notify(`中止しました。${counts}`);
+                    else notify(counts);
+                    refresh();
+                  } catch (err) {
+                    fail(errorText(err));
+                  } finally {
+                    setBusy(false);
+                    setWalking(false);
+                    void refreshLog();
+                  }
+                })()
+              }
+            >
+              ライブラリ全取得
+            </button>
+            <button
+              className="button"
+              type="button"
+              disabled={!walking}
+              onClick={() => void api.cancelBoothLibrary().catch((err) => fail(errorText(err)))}
+            >
+              中止
+            </button>
+            <button
               className="button danger"
               type="button"
               disabled={busy}
@@ -102,6 +154,16 @@ export function BrowserPage({ enabled }: { enabled: boolean }) {
               ログアウトしてセッションを消す
             </button>
           </div>
+          {walking && walkMessage && <p className="meta">{walkMessage}</p>}
+          {walkReport && (
+            <p className="meta">
+              商品 {walkReport.products}、ファイル {walkReport.files}、名前あり {walkReport.namedFiles}、名前なし{" "}
+              {walkReport.unnamedFiles}
+              {walkReport.cancelled ? "。中止しました" : ""}
+              {walkReport.notice ? `。${walkReport.notice}` : ""}
+              。新規 {walkReport.inserted}、更新 {walkReport.updated}、変更なし {walkReport.unchanged}
+            </p>
+          )}
           {report && (
             <p className="meta">
               新規 {report.inserted}、更新 {report.updated}、変更なし {report.unchanged}

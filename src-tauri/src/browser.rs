@@ -1,9 +1,14 @@
 use crate::db;
+use crate::library_walk::{
+    self, PAGE_DELAY, PageSnapshot, WalkMachine, WalkSection, WalkStop, final_counts_line,
+    same_library_page, section_label, settled_stop, walk_block_reason,
+};
 use crate::model::ImportReport;
 use serde::Serialize;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tauri::webview::DownloadEvent;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
@@ -146,7 +151,11 @@ fn browser_log(app: &AppHandle, message: &str) {
             }
         }
     }
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
         let _ = file.write_all(line.as_bytes());
     }
 }
@@ -189,10 +198,7 @@ fn open_popup_in_same_window(app: &AppHandle, url: Url) {
         }
         return;
     }
-    browser_log(
-        app,
-        &format!("別窓の要求は開きません {}", public_url(&url)),
-    );
+    browser_log(app, &format!("別窓の要求は開きません {}", public_url(&url)));
 }
 
 /// 受け取り中だけ、署名付きの別ホストも同じ窓で開く。クエリは記録しない。
@@ -466,7 +472,8 @@ async fn clear_folder_session(app: &AppHandle) -> Result<(), String> {
         }
         std::thread::sleep(Duration::from_millis(200));
     }
-    let message = "セッションのフォルダを消せませんでした。ブラウザを閉じてからもう一度押してください";
+    let message =
+        "セッションのフォルダを消せませんでした。ブラウザを閉じてからもう一度押してください";
     browser_log(app, message);
     Err(message.into())
 }
@@ -514,9 +521,17 @@ struct BoothFileStatus {
 }
 
 enum DownloadSignal {
-    Started { host: String, destination: PathBuf },
-    Finished { success: bool, path: Option<PathBuf> },
-    Rejected { age_gate: bool },
+    Started {
+        host: String,
+        destination: PathBuf,
+    },
+    Finished {
+        success: bool,
+        path: Option<PathBuf>,
+    },
+    Rejected {
+        age_gate: bool,
+    },
 }
 
 struct ArmedDownload {
@@ -631,6 +646,10 @@ fn unique_staging_name(dir: &Path, preferred: &str) -> String {
 fn handle_booth_download(event: DownloadEvent<'_>) -> bool {
     match event {
         DownloadEvent::Requested { url, destination } => {
+            // 全取得の途中では、ページが始めたダウンロードを保存しない。
+            if library_walk_running() && !download_job_armed() {
+                return false;
+            }
             let mut guard = job_lock();
             let choice = guard.as_ref().map(|job| DownloadChoice {
                 started: job.started,
@@ -666,7 +685,9 @@ fn handle_booth_download(event: DownloadEvent<'_>) -> bool {
         }
         DownloadEvent::Finished { path, success, .. } => {
             if let Some(job) = job_lock().as_ref() {
-                let _ = job.events.try_send(DownloadSignal::Finished { success, path });
+                let _ = job
+                    .events
+                    .try_send(DownloadSignal::Finished { success, path });
             }
             true
         }
@@ -766,6 +787,9 @@ pub async fn download_one_file(
     variation: String,
     filename: String,
 ) -> Result<(), String> {
+    if library_walk_running() {
+        return Err("ライブラリの取り込み中です。終わってから受け取ってください".into());
+    }
     let app_for_plan = app.clone();
     let booth_for_plan = booth_id.clone();
     let variation_for_plan = variation.clone();
@@ -834,9 +858,10 @@ pub async fn download_one_file(
         return Err(err);
     }
     let app_for_wait = app.clone();
-    let waited = tauri::async_runtime::spawn_blocking(move || wait_for_download(app_for_wait, receiver))
-        .await
-        .map_err(|err| format!("受け取りを待てません: {err}"))?;
+    let waited =
+        tauri::async_runtime::spawn_blocking(move || wait_for_download(app_for_wait, receiver))
+            .await
+            .map_err(|err| format!("受け取りを待てません: {err}"))?;
     drop(guard);
     let source = match waited {
         Waited::File(path) => path,
@@ -954,13 +979,358 @@ fn wait_for_download(
         Err(_) => return Waited::Login,
     };
     match receiver.recv_timeout(DOWNLOAD_FINISH_WAIT) {
-        Ok(DownloadSignal::Finished { success: true, path }) => {
-            existing_download(path, &destination).map_or(Waited::Failed, Waited::File)
-        }
+        Ok(DownloadSignal::Finished {
+            success: true,
+            path,
+        }) => existing_download(path, &destination).map_or(Waited::Failed, Waited::File),
         Ok(DownloadSignal::Rejected { age_gate: true }) => Waited::AgeGate,
         Ok(DownloadSignal::Rejected { age_gate: false }) => Waited::Failed,
         _ => Waited::Failed,
     }
+}
+
+const WALK_CANCELLED: &str = "ライブラリ全取得を中止しました";
+pub const WALK_LOGIN_NOTICE: &str = "ログインの期限が切れているか、ライブラリのページではありません。内蔵ブラウザでログインしてから、もう一度実行してください";
+
+static WALK_CANCEL: AtomicBool = AtomicBool::new(false);
+static WALK_RUNNING: AtomicBool = AtomicBool::new(false);
+
+pub fn library_walk_running() -> bool {
+    WALK_RUNNING.load(Ordering::SeqCst)
+}
+
+pub fn request_library_walk_cancel() {
+    WALK_CANCEL.store(true, Ordering::SeqCst);
+}
+
+fn walk_cancel_requested() -> bool {
+    WALK_CANCEL.load(Ordering::SeqCst)
+}
+
+struct WalkRunningGuard;
+
+impl Drop for WalkRunningGuard {
+    fn drop(&mut self) {
+        WALK_RUNNING.store(false, Ordering::SeqCst);
+    }
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryWalkReport {
+    pub products: u32,
+    pub files: u32,
+    pub named_files: u32,
+    pub unnamed_files: u32,
+    pub pages: u32,
+    pub cancelled: bool,
+    pub notice: String,
+    pub inserted: u32,
+    pub updated: u32,
+    pub unchanged: u32,
+}
+
+fn walk_page_script() -> String {
+    let mut script = String::from("(function () {\n  try {\n");
+    script.push_str(EXTRACT_JS);
+    script.push_str(
+        "\n    var href = String(location.href || \"\");\n    var products = globalThis.VrcLibManExtract.extractPage(document, href);\n    var lastPage = globalThis.VrcLibManExtract.libraryLastPage(document, href);\n    return { ok: true, href: href, products: products, lastPage: lastPage };\n  } catch (error) {\n    return { ok: false, error: String(error && error.message ? error.message : error) };\n  }\n})()",
+    );
+    script
+}
+
+const PROBE_JS: &str = "(function () {\n  try {\n    return { ok: true, href: String(location.href || \"\"), ready: String(document.readyState || \"\") };\n  } catch (error) {\n    return { ok: false, error: String(error && error.message ? error.message : error) };\n  }\n})()";
+
+fn unwrap_eval_json(raw: &str) -> Result<serde_json::Value, String> {
+    let mut value: serde_json::Value =
+        serde_json::from_str(raw).map_err(|_| "ページの結果を読めません".to_string())?;
+    if let serde_json::Value::String(inner) = value {
+        value = serde_json::from_str(&inner).map_err(|_| "ページの結果を読めません".to_string())?;
+    }
+    Ok(value)
+}
+
+fn parse_walk_snapshot(raw: &str) -> Result<PageSnapshot, String> {
+    let value = unwrap_eval_json(raw)?;
+    let ok = value
+        .get("ok")
+        .and_then(|item| item.as_bool())
+        .unwrap_or(false);
+    if !ok {
+        let message = value
+            .get("error")
+            .and_then(|item| item.as_str())
+            .unwrap_or("このページを読めませんでした");
+        return Err(message.to_string());
+    }
+    let href = value
+        .get("href")
+        .and_then(|item| item.as_str())
+        .unwrap_or("")
+        .to_string();
+    let products = value
+        .get("products")
+        .and_then(|item| item.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let last_page = value
+        .get("lastPage")
+        .and_then(|item| item.as_u64())
+        .unwrap_or(1) as u32;
+    Ok(PageSnapshot {
+        href,
+        products,
+        last_page,
+    })
+}
+
+fn parse_probe(raw: &str) -> Result<(String, String), String> {
+    let value = unwrap_eval_json(raw)?;
+    let href = value
+        .get("href")
+        .and_then(|item| item.as_str())
+        .unwrap_or("")
+        .to_string();
+    let ready = value
+        .get("ready")
+        .and_then(|item| item.as_str())
+        .unwrap_or("")
+        .to_string();
+    Ok((href, ready))
+}
+
+fn emit_walk_progress(app: &AppHandle, current: u32, total: u32, message: &str) {
+    let _ = app.emit(
+        "job-progress",
+        crate::model::JobProgress {
+            job: "browser-library".to_string(),
+            current,
+            total,
+            message: message.to_string(),
+        },
+    );
+}
+
+async fn pause_for(total: Duration) {
+    let slice = Duration::from_millis(50);
+    let mut waited = Duration::ZERO;
+    while waited < total {
+        if walk_cancel_requested() {
+            return;
+        }
+        let step = slice.min(total - waited);
+        let _ = tauri::async_runtime::spawn_blocking(move || std::thread::sleep(step)).await;
+        waited += step;
+    }
+}
+
+async fn eval_booth(app: &AppHandle, script: String) -> Result<String, String> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    dispatch_ui(app.clone(), move |handle| {
+        let window = handle
+            .get_webview_window(WINDOW_LABEL)
+            .ok_or("ブラウザが開いていません")?;
+        window
+            .eval_with_callback(script, move |result| {
+                let _ = sender.send(result);
+            })
+            .map_err(|err| format!("ページを読めません: {err}"))
+    })
+    .await?;
+    tauri::async_runtime::spawn_blocking(move || {
+        receiver
+            .recv_timeout(Duration::from_secs(15))
+            .map_err(|_| "ページの読み取りが返りませんでした".to_string())
+    })
+    .await
+    .map_err(|err| format!("ページを読めません: {err}"))?
+}
+
+async fn navigate_booth(
+    app: &AppHandle,
+    url: url::Url,
+    section: WalkSection,
+    page: u32,
+) -> Result<(), String> {
+    let label = section_label(section);
+    dispatch_ui(app.clone(), move |handle| {
+        if handle.get_webview_window(WINDOW_LABEL).is_none() {
+            open_browser(handle)?;
+        }
+        browser_enabled(handle)?;
+        let window = handle
+            .get_webview_window(WINDOW_LABEL)
+            .ok_or("ブラウザを開いてから取り込んでください")?;
+        browser_log(
+            handle,
+            &format!("{label} の {page} ページ目を開きます {}", public_url(&url)),
+        );
+        window
+            .navigate(url)
+            .map_err(|err| format!("ページを開けません: {err}"))
+    })
+    .await
+}
+
+async fn wait_until_settled(app: &AppHandle, target: &url::Url) -> Result<String, String> {
+    let started = std::time::Instant::now();
+    loop {
+        if walk_cancel_requested() {
+            return Err(WALK_CANCELLED.into());
+        }
+        if started.elapsed() > Duration::from_secs(20) {
+            return Err("ページの読み込みが返りませんでした".into());
+        }
+        let raw = eval_booth(app, PROBE_JS.to_string()).await?;
+        let (href, ready) = parse_probe(&raw)?;
+        if ready == "complete"
+            && (same_library_page(&href, target) || settled_stop(&href).is_some())
+        {
+            return Ok(href);
+        }
+        pause_for(Duration::from_millis(200)).await;
+    }
+}
+
+async fn read_library_page(
+    app: &AppHandle,
+    planned: &library_walk::PlannedPage,
+) -> Result<PageSnapshot, String> {
+    if walk_cancel_requested() {
+        return Err(WALK_CANCELLED.into());
+    }
+    navigate_booth(app, planned.url.clone(), planned.section, planned.page).await?;
+    let href = wait_until_settled(app, &planned.url).await?;
+    if walk_cancel_requested() {
+        return Err(WALK_CANCELLED.into());
+    }
+    if walk_block_reason(&href).is_some() {
+        return Ok(PageSnapshot {
+            href,
+            products: Vec::new(),
+            last_page: 1,
+        });
+    }
+    let raw = eval_booth(app, walk_page_script()).await?;
+    let mut snapshot = parse_walk_snapshot(&raw)?;
+    if snapshot.href.is_empty() {
+        snapshot.href = href;
+    }
+    if let Ok(url) = url::Url::parse(&snapshot.href) {
+        browser_log(app, &format!("読み終わり {}", public_url(&url)));
+    }
+    Ok(snapshot)
+}
+
+/// ライブラリとギフトを 1 ページずつ読む。移動と eval は IPC の外で行う。ファイルは受け取らない。
+pub async fn import_library(app: AppHandle) -> Result<LibraryWalkReport, String> {
+    browser_enabled(&app)?;
+    if download_job_armed() {
+        return Err(db::BROWSER_BUSY_MESSAGE.into());
+    }
+    if WALK_RUNNING.swap(true, Ordering::SeqCst) {
+        return Err("ライブラリの取り込み中です".into());
+    }
+    let _guard = WalkRunningGuard;
+    WALK_CANCEL.store(false, Ordering::SeqCst);
+    browser_log(&app, "ライブラリ全取得を開始");
+    let mut machine = WalkMachine::new();
+    loop {
+        if walk_cancel_requested() {
+            machine.cancel();
+            break;
+        }
+        let Some(planned) = machine.plan() else {
+            break;
+        };
+        let line = machine.progress_line_for(&planned);
+        emit_walk_progress(&app, 0, 0, &line);
+        if planned.pause {
+            if walk_cancel_requested() {
+                machine.cancel();
+                break;
+            }
+            pause_for(PAGE_DELAY).await;
+            if walk_cancel_requested() {
+                machine.cancel();
+                break;
+            }
+        }
+        if let Some(reason) = walk_block_reason(planned.url.as_str()) {
+            machine.stop_for(reason);
+            break;
+        }
+        match read_library_page(&app, &planned).await {
+            Ok(snapshot) => machine.accept(snapshot),
+            Err(err) if err == WALK_CANCELLED || walk_cancel_requested() => {
+                machine.cancel();
+                break;
+            }
+            Err(err) => {
+                machine.fail(err);
+                break;
+            }
+        }
+        if machine.stopped() {
+            break;
+        }
+    }
+    let collected = machine.collected();
+    let mut report = LibraryWalkReport {
+        products: collected.product_count(),
+        files: collected.files,
+        named_files: collected.named_files,
+        unnamed_files: collected.unnamed_files,
+        pages: collected.pages,
+        cancelled: collected.stop == WalkStop::Cancelled,
+        notice: match collected.stop {
+            WalkStop::Login => WALK_LOGIN_NOTICE.to_string(),
+            WalkStop::AgeGate => db::BROWSER_AGE_MESSAGE.to_string(),
+            WalkStop::Failed => collected.error,
+            WalkStop::Cancelled | WalkStop::Finished => String::new(),
+        },
+        inserted: 0,
+        updated: 0,
+        unchanged: 0,
+    };
+    if !collected.products.is_empty() {
+        let json = export_json(serde_json::Value::Array(collected.products));
+        let app_for_db = app.clone();
+        let imported = tauri::async_runtime::spawn_blocking(move || {
+            let state = app_for_db.state::<crate::AppState>();
+            let mut connection = state
+                .db
+                .lock()
+                .map_err(|_| "データベースをロックできません".to_string())?;
+            db::import_export_json(&mut connection, &json)
+        })
+        .await
+        .map_err(|err| format!("取り込みを実行できません: {err}"))??;
+        report.inserted = imported.inserted;
+        report.updated = imported.updated;
+        report.unchanged = imported.unchanged;
+    }
+    let summary = final_counts_line(
+        report.products,
+        report.files,
+        report.named_files,
+        report.unnamed_files,
+    );
+    browser_log(&app, &format!("ライブラリ全取得 {summary}"));
+    if report.cancelled {
+        browser_log(&app, "ライブラリ全取得を中止しました");
+    } else if report.notice == WALK_LOGIN_NOTICE {
+        browser_log(&app, "ログインが必要なので、ライブラリ全取得を止めました");
+    } else if report.notice == db::BROWSER_AGE_MESSAGE {
+        browser_log(
+            &app,
+            "年齢確認は自動では通過しないので、ライブラリ全取得を止めました",
+        );
+    } else if !report.notice.is_empty() {
+        browser_log(&app, "ライブラリ全取得を止めました");
+    }
+    emit_walk_progress(&app, 1, 1, &summary);
+    Ok(report)
 }
 
 #[cfg(test)]
@@ -971,6 +1341,8 @@ mod tests {
     fn only_the_open_library_page_can_be_imported() {
         assert!(library_page_for_import("https://accounts.booth.pm/library").is_ok());
         assert!(library_page_for_import("https://accounts.booth.pm/library?page=2").is_ok());
+        assert!(library_page_for_import("https://accounts.booth.pm/library/gifts").is_ok());
+        assert!(library_page_for_import("https://accounts.booth.pm/library/gifts?page=2").is_ok());
         assert!(library_page_for_import("https://booth.pm/ja/items/4876459").is_err());
         assert!(library_page_for_import("https://accounts.pixiv.net/login").is_err());
         assert!(library_page_for_import("http://accounts.booth.pm/library").is_err());
@@ -1008,17 +1380,16 @@ mod tests {
             "close_booth_browser",
         ] {
             let marker = format!("async fn {name}");
-            let start = commands.find(&marker).unwrap_or_else(|| panic!("{name} は async のままにする"));
+            let start = commands
+                .find(&marker)
+                .unwrap_or_else(|| panic!("{name} は async のままにする"));
             let rest = &commands[start..];
             let end = rest[marker.len()..]
                 .find("\n#[tauri::command]")
                 .map(|index| marker.len() + index)
                 .unwrap_or(rest.len());
             let body = &rest[..end];
-            assert!(
-                body.contains("dispatch_ui"),
-                "{name} は IPC の外で窓を触る"
-            );
+            assert!(body.contains("dispatch_ui"), "{name} は IPC の外で窓を触る");
             assert!(
                 !commands.contains(&format!("pub fn {name}")),
                 "{name} を同期コマンドに戻さない"
@@ -1106,7 +1477,10 @@ mod tests {
         let line = receipt_log("424242", "2336025").unwrap();
         assert!(!line.contains('?'));
         assert!(!line.contains("http"));
-        assert_eq!(host_log("cdn.example.test"), "受け取り先ホスト cdn.example.test");
+        assert_eq!(
+            host_log("cdn.example.test"),
+            "受け取り先ホスト cdn.example.test"
+        );
         assert!(!host_log("cdn.example.test?token=secret").contains("token"));
         assert!(!host_log("cdn.example.test?token=secret").contains('?'));
 
@@ -1179,10 +1553,100 @@ mod tests {
         std::fs::write(dir.join("body.unitypackage"), b"already").unwrap();
         match decide_download(Some(&job), &file_url, Path::new("body.unitypackage")) {
             DownloadChoiceResult::Save(path) => {
-                assert_eq!(path.file_name().and_then(|name| name.to_str()), Some("body (2).unitypackage"));
+                assert_eq!(
+                    path.file_name().and_then(|name| name.to_str()),
+                    Some("body (2).unitypackage")
+                );
             }
             other => panic!("expected a unique name, got {other:?}"),
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn library_walk_command_is_async_and_does_not_fetch_booth() {
+        let commands = include_str!("commands.rs");
+        assert!(commands.contains("async fn import_booth_library"));
+        assert!(!commands.contains("pub fn import_booth_library"));
+        let browser = include_str!("browser.rs");
+        let start = browser.find("async fn eval_booth").expect("eval_booth");
+        let rest = &browser[start..];
+        let end = rest.find("\n#[cfg(test)]").unwrap_or(rest.len());
+        let body = &rest[..end];
+        assert!(body.contains("pub async fn import_library"));
+        assert!(body.contains("dispatch_ui"));
+        assert!(body.contains(".navigate("));
+        assert!(body.contains("eval_with_callback"));
+        assert!(body.contains("PAGE_DELAY"));
+        assert!(body.contains("import_export_json"));
+        assert!(!body.contains("cookies_for_url"));
+        assert!(!body.contains(".cookies("));
+        assert!(!body.contains("reqwest"));
+        assert!(!body.contains("downloadables"));
+        assert!(!body.contains("download_one_file"));
+        let production = browser.split("mod tests").next().unwrap();
+        assert!(!production.contains("cookies_for_url"));
+        assert!(!production.contains("reqwest"));
+        let walk = include_str!("library_walk.rs");
+        let walk_production = walk.split("mod tests").next().unwrap();
+        assert!(!walk_production.contains("cookies_for_url"));
+        assert!(!walk_production.contains("reqwest"));
+        assert!(!walk_production.contains("downloadables"));
+        assert_eq!(library_walk::PAGE_DELAY_MS, 250);
+    }
+
+    #[test]
+    fn open_log_keeps_the_path_and_drops_the_query() {
+        let url = library_walk::library_walk_url(library_walk::WalkSection::Gifts, 2).unwrap();
+        let line = format!("ギフト の 2 ページ目を開きます {}", public_url(&url));
+        assert!(line.contains("https://accounts.booth.pm/library/gifts"));
+        assert!(!line.contains('?'));
+        assert!(!line.contains("サンプル"));
+        let summary = library_walk::final_counts_line(2, 4, 3, 1);
+        assert_eq!(summary, "商品 2、ファイル 4、名前あり 3、名前なし 1");
+        assert!(!summary.contains('?'));
+    }
+
+    #[test]
+    fn a_named_file_is_kept_when_the_walk_imports_an_id() {
+        let dir = std::env::temp_dir().join(format!("vrclibman-walk-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut connection = db::open(&dir.join("library.sqlite")).unwrap();
+        let named = serde_json::json!([{
+            "boothId": "424242",
+            "title": "サンプル商品",
+            "downloads": [
+                {"filename": "sample_body.unitypackage", "downloadableId": "2336025", "variation": ""},
+                {"filename": "2336028", "downloadableId": "2336028", "variation": ""}
+            ]
+        }]);
+        db::import_export_json(&mut connection, &export_json(named)).unwrap();
+        let id_only = serde_json::json!([{
+            "boothId": "424242",
+            "title": "サンプル商品",
+            "downloads": [
+                {"filename": "2336025", "downloadableId": "2336025", "variation": ""},
+                {"filename": "2336028", "downloadableId": "2336028", "variation": ""}
+            ]
+        }]);
+        db::import_export_json(&mut connection, &export_json(id_only)).unwrap();
+        let filename: String = connection
+            .query_row(
+                "SELECT filename FROM product_files WHERE booth_id = '424242' AND downloadable_id = '2336025'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(filename, "sample_body.unitypackage");
+        let unnamed: String = connection
+            .query_row(
+                "SELECT filename FROM product_files WHERE booth_id = '424242' AND downloadable_id = '2336028'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(unnamed, "2336028");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

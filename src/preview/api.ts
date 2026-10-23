@@ -9,6 +9,8 @@ import type {
   FileBrief,
   ExtensionLink,
   ImportReport,
+  JobProgress,
+  LibraryWalkReport,
   DownloadView,
   ItemView,
   Knowledge,
@@ -862,6 +864,79 @@ function desktopOnly(): never {
   throw new Error("この操作はデスクトップアプリで使えます。ブラウザ確認用の見本では動きません。");
 }
 
+const previewProgress = new EventTarget();
+let previewLibraryCancel = false;
+
+export function emitPreviewProgress(progress: JobProgress): void {
+  previewProgress.dispatchEvent(new CustomEvent("progress", { detail: progress }));
+}
+
+export function listenPreviewProgress(onProgress: (progress: JobProgress) => void): () => void {
+  const listener = (event: Event) => {
+    const detail = (event as CustomEvent<JobProgress>).detail;
+    onProgress(detail);
+  };
+  previewProgress.addEventListener("progress", listener);
+  return () => previewProgress.removeEventListener("progress", listener);
+}
+
+function previewWalkMessage(
+  label: string,
+  page: number,
+  last: number,
+  products: number,
+  files: number,
+  named: number,
+  unnamed: number,
+): string {
+  return `${label} ${page}/${last} ページ（商品 ${products}、ファイル ${files}、名前あり ${named}、名前なし ${unnamed}）`;
+}
+
+async function previewLibraryWalk(): Promise<LibraryWalkReport> {
+  if (!store.settings.builtinBrowser) {
+    throw new Error("内蔵ブラウザは設定で有効にしてから使います");
+  }
+  previewLibraryCancel = false;
+  const steps = [
+    { label: "ライブラリ", page: 1, last: 2, products: 1, files: 2, named: 1, unnamed: 1 },
+    { label: "ライブラリ", page: 2, last: 2, products: 2, files: 3, named: 2, unnamed: 1 },
+    { label: "ギフト", page: 1, last: 1, products: 3, files: 4, named: 2, unnamed: 2 },
+  ];
+  let seen = steps[0];
+  for (let index = 0; index < steps.length; index += 1) {
+    if (previewLibraryCancel) break;
+    seen = steps[index];
+    emitPreviewProgress({
+      job: "browser-library",
+      current: 0,
+      total: 0,
+      message: previewWalkMessage(seen.label, seen.page, seen.last, seen.products, seen.files, seen.named, seen.unnamed),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    if (previewLibraryCancel) break;
+  }
+  const cancelled = previewLibraryCancel;
+  const report: LibraryWalkReport = {
+    products: seen.products,
+    files: seen.files,
+    namedFiles: seen.named,
+    unnamedFiles: seen.unnamed,
+    pages: cancelled ? 1 : 3,
+    cancelled,
+    notice: "",
+    inserted: seen.products,
+    updated: 0,
+    unchanged: 0,
+  };
+  emitPreviewProgress({
+    job: "browser-library",
+    current: 1,
+    total: 1,
+    message: `商品 ${report.products}、ファイル ${report.files}、名前あり ${report.namedFiles}、名前なし ${report.unnamedFiles}`,
+  });
+  return report;
+}
+
 export async function dispatch<T>(command: string, args: Record<string, unknown>): Promise<T> {
   notePreviewCall(command);
   switch (command) {
@@ -1144,6 +1219,11 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     case "open_booth_browser":
     case "show_booth_library":
     case "browse_booth_history":
+    case "import_booth_library":
+      return (await previewLibraryWalk()) as T;
+    case "cancel_booth_library":
+      previewLibraryCancel = true;
+      return undefined as T;
     case "import_booth_page":
     case "close_booth_browser":
     case "clear_booth_session":

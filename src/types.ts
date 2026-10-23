@@ -219,6 +219,19 @@ export interface ImportReport {
   warnings: string[];
 }
 
+export interface LibraryWalkReport {
+  products: number;
+  files: number;
+  namedFiles: number;
+  unnamedFiles: number;
+  pages: number;
+  cancelled: boolean;
+  notice: string;
+  inserted: number;
+  updated: number;
+  unchanged: number;
+}
+
 export interface ScanReport {
   indexed: number;
   linked: number;

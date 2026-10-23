@@ -5,6 +5,7 @@ mod compat;
 mod db;
 mod import_data;
 mod library_files;
+mod library_walk;
 mod local_import;
 mod matching;
 mod model;
@@ -139,6 +140,8 @@ pub fn run() {
             commands::show_booth_library,
             commands::browse_booth_history,
             commands::import_booth_page,
+            commands::import_booth_library,
+            commands::cancel_booth_library,
             commands::clear_booth_session,
             commands::close_booth_browser,
             commands::booth_browser_log,
