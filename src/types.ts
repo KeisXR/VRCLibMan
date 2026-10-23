@@ -191,6 +191,7 @@ export interface Settings {
   builtinBrowser: boolean;
   remoteLibraryFolder: string;
   routeDownloads: boolean;
+  llmBackend: "ollama" | "apple";
 }
 
 export interface LibraryStats {
@@ -281,6 +282,14 @@ export interface SetupStatus {
   complete: boolean;
   model: string;
   defaultModel: string;
+  backend: "ollama" | "apple";
+}
+
+export interface AppleFmStatus {
+  availability: string;
+  variant: string;
+  contextSize: number;
+  message: string;
 }
 
 export interface AvatarCandidate {

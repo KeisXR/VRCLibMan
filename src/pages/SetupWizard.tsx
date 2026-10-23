@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, listenProgress, openExternal } from "../api";
 import { DEFAULT_OLLAMA_MODEL } from "../types";
-import type { ExtensionLink, JobProgress, OllamaStatus, SetupStatus } from "../types";
+import type { AppleFmStatus, ExtensionLink, JobProgress, OllamaStatus, SetupStatus } from "../types";
 import { formatBytes } from "../media";
 import { errorText } from "../ui";
 
@@ -10,6 +10,7 @@ const LIBRARY_URL = "https://accounts.booth.pm/library";
 export function SetupWizard({ onDone }: { onDone: () => void }) {
   const [status, setStatus] = useState<SetupStatus | null>(null);
   const [ollama, setOllama] = useState<OllamaStatus | null>(null);
+  const [apple, setApple] = useState<AppleFmStatus | null>(null);
   const [ollamaError, setOllamaError] = useState("");
   const [checking, setChecking] = useState(true);
   const [step, setStep] = useState<"model" | "extension">("model");
@@ -23,9 +24,14 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
     setChecking(true);
     setOllamaError("");
     try {
-      const [nextStatus, nextOllama] = await Promise.all([api.setupStatus(), api.testOllama()]);
+      const [nextStatus, nextOllama, nextApple] = await Promise.all([
+        api.setupStatus(),
+        api.testOllama(),
+        api.appleFmStatus().catch(() => null),
+      ]);
       setStatus(nextStatus);
       setOllama(nextOllama);
+      setApple(nextApple);
     } catch (err) {
       setOllama(null);
       setOllamaError(errorText(err));
@@ -78,6 +84,19 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
     }
   }
 
+  async function useApple() {
+    setMessage("");
+    try {
+      const settings = await api.settings();
+      await api.saveSettings({ ...settings, llmBackend: "apple" });
+      setMessage("Apple のオンデバイスモデルを使います。Ollama のモデルは取得しません。既定のモデルは gemma4:12b のままです。");
+      await check();
+      await showExtension();
+    } catch (err) {
+      setMessage(errorText(err));
+    }
+  }
+
   async function showExtension() {
     setStep("extension");
     try {
@@ -100,7 +119,9 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
 
   const model = status?.model || DEFAULT_OLLAMA_MODEL;
   const defaultModel = status?.defaultModel || DEFAULT_OLLAMA_MODEL;
-  const ready = Boolean(ollama?.modelReady);
+  const usingApple = status?.backend === "apple";
+  const appleAvailable = apple?.availability === "available";
+  const ready = usingApple || Boolean(ollama?.modelReady);
   const connected = ollama != null && ollamaError === "";
   const installedSize =
     ollama?.modelSizeBytes != null && ollama.modelSizeBytes > 0 ? formatBytes(ollama.modelSizeBytes) : null;
@@ -160,9 +181,21 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
                 </div>
               </div>
             )}
+            {appleAvailable && !usingApple && (
+              <p className="meta">この Mac では Apple のオンデバイスモデルも使えます。選ぶと、Ollama のモデルは取得しません。既定は {defaultModel} のままです。</p>
+            )}
+            {!checking && apple && !appleAvailable && apple.message && (
+              <p className="meta">{apple.message}</p>
+            )}
+            {usingApple && <p className="meta">分類は Apple のオンデバイスモデルです。Ollama の取得は飛ばします。</p>}
             {message && <p className="meta">{message}</p>}
             <div className="row-actions">
-              {!checking && connected && !ready && (
+              {appleAvailable && !usingApple && (
+                <button className="button" type="button" disabled={pulling} onClick={() => void useApple()}>
+                  Apple のオンデバイスモデルを使う
+                </button>
+              )}
+              {!checking && connected && !ready && !usingApple && (
                 <button className="button primary" type="button" disabled={pulling} onClick={() => void pull()}>
                   ダウンロードする
                 </button>

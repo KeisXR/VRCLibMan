@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use url::Url;
 
-const SYSTEM_PROMPT: &str = "\
+pub(crate) const SYSTEM_PROMPT: &str = "\
 あなたはVRChat向けBooth商品の抽出器です。タイトルと説明文に書かれている事実だけをJSONで返します。\
 書かれていないアバター名を推測で足してはいけません。
 
@@ -24,9 +24,10 @@ compatible_avatars:
 - 対応先は「対応アバター」「対応モデル」の欄から取る。タイトルの「25アバター対応」は人数であり、名前ではない
 - 【半額セール中】【新作】【オリジナル3Dモデル】のような宣伝や種別の括弧は名前ではない
 - 【プラム専用】のように専用・対応の括弧の中にある名前は入れる
-- 欄の1行が1体。ショップ名、ver、URL、括弧内のシェイプキー、作者名（様で終わるクレジット）は入れない
+- 欄の1行が1体。ショップ名、URL、括弧内のシェイプキー、作者名（様で終わるクレジット）は入れない
+- ver や「版」が名前に付いていても、その名前を省略しない。「クルミ ver1.2」は「クルミ ver1.2」のまま1件として返す
 - 商品自身がアバター本体のときは、そのアバター名を1件だけ入れる。説明に並ぶ兄弟の名前は入れない
-- Modular Avatar、QvPen、lilToon、Avatar、シェーダー名はアバターではない
+- Modular Avatar、QvPen、lilToon、Poiyomi、PhysBone、シェーダー名はアバターではない
 - 名前が一つも書かれていなければ空配列にする
 
 is_generic は、汎用、どのアバターでも、素体を問わない、と書かれているときだけ true。
@@ -39,6 +40,7 @@ is_generic は、汎用、どのアバターでも、素体を問わない、と
 - 「こたつ」「表情アニメーション」→ gimmick, [], false
 - 「どのアバターでも使えるペンライト」→ gimmick, [], true
 - 「【半額セール中】真冬 Mafuyu / オリジナル3Dモデル」→ avatar, [\"真冬\"], false
+- 「クルミ ver1.2 対応のワンピース」→ outfit, [\"クルミ ver1.2\"], false
 
 confidence は 0 から 1。対応アバターかカテゴリが文中ではっきり分かるとき 0.8 以上。\
 推測が混ざるとき 0.5 以下。情報がほとんど無いとき 0.2 以下。";
@@ -205,6 +207,9 @@ pub fn parse_extraction(raw: &str) -> Result<Extraction, String> {
         };
         let trimmed = name.trim();
         if trimmed.is_empty() || trimmed.chars().count() > 80 {
+            continue;
+        }
+        if crate::mask::is_known_tool(trimmed) {
             continue;
         }
         if !names.iter().any(|existing: &String| existing == trimmed) {
@@ -427,6 +432,11 @@ mod tests {
         let parsed = parse_extraction(raw).unwrap();
         assert_eq!(parsed.category, Category::Outfit);
         assert_eq!(parsed.compatible_avatars, vec!["ライム".to_string()]);
+        let kept = parse_extraction(
+            r#"{"category":"outfit","compatible_avatars":["クルミ ver1.2","lilToon","Modular Avatar"],"is_generic":false,"confidence":0.8}"#,
+        )
+        .unwrap();
+        assert_eq!(kept.compatible_avatars, vec!["クルミ ver1.2".to_string()]);
         assert!((parsed.confidence - 1.0).abs() < f64::EPSILON);
     }
 

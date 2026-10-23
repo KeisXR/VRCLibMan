@@ -270,6 +270,7 @@ pub struct Settings {
     pub builtin_browser: bool,
     pub remote_library_folder: String,
     pub route_downloads: bool,
+    pub llm_backend: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -285,6 +286,12 @@ pub struct SettingsInput {
     pub remote_library_folder: String,
     #[serde(default)]
     pub route_downloads: bool,
+    #[serde(default = "default_llm_backend")]
+    pub llm_backend: String,
+}
+
+fn default_llm_backend() -> String {
+    "ollama".into()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -321,6 +328,7 @@ pub struct SetupStatus {
     pub complete: bool,
     pub model: String,
     pub default_model: String,
+    pub backend: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -280,6 +280,7 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
                         builtin_browser: settings.builtin_browser,
                         remote_library_folder: settings.remote_library_folder,
                         route_downloads: enabled,
+                        llm_backend: settings.llm_backend,
                     },
                 )
             }) {
