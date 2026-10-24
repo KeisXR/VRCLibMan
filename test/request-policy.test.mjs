@@ -16,6 +16,16 @@ test("Retry-After respects seconds, HTTP dates and invalid values", () => {
   assert.equal(policy.retryAfterMs("invalid"), null);
 });
 
+test("allowed intervals are normalized and unsupported values default to safe mode", () => {
+  assert.deepEqual(policy.ALLOWED_INTERVALS_MS, [1000, 500, 250]);
+  for (const ms of policy.ALLOWED_INTERVALS_MS) assert.equal(policy.normalizeIntervalMs(ms), ms);
+  assert.equal(policy.normalizeIntervalMs("250"), 250);
+  assert.equal(policy.normalizeIntervalMs(0), 1000);
+  assert.equal(policy.normalizeIntervalMs(1), 1000);
+  assert.equal(policy.normalizeIntervalMs("999"), 1000);
+  assert.equal(policy.normalizeIntervalMs("invalid"), 1000);
+});
+
 test("request pacer enforces a minimum gap even with an instant fetch", async () => {
   let now = 5000;
   const waited = [];
