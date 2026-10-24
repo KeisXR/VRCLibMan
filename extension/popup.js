@@ -204,7 +204,7 @@ async function refreshLink() {
   const token = await savedToken();
   tokenInput.value = token;
   routeInput.checked = await storedRoute();
-  const storedInterval = await chrome.storage.local.get({ boothIntervalMs: requestPolicy.MIN_INTERVAL_MS });
+  const storedInterval = await chrome.storage.local.get({ boothIntervalMs: requestPolicy.DEFAULT_INTERVAL_MS });
   intervalInput.value = String(requestPolicy.normalizeIntervalMs(storedInterval.boothIntervalMs));
   if (!token) {
     linkStatus.textContent = "未ペアリング。アプリの設定に出るコードを貼ってください";
@@ -443,7 +443,7 @@ async function sendLibrary(updateMode) {
 
 intervalInput.addEventListener("change", async () => {
   const next = requestPolicy.normalizeIntervalMs(intervalInput.value);
-  const stored = await chrome.storage.local.get({ boothIntervalMs: requestPolicy.MIN_INTERVAL_MS });
+  const stored = await chrome.storage.local.get({ boothIntervalMs: requestPolicy.DEFAULT_INTERVAL_MS });
   const old = requestPolicy.normalizeIntervalMs(stored.boothIntervalMs);
   if (next === 250 && old !== 250 &&
       !window.confirm("0.25秒間隔はBOOTHへのアクセス制限やアカウントへの影響が起きる可能性のある高リスク設定です。規約上の安全性は保証されません。この設定を使用しますか？")) {
