@@ -5308,7 +5308,8 @@ mod tests {
             "products": [
                 {"boothId":"9101","title":"見本の小物","shop":"見本","description":"どのアバターでも使える小物です"},
                 {"boothId":"9102","title":"見本のワールド小物","shop":"見本","description":"ワールドに置く小物です"},
-                {"boothId":"9103","title":"表情ギミック","shop":"見本","description":"アバターに付けるギミックです"}
+                {"boothId":"9103","title":"表情ギミック","shop":"見本","description":"アバターに付けるギミックです"},
+                {"boothId":"9104","title":"ミホン用ギミック","shop":"見本","description":"ミホンに付けるギミックです"}
             ]
         }"#;
         {
@@ -5342,12 +5343,15 @@ mod tests {
                 assert_eq!(product.category, Some(Category::Gimmick), "{id}");
                 assert!(product.is_generic, "{id}");
             }
-            let untouched = snapshot
-                .products
-                .iter()
-                .find(|product| product.booth_id == "9103")
-                .unwrap();
-            assert!(untouched.category.is_none());
+            for id in ["9103", "9104"] {
+                let untouched = snapshot
+                    .products
+                    .iter()
+                    .find(|product| product.booth_id == id)
+                    .unwrap();
+                assert!(untouched.category.is_none(), "{id}");
+                assert!(!untouched.is_generic, "{id}");
+            }
         }
         let mut connection = open(&db_path).unwrap();
         apply_extraction(
@@ -5371,6 +5375,13 @@ mod tests {
             0.6,
         )
         .unwrap();
+        apply_extraction(
+            &mut connection,
+            "9104",
+            &extraction(Category::Gimmick, &["ミホン"], false, 0.9),
+            0.6,
+        )
+        .unwrap();
         let snapshot = load_snapshot(&connection).unwrap();
         let world = snapshot
             .products
@@ -5391,8 +5402,16 @@ mod tests {
             .iter()
             .find(|product| product.booth_id == "9103")
             .unwrap();
+        // 対応アバターが無いギミックは、モデルが汎用でないと答えても汎用になる。
         assert_eq!(gimmick.category, Some(Category::Gimmick));
-        assert!(!gimmick.is_generic);
+        assert!(gimmick.is_generic);
+        let targeted = snapshot
+            .products
+            .iter()
+            .find(|product| product.booth_id == "9104")
+            .unwrap();
+        assert_eq!(targeted.category, Some(Category::Gimmick));
+        assert!(!targeted.is_generic);
     }
 
     #[test]
