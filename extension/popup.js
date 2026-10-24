@@ -24,23 +24,26 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function retryAfterMs(response) {
-  const seconds = Number(response.headers.get("retry-after"));
-  if (Number.isFinite(seconds) && seconds > 0) return Math.min(seconds * 1000, 20000);
-  return 2000;
-}
+const requestPolicy = globalThis.VrcLibManRequestPolicy;
+const paceBoothRequest = requestPolicy.createPacer();
 
 async function fetchWithBackoff(url, options) {
-  const first = await fetch(url, options);
-  if (first.status !== 429) return first;
-  const waitMs = retryAfterMs(first);
-  setStatus(`サーバーが混んでいるので ${Math.ceil(waitMs / 1000)} 秒待って再試行します`);
-  await sleep(waitMs);
-  const second = await fetch(url, options);
-  if (second.status === 429) {
-    throw new Error("サーバーが混んでいるため、ここまでで止めました");
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await paceBoothRequest();
+    const response = await fetch(url, options);
+    if (!requestPolicy.isThrottled(response.status)) return response;
+    if (attempt === 1) {
+      throw new Error("BOOTH のアクセス制限が続いているため、ここまでで止めました");
+    }
+    const requested = requestPolicy.retryAfterMs(response.headers.get("retry-after"));
+    const waitMs = requested ?? requestPolicy.DEFAULT_RETRY_MS;
+    if (waitMs > requestPolicy.MAX_RETRY_MS) {
+      throw new Error("BOOTH から長い待機時間を指定されたため、再試行せずここまでで止めました");
+    }
+    setStatus(`BOOTH のアクセス制限を受けたため ${Math.ceil(waitMs / 1000)} 秒待って一度だけ再試行します`);
+    await sleep(waitMs);
   }
-  return second;
+  throw new Error("BOOTH から応答が得られず、ここまでで止めました");
 }
 
 async function currentTab() {
@@ -87,7 +90,6 @@ async function readLibraryPages(startUrl, knownIds) {
   const lastPage = api().libraryLastPage(first.doc, firstUrl);
   try {
     for (let page = 2; page <= lastPage && !stopped; page += 1) {
-      await sleep(250);
       setStatus(`ライブラリ ${page}/${lastPage} ページを読んでいます（${products.length} 件）`);
       const pageUrl = api().libraryPageUrl(startUrl, page);
       const response = await fetchWithBackoff(pageUrl, { credentials: "include" });
@@ -129,6 +131,9 @@ async function enrich(products) {
     } catch (error) {
       if (error instanceof Error && error.message.includes("止めました")) throw error;
     }
+    // Do not fall back to another endpoint after explicit access denial.
+    // In particular, JSON must not be used to bypass an age/login gate.
+    if (htmlStatus === 401 || htmlStatus === 403) continue;
     if (needsDetail(product)) {
       try {
         const response = await fetchWithBackoff(`https://booth.pm/ja/items/${product.boothId}.json`, {
@@ -145,7 +150,6 @@ async function enrich(products) {
       }
     }
     api().noteIfUnpublished(product, htmlStatus, jsonStatus);
-    await sleep(250);
   }
 }
 
