@@ -293,6 +293,7 @@ fn initial_download_cookie<'a>(
 ) -> Option<&'a str> {
     if redirect_index == 0
         && current_url == initial_url
+        && initial_url.scheme() == "https"
         && booth_host(initial_url)
         && !cookie_header.is_empty()
     {
@@ -684,7 +685,9 @@ mod tests {
         // Check that the actual fetch path consults this guard before attaching Cookie.
         let production = include_str!("quiet.rs").split("mod tests").next().unwrap();
         let fetch = function_body(production, "fn fetch_staged_file");
-        assert!(fetch.contains("initial_download_cookie(cookie_header, download_url, &current, redirect_index)"));
+        assert!(fetch.contains(
+            "initial_download_cookie(cookie_header, download_url, &current, redirect_index)"
+        ));
         assert!(!fetch.contains("booth_host(&current) && !cookie_header.is_empty()"));
     }
 
