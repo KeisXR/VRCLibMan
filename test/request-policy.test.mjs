@@ -51,6 +51,6 @@ test("only rate limiting and temporary unavailability trigger backoff", () => {
   assert.equal(policy.canUseJsonFallback(403), false);
   assert.equal(policy.canUseJsonFallback(404), true);
   assert.equal(policy.canUseJsonFallback(200), true);
-  assert.equal(policy.MIN_INTERVAL_MS >= 1000, true);
+  assert.equal(policy.DEFAULT_INTERVAL_MS >= 1000, true);
   assert.equal(policy.MAX_RETRY_MS > policy.DEFAULT_RETRY_MS, true);
 });
