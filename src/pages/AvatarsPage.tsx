@@ -129,7 +129,6 @@ function AvatarGroups({
                     <span className="pill">{CATEGORY_LABEL.outfit} {card.outfitCount}</span>
                     <span className="pill">{CATEGORY_LABEL.hair} {card.hairCount}</span>
                     <span className="pill">{CATEGORY_LABEL.gimmick} {card.gimmickCount}</span>
-                    {card.worldCount > 0 && <span className="pill">{CATEGORY_LABEL.world} {card.worldCount}</span>}
                     {card.genericCount > 0 && <span className="pill">汎用 {card.genericCount}</span>}
                   </div>
                 </div>

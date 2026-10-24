@@ -115,7 +115,6 @@ pub struct AvatarCard {
     pub outfit_count: u32,
     pub hair_count: u32,
     pub gimmick_count: u32,
-    pub world_count: u32,
     pub generic_count: u32,
 }
 
@@ -135,6 +134,7 @@ pub struct AvatarDetail {
     pub owned_products: Vec<OwnedBody>,
     pub sections: Vec<Section>,
     pub generic_items: Vec<ItemView>,
+    pub unsupported_outfits: Vec<ItemView>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -217,7 +217,6 @@ pub fn avatar_cards(snapshot: &Snapshot) -> Vec<AvatarCard> {
             outfit_count: section_len(&classified.sections, "outfit"),
             hair_count: section_len(&classified.sections, "hair"),
             gimmick_count: section_len(&classified.sections, "gimmick"),
-            world_count: section_len(&classified.sections, "world"),
             generic_count: classified.generic.len() as u32,
         });
     }
@@ -255,6 +254,7 @@ pub fn avatar_detail(snapshot: &Snapshot, id: &str) -> Option<AvatarDetail> {
         owned_products: classified.owned,
         sections: classified.sections,
         generic_items: classified.generic,
+        unsupported_outfits: outfits_for_adjustment(snapshot, avatar),
     })
 }
 
@@ -444,6 +444,9 @@ fn classify(snapshot: &Snapshot, avatar: &Avatar) -> Classified {
     let mut generic = Vec::new();
     let mut owned = Vec::new();
     for product in &snapshot.products {
+        if product.category == Some(Category::World) {
+            continue;
+        }
         let linked: HashSet<&str> = snapshot
             .links
             .iter()
@@ -474,8 +477,6 @@ fn classify(snapshot: &Snapshot, avatar: &Avatar) -> Classified {
                 key,
                 item_view(snapshot, product, !linked.contains(avatar.id.as_str())),
             ));
-        } else if linked.is_empty() && product.category == Some(Category::World) {
-            specific.push(("world".to_string(), item_view(snapshot, product, false)));
         } else if product.is_generic && linked.is_empty() {
             generic.push(item_view(snapshot, product, false));
         }
@@ -496,7 +497,6 @@ fn classify(snapshot: &Snapshot, avatar: &Avatar) -> Classified {
         "accessory",
         "texture",
         "gimmick",
-        "world",
         "other",
         "uncategorized",
     ] {
@@ -519,6 +519,37 @@ fn classify(snapshot: &Snapshot, avatar: &Avatar) -> Classified {
         sections,
         generic,
     }
+}
+
+fn outfits_for_adjustment(snapshot: &Snapshot, avatar: &Avatar) -> Vec<ItemView> {
+    let family = family_ids(snapshot, avatar);
+    let linked: HashSet<&str> = snapshot
+        .links
+        .iter()
+        .map(|link| link.product_id.as_str())
+        .collect();
+    let supported: HashSet<&str> = snapshot
+        .links
+        .iter()
+        .filter(|link| family.contains(&link.avatar_id))
+        .map(|link| link.product_id.as_str())
+        .collect();
+    let mut outfits: Vec<_> = snapshot
+        .products
+        .iter()
+        .filter(|product| {
+            product.category == Some(Category::Outfit)
+                && !supported.contains(product.booth_id.as_str())
+                && !(product.is_generic && !linked.contains(product.booth_id.as_str()))
+        })
+        .map(|product| item_view(snapshot, product, false))
+        .collect();
+    outfits.sort_by(|left, right| {
+        left.title
+            .cmp(&right.title)
+            .then_with(|| left.booth_id.cmp(&right.booth_id))
+    });
+    outfits
 }
 
 fn item_view(snapshot: &Snapshot, product: &Product, via_base_body: bool) -> ItemView {
@@ -639,7 +670,8 @@ fn referenced_only(snapshot: &Snapshot, avatar_id: &str) -> bool {
     snapshot.links.iter().any(|link| {
         link.avatar_id == avatar_id
             && snapshot.products.iter().any(|product| {
-                product.booth_id == link.product_id && product.category != Some(Category::Avatar)
+                product.booth_id == link.product_id
+                    && !matches!(product.category, Some(Category::Avatar | Category::World))
             })
     })
 }
@@ -805,31 +837,162 @@ mod tests {
     }
 
     #[test]
-    fn unlinked_world_items_stay_out_of_the_generic_pile() {
+    fn worlds_stay_in_the_world_library_and_never_create_avatar_entries() {
         let mut snapshot = sample();
-        snapshot.products.push(product(
-            "8",
-            "見本のワールド小物",
-            Some(Category::World),
-            true,
-        ));
+        snapshot
+            .avatars
+            .push(avatar("world-only", "ワールド専用の名前", None));
+        for (id, title, generic) in [
+            ("8", "汎用ワールド", true),
+            ("10", "対応付きワールド", false),
+            ("11", "ワールドだけ", true),
+        ] {
+            snapshot
+                .products
+                .push(product(id, title, Some(Category::World), generic));
+        }
+        snapshot
+            .links
+            .extend([link("10", "lime"), link("11", "world-only")]);
         snapshot
             .products
             .push(product("9", "表情ギミック", Some(Category::Gimmick), false));
         snapshot.links.push(link("9", "lime"));
+        for id in ["lime", "plum", "manuka", "world-only"] {
+            let detail = avatar_detail(&snapshot, id).unwrap();
+            assert!(
+                detail
+                    .sections
+                    .iter()
+                    .all(|section| section.category != "world")
+            );
+            assert!(
+                detail
+                    .generic_items
+                    .iter()
+                    .all(|item| item.category != Some(Category::World))
+            );
+            assert!(
+                detail
+                    .unsupported_outfits
+                    .iter()
+                    .all(|item| item.category != Some(Category::World))
+            );
+        }
         let lime = avatar_detail(&snapshot, "lime").unwrap();
-        assert!(lime.sections.iter().any(|section| {
-            section.category == "world" && section.items.iter().any(|item| item.booth_id == "8")
-        }));
-        assert!(lime.sections.iter().any(|section| {
-            section.category == "gimmick" && section.items.iter().any(|item| item.booth_id == "9")
-        }));
-        assert!(!lime.generic_items.iter().any(|item| item.booth_id == "8"));
+        assert!(
+            lime.sections
+                .iter()
+                .any(|section| section.category == "gimmick"
+                    && section.items.iter().any(|item| item.booth_id == "9"))
+        );
         assert!(lime.generic_items.iter().any(|item| item.booth_id == "5"));
-        let card = avatar_cards(&snapshot)
-            .into_iter()
-            .find(|card| card.id == "lime")
-            .unwrap();
-        assert_eq!(card.world_count, 1);
+        assert!(
+            avatar_cards(&snapshot)
+                .iter()
+                .all(|card| card.id != "world-only")
+        );
+        let worlds = products_by_ids(&snapshot, &["8".into(), "10".into(), "11".into()]);
+        assert_eq!(worlds.len(), 3);
+        assert!(
+            worlds
+                .iter()
+                .all(|item| item.category == Some(Category::World))
+        );
+    }
+
+    #[test]
+    fn other_outfits_are_separate_from_direct_shared_body_and_generic_matches() {
+        let mut snapshot = sample();
+        for (id, title, category, generic) in [
+            ("12", "マヌカ専用衣装", Some(Category::Outfit), false),
+            ("13", "複数アバター対応衣装", Some(Category::Outfit), false),
+            ("14", "対応先未登録の衣装", Some(Category::Outfit), false),
+            ("15", "汎用衣装", Some(Category::Outfit), true),
+            ("16", "しなの用の汎用衣装", Some(Category::Outfit), true),
+            ("17", "未分類の商品", None, false),
+            ("18", "その他の商品", Some(Category::Other), false),
+        ] {
+            snapshot
+                .products
+                .push(product(id, title, category, generic));
+        }
+        snapshot.links.extend([
+            link("12", "manuka"),
+            link("13", "lime"),
+            link("13", "manuka"),
+            link("16", "shinano"),
+        ]);
+        for id in ["lime", "plum"] {
+            let detail = avatar_detail(&snapshot, id).unwrap();
+            let ids: HashSet<_> = detail
+                .unsupported_outfits
+                .iter()
+                .map(|item| item.booth_id.as_str())
+                .collect();
+            assert_eq!(ids, HashSet::from(["12", "14", "16"]));
+            assert!(
+                detail
+                    .unsupported_outfits
+                    .iter()
+                    .all(|item| !item.via_base_body)
+            );
+            let supported: HashSet<_> = detail
+                .sections
+                .iter()
+                .flat_map(|section| &section.items)
+                .map(|item| item.booth_id.as_str())
+                .collect();
+            assert!(supported.contains("4") && supported.contains("13"));
+            assert!(
+                detail
+                    .generic_items
+                    .iter()
+                    .any(|item| item.booth_id == "15")
+            );
+            let card = avatar_cards(&snapshot)
+                .into_iter()
+                .find(|card| card.id == id)
+                .unwrap();
+            assert_eq!(card.outfit_count, 2);
+        }
+        let manuka = avatar_detail(&snapshot, "manuka").unwrap();
+        let ids: HashSet<_> = manuka
+            .unsupported_outfits
+            .iter()
+            .map(|item| item.booth_id.as_str())
+            .collect();
+        assert_eq!(ids, HashSet::from(["4", "14", "16"]));
+        assert_eq!(
+            snapshot
+                .links
+                .iter()
+                .filter(|link| link.product_id == "12")
+                .map(|link| link.avatar_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["manuka"]
+        );
+    }
+
+    #[test]
+    fn unsupported_outfits_have_stable_title_and_id_order() {
+        let mut snapshot = sample();
+        snapshot
+            .products
+            .retain(|item| item.category != Some(Category::Outfit));
+        for (id, title) in [("c", "B outfit"), ("b", "A outfit"), ("a", "A outfit")] {
+            snapshot
+                .products
+                .push(product(id, title, Some(Category::Outfit), false));
+        }
+        let detail = avatar_detail(&snapshot, "lime").unwrap();
+        assert_eq!(
+            detail
+                .unsupported_outfits
+                .iter()
+                .map(|item| item.booth_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a", "b", "c"]
+        );
     }
 }

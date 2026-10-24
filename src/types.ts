@@ -28,7 +28,6 @@ export interface AvatarCard {
   outfitCount: number;
   hairCount: number;
   gimmickCount: number;
-  worldCount: number;
   genericCount: number;
 }
 
@@ -112,6 +111,7 @@ export interface AvatarDetail {
   ownedProducts: OwnedBody[];
   sections: Section[];
   genericItems: ItemView[];
+  unsupportedOutfits: ItemView[];
 }
 
 export interface QueueProduct {

@@ -3879,6 +3879,11 @@ mod tests {
         let excluded = load_snapshot(&connection).unwrap();
         assert_eq!(excluded.products.len(), before.products.len() - 1);
         assert!(excluded.links.iter().all(|link| link.product_id != "1004"));
+        assert!(avatar_detail(&excluded, "manuka")
+            .unwrap()
+            .unsupported_outfits
+            .iter()
+            .all(|item| item.booth_id != "1004"));
         assert!(
             crate::view::product_options(&excluded)
                 .iter()
@@ -3917,6 +3922,11 @@ mod tests {
         set_product_excluded(&mut connection, "1004", false).unwrap();
         let restored = load_snapshot(&connection).unwrap();
         assert_eq!(restored.products.len(), before.products.len());
+        assert!(avatar_detail(&restored, "manuka")
+            .unwrap()
+            .unsupported_outfits
+            .iter()
+            .any(|item| item.booth_id == "1004"));
         assert!(
             restored
                 .links
