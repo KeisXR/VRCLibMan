@@ -6,11 +6,12 @@ import { ImportPage } from "./pages/ImportPage";
 import { QueuePage } from "./pages/QueuePage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { BrowserPage } from "./pages/BrowserPage";
+import { WorldsPage } from "./pages/WorldsPage";
 import { SetupWizard } from "./pages/SetupWizard";
 import type { BoothAccount, JobProgress, LibraryStats } from "./types";
 import { errorText } from "./ui";
 
-type Page = "avatars" | "avatar" | "queue" | "import" | "settings" | "browser";
+type Page = "avatars" | "avatar" | "worlds" | "queue" | "import" | "settings" | "browser";
 
 interface Route {
   page: Page;
@@ -44,7 +45,7 @@ function parseRoute(hash: string): Route {
       fileBoothId: parts[2] === "files" && parts[3] ? decodeURIComponent(parts[3]) : undefined,
     };
   }
-  if (parts[0] === "queue" || parts[0] === "import" || parts[0] === "settings" || parts[0] === "browser") {
+  if (parts[0] === "worlds" || parts[0] === "queue" || parts[0] === "import" || parts[0] === "settings" || parts[0] === "browser") {
     return { page: parts[0] };
   }
   return { page: "avatars" };
@@ -218,7 +219,7 @@ export default function App() {
   const density =
     route.page === "settings"
       ? "density-roomy"
-      : route.page === "avatars" || route.page === "avatar" || route.page === "queue"
+      : route.page === "avatars" || route.page === "avatar" || route.page === "worlds" || route.page === "queue"
         ? "density-compact"
         : "";
 
@@ -235,6 +236,9 @@ export default function App() {
             <a className={route.page === "avatars" || route.page === "avatar" ? "nav-link active" : "nav-link"} href="#/">
               アバター
               <span className="count">{stats?.ownedAvatars ?? 0}</span>
+            </a>
+            <a className={route.page === "worlds" ? "nav-link active" : "nav-link"} href="#/worlds">
+              ワールド
             </a>
             <a className={route.page === "queue" ? "nav-link active" : "nav-link"} href="#/queue">
               確認
@@ -295,6 +299,7 @@ export default function App() {
             {route.page === "avatar" && route.id && (
               <AvatarDetailPage id={route.id} fileBoothId={route.fileBoothId} />
             )}
+            {route.page === "worlds" && <WorldsPage />}
             {route.page === "queue" && <QueuePage />}
             {route.page === "import" && <ImportPage />}
             {route.page === "settings" && <SettingsPage />}
