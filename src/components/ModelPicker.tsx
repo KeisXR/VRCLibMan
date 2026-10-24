@@ -7,12 +7,14 @@ export function ModelPicker({
   checked,
   disabled,
   onChange,
+  onBlur,
 }: {
   value: string;
   models: string[];
   checked: boolean;
   disabled?: boolean;
   onChange: (value: string) => void;
+  onBlur?: () => void;
 }) {
   const id = useId();
   const custom = !MODEL_CHOICES.some((choice) => choice.name === value);
@@ -81,13 +83,14 @@ export function ModelPicker({
             <input
               value={value}
               placeholder="例: qwen3:4b"
+              onBlur={onBlur}
               onChange={(e) => onChange(e.target.value)}
             />
           </label>
         </div>
       )}
       <p className="meta">
-        選ぶだけではダウンロードしません。必要なメモリはほかのアプリやモデルの量子化によって変わります。既存の設定は自動では切り替えません。
+        選ぶだけではダウンロードしません。必要なメモリはほかのアプリやモデルの量子化によって変わります。アプリを更新しても、保存済みのモデル選択は引き継ぎます。
       </p>
     </fieldset>
   );

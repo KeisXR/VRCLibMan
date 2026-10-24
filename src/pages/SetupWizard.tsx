@@ -154,7 +154,7 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
         </h1>
         {step === "model" && (
           <>
-            <p>分類に使うモデルを選んでください。軽量な qwen3.5:4b を推奨します。既定は {defaultModel}、保存済みの設定は {status?.model || defaultModel} です。あとから設定でも変更できます。</p>
+            <p>分類に使うモデルを選んでください。qwen3.5:9b を推奨します。既定は {defaultModel}、保存済みの設定は {status?.model || defaultModel} です。あとから設定でも変更できます。</p>
             <ModelPicker value={model} models={ollama?.models ?? []} checked={connected} disabled={checking || pulling || usingApple} onChange={setSelectedModel} />
             {checking && <p className="meta">Ollama 接続確認中</p>}
             {!checking && !connected && <p className="meta">Ollama にはまだつながっていません。{ollamaError}</p>}

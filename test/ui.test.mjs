@@ -100,18 +100,18 @@ test("setup, import and version flows with synthetic local data", async (t) => {
     await t.test(
       "an installed default does not hide candidates; only confirmed target is pulled",
       async () => {
-        assert.equal((await api.settings()).ollamaModel, "gemma4:12b");
+        assert.equal((await api.settings()).ollamaModel, "qwen3.5:9b");
         assert.equal(
           document.querySelectorAll(".model-picker input[type=radio]").length,
           4,
         );
         await click(radio("qwen3.5:4b"));
         assert.deepEqual(pulls, []);
-        assert.equal((await api.settings()).ollamaModel, "gemma4:12b");
+        assert.equal((await api.settings()).ollamaModel, "qwen3.5:9b");
         window.confirm = () => false;
         await click(button("ダウンロードする"));
         assert.deepEqual(pulls, []);
-        assert.equal((await api.settings()).ollamaModel, "gemma4:12b");
+        assert.equal((await api.settings()).ollamaModel, "qwen3.5:9b");
         let prompt = "";
         window.confirm = (message) => {
           prompt = message;
@@ -123,7 +123,7 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         assert.match(prompt, /3\.3〜4\.0 GB/);
         assert.equal((await api.settings()).ollamaModel, "qwen3.5:4b");
         await click(radio("qwen3.5:9b"));
-        await click(button("スキップして次へ"));
+        await click(button("次へ"));
         await wait(() => radio("アプリの内蔵ブラウザ"));
         assert.equal((await api.settings()).ollamaModel, "qwen3.5:9b");
         assert.deepEqual(pulls, ["qwen3.5:4b"]);
@@ -254,18 +254,93 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         assert.equal((await api.settings()).ollamaModel, "qwen3.5:9b");
       },
     );
-    await t.test("Apple model setup remains available with Ollama offline", async () => {
-      const { requestRefresh } = await server.ssrLoadModule("/src/api.ts");
-      api.testOllama = async () => { throw new Error("Ollama offline (fixture)"); };
-      await api.reopenSetup();
-      await act(async () => { requestRefresh(); await delay(); });
-      await wait(() => document.querySelector(".setup-screen") && button("Apple のオンデバイスモデルを使う") && text().includes("Ollama offline"));
-      const before = pulls.length;
-      await click(button("Apple のオンデバイスモデルを使う"));
-      await wait(() => document.querySelector(".setup-screen .import-methods"));
-      assert.equal((await api.settings()).llmBackend, "apple");
-      assert.equal(pulls.length, before);
-    });
+    await t.test(
+      "settings selections apply immediately without a save button",
+      async () => {
+        assert.equal(button("設定を保存"), undefined);
+        assert.ok(text().includes("変更は自動で保存・適用"));
+        await click(radio("qwen3.5:4b"));
+        await wait(() => text().includes("今の設定は qwen3.5:4b"));
+        assert.equal((await api.settings()).ollamaModel, "qwen3.5:4b");
+        await click(radio("qwen3.5:9b"));
+        await wait(() => text().includes("今の設定は qwen3.5:9b"));
+        assert.equal((await api.settings()).ollamaModel, "qwen3.5:9b");
+        assert.equal(pulls.length, 1);
+      },
+    );
+
+    await t.test(
+      "irrelevant products can be excluded, remain excluded on reimport, and be restored",
+      async () => {
+        await route("#/import");
+        await wait(() => document.querySelector(".exclusion-list"));
+        const row = () =>
+          [...document.querySelectorAll(".exclusion-list li")].find((node) =>
+            node.textContent.includes("9991234"),
+          );
+        await wait(row);
+        const before = await api.stats();
+        await click(button("除外", row()));
+        await wait(() => button("元に戻す", row()));
+        assert.equal((await api.stats()).products, before.products - 1);
+        assert.ok(
+          !(await api.productOptions()).some((p) => p.boothId === "9991234"),
+        );
+        await act(async () => {
+          await api.importExport(
+            JSON.stringify([
+              {
+                boothId: "9991234",
+                title: "ダミーの帽子",
+                shop: "テスト",
+                descriptionSnippet: "更新した説明",
+              },
+            ]),
+          );
+          await delay();
+        });
+        assert.ok(
+          (await api.managedProducts()).find((p) => p.boothId === "9991234")
+            .excluded,
+        );
+        assert.ok(
+          !(await api.productOptions()).some((p) => p.boothId === "9991234"),
+        );
+        await click(button("元に戻す", row()));
+        await wait(() => button("除外", row()));
+        assert.equal((await api.stats()).products, before.products);
+        assert.ok(
+          (await api.productOptions()).some((p) => p.boothId === "9991234"),
+        );
+      },
+    );
+    await t.test(
+      "Apple model setup remains available with Ollama offline",
+      async () => {
+        const { requestRefresh } = await server.ssrLoadModule("/src/api.ts");
+        api.testOllama = async () => {
+          throw new Error("Ollama offline (fixture)");
+        };
+        await api.reopenSetup();
+        await act(async () => {
+          requestRefresh();
+          await delay();
+        });
+        await wait(
+          () =>
+            document.querySelector(".setup-screen") &&
+            button("Apple のオンデバイスモデルを使う") &&
+            text().includes("Ollama offline"),
+        );
+        const before = pulls.length;
+        await click(button("Apple のオンデバイスモデルを使う"));
+        await wait(() =>
+          document.querySelector(".setup-screen .import-methods"),
+        );
+        assert.equal((await api.settings()).llmBackend, "apple");
+        assert.equal(pulls.length, before);
+      },
+    );
   } finally {
     if (root) await act(async () => root.unmount());
     await server.close();

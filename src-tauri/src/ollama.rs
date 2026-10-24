@@ -384,7 +384,7 @@ fn json_object(input: &str) -> Option<&str> {
 
 fn connection_error(err: reqwest::Error) -> String {
     if err.is_connect() {
-        "Ollamaに接続できません。Ollamaを起動し、モデルを取得してください（例: ollama pull gemma4:12b）。"
+        "Ollamaに接続できません。Ollamaを起動し、モデルを取得してください（例: ollama pull qwen3.5:9b）。"
             .into()
     } else if err.is_timeout() {
         "Ollamaの応答がタイムアウトしました".into()
@@ -502,7 +502,7 @@ mod tests {
         assert!(SYSTEM_PROMPT.contains("ワールド"));
         assert!(SYSTEM_PROMPT.contains("UdonSharp"));
         assert!(!SYSTEM_PROMPT.contains("ワールド用の小物は gimmick"));
-        assert_eq!(crate::model::DEFAULT_OLLAMA_MODEL, "gemma4:12b");
+        assert_eq!(crate::model::DEFAULT_OLLAMA_MODEL, "qwen3.5:9b");
     }
 
     #[test]

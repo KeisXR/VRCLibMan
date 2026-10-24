@@ -5,6 +5,7 @@ import { confidenceLabel, formatBytes } from "../media";
 import { CATEGORIES, CATEGORY_LABEL } from "../types";
 import type { AvatarCandidate, ProductOption, QueueFile, QueueProduct } from "../types";
 import { FileMark, Thumb, errorText } from "../ui";
+import { ExcludeProductButton } from "../components/ProductExclusions";
 
 type Kind = "unextracted" | "review" | "files";
 
@@ -523,8 +524,9 @@ const ProductEditor = memo(function ProductEditor({
           </div>
           {product.descriptionSnippet && <p className="meta">{product.descriptionSnippet.slice(0, 280)}</p>}
           <button className="button" type="button" onClick={() => void openExternal(product.url)}>
-            Booth を開く
+            BOOTH を開く
           </button>
+          <ExcludeProductButton boothId={product.boothId} />
         </div>
       </div>
       {product.unresolvedNames.length > 0 && (

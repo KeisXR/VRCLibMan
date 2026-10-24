@@ -5,6 +5,7 @@ import { FILE_PRESENCE_LABEL, confidenceLabel, filePresence, formatBytes } from 
 import { CATEGORY_LABEL } from "../types";
 import type { AvatarDetail, BoothFileStatus, DownloadView, ItemView, Knowledge } from "../types";
 import { FileMark, Thumb, errorText } from "../ui";
+import { ExcludeProductButton } from "../components/ProductExclusions";
 
 export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?: string }) {
   const { revision, refresh, notify, fail } = useShell();
@@ -243,9 +244,7 @@ export function ItemCard({ item }: { item: ItemView }) {
           )}
         </div>
       </div>
-      <button className="button" type="button" onClick={() => void openExternal(item.url)}>
-        Booth
-      </button>
+      <div className="row-actions"><button className="button" type="button" onClick={() => void openExternal(item.url)}>BOOTH</button><ExcludeProductButton boothId={item.boothId} /></div>
     </article>
   );
 }

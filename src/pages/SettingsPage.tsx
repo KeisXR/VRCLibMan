@@ -1,14 +1,15 @@
-import { useEffect, useState } from "react";
-import { api, appVersion, chooseFolder, openExternal, saveLibraryAndScan } from "../api";
+import { useEffect, useRef, useState } from "react";
+import { api, appVersion, chooseFolder, openExternal } from "../api";
 import { useShell } from "../App";
 import { formatBytes } from "../media";
 import { DEFAULT_OLLAMA_MODEL } from "../types";
-import type { AppleFmStatus, AvatarRecord, BaseBody, CatalogInfo, IntegrationStatus, Knowledge, Settings } from "../types";
+import type { AppleFmStatus, AvatarRecord, BaseBody, CatalogInfo, IntegrationStatus, Knowledge } from "../types";
 import { errorText } from "../ui";
 import { SettingRow } from "../components/SettingRow";
 import { ModelPicker } from "../components/ModelPicker";
 import { BoothImportSettings } from "../components/BoothImportSettings";
-import { modelDownloadPrompt } from "../models";
+import { MODEL_CHOICES, modelDownloadPrompt } from "../models";
+import { useSettingsAutosave } from "../useSettingsAutosave";
 import { extensionVersionMessage } from "../versions";
 
 const emptyAvatar = {
@@ -22,13 +23,23 @@ const emptyAvatar = {
 
 export function SettingsPage() {
   const { revision, refresh, notify, fail } = useShell();
-  const [settings, setSettings] = useState<Settings | null>(null);
-  const [savedFolder, setSavedFolder] = useState("");
+  const lastScannedFolder = useRef<string | null>(null);
+  const { settings, phase: savePhase, error: saveError, change: changeSettings, hydrate, ticket, flush } = useSettingsAutosave((saved, patch) => {
+    refresh();
+    if (patch.libraryFolder !== undefined && saved.libraryFolder !== lastScannedFolder.current) {
+      lastScannedFolder.current = saved.libraryFolder;
+      if (saved.libraryFolder) void api.scanLibrary(saved.libraryFolder).then((report) => {
+        notify(`ライブラリのフォルダを調べ、${report.indexed} 件中 ${report.linked} 件を結び付けました${report.truncated ? "（上限で中断）" : ""}`);
+        refresh();
+      }, (err: unknown) => fail(`設定は保存しましたが、フォルダを調べられませんでした。${errorText(err)}`));
+    }
+  });
   const [knowledge, setKnowledge] = useState<Knowledge | null>(null);
   const [avatar, setAvatar] = useState(emptyAvatar);
   const [body, setBody] = useState({ id: "", displayName: "", note: "" });
   const [filter, setFilter] = useState("");
   const [status, setStatus] = useState("");
+  const [ollamaStatus, setOllamaStatus] = useState("");
   const [models, setModels] = useState<string[]>([]);
   const [installedSize, setInstalledSize] = useState<number | null>(null);
   const [integration, setIntegration] = useState<IntegrationStatus | null>(null);
@@ -40,6 +51,7 @@ export function SettingsPage() {
 
   useEffect(() => {
     let cancelled = false;
+    if (settings?.llmBackend !== "ollama") return;
     api.testOllama().then(
       (result) => {
         if (cancelled) return;
@@ -54,11 +66,19 @@ export function SettingsPage() {
         setInstalledSize(null);
       },
     );
+    return () => {
+      cancelled = true;
+    };
+  }, [revision, settings?.llmBackend]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const settingsTicket = ticket();
     Promise.all([api.settings(), api.knowledge(), api.integrationStatus(), api.catalogInfo(), api.appleFmStatus(), appVersion()]).then(
       ([nextSettings, nextKnowledge, nextIntegration, nextCatalog, nextApple, nextVersion]) => {
         if (cancelled) return;
-        setSettings(nextSettings);
-        setSavedFolder(nextSettings.libraryFolder);
+        hydrate(nextSettings, settingsTicket);
+        if (lastScannedFolder.current == null) lastScannedFolder.current = nextSettings.libraryFolder;
         setApple(nextApple);
         setCatalog(nextCatalog);
         setKnowledge(nextKnowledge);
@@ -72,50 +92,36 @@ export function SettingsPage() {
     return () => {
       cancelled = true;
     };
-  }, [revision, fail]);
+  }, [revision, fail, hydrate, ticket]);
 
-  async function saveSettings() {
-    if (!settings) return;
-    const folder = settings.libraryFolder.trim();
-    const folderChanged = folder !== savedFolder.trim();
+  function flushSettings() { void flush().catch(() => {}); }
+
+  async function chooseLibrary() {
     try {
-      await api.saveSettings(settings);
-      if (folder && folderChanged) {
-        const result = await api.scanLibrary(folder);
-        setSavedFolder(folder);
-        notify(
-          `設定を保存し、ライブラリのフォルダを調べました。${result.indexed} 件を調べ、${result.linked} 件を商品と結び付けました${result.truncated ? "。上限に達したため途中です" : ""}`,
-        );
-      } else {
-        setSavedFolder(folder);
-        notify("設定を保存しました");
-      }
-      setStatus("");
-      refresh();
+      const folder = await chooseFolder();
+      if (folder) changeSettings({ libraryFolder: folder });
+    } catch (err) { fail(errorText(err)); }
+  }
+
+  async function changeRouting(enabled: boolean) {
+    if (!settings) return;
+    if (enabled && !settings.libraryFolder.trim()) {
       try {
-        const result = await api.testOllama();
-        setModels(result.models);
-      setModelsChecked(true);
-        setInstalledSize(result.modelSizeBytes);
-      } catch {
-        setModels([]);
-        setInstalledSize(null);
-      }
-    } catch (err) {
-      const message = errorText(err);
-      setStatus(message);
-      fail(message);
-    }
+        const folder = await chooseFolder();
+        if (folder) changeSettings({ libraryFolder: folder, routeDownloads: true });
+      } catch (err) { fail(errorText(err)); }
+    } else changeSettings({ routeDownloads: enabled });
   }
 
   async function testOllama() {
     try {
+      await flush();
       const result = await api.testOllama();
       setModels(result.models);
       setModelsChecked(true);
       setInstalledSize(result.modelSizeBytes);
       const size = result.modelSizeBytes != null && result.modelSizeBytes > 0 ? formatBytes(result.modelSizeBytes) : "";
-      setStatus(
+      setOllamaStatus(
         result.modelReady
           ? `接続できました。設定中のモデルがあります（${result.models.length} 件）${size ? `。サイズは ${size}` : ""}`
           : `接続できましたが、設定中のモデルが見つかりません。導入済み: ${result.models.join(", ") || "なし"}`,
@@ -123,27 +129,24 @@ export function SettingsPage() {
     } catch (err) {
       setInstalledSize(null);
       setModelsChecked(false);
-      setStatus(errorText(err));
+      setOllamaStatus(errorText(err));
     }
   }
 
   async function pullOllamaModel() {
-    if (!settings) return;
-    if (!window.confirm(modelDownloadPrompt(settings.ollamaModel.trim()))) return;
-    setPulling(true);
-    setStatus(`${settings.ollamaModel} 取得中`);
     try {
-      await api.saveSettings(settings);
-      await api.pullOllamaModel(settings.ollamaModel.trim());
+      const saved = await flush();
+      if (!saved || !window.confirm(modelDownloadPrompt(saved.ollamaModel))) return;
+      setPulling(true);
+      setOllamaStatus(`${saved.ollamaModel} 取得中`);
+      await api.pullOllamaModel(saved.ollamaModel);
       await testOllama();
-      notify(`${settings.ollamaModel} を取得しました`);
+      notify(`${saved.ollamaModel} を取得しました`);
     } catch (err) {
       const message = errorText(err);
-      setStatus(message);
+      setOllamaStatus(message);
       fail(message);
-    } finally {
-      setPulling(false);
-    }
+    } finally { setPulling(false); }
   }
 
   function selectAvatar(record: AvatarRecord) {
@@ -267,8 +270,8 @@ export function SettingsPage() {
   return (
     <section className="settings-page">
       <div className="page-head">
-        <div><h1>設定</h1><p>分類、ファイルの保存先、アプリの動作を管理します。</p></div>
-        {settings && <button className="button primary" type="button" onClick={() => void saveSettings()}>設定を保存</button>}
+        <div><h1>設定</h1><p>分類、ファイルの保存先、アプリの動作を管理します。変更は自動で保存・適用します。</p></div>
+        {settings && <p className={savePhase === "error" ? "settings-save-state warn-text" : "settings-save-state meta"} role="status" aria-live="polite">{savePhase === "saving" ? "保存中…" : savePhase === "error" ? "未保存の変更があります" : "変更は自動保存されます"}</p>}
       </div>
 
       {settings && (
@@ -276,35 +279,46 @@ export function SettingsPage() {
           <section className="settings-section">
             <header><h2>分類モデル</h2><p>商品説明を分類する、端末内のモデルを選びます。</p></header>
             <SettingRow label="分類方法" help={apple?.message || "Ollama はこの PC のローカル接続だけを使用します。"}>
-              <select value={settings.llmBackend} onChange={(e) => setSettings({ ...settings, llmBackend: e.target.value === "apple" ? "apple" : "ollama" })}>
+              <select value={settings.llmBackend} onChange={(e) => changeSettings({ llmBackend: e.target.value === "apple" ? "apple" : "ollama" })}>
                 <option value="ollama">Ollama（既定）</option>
                 {(apple?.availability === "available" || settings.llmBackend === "apple") && <option value="apple" disabled={apple?.availability !== "available"}>Apple のオンデバイスモデル</option>}
               </select>
             </SettingRow>
-            <SettingRow label="Ollama の URL" help="http://127.0.0.1、localhost、または ::1 だけを使用できます。">
-              <input value={settings.ollamaBaseUrl} onChange={(e) => setSettings({ ...settings, ollamaBaseUrl: e.target.value })} />
-            </SettingRow>
-            <SettingRow label="モデル" help={`軽量な qwen3.5:4b を推奨します。既定は ${DEFAULT_OLLAMA_MODEL} のままです。`}>
-              <ModelPicker value={settings.ollamaModel} models={models} checked={modelsChecked} disabled={pulling || settings.llmBackend === "apple"} onChange={(value) => setSettings({ ...settings, ollamaModel: value })} />
-              <button className="button" type="button" disabled={pulling || settings.llmBackend === "apple" || !settings.ollamaModel.trim()} onClick={() => void pullOllamaModel()}>{pulling ? "取得中…" : "モデルを取得"}</button>
-            </SettingRow>
+            {settings.llmBackend === "ollama" && (
+              <>
+                <SettingRow label="Ollama の URL" help="http://127.0.0.1、localhost、または ::1 だけを使用できます。">
+                  <input value={settings.ollamaBaseUrl} onChange={(e) => changeSettings({ ollamaBaseUrl: e.target.value }, 300)} onBlur={flushSettings} />
+                </SettingRow>
+                <SettingRow label="モデル" help={`推奨・既定は ${DEFAULT_OLLAMA_MODEL}。軽量な代替は qwen3.5:4b です。`}>
+                  <ModelPicker onBlur={flushSettings} value={settings.ollamaModel} models={models} checked={modelsChecked} disabled={pulling} onChange={(value) => changeSettings({ ollamaModel: value }, MODEL_CHOICES.some((choice) => choice.name === value) ? 0 : 300)} />
+                  <button className="button" type="button" disabled={pulling || !settings.ollamaModel.trim()} onClick={() => void pullOllamaModel()}>{pulling ? "取得中…" : "モデルを取得"}</button>
+                </SettingRow>
+              </>
+            )}
             <SettingRow label="確信度のしきい値" help="0〜1 で指定します。要確認は名前と対応表の一致も使って判断します。">
-              <input className="short-input" type="number" min={0} max={1} step={0.05} value={settings.confidenceThreshold} onChange={(e) => setSettings({ ...settings, confidenceThreshold: Number(e.target.value) })} />
+              <input className="short-input" type="number" min={0} max={1} step={0.05} value={settings.confidenceThreshold} onChange={(e) => changeSettings({ confidenceThreshold: Number(e.target.value) }, 300)} onBlur={flushSettings} />
             </SettingRow>
-            <div className="section-actions"><button className="button" type="button" onClick={() => void testOllama()}>接続を確認</button><span className="meta">{installedSize ? `モデルサイズ ${formatBytes(installedSize)}` : models.length ? `導入済み: ${models.join("、")}` : "導入済みモデル：未確認"}</span></div>
-            <details className="settings-details"><summary>分類モデルについて詳しく</summary><p>今の設定は {settings.ollamaModel}、分類は {settings.llmBackend === "apple" ? "Apple のオンデバイスモデル" : "Ollama"} です。Apple は macOS 27.2 以上で使えるときだけ選べ、選んでも既定のモデル名は変わりません。温度は 0.1 固定です。要確認は、モデルが自分で付けた数値ではなく、名前が商品文と対応表に結び付いたかで決めます。</p><p>「モデルを取得」は、押したときだけ Ollama からモデルを1回ダウンロードします。数 GB になることがあります。「接続を確認」で導入済みのモデルを候補に出します。</p></details>
+            {settings.llmBackend === "ollama" && <div className="section-actions"><button className="button" type="button" onClick={() => void testOllama()}>接続を確認</button><span className="meta">{installedSize ? `モデルサイズ ${formatBytes(installedSize)}` : models.length ? `導入済み: ${models.join("、")}` : "導入済みモデル：未確認"}</span></div>}
+            <details className="settings-details">
+              <summary>分類モデルについて詳しく</summary>
+              {settings.llmBackend === "apple" ? <p>Apple のオンデバイスモデルで分類します。macOS 27.2 以上で利用可能な場合に使用できます。</p> : <>
+                <p>今の設定は {settings.ollamaModel}、分類は Ollama です。温度は 0.1 固定です。</p>
+                <p>「モデルを取得」は、押したときだけ Ollama からモデルを1回ダウンロードします。数 GB になることがあります。「接続を確認」で導入済みのモデルを候補に出します。</p>
+              </>}
+              <p>要確認は、モデルが自分で付けた数値ではなく、名前が商品文と対応表に結び付いたかで決めます。</p>
+            </details>
           </section>
 
           <section className="settings-section">
             <header><h2>ライブラリとダウンロード</h2><p>ファイルの保存先と自動整理を設定します。</p></header>
             <SettingRow label="ライブラリのフォルダ" help="インポート画面と同じフォルダです。選ぶと保存してスキャンします。ホームやボリュームの直下は選べません。">
-              <div className="inline-control"><input value={settings.libraryFolder} placeholder="ダウンロードしたファイルの移動先" onChange={(e) => setSettings({ ...settings, libraryFolder: e.target.value })} /><button className="button" type="button" onClick={() => void (async () => { try { const path = await chooseFolder(); if (!path) return; const next = { ...settings, libraryFolder: path }; setSettings(next); const result = await saveLibraryAndScan(path, next); setSavedFolder(path); setStatus(""); notify(`ライブラリのフォルダを保存し、${result.indexed} 件を調べ、${result.linked} 件を商品と結び付けました${result.truncated ? "。上限に達したため途中です" : ""}`); refresh(); } catch (err) { const message = errorText(err); setStatus(message); fail(message); } })()}>選ぶ</button></div>
+              <div className="inline-control"><input value={settings.libraryFolder} placeholder="ダウンロードしたファイルの移動先" onChange={(e) => changeSettings({ libraryFolder: e.target.value, ...(!e.target.value.trim() ? { routeDownloads: false } : {}) }, 300)} onBlur={flushSettings} /><button className="button" type="button" onClick={() => void chooseLibrary()}>選ぶ</button></div>
             </SettingRow>
             <SettingRow label="リモートライブラリ" help="ネットワークドライブやマウント済みのフォルダを指定します。">
-              <div className="inline-control"><input value={settings.remoteLibraryFolder} placeholder="リモートのフォルダ" onChange={(e) => setSettings({ ...settings, remoteLibraryFolder: e.target.value })} /><button className="button" type="button" onClick={() => void chooseFolder().then((path) => { if (path) setSettings({ ...settings, remoteLibraryFolder: path }); }, (err: unknown) => fail(errorText(err)))}>選ぶ</button></div>
+              <div className="inline-control"><input value={settings.remoteLibraryFolder} placeholder="リモートのフォルダ" onChange={(e) => changeSettings({ remoteLibraryFolder: e.target.value }, 300)} onBlur={flushSettings} /><button className="button" type="button" onClick={() => void chooseFolder().then((path) => { if (path) changeSettings({ remoteLibraryFolder: path }); }, (err: unknown) => fail(errorText(err)))}>選ぶ</button></div>
             </SettingRow>
             <SettingRow label="ダウンロードを自動整理" help="自分でダウンロードしたファイルだけを商品別にライブラリへ移動します。">
-              <label className="switch-label"><input type="checkbox" checked={settings.routeDownloads} onChange={(e) => { const enabled = e.target.checked; if (enabled && !settings.libraryFolder.trim()) { void (async () => { try { const path = await chooseFolder(); if (!path) return; const next = { ...settings, libraryFolder: path, routeDownloads: true }; setSettings(next); const result = await saveLibraryAndScan(path, next); setSavedFolder(path); setStatus(""); notify(`ライブラリのフォルダを保存し、${result.indexed} 件を調べ、${result.linked} 件を商品と結び付けました${result.truncated ? "。上限に達したため途中です" : ""}`); refresh(); } catch (err) { const message = errorText(err); setStatus(message); fail(message); } })(); return; } setSettings({ ...settings, routeDownloads: enabled }); }} />有効にする</label>
+              <label className="switch-label"><input type="checkbox" checked={settings.routeDownloads} onChange={(e) => void changeRouting(e.target.checked)} />有効にする</label>
             </SettingRow>
             <details className="settings-details"><summary>自動整理について詳しく</summary><p>自動整理は既定でオフです。オンにするときは、移動先のライブラリフォルダが必要です。オンにすると、拡張は自分で押したダウンロードだけを、この PC のダウンロードフォルダの VRCLibMan/商品ID に置き、アプリがライブラリへ移します。内蔵ブラウザを有効にしているときは、未ダウンロードの行を押したその1件も、同じ場所へダウンロードします。</p><p>それ以外の場所にあるファイルは移動しません。アプリから一括ではダウンロードしません。リモートの確認は画面を出してから行い、送る・取ってくるは押したファイルだけをコピーします。コピー中は画面の上に表示します。切れている共有先では待たずに未ダウンロードとして表示します。</p></details>
           </section>
@@ -316,10 +330,10 @@ export function SettingsPage() {
           <section className="settings-section">
             <header><h2>起動と常駐</h2><p>ウィンドウを閉じた後の動作を設定します。</p></header>
             <SettingRow label="バックグラウンドで動作" help="ウィンドウを閉じても拡張機能からのダウンロードを受け付けます。">
-              <label className="switch-label"><input type="checkbox" checked={settings.backgroundMode} onChange={(e) => { const enabled = e.target.checked; setSettings({ ...settings, backgroundMode: enabled, launchAtLogin: enabled ? settings.launchAtLogin : false }); }} />有効にする</label>
+              <label className="switch-label"><input type="checkbox" checked={settings.backgroundMode} onChange={(e) => { const enabled = e.target.checked; changeSettings({ backgroundMode: enabled, launchAtLogin: enabled ? settings.launchAtLogin : false }); }} />有効にする</label>
             </SettingRow>
             <SettingRow label="ログイン時に起動" help="バックグラウンド動作が有効な場合だけ使用できます。">
-              <label className="switch-label"><input type="checkbox" checked={settings.launchAtLogin} disabled={!settings.backgroundMode} onChange={(e) => setSettings({ ...settings, launchAtLogin: e.target.checked })} />有効にする</label>
+              <label className="switch-label"><input type="checkbox" checked={settings.launchAtLogin} disabled={!settings.backgroundMode} onChange={(e) => changeSettings({ launchAtLogin: e.target.checked })} />有効にする</label>
             </SettingRow>
             <details className="settings-details"><summary>起動と常駐について詳しく</summary><p>既定はオフです。オフのときはウィンドウを閉じるとアプリも終了し、トレイは残りません。オンのときはウィンドウを破棄してメモリを放し、プロセスと 17321 の受け付けだけ残します。トレイ（Windows）またはメニューバー（macOS）から開き直すか、終了できます。</p><p>ログイン時の起動は、バックグラウンドをオンにしたときだけ使えます。バックグラウンドをオフにすると、ログイン項目もオフになります。両方オンのとき、ログインから起動したプロセスはウィンドウを出さず、トレイまたはメニューバーから開けます。</p></details>
           </section>
@@ -347,7 +361,9 @@ export function SettingsPage() {
           </section>
         </div>
       )}
+      {saveError && <p className="settings-status warn-text" role="alert">設定を保存できませんでした。{saveError}</p>}
       {status && <p className="settings-status">{status}</p>}
+      {settings?.llmBackend === "ollama" && ollamaStatus && <p className="settings-status">{ollamaStatus}</p>}
 
       <section className="settings-section knowledge-section">
         <header><h2>対応表を編集</h2><p>アバターの別名と共通素体を編集します。</p></header>

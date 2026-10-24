@@ -285,7 +285,7 @@ export interface ExtractReport {
   errors: string[];
 }
 
-export const DEFAULT_OLLAMA_MODEL = "gemma4:12b";
+export const DEFAULT_OLLAMA_MODEL = "qwen3.5:9b";
 
 export interface OllamaStatus {
   models: string[];
@@ -341,6 +341,14 @@ export interface BoothFileStatus {
   filename: string;
   phase: "receiving" | "error" | "done";
   message: string;
+}
+
+export interface ManagedProduct {
+  boothId: string;
+  title: string;
+  shop: string;
+  category: Category | null;
+  excluded: boolean;
 }
 
 export interface ProductUpdate {

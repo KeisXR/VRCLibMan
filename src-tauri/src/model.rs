@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Fresh databases only. `INSERT OR IGNORE` leaves a model the user already saved.
-pub const DEFAULT_OLLAMA_MODEL: &str = "gemma4:12b";
+pub const DEFAULT_OLLAMA_MODEL: &str = "qwen3.5:9b";
 
 /// Booth page and item JSON were both missing. Not a failed extraction.
 pub const UNAVAILABLE_DESCRIPTION: &str = "公開終了（取得できず）";
@@ -70,6 +70,16 @@ pub struct Product {
     pub imported_at: String,
     pub updated_at: String,
     pub extracted_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedProduct {
+    pub booth_id: String,
+    pub title: String,
+    pub shop: String,
+    pub category: Option<Category>,
+    pub excluded: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -294,6 +304,49 @@ pub struct SettingsInput {
     pub background_mode: bool,
     #[serde(default)]
     pub launch_at_login: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SettingsPatch {
+    pub ollama_base_url: Option<String>,
+    pub ollama_model: Option<String>,
+    pub confidence_threshold: Option<f64>,
+    pub library_folder: Option<String>,
+    pub builtin_browser: Option<bool>,
+    pub remote_library_folder: Option<String>,
+    pub route_downloads: Option<bool>,
+    pub llm_backend: Option<String>,
+    pub background_mode: Option<bool>,
+    pub launch_at_login: Option<bool>,
+}
+
+impl SettingsPatch {
+    pub fn apply(&self, current: Settings) -> SettingsInput {
+        SettingsInput {
+            ollama_base_url: self
+                .ollama_base_url
+                .clone()
+                .unwrap_or(current.ollama_base_url),
+            ollama_model: self.ollama_model.clone().unwrap_or(current.ollama_model),
+            confidence_threshold: self
+                .confidence_threshold
+                .unwrap_or(current.confidence_threshold),
+            library_folder: self
+                .library_folder
+                .clone()
+                .unwrap_or(current.library_folder),
+            builtin_browser: self.builtin_browser.unwrap_or(current.builtin_browser),
+            remote_library_folder: self
+                .remote_library_folder
+                .clone()
+                .unwrap_or(current.remote_library_folder),
+            route_downloads: self.route_downloads.unwrap_or(current.route_downloads),
+            llm_backend: self.llm_backend.clone().unwrap_or(current.llm_backend),
+            background_mode: self.background_mode.unwrap_or(current.background_mode),
+            launch_at_login: self.launch_at_login.unwrap_or(current.launch_at_login),
+        }
+    }
 }
 
 fn default_llm_backend() -> String {

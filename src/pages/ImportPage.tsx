@@ -15,6 +15,7 @@ import type {
 } from "../types";
 import { errorText } from "../ui";
 import { SettingRow } from "../components/SettingRow";
+import { ProductExclusions } from "../components/ProductExclusions";
 import { ExtensionInstructions } from "../components/BoothImportSettings";
 
 export function ImportPage() {
@@ -226,6 +227,7 @@ export function ImportPage() {
               拡張か内蔵ブラウザで商品情報を送ります。受け取った商品は、次の「分類」で整理できます。
             </p>
           </header>
+          <details className="settings-details"><summary>商品を管理・除外</summary><ProductExclusions /></details>
           <SettingRow label="拡張機能" help={receiverStatus}>
             <a className="button" href="#/settings">
               読み込み方とペアリングの設定
