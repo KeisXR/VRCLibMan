@@ -5675,6 +5675,20 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    #[test]
+    fn booth_interval_is_safe_by_default_and_only_accepts_known_values() {
+        let connection = open_memory().unwrap();
+        assert_eq!(booth_page_interval_ms(&connection).unwrap(), 1000);
+        for interval in [1000, 500, 250] {
+            set_booth_page_interval_ms(&connection, interval).unwrap();
+            assert_eq!(booth_page_interval_ms(&connection).unwrap(), interval);
+        }
+        assert!(set_booth_page_interval_ms(&connection, 50).is_err());
+        assert_eq!(booth_page_interval_ms(&connection).unwrap(), 250);
+        set_setting(&connection, "booth_page_interval_ms", "invalid").unwrap();
+        assert_eq!(booth_page_interval_ms(&connection).unwrap(), 1000);
+    }
+
     fn section_items(detail: &crate::view::AvatarDetail, category: &str) -> Vec<(String, bool)> {
         detail
             .sections
