@@ -1762,7 +1762,7 @@ mod tests {
         assert!(!walk_production.contains("cookies_for_url"));
         assert!(!walk_production.contains("reqwest"));
         assert!(!walk_production.contains("downloadables"));
-        assert_eq!(library_walk::PAGE_DELAY_MS, 250);
+        assert_eq!(library_walk::PAGE_DELAY_MS, 1000);
     }
 
     #[test]
