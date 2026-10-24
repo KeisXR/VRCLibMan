@@ -5222,7 +5222,7 @@ mod tests {
     #[test]
     fn browser_download_needs_the_opt_in_and_routing_before_any_file_moves() {
         let mut connection = open_memory().unwrap();
-        let root = std::env::temp_dir().join(format!("vrclibman-browser-dl-{}", std::process::id()));
+        let root = crate::library_files::resolved_temp_dir().join(format!("vrclibman-browser-dl-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let library = root.join("library");
         let downloads = root.join("Downloads");
@@ -5568,7 +5568,7 @@ mod tests {
     #[test]
     fn startup_sweep_moves_only_the_staged_file_without_network() {
         let mut connection = open_memory().unwrap();
-        let root = std::env::temp_dir().join(format!("vrclibman-sweep-on-{}", std::process::id()));
+        let root = crate::library_files::resolved_temp_dir().join(format!("vrclibman-sweep-on-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let downloads = root.join("Downloads");
         let library = root.join("library");

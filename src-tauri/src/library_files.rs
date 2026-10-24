@@ -191,6 +191,16 @@ pub(crate) fn without_verbatim_prefix(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
+/// Test fixtures live under the temp folder. Some runners hand out a path that
+/// only resolves to the real one (a Windows 8.3 short name like `RUNNER~1`, or
+/// macOS `/var` -> `/private/var`). The staging code compares canonical paths,
+/// so fixtures start from the resolved temp folder too.
+#[cfg(test)]
+pub(crate) fn resolved_temp_dir() -> PathBuf {
+    let temp = std::env::temp_dir();
+    without_verbatim_prefix(&std::fs::canonicalize(&temp).unwrap_or(temp))
+}
+
 fn normal_names(path: &Path) -> Result<Vec<std::ffi::OsString>, ()> {
     let mut names = Vec::new();
     for component in path.components() {
@@ -834,7 +844,7 @@ mod tests {
     }
 
     fn fixture_root(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!("vrclibman-{name}-{}", std::process::id()));
+        let root = resolved_temp_dir().join(format!("vrclibman-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         root
     }

@@ -1,0 +1,77 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: install dependencies
+        run: npm ci
+
+      - name: type check
+        run: npx tsc --noEmit
+
+      - name: test
+        run: npm test
+
+  rust:
+    name: rust (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - windows-latest
+          - macos-latest
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+
+      # generate_context! embeds frontendDist, so it must exist before Rust is compiled.
+      - name: build frontend
+        run: npm ci && npm run build
+
+      # The native Apple Silicon helper targets the macOS 27.2 SDK, which is not
+      # installed on macos-latest. Tests use the repository's Intel fallback helper.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'x86_64-apple-darwin' || '' }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+          key: ${{ runner.os == 'macOS' && 'x86_64-apple-darwin' || 'native' }}
+
+      - name: test Rust library
+        if: runner.os != 'macOS'
+        working-directory: src-tauri
+        run: cargo test --lib
+
+      - name: test Rust library
+        if: runner.os == 'macOS'
+        working-directory: src-tauri
+        run: cargo test --lib --target x86_64-apple-darwin
