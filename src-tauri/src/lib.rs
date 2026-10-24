@@ -145,6 +145,7 @@ pub fn run() {
             commands::regenerate_extension_token,
             commands::library_stats,
             commands::list_avatars,
+            commands::list_products_by_category,
             commands::get_avatar,
             commands::probe_remote_files,
             commands::list_queue,

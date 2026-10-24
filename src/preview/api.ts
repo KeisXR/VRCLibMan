@@ -1001,6 +1001,10 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       return cards() as T;
     case "get_avatar":
       return detail(String(args.id ?? "")) as T;
+    case "list_products_by_category":
+      return store.products
+        .filter((item) => item.category === args.category)
+        .map((item) => itemView(item, false)) as T;
     case "probe_remote_files":
       store.remoteChecked = true;
       return detail(String(args.id ?? "")) as T;

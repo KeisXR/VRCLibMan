@@ -1571,6 +1571,23 @@ pub(crate) fn set_thumbnail_path(
     Ok(())
 }
 
+pub(crate) fn product_ids_by_category(
+    connection: &Connection,
+    category: Category,
+) -> Result<Vec<String>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT booth_id FROM products
+             WHERE category = ?1
+             ORDER BY title COLLATE NOCASE, booth_id",
+        )
+        .sql()?;
+    let rows = statement
+        .query_map([category.as_str()], |row| row.get(0))
+        .sql()?;
+    rows.collect::<Result<Vec<_>, _>>().sql()
+}
+
 pub(crate) fn load_snapshot(connection: &Connection) -> Result<Snapshot, String> {
     Ok(Snapshot {
         products: load_products(connection)?,
@@ -3605,6 +3622,30 @@ mod tests {
     use super::*;
     use crate::import_data::parse_export;
     use crate::view::{avatar_cards, avatar_detail, queue_page};
+
+    #[test]
+    fn products_by_category_returns_only_requested_category() {
+        let connection = open_memory().unwrap();
+        for (booth_id, title, category) in [
+            ("910001", "二番目のワールド", "world"),
+            ("910002", "衣装", "outfit"),
+            ("910003", "一番目のワールド", "world"),
+        ] {
+            connection
+                .execute(
+                    "INSERT INTO products
+                     (booth_id, title, category, imported_at, updated_at)
+                     VALUES (?1, ?2, ?3, '2026-01-01', '2026-01-01')",
+                    params![booth_id, title, category],
+                )
+                .unwrap();
+        }
+
+        assert_eq!(
+            product_ids_by_category(&connection, Category::World).unwrap(),
+            vec!["910003".to_string(), "910001".to_string()]
+        );
+    }
 
     #[test]
     fn path_compare_folds_case_only_on_windows() {
