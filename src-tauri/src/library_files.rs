@@ -191,6 +191,16 @@ pub(crate) fn without_verbatim_prefix(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
+/// Test fixtures live under the temp folder. Some runners hand out a path that
+/// only resolves to the real one (a Windows 8.3 short name like `RUNNER~1`, or
+/// macOS `/var` -> `/private/var`). The staging code compares canonical paths,
+/// so fixtures start from the resolved temp folder too.
+#[cfg(test)]
+pub(crate) fn resolved_temp_dir() -> PathBuf {
+    let temp = std::env::temp_dir();
+    without_verbatim_prefix(&std::fs::canonicalize(&temp).unwrap_or(temp))
+}
+
 fn normal_names(path: &Path) -> Result<Vec<std::ffi::OsString>, ()> {
     let mut names = Vec::new();
     for component in path.components() {
@@ -253,24 +263,31 @@ pub(crate) fn staged_download_ok(
     )
     .ok_or_else(|| "ファイル名を読めません".to_string())?;
     let source_keys = path_keys(source).map_err(|_| staged_path_error())?;
-    let root_keys = path_keys(downloads).map_err(|_| staged_path_error())?;
     let tail = [
         component_key("VRCLibMan"),
         component_key(booth_id),
         component_key(&filename),
     ];
-    if source_keys.len() != root_keys.len() + tail.len()
-        || source_keys[..root_keys.len()] != root_keys[..]
-        || source_keys[root_keys.len()..] != tail[..]
-    {
-        return Err(staged_path_error());
-    }
-    let source_names = normal_names(source).map_err(|_| staged_path_error())?;
-    let root_names = normal_names(downloads).map_err(|_| staged_path_error())?;
+    // Downloads が junction や symlink、短い名前のときは、ステージングのパスが
+    // 実体側の名前で届く。書いたままの Downloads か、実体の Downloads の直下だけを認める。
+    let under = |root: &Path| -> Option<usize> {
+        let root_keys = path_keys(root).ok()?;
+        let matches = source_keys.len() == root_keys.len() + tail.len()
+            && source_keys[..root_keys.len()] == root_keys[..]
+            && source_keys[root_keys.len()..] == tail[..];
+        if !matches {
+            return None;
+        }
+        normal_names(root).ok().map(|names| names.len())
+    };
     let root = std::fs::canonicalize(downloads).map_err(|_| staged_path_error())?;
-    let staging = open_child(&root, &source_names[root_names.len()], true)?;
-    let product_dir = open_child(&staging, &source_names[root_names.len() + 1], true)?;
-    let file = open_child(&product_dir, &source_names[root_names.len() + 2], false)?;
+    let root_len = under(downloads)
+        .or_else(|| under(&without_verbatim_prefix(&root)))
+        .ok_or_else(staged_path_error)?;
+    let source_names = normal_names(source).map_err(|_| staged_path_error())?;
+    let staging = open_child(&root, &source_names[root_len], true)?;
+    let product_dir = open_child(&staging, &source_names[root_len + 1], true)?;
+    let file = open_child(&product_dir, &source_names[root_len + 2], false)?;
     let source_canon = std::fs::canonicalize(source).map_err(|_| staged_path_error())?;
     if !same_path(&source_canon, &file) {
         return Err(staged_path_error());
@@ -534,7 +551,7 @@ pub(crate) fn place_into_library(
     booth_id: &str,
 ) -> Result<PathBuf, String> {
     let Some(library) = library.filter(|path| !path.as_os_str().is_empty()) else {
-        return Err("ライブラリのフォルダを選んでから、振り分けをオンにしてください".into());
+        return Err("ライブラリのフォルダを選んでから、自動整理をオンにしてください".into());
     };
     let downloads = downloads_folder()?;
     place_staged_download(source, &downloads, library, booth_id)
@@ -827,7 +844,7 @@ mod tests {
     }
 
     fn fixture_root(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!("vrclibman-{name}-{}", std::process::id()));
+        let root = resolved_temp_dir().join(format!("vrclibman-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         root
     }
@@ -956,6 +973,87 @@ mod tests {
         }
         assert!(staged_download_ok(&link, &downloads, "900001").is_err());
         assert_eq!(std::fs::read(&outside).unwrap(), b"secret");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Windows は junction、unix は symlink で Downloads を別の場所へ向ける。
+    /// 作れない環境ではテストを飛ばす。
+    fn link_dir(target: &Path, link: &Path) -> bool {
+        #[cfg(windows)]
+        {
+            std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .output()
+                .map(|out| out.status.success())
+                .unwrap_or(false)
+                && link.exists()
+        }
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link).is_ok()
+        }
+    }
+
+    fn unlink_dir(link: &Path) {
+        #[cfg(windows)]
+        let _ = std::fs::remove_dir(link);
+        #[cfg(unix)]
+        let _ = std::fs::remove_file(link);
+    }
+
+    #[test]
+    fn staged_download_accepts_downloads_behind_a_junction() {
+        let root = fixture_root("junction");
+        let real = root.join("real-downloads");
+        let downloads = root.join("Downloads");
+        std::fs::create_dir_all(&real).unwrap();
+        if !link_dir(&real, &downloads) {
+            eprintln!("skip: could not link the Downloads folder");
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+
+        // 書いたままの Downloads 経由のパスは今まで通り通る。
+        let via_link = downloads
+            .join("VRCLibMan")
+            .join("900001")
+            .join("body.unitypackage");
+        write_file(&via_link, b"dummy");
+        assert!(staged_download_ok(&via_link, &downloads, "900001").is_ok());
+
+        // 実体側の名前で届いたパスも通る（内蔵ブラウザと起動時の取り込み）。
+        let real_root = without_verbatim_prefix(&std::fs::canonicalize(&real).unwrap());
+        let canonical = real_root
+            .join("VRCLibMan")
+            .join("900001")
+            .join("body.unitypackage");
+        assert!(staged_download_ok(&canonical, &downloads, "900001").is_ok());
+        assert!(staged_download_ok(&canonical, &downloads, "999999").is_err());
+
+        let staging = prepare_staging_dir(&downloads, "900002").unwrap();
+        let fresh = staging.join("fresh.unitypackage");
+        std::fs::write(&fresh, b"dummy").unwrap();
+        assert!(staged_download_ok(&fresh, &downloads, "900002").is_ok());
+
+        let candidates = staged_download_candidates(&downloads);
+        assert_eq!(candidates.len(), 2);
+        for path in &candidates {
+            let booth_id = path.parent().unwrap().file_name().unwrap().to_string_lossy();
+            assert!(staged_download_ok(path, &downloads, &booth_id).is_ok());
+        }
+
+        // 実体の外にある同じ形のパスは今まで通り断る。
+        let elsewhere = root
+            .join("other")
+            .join("VRCLibMan")
+            .join("900001")
+            .join("body.unitypackage");
+        write_file(&elsewhere, b"dummy");
+        assert!(staged_download_ok(&elsewhere, &downloads, "900001").is_err());
+
+        unlink_dir(&downloads);
         let _ = std::fs::remove_dir_all(&root);
     }
 

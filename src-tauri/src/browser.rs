@@ -45,23 +45,23 @@ pub fn session_dir_is_safe(local_data: &Path, dir: &Path) -> bool {
 pub fn library_page_for_import(href: &str) -> Result<(), String> {
     let url = Url::parse(href).map_err(|_| "ページのURLを読めません".to_string())?;
     if url.scheme() != "https" {
-        return Err("https の BOOTH ライブラリだけ取り込みます".into());
+        return Err("https の BOOTH ライブラリだけインポートします".into());
     }
     let host = url.host_str().unwrap_or("");
     let booth = host == "booth.pm" || host.ends_with(".booth.pm");
     if !booth {
-        return Err("BOOTH のライブラリを開いてから取り込んでください".into());
+        return Err("BOOTH のライブラリを開いてからインポートしてください".into());
     }
     let path = url.path().to_ascii_lowercase();
     let query = url.query().unwrap_or("").to_ascii_lowercase();
     if is_age_gate(&path, &query) {
         return Err(
-            "年齢確認は自動では通過しません。自分でページを開いてから、もう一度取り込んでください"
+            "年齢確認は自動では通過しません。自分でページを開いてから、もう一度インポートしてください"
                 .into(),
         );
     }
     if !path.contains("/library") {
-        return Err("今開いているライブラリのページだけ取り込みます".into());
+        return Err("今開いているライブラリのページだけインポートします".into());
     }
     Ok(())
 }
@@ -409,21 +409,21 @@ pub fn import_current_page(app: &AppHandle) -> Result<ImportReport, String> {
         Ok(report) => browser_log(
             app,
             &format!(
-                "取り込み完了 追加 {} 更新 {} ダウンロード {}",
+                "インポート完了 追加 {} 更新 {} ダウンロード {}",
                 report.inserted, report.updated, report.downloads
             ),
         ),
-        Err(err) => browser_log(app, &format!("取り込み失敗 {err}")),
+        Err(err) => browser_log(app, &format!("インポート失敗 {err}")),
     }
     result
 }
 
 fn import_current_page_inner(app: &AppHandle) -> Result<ImportReport, String> {
     browser_enabled(app)?;
-    browser_log(app, "取り込みを開始");
+    browser_log(app, "インポートを開始");
     let window = app
         .get_webview_window(WINDOW_LABEL)
-        .ok_or("ブラウザを開いて、ライブラリのページを表示してから取り込んでください")?;
+        .ok_or("ブラウザを開いて、ライブラリのページを表示してからインポートしてください")?;
     let (sender, receiver) = std::sync::mpsc::channel();
     window
         .eval_with_callback(page_script(), move |result| {
@@ -435,7 +435,7 @@ fn import_current_page_inner(app: &AppHandle) -> Result<ImportReport, String> {
         .map_err(|_| "ページの読み取りが返りませんでした".to_string())?;
     let (href, products) = parse_page_read(&raw)?;
     if let Ok(url) = Url::parse(&href) {
-        browser_log(app, &format!("取り込み対象 {}", public_url(&url)));
+        browser_log(app, &format!("インポート対象 {}", public_url(&url)));
     }
     library_page_for_import(&href)?;
     let state = app.state::<crate::AppState>();
@@ -777,7 +777,7 @@ pub fn receipt_log(booth_id: &str, downloadable_id: &str) -> Option<String> {
         return None;
     }
     Some(format!(
-        "ファイルの受け取りを開始しました 商品 {booth_id} 番号 {downloadable_id}"
+        "ファイルのダウンロードを開始しました 商品 {booth_id} 番号 {downloadable_id}"
     ))
 }
 
@@ -788,9 +788,9 @@ pub fn host_log(host: &str) -> String {
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'));
     if ok {
-        format!("受け取り先ホスト {host}")
+        format!("ダウンロード先ホスト {host}")
     } else {
-        "受け取りを開始しました".to_string()
+        "ダウンロードを開始しました".to_string()
     }
 }
 
@@ -977,7 +977,7 @@ pub async fn download_one_file(
     filename: String,
 ) -> Result<(), String> {
     if library_walk_running() {
-        return Err("ライブラリの取り込み中です。終わってから受け取ってください".into());
+        return Err("ライブラリのインポート中です。終わってからダウンロードしてください".into());
     }
     let app_for_plan = app.clone();
     let booth_for_plan = booth_id.clone();
@@ -1002,7 +1002,7 @@ pub async fn download_one_file(
         Ok::<_, String>((request, dir))
     })
     .await
-    .map_err(|err| format!("受け取りを準備できません: {err}"))??;
+    .map_err(|err| format!("ダウンロードを準備できません: {err}"))??;
     let (request, dir) = plan;
     let url = downloadable_url(&request.downloadable_id)?;
     emit_file_status(
@@ -1011,7 +1011,7 @@ pub async fn download_one_file(
         &request.variation,
         &request.filename,
         "receiving",
-        "受け取っています",
+        "ダウンロード中",
     );
     if let Some(line) = receipt_log(&request.booth_id, &request.downloadable_id) {
         browser_log(&app, &line);
@@ -1035,7 +1035,7 @@ pub async fn download_one_file(
             } else if err == crate::quiet::QuietError::AgeGate {
                 browser_log(&app, "年齢確認は自動では通過しません");
             } else {
-                browser_log(&app, "受け取りに失敗しました");
+                browser_log(&app, "ダウンロードに失敗しました");
             }
             emit_file_status(
                 &app,
@@ -1086,7 +1086,7 @@ pub async fn download_one_file(
                 let _ = dispatch_ui(app.clone(), |handle| open_browser(handle)).await;
                 browser_log(&app, "ログインが必要です");
             } else {
-                browser_log(&app, "受け取りに失敗しました");
+                browser_log(&app, "ダウンロードに失敗しました");
             }
             emit_file_status(&app, &booth_id, &variation, &filename, "error", &err);
             Err(err)
@@ -1330,7 +1330,7 @@ async fn navigate_booth(
         browser_enabled(handle)?;
         let window = handle
             .get_webview_window(WINDOW_LABEL)
-            .ok_or("ブラウザを開いてから取り込んでください")?;
+            .ok_or("ブラウザを開いてからインポートしてください")?;
         browser_log(
             handle,
             &format!("{label} の {page} ページ目を開きます {}", public_url(&url)),
@@ -1399,7 +1399,7 @@ pub async fn import_library(app: AppHandle) -> Result<LibraryWalkReport, String>
         return Err(db::BROWSER_BUSY_MESSAGE.into());
     }
     if WALK_RUNNING.swap(true, Ordering::SeqCst) {
-        return Err("ライブラリの取り込み中です".into());
+        return Err("ライブラリのインポート中です".into());
     }
     let _guard = WalkRunningGuard;
     let page_delay = {
@@ -1480,7 +1480,7 @@ pub async fn import_library(app: AppHandle) -> Result<LibraryWalkReport, String>
             db::import_export_json(&mut connection, &json)
         })
         .await
-        .map_err(|err| format!("取り込みを実行できません: {err}"))??;
+        .map_err(|err| format!("インポートを実行できません: {err}"))??;
         report.inserted = imported.inserted;
         report.updated = imported.updated;
         report.unchanged = imported.unchanged;
@@ -1654,7 +1654,7 @@ mod tests {
         assert!(!line.contains("http"));
         assert_eq!(
             host_log("cdn.example.test"),
-            "受け取り先ホスト cdn.example.test"
+            "ダウンロード先ホスト cdn.example.test"
         );
         assert!(!host_log("cdn.example.test?token=secret").contains("token"));
         assert!(!host_log("cdn.example.test?token=secret").contains('?'));

@@ -186,7 +186,7 @@ test("update mode keeps newer purchases and stops at a known id", () => {
   const page = [
     { boothId: "9003", title: "新しい服" },
     { boothId: "9002", title: "その次" },
-    { boothId: "9001", title: "取り込み済み" },
+    { boothId: "9001", title: "インポート済み" },
     { boothId: "9000", title: "もっと古い" },
   ];
   const stopped = takeUntilKnown(page, new Set(["9001"]));

@@ -660,3 +660,42 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
   .content, .density-roomy .content { padding: var(--space-4); }
   .banner, .progress { margin-left: var(--space-4); margin-right: var(--space-4); }
 }
+
+/* Settings */
+.settings-page { max-width: 920px; }
+.settings-sections { display: flex; flex-direction: column; gap: var(--space-4); }
+.settings-section {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.settings-section > header { padding: var(--space-4) var(--space-5); border-bottom: 1px solid var(--line); }
+.settings-section > header h2 { margin: 0; font-size: 17px; }
+.settings-section > header p { margin: 3px 0 0; color: var(--text-secondary); font-size: 13px; }
+.setting-row { display: grid; grid-template-columns: minmax(180px, .8fr) minmax(280px, 1.2fr); gap: var(--space-5); align-items: center; padding: var(--space-4) var(--space-5); border-bottom: 1px solid var(--line); }
+.setting-copy strong { display: block; font-size: 14px; font-weight: 650; }
+.setting-copy p { margin: 3px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.setting-control { min-width: 0; }
+.setting-control > input, .setting-control > select, .inline-control > input, .inline-control > select { width: 100%; min-width: 0; padding: 8px 12px; border: 0; border-radius: var(--radius-control); background: var(--surface-secondary); }
+.setting-control .short-input { width: 110px; }
+.inline-control { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); min-width: 0; }
+.inline-control .button { flex: 0 0 auto; }
+.switch-label { display: flex; justify-content: flex-end; align-items: center; gap: var(--space-2); font-size: 13px; }
+.switch-label input { width: 18px; height: 18px; accent-color: var(--button); }
+.switch-label input:disabled + * { opacity: .5; }
+.section-actions { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-5); }
+.settings-details { padding: var(--space-3) var(--space-5); color: var(--text-secondary); font-size: 13px; }
+.settings-details summary { cursor: pointer; }
+.settings-details p { margin: var(--space-2) 0 0; }
+.settings-status { position: sticky; bottom: var(--space-3); z-index: 2; margin: var(--space-3) 0; padding: 10px 14px; border-radius: var(--radius-control); background: var(--surface); box-shadow: var(--shadow); }
+.knowledge-section { margin-top: var(--space-4); padding-bottom: var(--space-4); }
+.knowledge-section .knowledge { padding: var(--space-4) var(--space-5) 0; }
+@media (max-width: 760px) {
+  .setting-row { grid-template-columns: 1fr; gap: var(--space-2); }
+  .setting-control, .switch-label { justify-content: flex-start; }
+  .inline-control { justify-content: flex-start; flex-wrap: wrap; }
+  .inline-control > input, .inline-control > select { flex: 1 1 240px; }
+  .knowledge-section .knowledge { grid-template-columns: 1fr; }
+}

@@ -244,7 +244,7 @@ async function fetchKnownIds(token) {
   }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data.error || `取り込み済みの確認ができませんでした (${response.status})`);
+    throw new Error(data.error || `インポート済みの確認ができませんでした (${response.status})`);
   }
   return new Set((Array.isArray(data.ids) ? data.ids : []).map((id) => String(id)));
 }
@@ -266,7 +266,7 @@ async function knownIdsWithWake(token) {
       if (!isUnreachable(error)) throw error;
     }
   }
-  throw new Error("アプリを起動できませんでした。更新モードは、取り込み済みかをアプリに確認します");
+  throw new Error("アプリを起動できませんでした。更新モードは、インポート済みかをアプリに確認します");
 }
 
 async function postImport(token, payload) {
@@ -332,7 +332,7 @@ async function deliver(products, source) {
     }
   }
   await download(products, source);
-  return "アプリを起動できませんでした。JSONを保存したので、アプリの取り込みへドロップしてください";
+  return "アプリを起動できませんでした。JSONを保存したので、アプリのインポート画面へドロップしてください";
 }
 
 function sentText(report, products) {
@@ -419,7 +419,7 @@ async function sendLibrary(updateMode) {
       await refreshLink();
       return;
     }
-    const stopNote = updateMode && collected.stopped ? "。取り込み済みの商品があったので、そこまでで止めました" : "";
+    const stopNote = updateMode && collected.stopped ? "。インポート済みの商品があったので、そこまでで止めました" : "";
     setStatus(`${await deliver(products, source)}（${collected.lastPage} ページ分）${stopNote}`);
     await refreshLink();
   } catch (error) {
@@ -508,7 +508,7 @@ routeInput.addEventListener("change", async () => {
       const data = await response.json().catch(() => ({}));
       routeInput.checked = false;
       await chrome.storage.local.set({ routeDownloads: false });
-      setStatus(data.error || "振り分け設定をアプリへ保存できませんでした");
+      setStatus(data.error || "自動整理の設定をアプリへ保存できませんでした");
     }
   } catch {
     setStatus("アプリが起動していないので、拡張側だけ覚えました");

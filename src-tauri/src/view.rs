@@ -258,6 +258,13 @@ pub fn avatar_detail(snapshot: &Snapshot, id: &str) -> Option<AvatarDetail> {
     })
 }
 
+pub fn products_by_ids(snapshot: &Snapshot, ids: &[String]) -> Vec<ItemView> {
+    ids.iter()
+        .filter_map(|id| snapshot.products.iter().find(|product| product.booth_id == *id))
+        .map(|product| item_view(snapshot, product, false))
+        .collect()
+}
+
 fn file_presence(snapshot: &Snapshot, booth_id: &str) -> String {
     let rows: Vec<&DownloadFact> = snapshot
         .download_rows

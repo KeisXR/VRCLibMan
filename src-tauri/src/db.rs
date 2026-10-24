@@ -324,7 +324,7 @@ pub(crate) fn save_settings(connection: &Connection, input: &SettingsInput) -> R
         return Err("Apple のオンデバイスモデルは、今の Mac では使えません".into());
     }
     if input.route_downloads && library.is_empty() {
-        return Err("振り分けをオンにする前に、ライブラリのフォルダを選んでください".into());
+        return Err("自動整理をオンにする前に、ライブラリのフォルダを選んでください".into());
     }
     if !library.is_empty() {
         let folder = std::path::Path::new(library);
@@ -539,7 +539,7 @@ pub(crate) fn import_products(
     let mut warnings = parsed.warnings.clone();
     if !parsed.products.is_empty() && variations == 0 && downloads == 0 {
         warnings.push(
-            "バリエーションもダウンロードも 0 件です。ファイルの有無は分かりません。拡張の「解析結果をコピー」で構造を確認するか、ライブラリを取り込み直すか、フォルダを調べてください"
+            "バリエーションもダウンロードも 0 件です。ファイルの有無は分かりません。拡張の「解析結果をコピー」で構造を確認するか、ライブラリを再インポートするか、フォルダを調べてください"
                 .into(),
         );
     }
@@ -1589,6 +1589,23 @@ pub(crate) fn set_thumbnail_path(
     Ok(())
 }
 
+pub(crate) fn product_ids_by_category(
+    connection: &Connection,
+    category: Category,
+) -> Result<Vec<String>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT booth_id FROM products
+             WHERE category = ?1
+             ORDER BY title COLLATE NOCASE, booth_id",
+        )
+        .sql()?;
+    let rows = statement
+        .query_map([category.as_str()], |row| row.get(0))
+        .sql()?;
+    rows.collect::<Result<Vec<_>, _>>().sql()
+}
+
 pub(crate) fn load_snapshot(connection: &Connection) -> Result<Snapshot, String> {
     Ok(Snapshot {
         products: load_products(connection)?,
@@ -1787,10 +1804,10 @@ pub(crate) fn prepare_download(
 ) -> Result<DownloadPlan, String> {
     let saved = settings(connection)?;
     if !saved.route_downloads {
-        return Err("ダウンロードの振り分けはオフです".into());
+        return Err("ダウンロードの自動整理はオフです".into());
     }
     if saved.library_folder.trim().is_empty() {
-        return Err("ライブラリのフォルダを選んでから、振り分けをオンにしてください".into());
+        return Err("ライブラリのフォルダを選んでから、自動整理をオンにしてください".into());
     }
     let booth_id = notice.booth_id.trim();
     if !crate::library_files::valid_booth_id(booth_id) {
@@ -1946,9 +1963,9 @@ pub(crate) const BROWSER_AGE_MESSAGE: &str =
     "年齢確認は自動では通過しません。内蔵ブラウザで自分で確認してから、もう一度押してください";
 pub(crate) const BROWSER_DOWNLOAD_FAILED: &str =
     "ダウンロードできませんでした。内蔵ブラウザでログインしているか確認してください";
-pub(crate) const BROWSER_BUSY_MESSAGE: &str = "別のファイルを受け取っています";
+pub(crate) const BROWSER_BUSY_MESSAGE: &str = "別のファイルをダウンロード中です";
 pub(crate) const BROWSER_MISSING_ID_MESSAGE: &str =
-    "この行にはダウンロード番号がありません。拡張を更新して取り込み直してください";
+    "この行にはダウンロード番号がありません。拡張を更新して再インポートしてください";
 
 #[derive(Debug, Clone)]
 pub(crate) struct BrowserFilePlan {
@@ -1973,10 +1990,10 @@ pub(crate) fn plan_browser_download(
         return Err(BROWSER_OFF_MESSAGE.into());
     }
     if !saved.route_downloads {
-        return Err("ダウンロードの振り分けはオフです".into());
+        return Err("ダウンロードの自動整理はオフです".into());
     }
     if saved.library_folder.trim().is_empty() {
-        return Err("ライブラリのフォルダを選んでから、振り分けをオンにしてください".into());
+        return Err("ライブラリのフォルダを選んでから、自動整理をオンにしてください".into());
     }
     let variation = crate::library_files::clean_variation(variation).unwrap_or_default();
     let filename = crate::library_files::safe_filename(filename)
@@ -3625,6 +3642,30 @@ mod tests {
     use crate::view::{avatar_cards, avatar_detail, queue_page};
 
     #[test]
+    fn products_by_category_returns_only_requested_category() {
+        let connection = open_memory().unwrap();
+        for (booth_id, title, category) in [
+            ("910001", "二番目のワールド", "world"),
+            ("910002", "衣装", "outfit"),
+            ("910003", "一番目のワールド", "world"),
+        ] {
+            connection
+                .execute(
+                    "INSERT INTO products
+                     (booth_id, title, category, imported_at, updated_at)
+                     VALUES (?1, ?2, ?3, '2026-01-01', '2026-01-01')",
+                    params![booth_id, title, category],
+                )
+                .unwrap();
+        }
+
+        assert_eq!(
+            product_ids_by_category(&connection, Category::World).unwrap(),
+            vec!["910003".to_string(), "910001".to_string()]
+        );
+    }
+
+    #[test]
     fn path_compare_folds_case_only_on_windows() {
         assert_eq!(
             normalize_path_key_os("/Users/A/VRCLibMan/File.ZIP", false),
@@ -5199,7 +5240,7 @@ mod tests {
     #[test]
     fn browser_download_needs_the_opt_in_and_routing_before_any_file_moves() {
         let mut connection = open_memory().unwrap();
-        let root = std::env::temp_dir().join(format!("vrclibman-browser-dl-{}", std::process::id()));
+        let root = crate::library_files::resolved_temp_dir().join(format!("vrclibman-browser-dl-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let library = root.join("library");
         let downloads = root.join("Downloads");
@@ -5213,7 +5254,7 @@ mod tests {
         browser_settings(&connection, &library, true, false).unwrap();
         assert!(plan_browser_download(&connection, "424242", "通常", "2336025")
             .unwrap_err()
-            .contains("振り分けはオフ"));
+            .contains("自動整理はオフ"));
         browser_settings(&connection, &library, true, true).unwrap();
         assert!(plan_browser_download(&connection, "424242", "", "note.txt")
             .unwrap_err()
@@ -5545,7 +5586,7 @@ mod tests {
     #[test]
     fn startup_sweep_moves_only_the_staged_file_without_network() {
         let mut connection = open_memory().unwrap();
-        let root = std::env::temp_dir().join(format!("vrclibman-sweep-on-{}", std::process::id()));
+        let root = crate::library_files::resolved_temp_dir().join(format!("vrclibman-sweep-on-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let downloads = root.join("Downloads");
         let library = root.join("library");

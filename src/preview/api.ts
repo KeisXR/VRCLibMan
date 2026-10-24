@@ -852,7 +852,7 @@ function importExport(json: string): ImportReport {
   }
   if (inserted + updated + unchanged > 0 && variations === 0 && downloads === 0) {
     warnings.push(
-      "バリエーションもダウンロードも 0 件です。ファイルの有無は分かりません。拡張の「解析結果をコピー」で構造を確認するか、ライブラリを取り込み直すか、フォルダを調べてください",
+      "バリエーションもダウンロードも 0 件です。ファイルの有無は分かりません。拡張の「解析結果をコピー」で構造を確認するか、ライブラリを再インポートするか、フォルダを調べてください",
     );
   }
   return {
@@ -1003,6 +1003,10 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       return cards() as T;
     case "get_avatar":
       return detail(String(args.id ?? "")) as T;
+    case "list_products_by_category":
+      return store.products
+        .filter((item) => item.category === args.category)
+        .map((item) => itemView(item, false)) as T;
     case "probe_remote_files":
       store.remoteChecked = true;
       return detail(String(args.id ?? "")) as T;
@@ -1190,10 +1194,10 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
         throw new Error("内蔵ブラウザはオフです。拡張のダウンロードを使ってください");
       }
       if (!store.settings.routeDownloads) {
-        throw new Error("ダウンロードの振り分けはオフです");
+        throw new Error("ダウンロードの自動整理はオフです");
       }
       if (!store.settings.libraryFolder.trim()) {
-        throw new Error("ライブラリのフォルダを選んでから、振り分けをオンにしてください");
+        throw new Error("ライブラリのフォルダを選んでから、自動整理をオンにしてください");
       }
       const boothId = String(args.boothId ?? "");
       const variation = String(args.variation ?? "");
@@ -1204,7 +1208,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       if (!row) throw new Error("ダウンロード項目がありません");
       const number = /^\d{4,12}$/.test(filename);
       if (!number && !/\.(unitypackage|zip|rar|7z|vrm)$/i.test(filename)) {
-        throw new Error("この行にはダウンロード番号がありません。拡張を更新して取り込み直してください");
+        throw new Error("この行にはダウンロード番号がありません。拡張を更新して再インポートしてください");
       }
       row.state = "local";
       row.localPath = `${store.settings.libraryFolder}\\${boothId}\\${filename}`;

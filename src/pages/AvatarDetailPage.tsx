@@ -152,7 +152,7 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
   );
 }
 
-function ItemCard({ item }: { item: ItemView }) {
+export function ItemCard({ item }: { item: ItemView }) {
   const { refresh, notify, fail } = useShell();
   const [busy, setBusy] = useState("");
 
@@ -218,7 +218,7 @@ function ItemCard({ item }: { item: ItemView }) {
         )}
         <div id={`files-${item.boothId}`}>
           {item.downloads.length === 0 && item.localFileCount === 0 && (
-            <p className="meta">ファイル情報はまだありません。取り込み直すか、フォルダを調べてください</p>
+            <p className="meta">ファイル情報はまだありません。再インポートするか、フォルダを調べてください</p>
           )}
           {item.downloads.length > 0 && item.remoteConfigured && item.remoteChecked && !item.remoteReachable && (
             <p className="meta">リモートのフォルダを確認できません。接続してからもう一度開いてください。</p>
@@ -299,7 +299,7 @@ function DownloadFiles({
       variation: file.variation,
       filename: file.filename,
       phase: "receiving",
-      message: "受け取っています",
+      message: "ダウンロード中",
     });
     try {
       await api.downloadBoothFile(item.boothId, file.variation, file.filename);
@@ -350,7 +350,7 @@ function DownloadFiles({
     <>
       {unnamed && (
         <p className="meta">
-          ファイル名がない行は番号だけ出しています。拡張を更新してライブラリを取り込み直すと、名前が付きます。
+          ファイル名がない行は番号だけ出しています。拡張を更新してライブラリを再インポートすると、名前が付きます。
         </p>
       )}
       <ul className="file-list">
@@ -426,7 +426,7 @@ function DownloadRow({
               receive(file);
             }}
           >
-            {receiving === key ? "受け取っています" : "受け取る"}
+            {receiving === key ? "ダウンロード中" : "ダウンロード"}
           </button>
         )}
         {file.state === "local" && file.localPath && (
