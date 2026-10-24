@@ -3,12 +3,12 @@
   if (typeof module === "object" && module.exports) module.exports = api;
   root.VrcLibManRequestPolicy = api;
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
-  const MIN_INTERVAL_MS = 1000;
+  const DEFAULT_INTERVAL_MS = 1000;
   const ALLOWED_INTERVALS_MS = [1000, 500, 250];
 
   function normalizeIntervalMs(value) {
     const number = Number(value);
-    return ALLOWED_INTERVALS_MS.includes(number) ? number : MIN_INTERVAL_MS;
+    return ALLOWED_INTERVALS_MS.includes(number) ? number : DEFAULT_INTERVAL_MS;
   }
   const DEFAULT_RETRY_MS = 10000;
   const MAX_RETRY_MS = 60000;
@@ -27,7 +27,7 @@
   }
 
   function createPacer(
-    intervalMs = MIN_INTERVAL_MS,
+    intervalMs = DEFAULT_INTERVAL_MS,
     now = () => Date.now(),
     pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   ) {
@@ -49,7 +49,7 @@
   }
 
   return {
-    MIN_INTERVAL_MS, ALLOWED_INTERVALS_MS, normalizeIntervalMs,
+    DEFAULT_INTERVAL_MS, ALLOWED_INTERVALS_MS, normalizeIntervalMs,
     DEFAULT_RETRY_MS, MAX_RETRY_MS,
     retryAfterMs, createPacer, isThrottled, canUseJsonFallback,
   };
