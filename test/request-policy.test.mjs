@@ -16,6 +16,16 @@ test("Retry-After respects seconds, HTTP dates and invalid values", () => {
   assert.equal(policy.retryAfterMs("invalid"), null);
 });
 
+test("Retry-After rejects signed, exponent, ISO and non-GMT values", () => {
+  for (const value of ["-120", "+5", "1e3", " - 1", "2015-10-21T07:28:00Z", "Wed, 21 Oct 2015 07:28:00", "Wed, 21 Oct 2015 07:28:00 +0900"]) {
+    assert.equal(policy.retryAfterMs(value), null, value);
+  }
+  assert.equal(policy.retryAfterMs("2015"), 2015000);
+  const now = Date.parse("2015-10-21T07:27:30Z");
+  assert.equal(policy.retryAfterMs("  Wed, 21 Oct 2015 07:28:00 GMT  ", now), 30000);
+  assert.equal(policy.retryAfterMs("Wednesday, 21-Oct-15 07:28:00 GMT", now), 30000);
+});
+
 test("allowed intervals are normalized and unsupported values default to safe mode", () => {
   assert.deepEqual(policy.ALLOWED_INTERVALS_MS, [1000, 500, 250]);
   for (const ms of policy.ALLOWED_INTERVALS_MS) assert.equal(policy.normalizeIntervalMs(ms), ms);

@@ -7,6 +7,7 @@ const rust = readFileSync("src-tauri/src/local_import.rs", "utf8");
 const popup = readFileSync("extension/popup.js", "utf8");
 const manifest = JSON.parse(readFileSync("extension/manifest.json", "utf8"));
 const config = JSON.parse(readFileSync("src-tauri/tauri.conf.json", "utf8"));
+const agents = readFileSync("AGENTS.md", "utf8");
 
 test("extension and app share the fixed loopback port", () => {
   assert.match(rust, new RegExp(`LOCAL_IMPORT_PORT: u16 = ${port}`));
@@ -24,6 +25,7 @@ test("popup sends the export to the app and can wake it", () => {
   assert.match(popup, /https:\/\/accounts\.booth\.pm\/library/);
   assert.equal(popup.includes("chrome.cookies"), false);
   assert.equal(manifest.permissions.includes("cookies"), false);
-  assert.equal(manifest.version, "0.1.10");
+  assert.match(manifest.version, /^\d+\.\d+\.\d+$/);
+  assert.match(agents, new RegExp(`拡張の版は \`${manifest.version.replaceAll(".", "\\.")}\``));
   assert.deepEqual(config.plugins["deep-link"].desktop.schemes, ["vrclibman"]);
 });

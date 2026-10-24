@@ -157,7 +157,7 @@ pub fn set_booth_page_interval(
     interval_ms: u64,
 ) -> Result<(), String> {
     if crate::browser::library_walk_running() {
-        return Err("取り込み中はアクセス間隔を変更できません".into());
+        return Err("インポート中はアクセス間隔を変更できません".into());
     }
     let connection = db(&state)?;
     db::set_booth_page_interval_ms(&connection, interval_ms)
