@@ -133,7 +133,7 @@ async function enrich(products) {
     }
     // Do not fall back to another endpoint after explicit access denial.
     // In particular, JSON must not be used to bypass an age/login gate.
-    if (htmlStatus === 401 || htmlStatus === 403) continue;
+    if (!requestPolicy.canUseJsonFallback(htmlStatus)) continue;
     if (needsDetail(product)) {
       try {
         const response = await fetchWithBackoff(`https://booth.pm/ja/items/${product.boothId}.json`, {
