@@ -358,6 +358,13 @@ export function SettingsPage() {
             <SettingRow label="メンテナンス" help="不足している初期データの追加や、商品の紐づけの再計算を行います。">
               <div className="inline-control"><button className="button" type="button" onClick={() => void restore()}>初期データを追加</button><button className="button" type="button" onClick={() => void reresolve()}>対応表を再適用</button><button className="button" type="button" onClick={() => void reopenSetup()}>セットアップを再表示</button></div>
             </SettingRow>
+            <details className="settings-details privacy-notice">
+              <summary>プライバシー</summary>
+              <p>本アプリには、利用者の情報を開発者へ送信する機能はありません。</p>
+              <p>アカウント情報・購入情報・設定は端末内で扱います。分類には同じ端末の Ollama または Apple のオンデバイスモデルを使用します。</p>
+              <p>BOOTH／pixiv でのログインや閲覧には、そのサービスとの通信を行います。内蔵ブラウザのログイン状態は端末内に保存し、選択したファイルのダウンロード時には BOOTH の Cookie を利用します。</p>
+              <p>ログイン状態は「ログアウトしてセッションを消す」で削除できます。ライブラリ情報や設定は、この操作では削除されません。</p>
+            </details>
           </section>
         </div>
       )}

@@ -34,7 +34,16 @@
     </label>
     <p class="hint">自分で押した BOOTH の Unity / VRChat 用ファイルだけを Downloads/VRCLibMan/商品ID に置きます。アプリがライブラリのフォルダへ移します。一括では取りません。</p>
     <p id="status"></p>
-    <p id="extension-version" class="hint"></p>
+    <footer class="popup-footer">
+      <p id="extension-version" class="hint"></p>
+      <details class="privacy-notice">
+        <summary>プライバシー</summary>
+        <p>本拡張には、利用者の情報を開発者へ送信する機能はありません。</p>
+        <p>操作した BOOTH ページの商品情報・購入情報を、同じ PC の VRCLibMan に送ります。アプリへ送れない場合は JSON ファイルとして保存します。</p>
+        <p>ページの読み込みや商品説明の補完で BOOTH に通信します。パスワードや Cookie はアプリへ送りません。</p>
+        <p>ペアリングコードと設定はブラウザ内に保存し、拡張の削除で消せます。書き出した JSON とアプリに送った情報は、拡張を削除しても残ります。</p>
+      </details>
+    </footer>
     <script src="extract.js"></script>
     <script src="request-policy.js"></script>
     <script src="popup.js"></script>
