@@ -27,7 +27,11 @@ export function BrowserPage({ enabled }: { enabled: boolean }) {
   }
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled) {
+      setIntervalReady(false);
+      return;
+    }
+    setIntervalReady(false);
     let alive = true;
     let stop = () => {};
     void refreshLog();
