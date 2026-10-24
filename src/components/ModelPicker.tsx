@@ -37,9 +37,9 @@ export function ModelPicker({
             <span className="meta">
               {checked
                 ? modelInstalled(models, choice.name)
-                  ? "この PC に導入済み"
-                  : "この PC に未導入"
-                : "導入状況は未確認"}
+                  ? "導入済み"
+                  : "未導入"
+                : "未確認"}
             </span>
           </span>
         </label>

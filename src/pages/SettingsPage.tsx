@@ -131,7 +131,7 @@ export function SettingsPage() {
     if (!settings) return;
     if (!window.confirm(modelDownloadPrompt(settings.ollamaModel.trim()))) return;
     setPulling(true);
-    setStatus(`${settings.ollamaModel} を取得しています`);
+    setStatus(`${settings.ollamaModel} 取得中`);
     try {
       await api.saveSettings(settings);
       await api.pullOllamaModel(settings.ollamaModel.trim());
@@ -226,7 +226,7 @@ export function SettingsPage() {
   }
 
   async function refreshCatalog() {
-    setStatus("プロファイル一覧を取得しています");
+    setStatus("プロファイル一覧を取得中");
     try {
       const report = await api.refreshAvatarCatalog();
       notify(`対応表を更新しました。新しく ${report.added} 件、合計 ${report.total} 件です`);
@@ -291,7 +291,7 @@ export function SettingsPage() {
             <SettingRow label="確信度のしきい値" help="0〜1 で指定します。要確認は名前と対応表の一致も使って判断します。">
               <input className="short-input" type="number" min={0} max={1} step={0.05} value={settings.confidenceThreshold} onChange={(e) => setSettings({ ...settings, confidenceThreshold: Number(e.target.value) })} />
             </SettingRow>
-            <div className="section-actions"><button className="button" type="button" onClick={() => void testOllama()}>接続を確認</button><span className="meta">{installedSize ? `モデルサイズ ${formatBytes(installedSize)}` : models.length ? `導入済み: ${models.join("、")}` : "導入済みモデルは未確認です"}</span></div>
+            <div className="section-actions"><button className="button" type="button" onClick={() => void testOllama()}>接続を確認</button><span className="meta">{installedSize ? `モデルサイズ ${formatBytes(installedSize)}` : models.length ? `導入済み: ${models.join("、")}` : "導入済みモデル：未確認"}</span></div>
             <details className="settings-details"><summary>分類モデルについて詳しく</summary><p>今の設定は {settings.ollamaModel}、分類は {settings.llmBackend === "apple" ? "Apple のオンデバイスモデル" : "Ollama"} です。Apple は macOS 27.2 以上で使えるときだけ選べ、選んでも既定のモデル名は変わりません。温度は 0.1 固定です。要確認は、モデルが自分で付けた数値ではなく、名前が商品文と対応表に結び付いたかで決めます。</p><p>「モデルを取得」は、押したときだけ Ollama からモデルを1回ダウンロードします。数 GB になることがあります。「接続を確認」で導入済みのモデルを候補に出します。</p></details>
           </section>
 

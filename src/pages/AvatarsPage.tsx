@@ -54,10 +54,10 @@ export function AvatarsPage() {
             onChange={(event) => setQuery(event.target.value)}
           />
           <button className="button" type="button" onClick={() => setOnlyOwned((value) => !value)}>
-            {onlyOwned ? "所持だけ表示している" : "所持だけで絞る"}
+            {onlyOwned ? "所持のみ" : "所持で絞り込み"}
           </button>
           <button className="button" type="button" onClick={() => setGrouped((value) => !value)}>
-            {grouped ? "素体でまとめている" : "一覧で表示"}
+            {grouped ? "素体別" : "一覧"}
           </button>
         </div>
       </div>
