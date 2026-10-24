@@ -235,7 +235,7 @@ Windows の実ライブラリ（約 110 件、`gemma4:12b`、新しい一時 DB�
 5. 名前解決、突合、詳細の出し分けを変えるときは、先に `src-tauri/src` のテストを更新する。見本の `src/preview/api.ts` は画面用なので、同じ変更が必要なら別途合わせる。
 6. スキーマを変えるときは `user_version` を上げた移行を足す。既存の `library.sqlite` を暗黙に作り直さない。
 
-Windows の配布は未署名の NSIS（`.exe`）である。実行ファイルは `VRCLibMan.exe`。Mac は Apple Silicon（`aarch64-apple-darwin`）と macOS 14 以降だけの未署名 dmg で、ad-hoc 署名（`signingIdentity` が `-`）だけを付ける。公証はしない。Intel と universal は作らない。`v*` タグが `package.json`、`tauri.conf.json`、`Cargo.toml` の版と一致するとき、`.github/workflows/release.yml` が下書き Release に両方を載せる。拡張 zip は Windows ジョブだけが作る。`manifest.json` と `popup.html` が参照するファイルが無いときは失敗する。zip は `tauri-action` が返した release id で下書きへ載せる。`num_ctx` やモデルの初期値は変えない。16GB 未満向けに既定モデルは切り替えない。コード署名の秘密情報は置かない。
+Windows の配布は未署名の NSIS（`.exe`）である。実行ファイルは `VRCLibMan.exe`。Mac は Apple Silicon（`aarch64-apple-darwin`）と macOS 14 以降だけの未署名 dmg で、ad-hoc 署名（`signingIdentity` が `-`）だけを付ける。公証はしない。Intel と universal は作らない。`v*` タグが `package.json`、`package-lock.json`、`tauri.conf.json`、`Cargo.toml`、`Cargo.lock` の版と一致し、タグのコミットが main に含まれるとき、`.github/workflows/release.yml` が下書き Release を 1 回だけ作り（`scripts/check-release-version.mjs` で照合）、その release id に Windows と Mac のビルドを載せる。公開済みの同じタグには載せない。拡張の版は独立しており、タグとは照合しない。拡張 zip は ubuntu の別ジョブが作る。`manifest.json` と `popup.html` が参照するファイルが無いときは失敗する。Mac は補助プログラムに macOS 27.2 SDK が要るので `xcode-27` ランナーで Xcode 27.2 を選ぶ。`workflow_dispatch` はタグも Release も作らない試しビルドで、成果物は Artifacts に置く。`num_ctx` やモデルの初期値は変えない。16GB 未満向けに既定モデルは切り替えない。コード署名の秘密情報は置かない。
 
 Mac の内蔵ブラウザは `data_directory` を使わない。固定の 16 バイト `data_store_identifier`（`vrclibman-booth!`）でメイン画面と分ける。ログアウトはフォルダ削除ではなく、そのデータストアの `clear_all_browsing_data` と `remove_data_store` である。`vrclibman://` は `.app` を `/Applications` に置いたときだけ動く。
 
