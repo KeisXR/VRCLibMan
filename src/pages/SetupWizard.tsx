@@ -156,12 +156,12 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
           <>
             <p>分類に使うモデルを選んでください。軽量な qwen3.5:4b を推奨します。既定は {defaultModel}、保存済みの設定は {status?.model || defaultModel} です。あとから設定でも変更できます。</p>
             <ModelPicker value={model} models={ollama?.models ?? []} checked={connected} disabled={checking || pulling || usingApple} onChange={setSelectedModel} />
-            {checking && <p className="meta">Ollama を確認しています</p>}
+            {checking && <p className="meta">Ollama 接続確認中</p>}
             {!checking && !connected && <p className="meta">Ollama にはまだつながっていません。{ollamaError}</p>}
             {!checking && connected && !usingApple && <p className="meta">{model || "モデル"} は{ready ? "導入済みです。" : "未導入です。取得するか、別のモデルを選べます。"}</p>}
             {pulling && (
               <div className="progress">
-                <p>{progress?.message ?? "取得しています"}</p>
+                <p>{progress?.message ?? "取得中"}</p>
                 <div className={progress && progress.total > 0 ? "track" : "track indeterminate"}>
                   <span style={{ width: progress && progress.total > 0 ? `${percent}%` : undefined }} />
                 </div>

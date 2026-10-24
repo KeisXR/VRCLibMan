@@ -315,7 +315,7 @@ export default function App() {
 }
 
 function accountLabel(account: BoothAccount | null): string {
-  if (!account) return "確認しています";
+  if (!account) return "確認中";
   if (!account.loggedIn) return "未ログイン";
   if (account.displayName.trim()) return account.displayName.trim();
   if (account.pixivId.trim()) return account.pixivId.trim();

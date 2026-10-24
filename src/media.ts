@@ -18,9 +18,9 @@ export function formatBytes(size: number): string {
 export type FilePresence = "local" | "partial" | "remote" | "missing" | "unknown";
 
 export const FILE_PRESENCE_LABEL: Record<FilePresence, string> = {
-  local: "ローカルにある",
-  partial: "一部だけある",
-  remote: "リモートのみ",
+  local: "ローカル",
+  partial: "一部あり",
+  remote: "リモート",
   missing: "未ダウンロード",
   unknown: "不明",
 };

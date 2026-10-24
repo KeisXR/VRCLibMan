@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, listenBoothFile, openExternal, openLocal, revealInFolder } from "../api";
 import { useShell } from "../App";
-import { confidenceLabel, filePresence, formatBytes } from "../media";
+import { FILE_PRESENCE_LABEL, confidenceLabel, filePresence, formatBytes } from "../media";
 import { CATEGORY_LABEL } from "../types";
 import type { AvatarDetail, BoothFileStatus, DownloadView, ItemView, Knowledge } from "../types";
 import { FileMark, Thumb, errorText } from "../ui";
@@ -436,12 +436,12 @@ function DownloadRow({
         )}
         {file.state === "local" && item.remoteConfigured && item.remoteReachable && (
           <button type="button" disabled={busy === file.filename} onClick={() => push(file)}>
-            {busy === file.filename ? "コピー中" : "リモートに送る"}
+            {busy === file.filename ? "コピー中" : "リモートへコピー"}
           </button>
         )}
         {file.state === "remote" && item.remoteChecked && (
           <button type="button" disabled={busy === file.filename} onClick={() => pull(file)}>
-            {busy === file.filename ? "コピー中" : "ローカルに取ってくる"}
+            {busy === file.filename ? "コピー中" : "ローカルへコピー"}
           </button>
         )}
       </div>
@@ -450,8 +450,6 @@ function DownloadRow({
 }
 
 function placeLabel(file: DownloadView, item: ItemView): string {
-  if (file.state === "local") return "ローカルにある";
-  if (item.remoteConfigured && !item.remoteChecked) return "確認しています";
-  if (file.state === "remote") return "リモートにだけある";
-  return "未ダウンロード";
+  if (file.state !== "local" && item.remoteConfigured && !item.remoteChecked) return "確認中";
+  return FILE_PRESENCE_LABEL[file.state];
 }
