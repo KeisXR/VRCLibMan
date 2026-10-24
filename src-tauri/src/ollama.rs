@@ -16,8 +16,8 @@ category は次のどれか一つです。
 - hair: 髪、ヘア、ウィッグ、ポニーテール
 - accessory: メガネ、ピアス、イヤリング、ネックレス、帽子、バッグ、ヘイロー
 - texture: 瞳・目・メイクのテクスチャ。衣装やギミックにしない
-- gimmick: ギミック、表情アニメ、シェーダー、ツール、こたつ、毛布、布団、磁気ディスクなどの小物
-- world: ワールド。ワールド用の小物は gimmick
+- gimmick: アバター用のギミック、表情アニメ、アバター用シェーダー、ツール、こたつ、毛布、布団、磁気ディスクなどの小物
+- world: ワールド本体、ワールド用の小物、ワールドギミック、Udon、UdonSharp、ワールド用シェーダー、ワールドプレハブ。アバター用のギミックは gimmick
 - other: どれにも当てはまらない
 
 compatible_avatars:
@@ -30,15 +30,16 @@ compatible_avatars:
 - Modular Avatar、QvPen、lilToon、Poiyomi、PhysBone、シェーダー名はアバターではない
 - 名前が一つも書かれていなければ空配列にする
 
-is_generic は、汎用、どのアバターでも、素体を問わない、と書かれているときだけ true。
+is_generic は、汎用、どのアバターでも、素体を問わない、と書かれているときだけ true。ワールドは false。
 
 例:
 - 「ライム -Lime- / オリジナル3Dモデル」「ライムのオリジナル3Dモデルです」→ avatar, [\"ライム\"], false
 - 「【プラム専用】Hairグラデーション」→ hair, [\"プラム\"], false
 - 「Noctilume EyeTexture」→ texture, [], false
 - 「ネオンヘイロー」→ accessory, [], false
-- 「こたつ」「表情アニメーション」→ gimmick, [], false
+- 「こたつ」「表情アニメーション」「表情ギミック」→ gimmick, [], false
 - 「どのアバターでも使えるペンライト」→ gimmick, [], true
+- 「ワールド用の小物」「Udonのスイッチ」「ワールド用シェーダー」「World Prefab」→ world, [], false
 - 「【半額セール中】真冬 Mafuyu / オリジナル3Dモデル」→ avatar, [\"真冬\"], false
 - 「クルミ ver1.2 対応のワンピース」→ outfit, [\"クルミ ver1.2\"], false
 
@@ -85,7 +86,10 @@ pub fn model_ready(models: &[InstalledModel], wanted: &str) -> bool {
     selected_model(models, wanted).is_some()
 }
 
-pub fn selected_model<'a>(models: &'a [InstalledModel], wanted: &str) -> Option<&'a InstalledModel> {
+pub fn selected_model<'a>(
+    models: &'a [InstalledModel],
+    wanted: &str,
+) -> Option<&'a InstalledModel> {
     let matches = |name: &str| {
         name == wanted
             || name
@@ -121,7 +125,10 @@ pub fn parse_installed_models(text: &str) -> Result<Vec<InstalledModel>, String>
     Ok(models)
 }
 
-pub async fn list_models(client: &reqwest::Client, base: &str) -> Result<Vec<InstalledModel>, String> {
+pub async fn list_models(
+    client: &reqwest::Client,
+    base: &str,
+) -> Result<Vec<InstalledModel>, String> {
     let base = validate_base_url(base)?;
     let response = client
         .get(format!("{base}/api/tags"))
@@ -269,7 +276,10 @@ pub async fn pull_model(
             if let Some(error) = value.get("error").and_then(Value::as_str) {
                 return Err(format!("モデルを取得できません: {error}"));
             }
-            let status = value.get("status").and_then(Value::as_str).unwrap_or("取得中");
+            let status = value
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("取得中");
             let completed = value.get("completed").and_then(Value::as_u64).unwrap_or(0);
             let total = value.get("total").and_then(Value::as_u64).unwrap_or(0);
             on_progress(completed, total, status);
@@ -438,6 +448,19 @@ mod tests {
         .unwrap();
         assert_eq!(kept.compatible_avatars, vec!["クルミ ver1.2".to_string()]);
         assert!((parsed.confidence - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn schema_offers_world_without_changing_the_default_model() {
+        let schema = extraction_schema();
+        let categories = schema["properties"]["category"]["enum"]
+            .as_array()
+            .expect("category enum");
+        assert!(categories.iter().any(|value| value == "world"));
+        assert!(SYSTEM_PROMPT.contains("ワールド"));
+        assert!(SYSTEM_PROMPT.contains("UdonSharp"));
+        assert!(!SYSTEM_PROMPT.contains("ワールド用の小物は gimmick"));
+        assert_eq!(crate::model::DEFAULT_OLLAMA_MODEL, "gemma4:12b");
     }
 
     #[test]

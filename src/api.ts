@@ -24,6 +24,7 @@ import type {
   QueuePage,
   ScanReport,
   Settings,
+  StagedDownload,
 } from "./types";
 
 export function isTauri(): boolean {
@@ -134,6 +135,8 @@ export const api = {
   pushRemoteFile: (boothId: string, variation: string, filename: string) =>
     call<void>("push_remote_file", { boothId, variation, filename }),
   cacheThumbnails: () => call<number>("cache_thumbnails"),
+  stagedDownloads: () => call<StagedDownload[]>("list_staged_downloads"),
+  routeStagedDownload: (path: string) => call<void>("route_staged_download", { path }),
 };
 
 export async function saveLibraryAndScan(folder: string, settings?: Settings): Promise<ScanReport> {

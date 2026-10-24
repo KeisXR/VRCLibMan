@@ -271,6 +271,8 @@ pub struct Settings {
     pub remote_library_folder: String,
     pub route_downloads: bool,
     pub llm_backend: String,
+    pub background_mode: bool,
+    pub launch_at_login: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -288,10 +290,23 @@ pub struct SettingsInput {
     pub route_downloads: bool,
     #[serde(default = "default_llm_backend")]
     pub llm_backend: String,
+    #[serde(default)]
+    pub background_mode: bool,
+    #[serde(default)]
+    pub launch_at_login: bool,
 }
 
 fn default_llm_backend() -> String {
     "ollama".into()
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StagedLeftover {
+    pub path: String,
+    pub booth_id: String,
+    pub filename: String,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

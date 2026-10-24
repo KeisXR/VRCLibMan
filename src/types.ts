@@ -28,6 +28,7 @@ export interface AvatarCard {
   outfitCount: number;
   hairCount: number;
   gimmickCount: number;
+  worldCount: number;
   genericCount: number;
 }
 
@@ -192,6 +193,15 @@ export interface Settings {
   remoteLibraryFolder: string;
   routeDownloads: boolean;
   llmBackend: "ollama" | "apple";
+  backgroundMode: boolean;
+  launchAtLogin: boolean;
+}
+
+export interface StagedDownload {
+  path: string;
+  boothId: string;
+  filename: string;
+  reason: string;
 }
 
 export interface LibraryStats {

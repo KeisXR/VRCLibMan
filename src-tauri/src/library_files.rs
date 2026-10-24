@@ -748,6 +748,60 @@ fn fill_places_inner(snapshot: &mut Snapshot, remote_folder: &str, probe_remote:
     snapshot.placed_downloads = placed;
 }
 
+/// Direct files (and symlinks) at `{downloads}/VRCLibMan/<booth id>/<name>`.
+/// Symlinked folders are not followed. Extra directories are not entered.
+pub(crate) fn staged_download_candidates(downloads: &Path) -> Vec<PathBuf> {
+    if !downloads.is_absolute() {
+        return Vec::new();
+    }
+    let Ok(root) = std::fs::canonicalize(downloads) else {
+        return Vec::new();
+    };
+    let staging = root.join("VRCLibMan");
+    let Ok(staging_meta) = std::fs::symlink_metadata(&staging) else {
+        return Vec::new();
+    };
+    if staging_meta.file_type().is_symlink() || !staging_meta.is_dir() {
+        return Vec::new();
+    }
+    let Ok(entries) = std::fs::read_dir(&staging) else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    for entry in entries.flatten() {
+        let id_path = entry.path();
+        let Ok(meta) = std::fs::symlink_metadata(&id_path) else {
+            continue;
+        };
+        if meta.file_type().is_symlink() || !meta.is_dir() {
+            continue;
+        }
+        let id = entry.file_name();
+        let Some(id) = id.to_str() else {
+            continue;
+        };
+        if !valid_booth_id(id) {
+            continue;
+        }
+        let Ok(children) = std::fs::read_dir(&id_path) else {
+            continue;
+        };
+        for child in children.flatten() {
+            let path = child.path();
+            let Ok(meta) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if meta.is_dir() && !meta.file_type().is_symlink() {
+                continue;
+            }
+            if meta.is_file() || meta.file_type().is_symlink() {
+                found.push(path);
+            }
+        }
+    }
+    found
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
