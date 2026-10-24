@@ -282,6 +282,27 @@ fn booth_host(url: &Url) -> bool {
     host == "booth.pm" || host.ends_with(".booth.pm")
 }
 
+/// The WebView supplied cookies for the original download URL, not for a
+/// redirect target. Send them only on the initial request, even if a redirect
+/// stays within booth.pm: the target can have different cookie domain/path rules.
+fn initial_download_cookie<'a>(
+    cookie_header: &'a str,
+    initial_url: &Url,
+    current_url: &Url,
+    redirect_index: usize,
+) -> Option<&'a str> {
+    if redirect_index == 0
+        && current_url == initial_url
+        && initial_url.scheme() == "https"
+        && booth_host(initial_url)
+        && !cookie_header.is_empty()
+    {
+        Some(cookie_header)
+    } else {
+        None
+    }
+}
+
 /// ワーカー側から呼ぶ。UI スレッドや dispatch_ui の中では呼ばない。
 pub fn session_header(
     window: &tauri::webview::WebviewWindow<tauri::Wry>,
@@ -354,13 +375,15 @@ pub async fn fetch_staged_file(
         .map_err(|_| QuietError::Failed)?;
     let mut current = download_url.clone();
     let mut response = None;
-    for _ in 0..8 {
+    for redirect_index in 0..8 {
         let mut request = client
             .get(current.clone())
             .header(reqwest::header::ACCEPT, "*/*")
             .header(reqwest::header::REFERER, "https://booth.pm/")
             .header(reqwest::header::USER_AGENT, download_user_agent());
-        if booth_host(&current) && !cookie_header.is_empty() {
+        if let Some(cookie_header) =
+            initial_download_cookie(cookie_header, download_url, &current, redirect_index)
+        {
             let mut value = reqwest::header::HeaderValue::from_str(cookie_header)
                 .map_err(|_| QuietError::Failed)?;
             value.set_sensitive(true);
@@ -616,6 +639,56 @@ mod tests {
         assert!(script.contains("data-signed-in"));
         assert!(script.contains("data-user-name"));
         assert!(script.contains("data-user-thumbnail-url"));
+    }
+
+    #[test]
+    fn cookies_are_only_attached_to_the_initial_download_request() {
+        let original = Url::parse("https://booth.pm/downloadables/2336025").unwrap();
+        let same_host_redirect = Url::parse("https://booth.pm/downloadables/redirected").unwrap();
+        let subdomain_redirect = Url::parse("https://accounts.booth.pm/library").unwrap();
+        let external_redirect = Url::parse("https://cdn.example.test/file.zip?signature=abc").unwrap();
+        let lookalike_host = Url::parse("https://evil-booth.pm/file.zip").unwrap();
+        let insecure_url = Url::parse("http://booth.pm/downloadables/2336025").unwrap();
+        let session_cookie = "session_id=secret";
+
+        assert_eq!(
+            initial_download_cookie(session_cookie, &original, &original, 0),
+            Some(session_cookie)
+        );
+        assert_eq!(initial_download_cookie("", &original, &original, 0), None);
+        assert_eq!(
+            initial_download_cookie(session_cookie, &original, &original, 1),
+            None,
+            "cookies must not be reused after an initial redirect"
+        );
+        for redirected in [
+            &same_host_redirect,
+            &subdomain_redirect,
+            &external_redirect,
+            &lookalike_host,
+        ] {
+            assert_eq!(
+                initial_download_cookie(session_cookie, &original, redirected, 1),
+                None,
+                "a redirected request must not receive the initial URL's cookies"
+            );
+            assert_eq!(
+                initial_download_cookie(session_cookie, &original, redirected, 0),
+                None,
+                "a different URL must not receive the initial URL's cookies"
+            );
+        }
+        assert_eq!(
+            initial_download_cookie(session_cookie, &insecure_url, &insecure_url, 0),
+            None
+        );
+        // Check that the actual fetch path consults this guard before attaching Cookie.
+        let production = include_str!("quiet.rs").split("mod tests").next().unwrap();
+        let fetch = function_body(production, "fn fetch_staged_file");
+        assert!(fetch.contains(
+            "initial_download_cookie(cookie_header, download_url, &current, redirect_index)"
+        ));
+        assert!(!fetch.contains("booth_host(&current) && !cookie_header.is_empty()"));
     }
 
     #[test]
