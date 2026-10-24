@@ -173,7 +173,7 @@ export function ImportPage() {
             checked={extractAfter}
             onChange={(event) => setExtractAfter(event.target.checked)}
           />{" "}
-          取り込んだあと、未抽出の商品を Ollama で分類する
+          インポートしたあと、未抽出の商品を Ollama で分類する
         </span>
       </label>
       <form

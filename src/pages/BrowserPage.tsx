@@ -101,7 +101,7 @@ export function BrowserPage({ enabled }: { enabled: boolean }) {
                 })
               }
             >
-              今開いているページを取り込む
+              今開いているページをインポート
             </button>
             <button
               className="button"

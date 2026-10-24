@@ -551,7 +551,7 @@ pub(crate) fn place_into_library(
     booth_id: &str,
 ) -> Result<PathBuf, String> {
     let Some(library) = library.filter(|path| !path.as_os_str().is_empty()) else {
-        return Err("ライブラリのフォルダを選んでから、振り分けをオンにしてください".into());
+        return Err("ライブラリのフォルダを選んでから、自動整理をオンにしてください".into());
     };
     let downloads = downloads_folder()?;
     place_staged_download(source, &downloads, library, booth_id)

@@ -38,7 +38,7 @@ export function WorldsPage() {
       <div className="page-head">
         <div>
           <h1>ワールド</h1>
-          <p>取り込んだワールド商品を、アバターとの結び付きに関係なく表示します。</p>
+          <p>インポートしたワールド商品を、アバターとの結び付きに関係なく表示します。</p>
         </div>
         <input
           className="search"

@@ -160,7 +160,7 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
       <div className="setup-card panel">
         <p className="meta">初回セットアップ</p>
         <h1>
-          {step === "model" ? "分類用のモデル" : step === "extension" ? "Booth から取り込む" : "閉じたあとの動き"}
+          {step === "model" ? "分類用のモデル" : step === "extension" ? "Booth からインポート" : "閉じたあとの動き"}
         </h1>
         {step === "model" && (
           <>

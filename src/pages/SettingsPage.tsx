@@ -165,6 +165,7 @@ export function SettingsPage() {
 
   async function pullOllamaModel() {
     if (!settings) return;
+    if (!window.confirm(`${settings.ollamaModel} を Ollama からダウンロードします。数 GB になることがあります。続けますか？`)) return;
     setPulling(true);
     setStatus(`${settings.ollamaModel} を取得しています`);
     try {
@@ -330,28 +331,29 @@ export function SettingsPage() {
               <input className="short-input" type="number" min={0} max={1} step={0.05} value={settings.confidenceThreshold} onChange={(e) => setSettings({ ...settings, confidenceThreshold: Number(e.target.value) })} />
             </SettingRow>
             <div className="section-actions"><button className="button" type="button" onClick={() => void testOllama()}>接続を確認</button><span className="meta">{installedSize ? `モデルサイズ ${formatBytes(installedSize)}` : models.length ? `導入済み: ${models.join("、")}` : "導入済みモデルは未確認です"}</span></div>
+            <details className="settings-details"><summary>分類モデルについて詳しく</summary><p>今の設定は {settings.ollamaModel}、分類は {settings.llmBackend === "apple" ? "Apple のオンデバイスモデル" : "Ollama"} です。Apple は macOS 27.2 以上で使えるときだけ選べ、選んでも既定のモデル名は変わりません。温度は 0.1 固定です。要確認は、モデルが自分で付けた数値ではなく、名前が商品文と対応表に結び付いたかで決めます。</p><p>「モデルを取得」は、押したときだけ Ollama からモデルを1回ダウンロードします。数 GB になることがあります。「接続を確認」で導入済みのモデルを候補に出します。</p></details>
           </section>
 
           <section className="settings-section">
             <header><h2>ライブラリとダウンロード</h2><p>ファイルの保存先と自動整理を設定します。</p></header>
-            <SettingRow label="ライブラリのフォルダ" help="選ぶと保存してスキャンします。ホームやボリュームの直下は選べません。">
+            <SettingRow label="ライブラリのフォルダ" help="インポート画面と同じフォルダです。選ぶと保存してスキャンします。ホームやボリュームの直下は選べません。">
               <div className="inline-control"><input value={settings.libraryFolder} placeholder="ダウンロードしたファイルの移動先" onChange={(e) => setSettings({ ...settings, libraryFolder: e.target.value })} /><button className="button" type="button" onClick={() => void (async () => { try { const path = await chooseFolder(); if (!path) return; const next = { ...settings, libraryFolder: path }; setSettings(next); const result = await saveLibraryAndScan(path, next); setSavedFolder(path); setStatus(""); notify(`ライブラリのフォルダを保存し、${result.indexed} 件を調べ、${result.linked} 件を商品と結び付けました${result.truncated ? "。上限に達したため途中です" : ""}`); refresh(); } catch (err) { const message = errorText(err); setStatus(message); fail(message); } })()}>選ぶ</button></div>
             </SettingRow>
             <SettingRow label="リモートライブラリ" help="ネットワークドライブやマウント済みのフォルダを指定します。">
               <div className="inline-control"><input value={settings.remoteLibraryFolder} placeholder="リモートのフォルダ" onChange={(e) => setSettings({ ...settings, remoteLibraryFolder: e.target.value })} /><button className="button" type="button" onClick={() => void chooseFolder().then((path) => { if (path) setSettings({ ...settings, remoteLibraryFolder: path }); }, (err: unknown) => fail(errorText(err)))}>選ぶ</button></div>
             </SettingRow>
             <SettingRow label="ダウンロードを自動整理" help="自分でダウンロードしたファイルだけを商品別にライブラリへ移動します。">
-              <label className="switch-label"><input type="checkbox" checked={settings.routeDownloads} onChange={(e) => { const enabled = e.target.checked; if (enabled && !settings.libraryFolder.trim()) { void (async () => { try { const path = await chooseFolder(); if (!path) return; const next = { ...settings, libraryFolder: path, routeDownloads: true }; setSettings(next); const result = await saveLibraryAndScan(path, next); setSavedFolder(path); notify(`ライブラリのフォルダを保存し、${result.indexed} 件を調べ、${result.linked} 件を商品と結び付けました`); refresh(); } catch (err) { fail(errorText(err)); } })(); return; } setSettings({ ...settings, routeDownloads: enabled }); }} />有効にする</label>
+              <label className="switch-label"><input type="checkbox" checked={settings.routeDownloads} onChange={(e) => { const enabled = e.target.checked; if (enabled && !settings.libraryFolder.trim()) { void (async () => { try { const path = await chooseFolder(); if (!path) return; const next = { ...settings, libraryFolder: path, routeDownloads: true }; setSettings(next); const result = await saveLibraryAndScan(path, next); setSavedFolder(path); setStatus(""); notify(`ライブラリのフォルダを保存し、${result.indexed} 件を調べ、${result.linked} 件を商品と結び付けました${result.truncated ? "。上限に達したため途中です" : ""}`); refresh(); } catch (err) { const message = errorText(err); setStatus(message); fail(message); } })(); return; } setSettings({ ...settings, routeDownloads: enabled }); }} />有効にする</label>
             </SettingRow>
-            <details className="settings-details"><summary>自動整理について詳しく</summary><p>拡張機能または内蔵ブラウザで選んだ1件だけを Downloads/VRCLibMan/商品ID に保存し、アプリがライブラリへ移動します。リモートとのコピーも操作したファイルだけです。</p></details>
+            <details className="settings-details"><summary>自動整理について詳しく</summary><p>自動整理は既定でオフです。オンにするときは、移動先のライブラリフォルダが必要です。オンにすると、拡張は自分で押したダウンロードだけを、この PC のダウンロードフォルダの VRCLibMan/商品ID に置き、アプリがライブラリへ移します。内蔵ブラウザを有効にしているときは、未ダウンロードの行を押したその1件も、同じ場所へダウンロードします。</p><p>それ以外の場所にあるファイルは移動しません。アプリから一括ではダウンロードしません。リモートの確認は画面を出してから行い、送る・取ってくるは押したファイルだけをコピーします。コピー中は画面の上に表示します。切れている共有先では待たずに未ダウンロードとして表示します。</p></details>
           </section>
 
           <section className="settings-section">
             <header><h2>ブラウザ連携</h2><p>BOOTH を開く方法を選びます。</p></header>
             <SettingRow label="内蔵ブラウザ" help="既定は拡張機能です。有効化すると確認画面が表示されます。">
-              <div className="inline-control"><button className={`button ${settings.builtinBrowser ? "" : "primary"}`} type="button" onClick={() => void setBuiltinBrowser(!settings.builtinBrowser)}>{settings.builtinBrowser ? "無効にする" : "有効にする"}</button>{settings.builtinBrowser && <button className="button danger" type="button" onClick={() => void (async () => { if (!window.confirm("ブラウザを閉じ、このアプリの中の BOOTH のログイン状態を消します。")) return; try { await api.clearBoothSession(); notify("セッションを消しました"); } catch (err) { fail(errorText(err)); } })()}>ログアウトしてデータを消す</button>}</div>
+              <div className="inline-control"><button className={`button ${settings.builtinBrowser ? "" : "primary"}`} type="button" onClick={() => void setBuiltinBrowser(!settings.builtinBrowser)}>{settings.builtinBrowser ? "無効にする" : "有効にする"}</button>{settings.builtinBrowser && <button className="button danger" type="button" onClick={() => void (async () => { if (!window.confirm("ブラウザを閉じ、このアプリの中の BOOTH のログイン状態を消します。")) return; try { await api.clearBoothSession(); notify("セッションを消しました"); } catch (err) { fail(errorText(err)); } })()}>ログアウトしてセッションを消す</button>}</div>
             </SettingRow>
-            <details className="settings-details"><summary>内蔵ブラウザについて詳しく</summary><p>ログイン状態はアプリ専用フォルダに保存されます。ページ移動は「ライブラリ全取得」を押したときだけで、一括ダウンロードや年齢確認の自動通過は行いません。</p></details>
+            <details className="settings-details"><summary>内蔵ブラウザについて詳しく</summary><p>既定は拡張機能です。内蔵ブラウザは、自分でログインして使う別のモードです。ページを辿るのはブラウザ画面の「ライブラリ全取得」だけです。一括のダウンロードはしません。年齢確認も自動では進みません。</p><p>ログイン状態はこのアプリ専用のフォルダに残り、ログアウトでそのフォルダを消します。</p></details>
           </section>
 
           <section className="settings-section">
@@ -362,6 +364,7 @@ export function SettingsPage() {
             <SettingRow label="ログイン時に起動" help="バックグラウンド動作が有効な場合だけ使用できます。">
               <label className="switch-label"><input type="checkbox" checked={settings.launchAtLogin} disabled={!settings.backgroundMode} onChange={(e) => setSettings({ ...settings, launchAtLogin: e.target.checked })} />有効にする</label>
             </SettingRow>
+            <details className="settings-details"><summary>起動と常駐について詳しく</summary><p>既定はオフです。オフのときはウィンドウを閉じるとアプリも終了し、トレイは残りません。オンのときはウィンドウを破棄してメモリを放し、プロセスと 17321 の受け付けだけ残します。トレイ（Windows）またはメニューバー（macOS）から開き直すか、終了できます。</p><p>ログイン時の起動は、バックグラウンドをオンにしたときだけ使えます。バックグラウンドをオフにすると、ログイン項目もオフになります。両方オンのとき、ログインから起動したプロセスはウィンドウを出さず、トレイまたはメニューバーから開けます。</p></details>
           </section>
 
           {link && <section className="settings-section">
@@ -369,7 +372,7 @@ export function SettingsPage() {
             <SettingRow label="ペアリングコード" help={link.listening ? `127.0.0.1:${link.port} で待機中です。` : link.error || "受信を開始できませんでした。"}>
               <div className="inline-control"><input readOnly value={link.token} /><button className="button" type="button" onClick={() => void regenerateToken()}>作り直す</button></div>
             </SettingRow>
-            <details className="settings-details"><summary>接続について詳しく</summary><p>コードを拡張機能へ一度貼り付けます。作り直すと以前のコードと接続は無効になり、アプリが閉じている場合は専用リンクから起動します。</p></details>
+            <details className="settings-details"><summary>接続について詳しく</summary><p>拡張は今開いている Booth のページだけを読み、この PC の 127.0.0.1:{link.port} に送ります。アプリは Booth を取りに行きません。コードを拡張のポップアップに一度貼ってください。最初に届いた拡張だけを覚えます。</p><p>コードを作り直すと、以前のコードと結び付きは外れます。違うコードが続くと、しばらく受け付けません。アプリが閉じているときは、拡張が vrclibman://import で起動します。</p></details>
           </section>}
 
           <section className="settings-section">
@@ -377,6 +380,7 @@ export function SettingsPage() {
             {catalog && <SettingRow label="同梱の対応表" help={`${catalog.credit}（${catalog.author}）・${catalog.count} 件・取得日 ${catalog.fetchedOn || "未記録"}${catalog.upstreamUpdated ? `・上流 ${catalog.upstreamUpdated}` : ""}`}>
               <div className="inline-control"><button className="button primary" type="button" onClick={() => void refreshCatalog()}>対応表を更新</button><button className="button" type="button" onClick={() => void openExternal(catalog.sourceUrl)}>出典</button><button className="button" type="button" onClick={() => void openExternal(catalog.termsUrl)}>利用規約</button></div>
             </SettingRow>}
+            {catalog && <details className="settings-details"><summary>対応表について詳しく</summary><p>定期的には取りに行きません。「対応表を更新」を押したときだけ GitHub から1回取得します。規約ではコピー、保存、二次利用、商用利用が許されています。正確性の保証はなく、アバターの著作権は各作者にあります。共通素体シート（スペキュラム合金さん）はライセンスが不明なので入れていません。</p></details>}
             <SettingRow label="メンテナンス" help="不足している初期データの追加や、商品の紐づけの再計算を行います。">
               <div className="inline-control"><button className="button" type="button" onClick={() => void restore()}>初期データを追加</button><button className="button" type="button" onClick={() => void reresolve()}>対応表を再適用</button><button className="button" type="button" onClick={() => void reopenSetup()}>セットアップを再表示</button></div>
             </SettingRow>
