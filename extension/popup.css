@@ -64,6 +64,17 @@ input {
   background: var(--surface);
   color: var(--text);
 }
+select {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 4px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 1px var(--line);
+  background: var(--surface);
+  color: var(--text);
+}
 label.check { display: flex; gap: 8px; align-items: flex-start; color: var(--text); }
 label.check input { width: auto; margin: 3px 0 0; }
 .hint { font-size: 12px; }
