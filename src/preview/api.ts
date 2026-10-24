@@ -509,6 +509,7 @@ function classify(avatar: AvatarRecord): {
   const generic: ItemView[] = [];
   const owned: OwnedBody[] = [];
   for (const item of activeProducts()) {
+    if (item.category === "world") continue;
     const linked = new Set(linksOf(item.boothId));
     const inFamily = [...linked].some((id) => family.has(id));
     if (item.category === "avatar") {
@@ -529,14 +530,12 @@ function classify(avatar: AvatarRecord): {
         key: item.category ?? "uncategorized",
         item: itemView(item, !linked.has(avatar.id)),
       });
-    } else if (item.category === "world" && linked.size === 0) {
-      specific.push({ key: "world", item: itemView(item, false) });
     } else if (item.isGeneric && linked.size === 0) {
       generic.push(itemView(item, false));
     }
   }
   const sections: Section[] = [];
-  for (const key of ["outfit", "hair", "accessory", "texture", "gimmick", "world", "other", "uncategorized"]) {
+  for (const key of ["outfit", "hair", "accessory", "texture", "gimmick", "other", "uncategorized"]) {
     const items = specific.filter((row) => row.key === key).map((row) => row.item);
     if (items.length > 0) sections.push({ category: key, items });
   }
@@ -573,7 +572,6 @@ function cards(): AvatarCard[] {
         outfitCount: sectionCount(view.sections, "outfit"),
         hairCount: sectionCount(view.sections, "hair"),
         gimmickCount: sectionCount(view.sections, "gimmick"),
-        worldCount: sectionCount(view.sections, "world"),
         genericCount: view.generic.length,
       };
     });
@@ -583,7 +581,7 @@ function referencedOnly(avatarId: string): boolean {
   return store.links.some((link) => {
     if (link.avatarId !== avatarId) return false;
     const product = activeProducts().find((item) => item.boothId === link.productId);
-    return product != null && product.category !== "avatar";
+    return product != null && product.category !== "avatar" && product.category !== "world";
   });
 }
 
@@ -591,6 +589,21 @@ function detail(id: string): AvatarDetail {
   const avatar = activeAvatars().find((item) => item.id === id);
   if (!avatar) throw new Error("アバターが見つかりません");
   const view = classify(avatar);
+  const family = familyOf(avatar);
+  const unsupportedOutfits = activeProducts()
+    .filter((item) => {
+      if (item.category !== "outfit") return false;
+      const linked = linksOf(item.boothId);
+      return (
+        !linked.some((id) => family.has(id)) &&
+        !(item.isGeneric && linked.length === 0)
+      );
+    })
+    .map((item) => itemView(item, false))
+    .sort((a, b) => {
+      if (a.title !== b.title) return a.title < b.title ? -1 : 1;
+      return a.boothId < b.boothId ? -1 : a.boothId > b.boothId ? 1 : 0;
+    });
   const body = store.baseBodies.find((item) => item.id === avatar.baseBody);
   const siblings = activeAvatars()
     .filter(
@@ -615,6 +628,7 @@ function detail(id: string): AvatarDetail {
     ownedProducts: view.owned,
     sections: view.sections,
     genericItems: view.generic,
+    unsupportedOutfits,
   };
 }
 

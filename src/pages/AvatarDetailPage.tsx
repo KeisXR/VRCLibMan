@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { api, listenBoothFile, openExternal, openLocal, revealInFolder } from "../api";
 import { useShell } from "../App";
 import { FILE_PRESENCE_LABEL, confidenceLabel, filePresence, formatBytes } from "../media";
@@ -123,6 +123,7 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
           {detail.sections.length === 0 && detail.genericItems.length === 0 && (
             <p className="empty">このアバターに結び付いた衣装・髪・ギミックはまだありません。</p>
           )}
+          {detail.unsupportedOutfits.length > 0 && <UnsupportedOutfits key={detail.id} items={detail.unsupportedOutfits} />}
         </div>
         {!detail.isBuiltin && (
           <aside className="panel" style={{ padding: 14 }}>
@@ -150,6 +151,68 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
         )}
       </div>
     </section>
+  );
+}
+
+function UnsupportedOutfits({ items }: { items: ItemView[] }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [limit, setLimit] = useState(30);
+  const needle = useDeferredValue(query.trim().toLocaleLowerCase("ja"));
+  const matches = useMemo(
+    () =>
+      items.filter((item) =>
+        `${item.title} ${item.shop} ${item.boothId}`
+          .toLocaleLowerCase("ja")
+          .includes(needle),
+      ),
+    [items, needle],
+  );
+
+  return (
+    <details
+      className="generic unsupported-outfits"
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary>非対応の衣装 {items.length} 件</summary>
+      {open && (
+        <>
+          <p className="meta">
+            このアバターや共通素体への対応が登録されていない衣装です。もちふぃった～などで調整する際の候補として表示しています。
+          </p>
+          <input
+            className="search"
+            aria-label="非対応の衣装を検索"
+            placeholder="商品名・ショップ名・商品IDで検索"
+            value={query}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setLimit(30);
+            }}
+          />
+          <p className="meta">
+            {matches.length} 件中 {Math.min(limit, matches.length)} 件を表示
+          </p>
+          {matches.length === 0 && (
+            <p className="empty">該当する衣装はありません。</p>
+          )}
+          <div className="stack">
+            {matches.slice(0, limit).map((item) => (
+              <ItemCard key={item.boothId} item={item} />
+            ))}
+          </div>
+          {matches.length > limit && (
+            <button
+              className="button"
+              type="button"
+              onClick={() => setLimit((value) => value + 30)}
+            >
+              さらに表示
+            </button>
+          )}
+        </>
+      )}
+    </details>
   );
 }
 
@@ -250,7 +313,7 @@ export function ItemCard({ item }: { item: ItemView }) {
 }
 
 function avatarNeedsRemoteProbe(detail: AvatarDetail): boolean {
-  const items = [...detail.sections.flatMap((section) => section.items), ...detail.genericItems];
+  const items = [...detail.sections.flatMap((section) => section.items), ...detail.genericItems, ...detail.unsupportedOutfits];
   return items.some((item) => item.remoteConfigured && !item.remoteChecked);
 }
 

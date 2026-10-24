@@ -315,6 +315,70 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       },
     );
     await t.test(
+      "avatar pages separate adjustment candidates and keep worlds in their library",
+      async () => {
+        await route("#/");
+        await wait(() => document.querySelector(".avatar-card"));
+        assert.ok(
+          [...document.querySelectorAll(".avatar-card .pill")].every(
+            (node) => !node.textContent.includes("ワールド"),
+          ),
+        );
+        const expected = await api.avatar("manuka");
+        assert.ok(expected.unsupportedOutfits.length > 0);
+        assert.ok(
+          expected.sections.every((section) => section.category !== "world"),
+        );
+        assert.ok(
+          expected.genericItems.every((item) => item.category !== "world"),
+        );
+        const worlds = await api.productsByCategory("world");
+        assert.ok(worlds.length > 0);
+        await route("#/worlds");
+        await wait(
+          () => document.querySelector("main h1")?.textContent === "ワールド",
+        );
+        await wait(() => text().includes(worlds[0].title));
+        await route("#/avatar/manuka");
+        await wait(() => document.querySelector(".unsupported-outfits"));
+        const candidates = document.querySelector(".unsupported-outfits");
+        assert.ok(
+          candidates
+            .querySelector("summary")
+            .textContent.includes(String(expected.unsupportedOutfits.length)),
+        );
+        assert.equal(candidates.querySelectorAll(".item").length, 0);
+        await act(async () => {
+          candidates.open = true;
+          candidates.dispatchEvent(new window.Event("toggle"));
+          await delay();
+        });
+        await wait(() => candidates.querySelector(".item"));
+        assert.equal(
+          candidates.querySelectorAll(".item").length,
+          Math.min(30, expected.unsupportedOutfits.length),
+        );
+        assert.ok(candidates.textContent.includes("もちふぃった～"));
+        assert.ok(
+          candidates.textContent.includes(expected.unsupportedOutfits[0].title),
+        );
+        await route("#/avatar/lime");
+        await wait(
+          () => document.querySelector("main h1")?.textContent === "ライム",
+        );
+        await wait(
+          () =>
+            document.querySelector(".unsupported-outfits") == null ||
+            !document.querySelector(".unsupported-outfits").open,
+        );
+        assert.ok(
+          !document
+            .querySelector(".unsupported-outfits")
+            ?.querySelector(".item"),
+        );
+      },
+    );
+    await t.test(
       "Apple model setup remains available with Ollama offline",
       async () => {
         const { requestRefresh } = await server.ssrLoadModule("/src/api.ts");
