@@ -153,6 +153,8 @@ pub fn run() {
             commands::list_knowledge,
             commands::get_settings,
             commands::save_settings,
+            commands::get_booth_page_interval,
+            commands::set_booth_page_interval,
             commands::update_product,
             commands::link_file,
             commands::save_avatar,

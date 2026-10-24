@@ -247,6 +247,7 @@ fn ensure_ready(connection: &Connection) -> Result<(), String> {
         ("confidence_threshold", "0.6"),
         ("library_folder", ""),
         ("builtin_browser", "0"),
+        ("booth_page_interval_ms", "1000"),
         ("remote_library_folder", ""),
         ("route_downloads", "0"),
         ("llm_backend", "ollama"),
@@ -389,6 +390,23 @@ pub(crate) fn save_settings(connection: &Connection, input: &SettingsInput) -> R
         if launch_at_login { "1" } else { "0" },
     )?;
     Ok(())
+}
+
+pub(crate) fn booth_page_interval_ms(connection: &Connection) -> Result<u64, String> {
+    let stored = setting(connection, "booth_page_interval_ms")?
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(crate::library_walk::PAGE_DELAY_MS);
+    Ok(crate::library_walk::normalize_page_delay_ms(stored))
+}
+
+pub(crate) fn set_booth_page_interval_ms(
+    connection: &Connection,
+    interval_ms: u64,
+) -> Result<(), String> {
+    if !crate::library_walk::allowed_page_delay_ms(interval_ms) {
+        return Err("BOOTH のアクセス間隔は 250、500、1000 ミリ秒から選んでください".into());
+    }
+    set_setting(connection, "booth_page_interval_ms", &interval_ms.to_string())
 }
 
 pub(crate) fn set_library_folder(connection: &Connection, path: &str) -> Result<(), String> {
@@ -5696,6 +5714,20 @@ mod tests {
             .unwrap();
         assert_eq!(foreign_count, 0);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn booth_interval_is_safe_by_default_and_only_accepts_known_values() {
+        let connection = open_memory().unwrap();
+        assert_eq!(booth_page_interval_ms(&connection).unwrap(), 1000);
+        for interval in [1000, 500, 250] {
+            set_booth_page_interval_ms(&connection, interval).unwrap();
+            assert_eq!(booth_page_interval_ms(&connection).unwrap(), interval);
+        }
+        assert!(set_booth_page_interval_ms(&connection, 50).is_err());
+        assert_eq!(booth_page_interval_ms(&connection).unwrap(), 250);
+        set_setting(&connection, "booth_page_interval_ms", "invalid").unwrap();
+        assert_eq!(booth_page_interval_ms(&connection).unwrap(), 1000);
     }
 
     fn section_items(detail: &crate::view::AvatarDetail, category: &str) -> Vec<(String, bool)> {

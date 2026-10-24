@@ -146,6 +146,24 @@ pub async fn probe_remote_files(app: AppHandle, id: String) -> Result<AvatarDeta
 }
 
 #[tauri::command]
+pub fn get_booth_page_interval(state: State<'_, AppState>) -> Result<u64, String> {
+    let connection = db(&state)?;
+    db::booth_page_interval_ms(&connection)
+}
+
+#[tauri::command]
+pub fn set_booth_page_interval(
+    state: State<'_, AppState>,
+    interval_ms: u64,
+) -> Result<(), String> {
+    if crate::browser::library_walk_running() {
+        return Err("インポート中はアクセス間隔を変更できません".into());
+    }
+    let connection = db(&state)?;
+    db::set_booth_page_interval_ms(&connection, interval_ms)
+}
+
+#[tauri::command]
 pub fn list_queue(
     state: State<'_, AppState>,
     kind: String,

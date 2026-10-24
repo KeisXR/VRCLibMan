@@ -1,6 +1,6 @@
 //! 拡張の「ライブラリをすべて送る」と同じページの進み方。
 //! ライブラリを `?page=` で 1 ページずつ読み、そのあとギフトを同じ間隔で読む。
-//! ページの間隔は `extension/popup.js` の `sleep(250)`。ファイルは取りに行かない。
+//! 既定は 1 秒、250ms は明示的な高速設定のみ。ファイルは取りに行かない。
 
 use serde_json::Value;
 use std::collections::HashSet;
@@ -8,9 +8,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use url::Url;
 
-/// `extension/popup.js` がページのあいだに待つミリ秒。
-pub const PAGE_DELAY_MS: u64 = 250;
+/// Default pacing for new installs and unknown or invalid stored values.
+pub const PAGE_DELAY_MS: u64 = 1000;
 pub const PAGE_DELAY: Duration = Duration::from_millis(PAGE_DELAY_MS);
+
+pub fn allowed_page_delay_ms(value: u64) -> bool {
+    matches!(value, 1000 | 500 | 250)
+}
+
+pub fn normalize_page_delay_ms(value: u64) -> u64 {
+    if allowed_page_delay_ms(value) { value } else { PAGE_DELAY_MS }
+}
 const MAX_PAGE: u32 = 200;
 
 pub const LIBRARY_PAGE: &str = "https://accounts.booth.pm/library";
@@ -480,8 +488,16 @@ mod tests {
 
     #[test]
     fn page_urls_match_the_extension_and_reject_age_gates() {
-        assert_eq!(PAGE_DELAY_MS, 250);
-        assert_eq!(PAGE_DELAY, Duration::from_millis(250));
+        assert!(allowed_page_delay_ms(250));
+        assert!(allowed_page_delay_ms(500));
+        assert!(allowed_page_delay_ms(1000));
+        assert!(!allowed_page_delay_ms(100));
+        assert_eq!(normalize_page_delay_ms(250), 250);
+        assert_eq!(normalize_page_delay_ms(500), 500);
+        assert_eq!(normalize_page_delay_ms(1000), 1000);
+        assert_eq!(normalize_page_delay_ms(1), 1000);
+        assert_eq!(PAGE_DELAY_MS, 1000);
+        assert_eq!(PAGE_DELAY, Duration::from_millis(1000));
         assert_eq!(
             library_page_url("https://accounts.booth.pm/library?page=4", 1).unwrap(),
             "https://accounts.booth.pm/library?page=1"
@@ -572,7 +588,7 @@ mod tests {
         );
         assert_eq!(reads.load(Ordering::SeqCst), 2);
         assert_eq!(delays, vec![PAGE_DELAY]);
-        assert_eq!(delays[0].as_millis(), 250);
+        assert_eq!(delays[0].as_millis(), 1000);
         assert_eq!(collected.stop, WalkStop::Finished);
         assert_eq!(collected.pages, 2);
     }

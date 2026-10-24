@@ -1,6 +1,6 @@
 use crate::db;
 use crate::library_walk::{
-    self, PAGE_DELAY, PageSnapshot, WalkMachine, WalkSection, WalkStop, final_counts_line,
+    self, PageSnapshot, WalkMachine, WalkSection, WalkStop, final_counts_line,
     same_library_page, section_label, settled_stop, walk_block_reason,
 };
 use crate::model::ImportReport;
@@ -1402,6 +1402,11 @@ pub async fn import_library(app: AppHandle) -> Result<LibraryWalkReport, String>
         return Err("ライブラリのインポート中です".into());
     }
     let _guard = WalkRunningGuard;
+    let page_delay = {
+        let state = app.state::<crate::AppState>();
+        let connection = state.db.lock().map_err(|_| "データベースをロックできません".to_string())?;
+        Duration::from_millis(db::booth_page_interval_ms(&connection)?)
+    };
     WALK_CANCEL.store(false, Ordering::SeqCst);
     browser_log(&app, "ライブラリ全取得を開始");
     let mut machine = WalkMachine::new();
@@ -1420,7 +1425,7 @@ pub async fn import_library(app: AppHandle) -> Result<LibraryWalkReport, String>
                 machine.cancel();
                 break;
             }
-            pause_for(PAGE_DELAY).await;
+            pause_for(page_delay).await;
             if walk_cancel_requested() {
                 machine.cancel();
                 break;
@@ -1747,7 +1752,7 @@ mod tests {
         assert!(body.contains("dispatch_ui"));
         assert!(body.contains(".navigate("));
         assert!(body.contains("eval_with_callback"));
-        assert!(body.contains("PAGE_DELAY"));
+        assert!(body.contains("page_delay"));
         assert!(body.contains("import_export_json"));
         assert!(!body.contains("cookies_for_url"));
         assert!(!body.contains(".cookies("));
@@ -1762,7 +1767,7 @@ mod tests {
         assert!(!walk_production.contains("cookies_for_url"));
         assert!(!walk_production.contains("reqwest"));
         assert!(!walk_production.contains("downloadables"));
-        assert_eq!(library_walk::PAGE_DELAY_MS, 250);
+        assert_eq!(library_walk::PAGE_DELAY_MS, 1000);
     }
 
     #[test]

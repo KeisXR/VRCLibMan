@@ -14,6 +14,14 @@
       <input id="token" type="text" autocomplete="off" spellcheck="false" />
     </label>
     <button id="save-token" class="secondary" type="button">コードを保存</button>
+    <label for="booth-interval">BOOTHへのアクセス間隔
+      <select id="booth-interval">
+        <option value="1000">1.0秒（推奨・初期値）</option>
+        <option value="500">0.5秒（やや速い）</option>
+        <option value="250">0.25秒（高リスク）</option>
+      </select>
+    </label>
+    <p class="hint">短い間隔ほどアクセス制限・アカウントへの影響の可能性があります。高速設定でもアクセス制限は回避しません。</p>
     <button id="export" type="button">このページを送る</button>
     <button id="export-all" class="secondary" type="button">ライブラリをすべて送る</button>
     <button id="export-new" class="secondary" type="button">新しい購入だけ送る</button>
@@ -27,6 +35,7 @@
     <p class="hint">自分で押した BOOTH の Unity / VRChat 用ファイルだけを Downloads/VRCLibMan/商品ID に置きます。アプリがライブラリのフォルダへ移します。一括では取りません。</p>
     <p id="status"></p>
     <script src="extract.js"></script>
+    <script src="request-policy.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>

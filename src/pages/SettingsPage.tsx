@@ -91,7 +91,7 @@ export function SettingsPage() {
     if (!settings) return;
     if (enabled && !settings.builtinBrowser) {
       const accepted = window.confirm(
-        "内蔵ブラウザでは、このアプリの中で BOOTH / pixiv にメールアドレスとパスワードでログインします。ログイン情報はアプリ専用のフォルダに保存され、アプリはクッキーを読み出したり外へ送ったりしません。拡張機能でページを書き出すより、アカウントへのリスク（制限や停止を含む）が高くなることがあります。年齢確認を自動で進めることはありません。ページを辿るのは、ブラウザ画面の「ライブラリ全取得」を押したときだけです。一括のダウンロードはしません。ご自身の判断で使ってください。有効にしますか？",
+        "内蔵ブラウザでは、このアプリの中で BOOTH / pixiv にメールアドレスとパスワードでログインします。ログイン状態はアプリ専用の WebView データストアに保存されます。ファイルの「ダウンロード」を押した場合、アプリは BOOTH 用クッキーを読み出し、その 1 件の BOOTH 向けダウンロード要求に使用します。クッキーは VRCLibMan 独自の外部サーバーやダウンロード先の別ドメインには送りません。拡張機能でページを書き出すより、アカウントへのリスク（制限や停止を含む）が高くなることがあります。年齢確認を自動で進めることはありません。ページを辿るのは、ブラウザ画面の「ライブラリ全取得」を押したときだけです。一括のダウンロードはしません。ご自身の判断で使ってください。有効にしますか？",
       );
       if (!accepted) return;
     }
@@ -353,7 +353,7 @@ export function SettingsPage() {
             <SettingRow label="内蔵ブラウザ" help="既定は拡張機能です。有効化すると確認画面が表示されます。">
               <div className="inline-control"><button className={`button ${settings.builtinBrowser ? "" : "primary"}`} type="button" onClick={() => void setBuiltinBrowser(!settings.builtinBrowser)}>{settings.builtinBrowser ? "無効にする" : "有効にする"}</button>{settings.builtinBrowser && <button className="button danger" type="button" onClick={() => void (async () => { if (!window.confirm("ブラウザを閉じ、このアプリの中の BOOTH のログイン状態を消します。")) return; try { await api.clearBoothSession(); notify("セッションを消しました"); } catch (err) { fail(errorText(err)); } })()}>ログアウトしてセッションを消す</button>}</div>
             </SettingRow>
-            <details className="settings-details"><summary>内蔵ブラウザについて詳しく</summary><p>既定は拡張機能です。内蔵ブラウザは、自分でログインして使う別のモードです。ページを辿るのはブラウザ画面の「ライブラリ全取得」だけです。一括のダウンロードはしません。年齢確認も自動では進みません。</p><p>ログイン状態はこのアプリ専用のフォルダに残り、ログアウトでそのフォルダを消します。</p></details>
+            <details className="settings-details"><summary>内蔵ブラウザについて詳しく</summary><p>既定は拡張機能です。内蔵ブラウザは、自分でログインして使う別のモードです。ページを辿るのはブラウザ画面の「ライブラリ全取得」だけです。一括のダウンロードはしません。年齢確認も自動では進みません。</p><p>ログイン状態はこのアプリ専用の WebView データストアに残り、ログアウトで消します。ファイルの「ダウンロード」を押したときだけ、BOOTH 用クッキーをその1件の BOOTH 向けダウンロード要求に使います。クッキーを VRCLibMan 独自のサーバーや別ドメインへ送ることはありません。</p></details>
           </section>
 
           <section className="settings-section">

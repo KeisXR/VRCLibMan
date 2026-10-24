@@ -9,6 +9,7 @@ const diagnoseButton = document.querySelector("#diagnose");
 const diagnosisBox = document.querySelector("#diagnosis");
 const tokenInput = document.querySelector("#token");
 const routeInput = document.querySelector("#route-downloads");
+const intervalInput = document.querySelector("#booth-interval");
 const api = () => globalThis.VrcLibManExtract;
 const LOCAL_PORT = 17321;
 const LOCAL_BASE = `http://127.0.0.1:${LOCAL_PORT}`;
@@ -24,23 +25,31 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function retryAfterMs(response) {
-  const seconds = Number(response.headers.get("retry-after"));
-  if (Number.isFinite(seconds) && seconds > 0) return Math.min(seconds * 1000, 20000);
-  return 2000;
+const requestPolicy = globalThis.VrcLibManRequestPolicy;
+let paceBoothRequest = requestPolicy.createPacer();
+
+// Each user-started import captures the selected pace.
+function resetPacer() {
+  paceBoothRequest = requestPolicy.createPacer(requestPolicy.normalizeIntervalMs(intervalInput.value));
 }
 
 async function fetchWithBackoff(url, options) {
-  const first = await fetch(url, options);
-  if (first.status !== 429) return first;
-  const waitMs = retryAfterMs(first);
-  setStatus(`サーバーが混んでいるので ${Math.ceil(waitMs / 1000)} 秒待って再試行します`);
-  await sleep(waitMs);
-  const second = await fetch(url, options);
-  if (second.status === 429) {
-    throw new Error("サーバーが混んでいるため、ここまでで止めました");
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await paceBoothRequest();
+    const response = await fetch(url, options);
+    if (!requestPolicy.isThrottled(response.status)) return response;
+    if (attempt === 1) {
+      throw new Error("BOOTH のアクセス制限が続いているため、ここまでで止めました");
+    }
+    const requested = requestPolicy.retryAfterMs(response.headers.get("retry-after"));
+    const waitMs = requested ?? requestPolicy.DEFAULT_RETRY_MS;
+    if (waitMs > requestPolicy.MAX_RETRY_MS) {
+      throw new Error("BOOTH から長い待機時間を指定されたため、再試行せずここまでで止めました");
+    }
+    setStatus(`BOOTH のアクセス制限を受けたため ${Math.ceil(waitMs / 1000)} 秒待って一度だけ再試行します`);
+    await sleep(waitMs);
   }
-  return second;
+  throw new Error("BOOTH から応答が得られず、ここまでで止めました");
 }
 
 async function currentTab() {
@@ -87,7 +96,6 @@ async function readLibraryPages(startUrl, knownIds) {
   const lastPage = api().libraryLastPage(first.doc, firstUrl);
   try {
     for (let page = 2; page <= lastPage && !stopped; page += 1) {
-      await sleep(250);
       setStatus(`ライブラリ ${page}/${lastPage} ページを読んでいます（${products.length} 件）`);
       const pageUrl = api().libraryPageUrl(startUrl, page);
       const response = await fetchWithBackoff(pageUrl, { credentials: "include" });
@@ -129,6 +137,9 @@ async function enrich(products) {
     } catch (error) {
       if (error instanceof Error && error.message.includes("止めました")) throw error;
     }
+    // Do not fall back to another endpoint after explicit access denial.
+    // In particular, JSON must not be used to bypass an age/login gate.
+    if (!requestPolicy.canUseJsonFallback(htmlStatus)) continue;
     if (needsDetail(product)) {
       try {
         const response = await fetchWithBackoff(`https://booth.pm/ja/items/${product.boothId}.json`, {
@@ -145,7 +156,6 @@ async function enrich(products) {
       }
     }
     api().noteIfUnpublished(product, htmlStatus, jsonStatus);
-    await sleep(250);
   }
 }
 
@@ -153,6 +163,7 @@ function setBusy(busy) {
   button.disabled = busy;
   allButton.disabled = busy;
   newButton.disabled = busy;
+  intervalInput.disabled = busy;
   saveTokenButton.disabled = busy;
 }
 
@@ -193,6 +204,8 @@ async function refreshLink() {
   const token = await savedToken();
   tokenInput.value = token;
   routeInput.checked = await storedRoute();
+  const storedInterval = await chrome.storage.local.get({ boothIntervalMs: requestPolicy.DEFAULT_INTERVAL_MS });
+  intervalInput.value = String(requestPolicy.normalizeIntervalMs(storedInterval.boothIntervalMs));
   if (!token) {
     linkStatus.textContent = "未ペアリング。アプリの設定に出るコードを貼ってください";
     return;
@@ -353,6 +366,7 @@ async function download(products, source) {
 }
 
 button.addEventListener("click", async () => {
+  resetPacer();
   setBusy(true);
   try {
     setStatus("ページを読んでいます");
@@ -372,6 +386,7 @@ button.addEventListener("click", async () => {
 });
 
 async function sendLibrary(updateMode) {
+  resetPacer();
   setBusy(true);
   let products = [];
   try {
@@ -425,6 +440,20 @@ async function sendLibrary(updateMode) {
     setBusy(false);
   }
 }
+
+intervalInput.addEventListener("change", async () => {
+  const next = requestPolicy.normalizeIntervalMs(intervalInput.value);
+  const stored = await chrome.storage.local.get({ boothIntervalMs: requestPolicy.DEFAULT_INTERVAL_MS });
+  const old = requestPolicy.normalizeIntervalMs(stored.boothIntervalMs);
+  if (next === 250 && old !== 250 &&
+      !window.confirm("0.25秒間隔はBOOTHへのアクセス制限やアカウントへの影響が起きる可能性のある高リスク設定です。規約上の安全性は保証されません。この設定を使用しますか？")) {
+    intervalInput.value = String(old);
+    return;
+  }
+  await chrome.storage.local.set({ boothIntervalMs: next });
+  intervalInput.value = String(next);
+  setStatus(`BOOTHへのアクセス間隔を ${next / 1000} 秒に設定しました`);
+});
 
 allButton.addEventListener("click", () => sendLibrary(false));
 newButton.addEventListener("click", () => sendLibrary(true));

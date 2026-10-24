@@ -992,6 +992,8 @@ async function previewLibraryWalk(): Promise<LibraryWalkReport> {
   return report;
 }
 
+let boothPageIntervalMs = 1000;
+
 export async function dispatch<T>(command: string, args: Record<string, unknown>): Promise<T> {
   notePreviewCall(command);
   switch (command) {
@@ -1018,6 +1020,14 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       return { avatars: store.avatars, baseBodies: store.baseBodies } satisfies Knowledge as T;
     case "get_settings":
       return { ...store.settings } as T;
+    case "get_booth_page_interval":
+      return boothPageIntervalMs as T;
+    case "set_booth_page_interval": {
+      const next = Number(args.intervalMs);
+      if (![1000, 500, 250].includes(next)) throw new Error("BOOTH のアクセス間隔が不正です");
+      boothPageIntervalMs = next;
+      return undefined as T;
+    }
     case "extension_link":
       return { ...extensionLink } as T;
     case "regenerate_extension_token":

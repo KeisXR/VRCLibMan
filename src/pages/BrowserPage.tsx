@@ -9,6 +9,8 @@ export function BrowserPage({ enabled }: { enabled: boolean }) {
   const [busy, setBusy] = useState(false);
   const [walking, setWalking] = useState(false);
   const [walkMessage, setWalkMessage] = useState("");
+  const [intervalMs, setIntervalMs] = useState(1000);
+  const [intervalReady, setIntervalReady] = useState(false);
   const [report, setReport] = useState<ImportReport | null>(null);
   const [walkReport, setWalkReport] = useState<LibraryWalkReport | null>(null);
   const [logPath, setLogPath] = useState("");
@@ -25,10 +27,25 @@ export function BrowserPage({ enabled }: { enabled: boolean }) {
   }
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled) {
+      setIntervalReady(false);
+      return;
+    }
+    setIntervalReady(false);
     let alive = true;
     let stop = () => {};
     void refreshLog();
+    void api.boothPageInterval().then(
+      (value) => {
+        if (alive) {
+          setIntervalMs(value);
+          setIntervalReady(true);
+        }
+      },
+      (err: unknown) => {
+        if (alive) fail(errorText(err));
+      },
+    );
     void listenProgress((progress) => {
       if (alive && progress.job === "browser-library") setWalkMessage(progress.message);
     }).then((unlisten) => {
@@ -40,6 +57,21 @@ export function BrowserPage({ enabled }: { enabled: boolean }) {
       stop();
     };
   }, [enabled]);
+
+  async function changeInterval(value: number) {
+    if (busy || !intervalReady || value === intervalMs) return;
+    if (value === 250 && intervalMs !== 250 &&
+        !window.confirm("0.25秒間隔はBOOTHのアクセス制限やアカウントへの影響が発生し得る高リスク設定です。規約上の安全性は保証されません。変更しますか？")) {
+      return;
+    }
+    try {
+      await api.setBoothPageInterval(value);
+      setIntervalMs(value);
+      notify(`内蔵ブラウザのアクセス間隔を ${value / 1000} 秒に変更しました`);
+    } catch (err) {
+      fail(errorText(err));
+    }
+  }
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -72,6 +104,19 @@ export function BrowserPage({ enabled }: { enabled: boolean }) {
             ブラウザは別ウィンドウで開きます。ログインと年齢確認は自分で行ってください。
             「ライブラリ全取得」はライブラリのあとギフトを、1ページずつ間隔を空けて読みます。ファイルはダウンロードしません。
           </p>
+          <label className="field" style={{ maxWidth: 300, marginBottom: 8 }}>
+            <span>BOOTHへのアクセス間隔（ライブラリ全取得）</span>
+            <select
+              value={intervalMs}
+              disabled={busy || !intervalReady}
+              onChange={(event) => void changeInterval(Number(event.target.value))}
+            >
+              <option value={1000}>1.0秒（推奨・初期値）</option>
+              <option value={500}>0.5秒（やや速い）</option>
+              <option value={250}>0.25秒（高リスク）</option>
+            </select>
+          </label>
+          <p className="meta">短い間隔はアクセス制限やアカウントへの影響の可能性があります。高速設定でも制限を回避するものではありません。</p>
           <div className="row-actions">
             <button className="button primary" type="button" disabled={busy} onClick={() => void run(() => api.openBoothBrowser())}>
               ブラウザを開く
