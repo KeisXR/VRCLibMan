@@ -241,7 +241,7 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
         )}
         {step === "extension" && (
           <>
-            <p>いつもの取り込みは Chrome 拡張です。次の順で一度だけ結んでください。</p>
+            <p>いつものインポートは Chrome 拡張です。次の順で一度だけ結んでください。</p>
             <ol className="setup-steps">
               <li>Chrome の拡張機能ページでデベロッパーモードをオンにし、「パッケージ化されていない拡張機能を読み込む」から extension フォルダを選びます。</li>
               <li>下のペアリングコードをコピーし、拡張のポップアップに貼って保存します。</li>

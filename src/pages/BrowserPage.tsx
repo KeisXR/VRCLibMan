@@ -58,12 +58,12 @@ export function BrowserPage({ enabled }: { enabled: boolean }) {
       <div className="page-head">
         <div>
           <h1>ブラウザ</h1>
-          <p>自分で BOOTH にログインし、今のページか、ライブラリとギフトを1ページずつ取り込みます。</p>
+          <p>自分で BOOTH にログインし、今のページか、ライブラリとギフトを1ページずつインポートします。</p>
         </div>
       </div>
       {!enabled && (
         <p className="note">
-          内蔵ブラウザはオフです。設定で有効にすると使えます。既定の取り込みは拡張機能のままです。
+          内蔵ブラウザはオフです。設定で有効にすると使えます。既定のインポートは拡張機能のままです。
         </p>
       )}
       {enabled && (

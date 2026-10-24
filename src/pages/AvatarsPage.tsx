@@ -64,7 +64,7 @@ export function AvatarsPage() {
       {cards && cards.length === 0 && (
         <div className="empty">
           まだ持っているアバターがありません。Booth の拡張で今見ているページを JSON
-          にし、取り込みから読み込み、ローカルの Ollama で分類すると、ここへ並びます。
+          にし、インポートから読み込み、ローカルの Ollama で分類すると、ここへ並びます。
         </div>
       )}
       {cards && cards.length > 0 && filtered.length === 0 && <div className="empty">一致するアバターがありません。</div>}
