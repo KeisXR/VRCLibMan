@@ -3,13 +3,13 @@ use crate::db::{self, ExtractJob};
 use crate::model::{
     AvatarCandidate, AvatarInput, BaseBodyInput, CatalogInfo, CatalogRefresh, ExtractReport,
     ImportReport, JobProgress, Knowledge, LibraryStats, OllamaStatus, ProductUpdate, ScanReport,
-    Settings, SettingsInput, SetupStatus, StagedLeftover,
+    Category, Settings, SettingsInput, SetupStatus, StagedLeftover,
 };
 use crate::apple_fm::{self, AppleError};
 use crate::model::Extraction;
 use crate::ollama::{self, model_ready};
 use crate::scan;
-use crate::view::{self, AvatarCard, AvatarDetail, ProductOption, QueuePage};
+use crate::view::{self, AvatarCard, AvatarDetail, ItemView, ProductOption, QueuePage};
 use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, MutexGuard};
@@ -96,6 +96,20 @@ pub fn list_avatars(state: State<'_, AppState>) -> Result<Vec<AvatarCard>, Strin
     let mut connection = db(&state)?;
     let snapshot = db::load_snapshot(&mut connection)?;
     Ok(view::avatar_cards(&snapshot))
+}
+
+#[tauri::command]
+pub fn list_products_by_category(
+    state: State<'_, AppState>,
+    category: String,
+) -> Result<Vec<ItemView>, String> {
+    let category = Category::parse(&category).ok_or_else(|| "商品の種類が不正です".to_string())?;
+    let mut connection = db(&state)?;
+    let ids = db::product_ids_by_category(&connection, category)?;
+    let mut snapshot = db::load_snapshot(&mut connection)?;
+    let remote = db::settings(&mut connection)?.remote_library_folder;
+    crate::library_files::fill_local_places(&mut snapshot, &remote);
+    Ok(view::products_by_ids(&snapshot, &ids))
 }
 
 fn load_avatar(app: &AppHandle, id: &str, probe_remote: bool) -> Result<AvatarDetail, String> {

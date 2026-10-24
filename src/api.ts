@@ -25,6 +25,7 @@ import type {
   ScanReport,
   Settings,
   StagedDownload,
+  ItemView,
 } from "./types";
 
 export function isTauri(): boolean {
@@ -79,6 +80,7 @@ export const api = {
   stats: () => call<LibraryStats>("library_stats"),
   avatars: () => call<AvatarCard[]>("list_avatars"),
   avatar: (id: string) => call<AvatarDetail>("get_avatar", { id }),
+  productsByCategory: (category: string) => call<ItemView[]>("list_products_by_category", { category }),
   probeRemoteFiles: (id: string) => call<AvatarDetail>("probe_remote_files", { id }),
   queue: (kind: string, offset = 0, limit = 50) =>
     call<QueuePage>("list_queue", { kind, offset, limit }),

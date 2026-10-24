@@ -152,7 +152,7 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
   );
 }
 
-function ItemCard({ item }: { item: ItemView }) {
+export function ItemCard({ item }: { item: ItemView }) {
   const { refresh, notify, fail } = useShell();
   const [busy, setBusy] = useState("");
 
