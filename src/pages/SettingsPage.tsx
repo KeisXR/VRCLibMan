@@ -1,11 +1,15 @@
 import { useEffect, useState } from "react";
-import type { ReactNode } from "react";
-import { api, chooseFolder, openExternal, saveLibraryAndScan } from "../api";
+import { api, appVersion, chooseFolder, openExternal, saveLibraryAndScan } from "../api";
 import { useShell } from "../App";
 import { formatBytes } from "../media";
 import { DEFAULT_OLLAMA_MODEL } from "../types";
-import type { AppleFmStatus, AvatarRecord, BaseBody, CatalogInfo, ExtensionLink, Knowledge, Settings } from "../types";
+import type { AppleFmStatus, AvatarRecord, BaseBody, CatalogInfo, IntegrationStatus, Knowledge, Settings } from "../types";
 import { errorText } from "../ui";
+import { SettingRow } from "../components/SettingRow";
+import { ModelPicker } from "../components/ModelPicker";
+import { BoothImportSettings } from "../components/BoothImportSettings";
+import { modelDownloadPrompt } from "../models";
+import { extensionVersionMessage } from "../versions";
 
 const emptyAvatar = {
   id: "",
@@ -15,18 +19,6 @@ const emptyAvatar = {
   notes: "",
   builtin: false,
 };
-
-function SettingRow({ label, help, children }: { label: string; help?: ReactNode; children: ReactNode }) {
-  return (
-    <div className="setting-row">
-      <div className="setting-copy">
-        <strong>{label}</strong>
-        {help && <p>{help}</p>}
-      </div>
-      <div className="setting-control">{children}</div>
-    </div>
-  );
-}
 
 export function SettingsPage() {
   const { revision, refresh, notify, fail } = useShell();
@@ -39,7 +31,9 @@ export function SettingsPage() {
   const [status, setStatus] = useState("");
   const [models, setModels] = useState<string[]>([]);
   const [installedSize, setInstalledSize] = useState<number | null>(null);
-  const [link, setLink] = useState<ExtensionLink | null>(null);
+  const [integration, setIntegration] = useState<IntegrationStatus | null>(null);
+  const [version, setVersion] = useState("");
+  const [modelsChecked, setModelsChecked] = useState(false);
   const [apple, setApple] = useState<AppleFmStatus | null>(null);
   const [catalog, setCatalog] = useState<CatalogInfo | null>(null);
   const [pulling, setPulling] = useState(false);
@@ -50,23 +44,26 @@ export function SettingsPage() {
       (result) => {
         if (cancelled) return;
         setModels(result.models);
+        setModelsChecked(true);
         setInstalledSize(result.modelSizeBytes);
       },
       () => {
         if (cancelled) return;
         setModels([]);
+        setModelsChecked(false);
         setInstalledSize(null);
       },
     );
-    Promise.all([api.settings(), api.knowledge(), api.extensionLink(), api.catalogInfo(), api.appleFmStatus()]).then(
-      ([nextSettings, nextKnowledge, nextLink, nextCatalog, nextApple]) => {
+    Promise.all([api.settings(), api.knowledge(), api.integrationStatus(), api.catalogInfo(), api.appleFmStatus(), appVersion()]).then(
+      ([nextSettings, nextKnowledge, nextIntegration, nextCatalog, nextApple, nextVersion]) => {
         if (cancelled) return;
         setSettings(nextSettings);
         setSavedFolder(nextSettings.libraryFolder);
         setApple(nextApple);
         setCatalog(nextCatalog);
         setKnowledge(nextKnowledge);
-        setLink(nextLink);
+        setIntegration(nextIntegration);
+        setVersion(nextVersion);
       },
       (err: unknown) => {
         if (!cancelled) fail(errorText(err));
@@ -76,42 +73,6 @@ export function SettingsPage() {
       cancelled = true;
     };
   }, [revision, fail]);
-
-  async function regenerateToken() {
-    if (!window.confirm("コードを作り直すと、貼ってあるコードは使えなくなり、結び付いた拡張も外れます。")) return;
-    try {
-      setLink(await api.regenerateExtensionToken());
-      notify("ペアリングコードを作り直しました");
-    } catch (err) {
-      fail(errorText(err));
-    }
-  }
-
-  async function setBuiltinBrowser(enabled: boolean) {
-    if (!settings) return;
-    if (enabled && !settings.builtinBrowser) {
-      const accepted = window.confirm(
-        "内蔵ブラウザでは、このアプリの中で BOOTH / pixiv にメールアドレスとパスワードでログインします。ログイン状態はアプリ専用の WebView データストアに保存されます。ファイルの「ダウンロード」を押した場合、アプリは BOOTH 用クッキーを読み出し、その 1 件の BOOTH 向けダウンロード要求に使用します。クッキーは VRCLibMan 独自の外部サーバーやダウンロード先の別ドメインには送りません。拡張機能でページを書き出すより、アカウントへのリスク（制限や停止を含む）が高くなることがあります。年齢確認を自動で進めることはありません。ページを辿るのは、ブラウザ画面の「ライブラリ全取得」を押したときだけです。一括のダウンロードはしません。ご自身の判断で使ってください。有効にしますか？",
-      );
-      if (!accepted) return;
-    }
-    try {
-      const next = { ...settings, builtinBrowser: enabled };
-      await api.saveSettings(next);
-      if (!enabled) {
-        try {
-          await api.closeBoothBrowser();
-        } catch {
-          // 見本データにはブラウザウィンドウがない。
-        }
-      }
-      setSettings(next);
-      notify(enabled ? "内蔵ブラウザを有効にしました" : "内蔵ブラウザを無効にしました");
-      refresh();
-    } catch (err) {
-      fail(errorText(err));
-    }
-  }
 
   async function saveSettings() {
     if (!settings) return;
@@ -134,6 +95,7 @@ export function SettingsPage() {
       try {
         const result = await api.testOllama();
         setModels(result.models);
+      setModelsChecked(true);
         setInstalledSize(result.modelSizeBytes);
       } catch {
         setModels([]);
@@ -150,6 +112,7 @@ export function SettingsPage() {
     try {
       const result = await api.testOllama();
       setModels(result.models);
+      setModelsChecked(true);
       setInstalledSize(result.modelSizeBytes);
       const size = result.modelSizeBytes != null && result.modelSizeBytes > 0 ? formatBytes(result.modelSizeBytes) : "";
       setStatus(
@@ -159,18 +122,19 @@ export function SettingsPage() {
       );
     } catch (err) {
       setInstalledSize(null);
+      setModelsChecked(false);
       setStatus(errorText(err));
     }
   }
 
   async function pullOllamaModel() {
     if (!settings) return;
-    if (!window.confirm(`${settings.ollamaModel} を Ollama からダウンロードします。数 GB になることがあります。続けますか？`)) return;
+    if (!window.confirm(modelDownloadPrompt(settings.ollamaModel.trim()))) return;
     setPulling(true);
     setStatus(`${settings.ollamaModel} を取得しています`);
     try {
       await api.saveSettings(settings);
-      await api.pullOllamaModel();
+      await api.pullOllamaModel(settings.ollamaModel.trim());
       await testOllama();
       notify(`${settings.ollamaModel} を取得しました`);
     } catch (err) {
@@ -320,12 +284,9 @@ export function SettingsPage() {
             <SettingRow label="Ollama の URL" help="http://127.0.0.1、localhost、または ::1 だけを使用できます。">
               <input value={settings.ollamaBaseUrl} onChange={(e) => setSettings({ ...settings, ollamaBaseUrl: e.target.value })} />
             </SettingRow>
-            <SettingRow label="モデル" help={`既定は ${DEFAULT_OLLAMA_MODEL}。軽い代替は qwen3:4b です。`}>
-              <div className="inline-control">
-                <input list="ollama-models" value={settings.ollamaModel} onChange={(e) => setSettings({ ...settings, ollamaModel: e.target.value })} />
-                <datalist id="ollama-models">{models.map((model) => <option key={model} value={model} />)}</datalist>
-                <button className="button" type="button" disabled={pulling || settings.llmBackend === "apple"} onClick={() => void pullOllamaModel()}>{pulling ? "取得中…" : "モデルを取得"}</button>
-              </div>
+            <SettingRow label="モデル" help={`軽量な qwen3.5:4b を推奨します。既定は ${DEFAULT_OLLAMA_MODEL} のままです。`}>
+              <ModelPicker value={settings.ollamaModel} models={models} checked={modelsChecked} disabled={pulling || settings.llmBackend === "apple"} onChange={(value) => setSettings({ ...settings, ollamaModel: value })} />
+              <button className="button" type="button" disabled={pulling || settings.llmBackend === "apple" || !settings.ollamaModel.trim()} onClick={() => void pullOllamaModel()}>{pulling ? "取得中…" : "モデルを取得"}</button>
             </SettingRow>
             <SettingRow label="確信度のしきい値" help="0〜1 で指定します。要確認は名前と対応表の一致も使って判断します。">
               <input className="short-input" type="number" min={0} max={1} step={0.05} value={settings.confidenceThreshold} onChange={(e) => setSettings({ ...settings, confidenceThreshold: Number(e.target.value) })} />
@@ -350,10 +311,6 @@ export function SettingsPage() {
 
           <section className="settings-section">
             <header><h2>ブラウザ連携</h2><p>BOOTH を開く方法を選びます。</p></header>
-            <SettingRow label="内蔵ブラウザ" help="既定は拡張機能です。有効化すると確認画面が表示されます。">
-              <div className="inline-control"><button className={`button ${settings.builtinBrowser ? "" : "primary"}`} type="button" onClick={() => void setBuiltinBrowser(!settings.builtinBrowser)}>{settings.builtinBrowser ? "無効にする" : "有効にする"}</button>{settings.builtinBrowser && <button className="button danger" type="button" onClick={() => void (async () => { if (!window.confirm("ブラウザを閉じ、このアプリの中の BOOTH のログイン状態を消します。")) return; try { await api.clearBoothSession(); notify("セッションを消しました"); } catch (err) { fail(errorText(err)); } })()}>ログアウトしてセッションを消す</button>}</div>
-            </SettingRow>
-            <details className="settings-details"><summary>内蔵ブラウザについて詳しく</summary><p>既定は拡張機能です。内蔵ブラウザは、自分でログインして使う別のモードです。ページを辿るのはブラウザ画面の「ライブラリ全取得」だけです。一括のダウンロードはしません。年齢確認も自動では進みません。</p><p>ログイン状態はこのアプリ専用の WebView データストアに残り、ログアウトで消します。ファイルの「ダウンロード」を押したときだけ、BOOTH 用クッキーをその1件の BOOTH 向けダウンロード要求に使います。クッキーを VRCLibMan 独自のサーバーや別ドメインへ送ることはありません。</p></details>
           </section>
 
           <section className="settings-section">
@@ -367,16 +324,19 @@ export function SettingsPage() {
             <details className="settings-details"><summary>起動と常駐について詳しく</summary><p>既定はオフです。オフのときはウィンドウを閉じるとアプリも終了し、トレイは残りません。オンのときはウィンドウを破棄してメモリを放し、プロセスと 17321 の受け付けだけ残します。トレイ（Windows）またはメニューバー（macOS）から開き直すか、終了できます。</p><p>ログイン時の起動は、バックグラウンドをオンにしたときだけ使えます。バックグラウンドをオフにすると、ログイン項目もオフになります。両方オンのとき、ログインから起動したプロセスはウィンドウを出さず、トレイまたはメニューバーから開けます。</p></details>
           </section>
 
-          {link && <section className="settings-section">
-            <header><h2>拡張機能の接続</h2><p>拡張機能からこの PC へ安全にデータを送ります。</p></header>
-            <SettingRow label="ペアリングコード" help={link.listening ? `127.0.0.1:${link.port} で待機中です。` : link.error || "受信を開始できませんでした。"}>
-              <div className="inline-control"><input readOnly value={link.token} /><button className="button" type="button" onClick={() => void regenerateToken()}>作り直す</button></div>
-            </SettingRow>
-            <details className="settings-details"><summary>接続について詳しく</summary><p>拡張は今開いている Booth のページだけを読み、この PC の 127.0.0.1:{link.port} に送ります。アプリは Booth を取りに行きません。コードを拡張のポップアップに一度貼ってください。最初に届いた拡張だけを覚えます。</p><p>コードを作り直すと、以前のコードと結び付きは外れます。違うコードが続くと、しばらく受け付けません。アプリが閉じているときは、拡張が vrclibman://import で起動します。</p></details>
-          </section>}
+          <section className="settings-section">
+            <header><h2>BOOTH の読み込み方</h2><p>拡張機能・内蔵ブラウザ・併用を選び、その場で保存します。</p></header>
+            <div className="section-body"><BoothImportSettings onFail={fail} onChange={() => refresh()} /></div>
+            {settings.builtinBrowser && <div className="section-actions"><button className="button danger" type="button" onClick={() => void (async () => { if (!window.confirm("ブラウザを閉じ、このアプリの中の BOOTH のログイン状態を消します。")) return; try { await api.clearBoothSession(); notify("セッションを消しました"); } catch (err) { fail(errorText(err)); } })()}>ログアウトしてセッションを消す</button></div>}
+          </section>
 
           <section className="settings-section">
-            <header><h2>データ</h2><p>アバター対応表と初期データを管理します。</p></header>
+            <header><h2>データ</h2><p>バージョン、アバター対応表と初期データを確認します。</p></header>
+            <SettingRow label="バージョン" help="アプリと拡張機能は別のバージョン番号です。外部への更新確認はしません。">
+              <div className="version-info"><p>アプリ v{version || "確認中"}</p>
+                {integration && <><p>想定する拡張 v{integration.expectedExtensionVersion}</p><p>最後に通信した拡張 {integration.extensionVersion ? `v${integration.extensionVersion}` : "未確認"}</p><p className={integration.extensionVersion && integration.extensionVersion !== integration.expectedExtensionVersion ? "warn-text" : "meta"}>{extensionVersionMessage(integration.expectedExtensionVersion, integration.extensionVersion)}</p></>}
+              </div>
+            </SettingRow>
             {catalog && <SettingRow label="同梱の対応表" help={`${catalog.credit}（${catalog.author}）・${catalog.count} 件・取得日 ${catalog.fetchedOn || "未記録"}${catalog.upstreamUpdated ? `・上流 ${catalog.upstreamUpdated}` : ""}`}>
               <div className="inline-control"><button className="button primary" type="button" onClick={() => void refreshCatalog()}>対応表を更新</button><button className="button" type="button" onClick={() => void openExternal(catalog.sourceUrl)}>出典</button><button className="button" type="button" onClick={() => void openExternal(catalog.termsUrl)}>利用規約</button></div>
             </SettingRow>}

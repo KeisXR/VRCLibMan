@@ -1,4 +1,5 @@
 const status = document.querySelector("#status");
+document.querySelector("#extension-version").textContent = `拡張機能 v${chrome.runtime.getManifest().version}`;
 const linkStatus = document.querySelector("#link-status");
 const button = document.querySelector("#export");
 const allButton = document.querySelector("#export-all");
@@ -187,7 +188,7 @@ async function probe(token) {
     const response = await fetch(`${LOCAL_BASE}/health`, {
       method: "GET",
       credentials: "omit",
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { Authorization: `Bearer ${token}`, "X-VRCLibMan-Extension-Version": chrome.runtime.getManifest().version },
     });
     return response.ok;
   } catch {
@@ -219,7 +220,7 @@ async function refreshLink() {
     const response = await fetch(`${LOCAL_BASE}/route-downloads`, {
       method: "GET",
       credentials: "omit",
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { Authorization: `Bearer ${token}`, "X-VRCLibMan-Extension-Version": chrome.runtime.getManifest().version },
     });
     if (!response.ok) return;
     const data = await response.json();
@@ -237,7 +238,7 @@ async function fetchKnownIds(token) {
     response = await fetch(`${LOCAL_BASE}/known-ids`, {
       method: "GET",
       credentials: "omit",
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { Authorization: `Bearer ${token}`, "X-VRCLibMan-Extension-Version": chrome.runtime.getManifest().version },
     });
   } catch {
     throw unreachableError();
@@ -276,7 +277,7 @@ async function postImport(token, payload) {
       method: "POST",
       credentials: "omit",
       headers: {
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${token}`, "X-VRCLibMan-Extension-Version": chrome.runtime.getManifest().version,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(payload),
@@ -499,7 +500,7 @@ routeInput.addEventListener("change", async () => {
       method: "POST",
       credentials: "omit",
       headers: {
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${token}`, "X-VRCLibMan-Extension-Version": chrome.runtime.getManifest().version,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ enabled }),

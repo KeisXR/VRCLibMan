@@ -1,6 +1,9 @@
+import extensionManifest from "../../extension/manifest.json";
 import { filePresence } from "../media";
 import type {
   AvatarCard,
+  IntegrationStatus,
+  BoothImportMode,
   AvatarDetail,
   AvatarInput,
   AvatarRecord,
@@ -993,6 +996,16 @@ async function previewLibraryWalk(): Promise<LibraryWalkReport> {
 }
 
 let boothPageIntervalMs = 1000;
+let importMode: BoothImportMode | null = null;
+const installedModels = ["gemma4:12b", "qwen3:4b"];
+const previewIntegration = {
+  paired: true,
+  expectedExtensionVersion: extensionManifest.version,
+  extensionVersion: "0.1.10",
+  extensionLastSeenAt: "2026-10-24T01:00:00Z",
+  extensionImport: { at: "2026-10-24T01:00:00Z", products: 3, inserted: 1, updated: 1, unchanged: 1, skipped: 0 },
+  browserImport: null,
+};
 
 export async function dispatch<T>(command: string, args: Record<string, unknown>): Promise<T> {
   notePreviewCall(command);
@@ -1018,6 +1031,15 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
         .sort((left, right) => left.title.localeCompare(right.title, "ja")) as T;
     case "list_knowledge":
       return { avatars: store.avatars, baseBodies: store.baseBodies } satisfies Knowledge as T;
+    case "integration_status":
+      return { ...previewIntegration, mode: !store.settings.builtinBrowser ? "extension" : importMode === "browser" ? "browser" : "both" } satisfies IntegrationStatus as T;
+    case "set_booth_import_mode": {
+      const mode = args.mode as BoothImportMode;
+      if (!["extension", "browser", "both"].includes(mode)) throw new Error("BOOTH の読み込み方が不正です");
+      importMode = mode;
+      store.settings.builtinBrowser = mode !== "extension";
+      return undefined as T;
+    }
     case "get_settings":
       return { ...store.settings } as T;
     case "get_booth_page_interval":
@@ -1119,7 +1141,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     case "extract_products":
       desktopOnly();
     case "test_ollama": {
-      const installed = ["qwen3:4b"];
+      const installed = [...installedModels];
       const selected = store.settings.ollamaModel;
       const modelReady = installed.some((name) => name === selected);
       return {
@@ -1302,8 +1324,13 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       }
       return undefined as T;
     }
+    case "pull_ollama_model": {
+      const model = String(args.model ?? "").trim();
+      if (!/^[a-zA-Z0-9._:/-]{1,80}$/.test(model)) throw new Error("モデル名が不正です");
+      if (!installedModels.includes(model)) installedModels.push(model);
+      return undefined as T;
+    }
     case "refresh_avatar_catalog":
-    case "pull_ollama_model":
     case "booth_browser_log":
       return { path: "", text: "見本では記録はありません" } as T;
     case "open_booth_browser":
@@ -1311,6 +1338,8 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     case "browse_booth_history":
     case "import_booth_library":
       return (await previewLibraryWalk()) as T;
+    case "close_booth_browser":
+      return undefined as T;
     case "cancel_booth_library":
       previewLibraryCancel = true;
       return undefined as T;
@@ -1318,7 +1347,6 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       previewBoothLoggedIn = false;
       return undefined as T;
     case "import_booth_page":
-    case "close_booth_browser":
     case "cache_thumbnails":
     case "route_staged_download":
       desktopOnly();

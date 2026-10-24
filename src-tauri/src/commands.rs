@@ -84,6 +84,21 @@ fn extension_link_view(state: &AppState, token: &str) -> crate::model::Extension
 }
 
 #[tauri::command]
+pub fn integration_status(state: State<'_, AppState>) -> Result<crate::integration::IntegrationStatus, String> {
+    let connection = db(&state)?;
+    crate::integration::status(&connection)
+}
+
+#[tauri::command]
+pub fn set_booth_import_mode(app: AppHandle, state: State<'_, AppState>, mode: String) -> Result<(), String> {
+    let mut connection = db(&state)?;
+    crate::integration::set_mode(&mut connection, &mode)?;
+    drop(connection);
+    let _ = app.emit("library-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
 pub fn library_stats(state: State<'_, AppState>) -> Result<LibraryStats, String> {
     let mut connection = db(&state)?;
     let snapshot = db::load_snapshot(&mut connection)?;
@@ -838,7 +853,8 @@ pub fn reopen_setup(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn pull_ollama_model(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+pub async fn pull_ollama_model(app: AppHandle, state: State<'_, AppState>, model: String) -> Result<(), String> {
+    let model = ollama::validate_model_name(&model)?;
     let settings = {
         let connection = db(&state)?;
         db::settings(&connection)?
@@ -848,7 +864,7 @@ pub async fn pull_ollama_model(app: AppHandle, state: State<'_, AppState>) -> Re
     ollama::pull_model(
         &client,
         &settings.ollama_base_url,
-        &settings.ollama_model,
+        &model,
         |completed, total, status| {
             let current = (completed / 1_000_000) as u32;
             let whole = (total / 1_000_000) as u32;

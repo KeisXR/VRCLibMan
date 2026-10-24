@@ -61,7 +61,7 @@ async function notifyFinished(notice) {
       method: "POST",
       credentials: "omit",
       headers: {
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${token}`, "X-VRCLibMan-Extension-Version": chrome.runtime.getManifest().version,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),

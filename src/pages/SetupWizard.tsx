@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
-import { api, listenProgress, openExternal } from "../api";
+import { api, listenProgress } from "../api";
 import { DEFAULT_OLLAMA_MODEL } from "../types";
-import type { AppleFmStatus, ExtensionLink, JobProgress, OllamaStatus, SetupStatus } from "../types";
-import { formatBytes } from "../media";
+import type { AppleFmStatus, JobProgress, OllamaStatus, SetupStatus } from "../types";
+import { ModelPicker } from "../components/ModelPicker";
+import { BoothImportSettings } from "../components/BoothImportSettings";
+import { modelDownloadPrompt, modelInstalled } from "../models";
 import { errorText } from "../ui";
-
-const LIBRARY_URL = "https://accounts.booth.pm/library";
 
 export function SetupWizard({ onDone }: { onDone: () => void }) {
   const [status, setStatus] = useState<SetupStatus | null>(null);
@@ -18,8 +18,8 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
   const [loginChoice, setLoginChoice] = useState<"unset" | "on" | "off">("unset");
   const [pulling, setPulling] = useState(false);
   const [progress, setProgress] = useState<JobProgress | null>(null);
-  const [link, setLink] = useState<ExtensionLink | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<string | null>(null);
+  const [importReady, setImportReady] = useState(false);
   const [message, setMessage] = useState("");
 
   async function check() {
@@ -28,10 +28,11 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
     try {
       const [nextStatus, nextOllama, nextApple] = await Promise.all([
         api.setupStatus(),
-        api.testOllama(),
+        api.testOllama().catch((err: unknown) => { setOllamaError(errorText(err)); return null; }),
         api.appleFmStatus().catch(() => null),
       ]);
       setStatus(nextStatus);
+      setSelectedModel((current) => current ?? nextStatus.model);
       setOllama(nextOllama);
       setApple(nextApple);
     } catch (err) {
@@ -58,25 +59,21 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
     return () => stop();
   }, []);
 
-  async function useInstalled(name: string) {
-    if (!name) return;
-    setMessage("");
-    try {
-      const settings = await api.settings();
-      await api.saveSettings({ ...settings, ollamaModel: name });
-      setMessage(`今の設定を ${name} にしました。既定は ${defaultModel} のままです。`);
-      await check();
-    } catch (err) {
-      setMessage(errorText(err));
-    }
+  async function saveModel() {
+    const name = model.trim();
+    if (!name) throw new Error("モデル名を入力してください");
+    const settings = await api.settings();
+    await api.saveSettings({ ...settings, ollamaModel: name });
   }
 
   async function pull() {
+    if (!window.confirm(modelDownloadPrompt(model.trim()))) return;
     setPulling(true);
     setMessage("");
     setProgress(null);
     try {
-      await api.pullOllamaModel();
+      await saveModel();
+      await api.pullOllamaModel(model.trim());
       setMessage("モデルを取得しました");
       await check();
     } catch (err) {
@@ -91,27 +88,22 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
     try {
       const settings = await api.settings();
       await api.saveSettings({ ...settings, llmBackend: "apple" });
-      setMessage("Apple のオンデバイスモデルを使います。Ollama のモデルは取得しません。既定のモデルは gemma4:12b のままです。");
+      setMessage("Apple のオンデバイスモデルを使います。Ollama のモデルは取得しません。");
       await check();
-      await showExtension();
+      setStep("extension");
     } catch (err) {
       setMessage(errorText(err));
     }
   }
 
   async function showExtension() {
-    setStep("extension");
+    setMessage("");
     try {
-      setLink(await api.extensionLink());
+      if (!usingApple) await saveModel();
+      setStep("extension");
     } catch (err) {
       setMessage(errorText(err));
     }
-  }
-
-  async function copyCode() {
-    if (!link) return;
-    await navigator.clipboard.writeText(link.token);
-    setCopied(true);
   }
 
   async function savePresence(backgroundMode: boolean, launchAtLogin: boolean) {
@@ -145,14 +137,12 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
   }
 
   const presenceReady = backgroundChoice !== "unset" && loginChoice !== "unset";
-  const model = status?.model || DEFAULT_OLLAMA_MODEL;
+  const model = selectedModel ?? status?.model ?? DEFAULT_OLLAMA_MODEL;
   const defaultModel = status?.defaultModel || DEFAULT_OLLAMA_MODEL;
   const usingApple = status?.backend === "apple";
   const appleAvailable = apple?.availability === "available";
-  const ready = usingApple || Boolean(ollama?.modelReady);
+  const ready = usingApple || modelInstalled(ollama?.models ?? [], model);
   const connected = ollama != null && ollamaError === "";
-  const installedSize =
-    ollama?.modelSizeBytes != null && ollama.modelSizeBytes > 0 ? formatBytes(ollama.modelSizeBytes) : null;
   const percent = progress && progress.total > 0 ? Math.min(100, (progress.current / progress.total) * 100) : 0;
 
   return (
@@ -160,49 +150,15 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
       <div className="setup-card panel">
         <p className="meta">初回セットアップ</p>
         <h1>
-          {step === "model" ? "分類用のモデル" : step === "extension" ? "Booth からインポート" : "閉じたあとの動き"}
+          {step === "model" ? "分類用のモデル" : step === "extension" ? "BOOTH の購入情報の読み込み方" : "閉じたあとの動き"}
         </h1>
         {step === "model" && (
           <>
-            <p>
-              既定のモデルは {defaultModel} です。今の設定は {model} です。
-              商品名の整理には、この PC の Ollama と今の設定を使います。
-              {installedSize ? `入っているサイズは ${installedSize} です。` : ""}
-              ダウンロードはここでの確認のあとだけ行い、あとから設定でも変えられます。
-            </p>
+            <p>分類に使うモデルを選んでください。軽量な qwen3.5:4b を推奨します。既定は {defaultModel}、保存済みの設定は {status?.model || defaultModel} です。あとから設定でも変更できます。</p>
+            <ModelPicker value={model} models={ollama?.models ?? []} checked={connected} disabled={checking || pulling || usingApple} onChange={setSelectedModel} />
             {checking && <p className="meta">Ollama を確認しています</p>}
-            {!checking && !connected && (
-              <p className="meta">Ollama にはまだつながっていません。{ollamaError}</p>
-            )}
-            {!checking && connected && ready && (
-              <p className="meta">
-                {model} は入っています。
-                {installedSize ? `サイズは ${installedSize} です。` : ""}
-              </p>
-            )}
-            {!checking && connected && !ready && (
-              <p className="meta">{model} はまだありません。取得するか、入っているモデルから選べます。設定は自動では切り替わりません。</p>
-            )}
-            {!checking && connected && !ready && (ollama?.models.length ?? 0) > 0 && (
-              <label className="field">
-                <span>入っているモデル</span>
-                <select
-                  value=""
-                  disabled={pulling}
-                  onChange={(event) => {
-                    const name = event.target.value;
-                    if (name) void useInstalled(name);
-                  }}
-                >
-                  <option value="">選んで切り替える</option>
-                  {ollama?.models.map((name) => (
-                    <option key={name} value={name}>
-                      {name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
+            {!checking && !connected && <p className="meta">Ollama にはまだつながっていません。{ollamaError}</p>}
+            {!checking && connected && !usingApple && <p className="meta">{model || "モデル"} は{ready ? "導入済みです。" : "未導入です。取得するか、別のモデルを選べます。"}</p>}
             {pulling && (
               <div className="progress">
                 <p>{progress?.message ?? "取得しています"}</p>
@@ -217,7 +173,7 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
             {!checking && apple && !appleAvailable && apple.message && (
               <p className="meta">{apple.message}</p>
             )}
-            {usingApple && <p className="meta">分類は Apple のオンデバイスモデルです。Ollama の取得は飛ばします。</p>}
+            {usingApple && <><p className="meta">分類は Apple のオンデバイスモデルです。Ollama の取得は飛ばします。</p><button className="button" type="button" onClick={() => void api.settings().then(async (settings) => { await api.saveSettings({ ...settings, llmBackend: "ollama" }); await check(); }).catch((err: unknown) => setMessage(errorText(err)))}>Ollama を使う</button></>}
             {message && <p className="meta">{message}</p>}
             <div className="row-actions">
               {appleAvailable && !usingApple && (
@@ -226,14 +182,14 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
                 </button>
               )}
               {!checking && connected && !ready && !usingApple && (
-                <button className="button primary" type="button" disabled={pulling} onClick={() => void pull()}>
+                <button className="button primary" type="button" disabled={pulling || !model.trim()} onClick={() => void pull()}>
                   ダウンロードする
                 </button>
               )}
               <button className="button" type="button" disabled={checking || pulling} onClick={() => void check()}>
                 もう一度確認
               </button>
-              <button className="button primary" type="button" disabled={pulling} onClick={() => void showExtension()}>
+              <button className="button primary" type="button" disabled={checking || pulling || (!usingApple && !model.trim())} onClick={() => void showExtension()}>
                 {ready ? "次へ" : "スキップして次へ"}
               </button>
             </div>
@@ -241,32 +197,12 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
         )}
         {step === "extension" && (
           <>
-            <p>いつものインポートは Chrome 拡張です。次の順で一度だけ結んでください。</p>
-            <ol className="setup-steps">
-              <li>Chrome の拡張機能ページでデベロッパーモードをオンにし、「パッケージ化されていない拡張機能を読み込む」から extension フォルダを選びます。</li>
-              <li>下のペアリングコードをコピーし、拡張のポップアップに貼って保存します。</li>
-              <li>「ライブラリを開く」で Booth のライブラリを開き、拡張の「ライブラリをすべて送る」か「新しい購入だけ送る」を押します。</li>
-            </ol>
-            <p className="meta">
-              内蔵ブラウザは設定で有効にする別のモードです。拡張が使えないときの任意の手段で、ログインはメールとパスワードだけを想定しています。
-            </p>
-            {link && (
-              <label className="field">
-                <span>ペアリングコード</span>
-                <input value={link.token} readOnly />
-              </label>
-            )}
-            {message && <p className="meta">{message}</p>}
+            <p>どちらの方法で BOOTH のライブラリを読み込むか選んでください。</p>
+            <BoothImportSettings onFail={setMessage} onReady={setImportReady} navigateBrowser={() => setStep("presence")} />
+            {message && <p className="meta" role="status">{message}</p>}
             <div className="row-actions">
-              <button className="button" type="button" disabled={!link} onClick={() => void copyCode()}>
-                {copied ? "コピーしました" : "コードをコピー"}
-              </button>
-              <button className="button" type="button" onClick={() => void openExternal(LIBRARY_URL)}>
-                ライブラリを開く
-              </button>
-              <button className="button primary" type="button" onClick={() => setStep("presence")}>
-                次へ
-              </button>
+              <button className="button" type="button" onClick={() => setStep("model")}>モデル選択へ戻る</button>
+              <button className="button primary" type="button" disabled={!importReady} onClick={() => setStep("presence")}>次へ</button>
             </div>
           </>
         )}

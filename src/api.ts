@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AvatarCard,
+  BoothImportMode,
+  IntegrationStatus,
   AvatarDetail,
   AvatarInput,
   AvatarCandidate,
@@ -27,6 +29,14 @@ import type {
   StagedDownload,
   ItemView,
 } from "./types";
+
+export async function appVersion(): Promise<string> {
+  if (isTauri()) {
+    const { getVersion } = await import("@tauri-apps/api/app");
+    return getVersion();
+  }
+  return (await import("../package.json")).version;
+}
 
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -87,6 +97,8 @@ export const api = {
   productOptions: () => call<ProductOption[]>("list_product_options"),
   knowledge: () => call<Knowledge>("list_knowledge"),
   settings: () => call<Settings>("get_settings"),
+  integrationStatus: () => call<IntegrationStatus>("integration_status"),
+  setBoothImportMode: (mode: BoothImportMode) => call<void>("set_booth_import_mode", { mode }),
   extensionLink: () => call<ExtensionLink>("extension_link"),
   regenerateExtensionToken: () => call<ExtensionLink>("regenerate_extension_token"),
   saveSettings: (settings: Settings) => call<void>("save_settings", { settings }),
@@ -125,7 +137,7 @@ export const api = {
   setupStatus: () => call<SetupStatus>("setup_status"),
   completeSetup: () => call<void>("complete_setup"),
   reopenSetup: () => call<void>("reopen_setup"),
-  pullOllamaModel: () => call<void>("pull_ollama_model"),
+  pullOllamaModel: (model: string) => call<void>("pull_ollama_model", { model }),
   avatarCandidates: () => call<AvatarCandidate[]>("avatar_candidates"),
   registerAvatarCandidate: (name: string) => call<string>("register_avatar_candidate", { name }),
   aliasAvatarCandidate: (name: string, avatarId: string) =>

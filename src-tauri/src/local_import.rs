@@ -145,6 +145,11 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
         if let Ok(mut guard) = state.import_guard.lock() {
             guard.record_success(&origin_key);
         }
+        if let Ok(connection) = state.db.lock() {
+            let _ = crate::integration::record_extension_seen(
+                &connection, header(request, "X-VRCLibMan-Extension-Version"),
+            );
+        }
         if pinned.is_none() {
             if let Ok(connection) = state.db.lock() {
                 let _ = db::set_extension_origin(&connection, &origin_key);
@@ -416,7 +421,11 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
                 );
             }
         };
-        db::import_export_json(&mut connection, &text)
+        let imported = db::import_export_json(&mut connection, &text);
+        if let Ok(ref report) = imported {
+            let _ = crate::integration::record_import(&connection, "extension", report);
+        }
+        imported
     };
     match imported {
         Ok(report) => {
@@ -586,7 +595,7 @@ fn add_cors(
         ("Access-Control-Allow-Origin", origin),
         (
             "Access-Control-Allow-Headers",
-            "authorization, content-type",
+            "authorization, content-type, x-vrclibman-extension-version",
         ),
         ("Access-Control-Allow-Methods", "GET, POST, OPTIONS"),
         ("Access-Control-Allow-Private-Network", "true"),
