@@ -104,6 +104,16 @@ npm run build
 
 `npm run tauri dev` で実アプリを開けます。`npm run dev` は UI 確認用の見本データだけを表示し、SQLite、分類、フォルダ調査は動きません。
 
+## リリースの作り方
+
+`v*` タグを push すると `.github/workflows/release.yml` が動き、Windows の NSIS インストーラ、Apple Silicon の dmg、拡張 zip を載せた**下書き**の Release を作ります。公開は手で行います。
+
+1. アプリの版を `package.json`、`package-lock.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` で揃えて上げ、main にマージします。拡張の版（`extension/manifest.json`）はアプリとは独立しており、拡張を変えたときだけ上げます。
+2. main の最新でタグを打って push します（例: `git tag v0.1.3 && git push origin v0.1.3`）。
+3. Actions の release が終わったら、Releases の下書きで 3 つのファイルと本文を確認し、「Publish release」を押します。
+
+タグとアプリの版が違う場合、版が揃っていない場合、タグのコミットが main に無い場合、同じタグの Release がすでに公開済みの場合は、ビルド前に失敗します。Actions の「Run workflow」から手動で実行すると、タグも Release も作らずに同じビルドだけを行い、成果物を workflow の Artifacts に置きます。Mac は Apple のオンデバイスモデル補助プログラムに macOS 27.2 SDK が要るため、GitHub の `xcode-27` ランナーでビルドします。
+
 ## 既知の制限
 
 - BOOTH の DOM やログイン手順が変わると、拡張と内蔵ブラウザのインポートが動かなくなる可能性があります。

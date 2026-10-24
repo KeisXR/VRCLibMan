@@ -1,26 +1,227 @@
 name: release
 
-# Windows NSIS and Apple Silicon dmg. Intel and universal macOS builds are not produced.
+# Pushing a v* tag builds the Windows NSIS installer and the Apple Silicon dmg,
+# zips the Chrome extension, and puts all three on a DRAFT GitHub Release.
+# Nothing is published until someone presses "Publish release".
+#
+# workflow_dispatch is a dry run: it runs the same checks and builds on the chosen
+# branch and keeps the files as workflow artifacts. It creates no tag and no release.
+#
+# Intel and universal macOS builds are not produced (see AGENTS.md).
+# No signing secrets are used: Windows is unsigned, macOS is ad-hoc signed only.
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  IS_RELEASE: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
 
 jobs:
-  release:
+  verify:
+    name: verify versions and tests
+    runs-on: ubuntu-latest
+    outputs:
+      app_version: ${{ steps.version.outputs.app_version }}
+      extension_version: ${{ steps.version.outputs.extension_version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: tag must match the app version
+        id: version
+        shell: bash
+        run: |
+          if [ "${IS_RELEASE}" = "true" ]; then
+            node scripts/check-release-version.mjs --tag "${GITHUB_REF_NAME}"
+          else
+            echo "workflow_dispatch: dry run, the tag is not checked"
+            node scripts/check-release-version.mjs
+          fi
+
+      - name: tagged commit must be on main
+        if: env.IS_RELEASE == 'true'
+        shell: bash
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "::error::タグ ${GITHUB_REF_NAME} のコミット ${GITHUB_SHA} は main に含まれていません。main にマージしてからタグを打ってください"
+            exit 1
+          fi
+
+      - name: install dependencies
+        run: npm ci
+
+      - name: type check
+        run: npx tsc --noEmit
+
+      - name: test
+        run: npm test
+
+  extension:
+    name: extension zip
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+
+      - name: package the Chrome extension
+        shell: bash
+        env:
+          EXTENSION_VERSION: ${{ needs.verify.outputs.extension_version }}
+        run: |
+          set -euo pipefail
+          stage="${RUNNER_TEMP}/vrclibman-booth-export"
+          node scripts/stage-extension.mjs --dest "${stage}"
+          mkdir -p dist-artifacts
+          zip_path="${PWD}/dist-artifacts/vrclibman-booth-export-${EXTENSION_VERSION}.zip"
+          rm -f "${zip_path}"
+          (cd "${stage}" && zip -r -X -q "${zip_path}" .)
+          unzip -l "${zip_path}"
+          unzip -p "${zip_path}" manifest.json > /dev/null
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: extension
+          path: dist-artifacts/*.zip
+          if-no-files-found: error
+
+  create-release:
+    name: create draft release
+    needs: [verify, extension]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      release_id: ${{ steps.release.outputs.release_id }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: release
+        name: create or reuse the draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APP_VERSION: ${{ needs.verify.outputs.app_version }}
+          EXTENSION_VERSION: ${{ needs.verify.outputs.extension_version }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          # Drafts are not visible through /releases/tags/{tag}, so search the list.
+          found=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" \
+            --jq ".[] | select(.tag_name == \"${tag}\") | \"\(.id) \(.draft)\"")
+          if echo "${found}" | grep -q ' false$'; then
+            echo "::error::${tag} の Release はすでに公開されています。上書きしないので、版を上げて新しいタグを打ってください"
+            exit 1
+          fi
+          id=$(echo "${found}" | awk '$2 == "true" { print $1; exit }')
+          if [ -n "${id}" ]; then
+            echo "reusing draft release ${id} for ${tag}"
+          else
+            sed -e "s/{{APP_VERSION}}/${APP_VERSION}/g" \
+                -e "s/{{EXTENSION_VERSION}}/${EXTENSION_VERSION}/g" \
+                .github/release-notes.md > "${RUNNER_TEMP}/notes.md"
+            id=$(jq -n \
+              --arg tag "${tag}" \
+              --arg name "VRCLibMan ${tag}" \
+              --rawfile body "${RUNNER_TEMP}/notes.md" \
+              '{tag_name: $tag, name: $name, body: $body, draft: true, prerelease: false}' \
+              | gh api --method POST "repos/${GITHUB_REPOSITORY}/releases" --input - --jq .id)
+            echo "created draft release ${id} for ${tag}"
+          fi
+          echo "release_id=${id}" >> "${GITHUB_OUTPUT}"
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: extension
+          path: dist-artifacts
+
+      - name: upload the extension zip
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          zip=$(ls dist-artifacts/*.zip)
+          name=$(basename "${zip}")
+          for asset_id in $(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets" \
+              --jq ".[] | select(.name == \"${name}\") | .id"); do
+            gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}"
+          done
+          http=$(curl -sS -o "${RUNNER_TEMP}/asset.json" -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/zip" \
+            --data-binary @"${zip}" \
+            "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?name=${name}")
+          if [ "${http}" -lt 200 ] || [ "${http}" -ge 300 ]; then
+            echo "::error::拡張 zip のアップロードに失敗しました (HTTP ${http})"
+            cat "${RUNNER_TEMP}/asset.json"
+            exit 1
+          fi
+          echo "uploaded ${name}"
+
+  build:
+    name: build (${{ matrix.name }})
+    needs: [verify, create-release]
+    # create-release is skipped on workflow_dispatch; build anyway, without a release.
+    if: >-
+      ${{ !cancelled() && needs.verify.result == 'success' &&
+      (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') }}
     permissions:
       contents: write
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: windows-latest
+          - name: windows-x64
+            platform: windows-latest
+            target: ""
             args: ""
-          - platform: macos-latest
+          # The Apple on-device helper (src-tauri/afm/main.swift) is compiled for
+          # arm64-apple-macos27.2, which needs the macOS 27.2 SDK. macos-latest only
+          # has Xcode 26, so use the Xcode 27 image (Apple Silicon only).
+          - name: macos-aarch64
+            platform: xcode-27
+            target: aarch64-apple-darwin
             args: --target aarch64-apple-darwin
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v7
+
+      - name: select Xcode with the macOS 27.2 SDK
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s /Applications/Xcode_27.2.app
+          xcodebuild -version
+          sdk=$(xcrun --sdk macosx --show-sdk-version)
+          echo "macOS SDK ${sdk}"
+          if ! python3 -c "import sys; v=tuple(int(x) for x in sys.argv[1].split('.')); sys.exit(0 if v >= (27, 2) else 1)" "${sdk}"; then
+            echo "::error::macOS SDK ${sdk} は 27.2 未満です。Apple のオンデバイスモデル補助プログラムをビルドできません"
+            exit 1
+          fi
 
       - uses: actions/setup-node@v6
         with:
@@ -29,107 +230,30 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || '' }}
+          targets: ${{ matrix.target }}
 
-      - uses: swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2
         with:
           workspaces: "./src-tauri -> target"
+          key: release-${{ matrix.name }}
 
       - name: install frontend dependencies
         run: npm ci
-
-      - name: require the tag to match the app version
-        shell: bash
-        env:
-          GITHUB_REF_NAME: ${{ github.ref_name }}
-        run: |
-          node --input-type=module <<'EOF'
-          import { readFileSync } from "node:fs";
-          const pkg = JSON.parse(readFileSync("package.json", "utf8")).version;
-          const tauri = JSON.parse(readFileSync("src-tauri/tauri.conf.json", "utf8")).version;
-          const cargo = readFileSync("src-tauri/Cargo.toml", "utf8").match(/^version = "([^"]+)"/m)?.[1];
-          const tag = process.env.GITHUB_REF_NAME;
-          if (pkg !== tauri || pkg !== cargo) {
-            console.error(`versions differ: package.json ${pkg}, tauri.conf.json ${tauri}, Cargo.toml ${cargo}`);
-            process.exit(1);
-          }
-          if (tag !== `v${pkg}`) {
-            console.error(`tag ${tag} must be v${pkg}`);
-            process.exit(1);
-          }
-          EOF
-
-      - name: package the Chrome extension
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $stage = Join-Path $env:RUNNER_TEMP "vrclibman-booth-export"
-          node scripts/stage-extension.mjs --dest "$stage"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $version = (Get-Content extension/manifest.json -Raw | ConvertFrom-Json).version
-          New-Item -ItemType Directory -Force dist-artifacts | Out-Null
-          $dest = Join-Path (Get-Location) "dist-artifacts/vrclibman-booth-export-$version.zip"
-          if (Test-Path $dest) { Remove-Item $dest }
-          Push-Location $stage
-          try {
-            Compress-Archive -Path * -DestinationPath $dest
-          } finally {
-            Pop-Location
-          }
 
       - id: tauri
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: v__VERSION__
-          releaseName: VRCLibMan v__VERSION__
-          releaseBody: |
-            Windows 用の未署名 NSIS インストーラです。SmartScreen が「Windows によって PC が保護されました」と出すことがあります。
-            「詳細情報」から「実行」を選んでください。
-            Mac は Apple Silicon と macOS 14 以降向けの未署名 dmg です。署名も公証もしていません。
-            開けないときは、システム設定の「プライバシーとセキュリティ」で「このまま開く」を選ぶか、`xattr -dr com.apple.quarantine` をその .app に実行してください。
-            `vrclibman://` は、.app を /Applications に置いたときだけ動きます。
-            拡張は vrclibman-booth-export-*.zip です。展開したフォルダ（直下に manifest.json）を、Chrome の「パッケージ化されていない拡張機能」として読み込みます。
-          releaseDraft: true
-          prerelease: false
+          # Empty on workflow_dispatch: build only, no release.
+          releaseId: ${{ needs.create-release.outputs.release_id }}
           uploadUpdaterJson: false
+          uploadWorkflowArtifacts: ${{ env.IS_RELEASE != 'true' }}
+          workflowArtifactNamePattern: "${{ matrix.name }}-[bundle]"
           args: ${{ matrix.args }}
 
-      - name: upload the extension zip
-        if: runner.os == 'Windows'
+      - name: list the built files
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_ID: ${{ steps.tauri.outputs.releaseId }}
-          RELEASE_UPLOAD_URL: ${{ steps.tauri.outputs.releaseUploadUrl }}
-        run: |
-          set -euo pipefail
-          if [ -z "${RELEASE_ID}" ] || [ -z "${RELEASE_UPLOAD_URL}" ]; then
-            echo "tauri-action did not return a draft release id"
-            exit 1
-          fi
-          zip=$(echo dist-artifacts/*.zip)
-          if [ ! -f "${zip}" ]; then
-            echo "extension zip was not produced"
-            exit 1
-          fi
-          name=$(basename "${zip}")
-          existing=$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets" --jq ".[] | select(.name==\"${name}\") | .id")
-          while IFS= read -r asset_id; do
-            if [ -n "${asset_id}" ]; then
-              gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}"
-            fi
-          done <<< "${existing}"
-          upload="${RELEASE_UPLOAD_URL%%\{*}"
-          http=$(curl -sS -o /tmp/vrclibman-asset.json -w "%{http_code}" -X POST \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "Content-Type: application/zip" \
-            --data-binary @"${zip}" \
-            "${upload}?name=${name}")
-          if [ "${http}" -lt 200 ] || [ "${http}" -ge 300 ]; then
-            echo "extension upload failed with HTTP ${http}"
-            cat /tmp/vrclibman-asset.json
-            exit 1
-          fi
+          ARTIFACT_PATHS: ${{ steps.tauri.outputs.artifactPaths }}
+        run: echo "${ARTIFACT_PATHS}"
