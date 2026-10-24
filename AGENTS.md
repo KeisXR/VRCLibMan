@@ -114,6 +114,11 @@ VRCVideoCacher の拡張が手元のアプリへ POST するのと同じ運び�
 
 Windows では、BOOTH の窓を同期コマンドの中で作らない。WebView2 は再入できず、IPC のコールバックから `WebviewWindowBuilder::build` すると新しい窓だけが応答しなくなる（メインの窓は動いたままに見える）。開く・ライブラリへ移動する・戻る進む・閉じるは async コマンドにし、コールバックが返ったあとメインスレッドで行う。データベースのロックを持ったまま窓を作らない。ページ読み取りの待ちも UI スレッドに載せない。`booth-browser` をメイン画面の `EBWebView` と同じ data_directory にしない。操作とページの移動先（スキーム、ホスト、パスだけ。クエリは残さない）はアプリデータの `booth-browser.log` に残す。pixiv か BOOTH の別窓要求は同じ窓で開き、Google や年齢確認の URL は開かない。
 
+### 商品の除外と設定の自動保存
+
+- 商品の除外は `product_exclusions`（DB版2）に保持する。通常の商品一覧、確認、分類、突合、自動整理の対象から外し、再インポートでも解除しない。管理画面から解除でき、商品情報・手動修正・ファイルを消さない。
+- 設定画面は変更した項目だけを `update_settings` へ送り、Rust が現在値とマージして検証し、トランザクションで保存する。フロントは保存を直列化し、保存中の新しい入力を古い応答で戻さない。テキストは短く待って保存し、フォーカスを外す・画面を移動するときも送る。対応表の編集には引き続き保存ボタンがある。
+
 ### 抽出と安全境界
 
 細かい分類規則は次節。ここは境界だけを書く。
@@ -131,8 +136,8 @@ Windows の実ライブラリ（約 110 件、`gemma4:12b`、新しい一時 DB�
 
 ### 呼び出し
 
-- 初期モデルは `gemma4:12b`。目安 8GB、`num_ctx` 8192 で約 7.6GB。セットアップ・設定の共通候補は `qwen3.5:4b`（軽量・推奨）、`qwen3.5:9b`、`gemma4:12b` と、導入済み・手入力。容量とメモリは目安であり、qwen3.5 の実モデルによる分類品質・メモリ計測は未検証。選択だけでは取得せず、容量の確認後に選択したモデル名を `pull_ollama_model` へ渡す。
-- 新しい DB だけが `gemma4:12b` になる。`settings` は `INSERT OR IGNORE` なので、保存済みのモデル名は起動でも更新でも上書きしない。別名の追加も既存行には戻らない。再検証は新しい一時 DB で行う。
+- 初期・推奨モデルは `qwen3.5:9b`。容量約 6.6〜7.6GB、メモリ16GB以上が目安。セットアップ・設定の共通候補は `qwen3.5:9b`（推奨・既定）、`qwen3.5:4b`（軽量）、`gemma4:12b` と、導入済み・手入力。容量とメモリは目安であり、qwen3.5 の実モデルによる分類品質・メモリ計測は未検証。選択だけでは取得せず、容量の確認後に選択したモデル名を `pull_ollama_model` へ渡す。
+- 新しい DB だけが `qwen3.5:9b` になる。`settings` は `INSERT OR IGNORE` なので、保存済みのモデル名は起動でも更新でも上書きしない。別名の追加も既存行には戻らない。再検証は新しい一時 DB で行う。
 - 温度は 0.1。`think: false` と JSON schema。HTTP 400 のときは `think` と `num_ctx` を外して 1 回だけ再送する。
 - `num_ctx` は毎回 8192。説明の長さで変えない。変えると Ollama がモデルを読み直し、1 件が十秒台になる。
 - 説明は約 4000 字に切り、末尾にあっても「対応アバター」欄は残す。
@@ -235,7 +240,7 @@ Windows の実ライブラリ（約 110 件、`gemma4:12b`、新しい一時 DB�
 5. 名前解決、突合、詳細の出し分けを変えるときは、先に `src-tauri/src` のテストを更新する。見本の `src/preview/api.ts` は画面用なので、同じ変更が必要なら別途合わせる。
 6. スキーマを変えるときは `user_version` を上げた移行を足す。既存の `library.sqlite` を暗黙に作り直さない。
 
-Windows の配布は未署名の NSIS（`.exe`）である。実行ファイルは `VRCLibMan.exe`。Mac は Apple Silicon（`aarch64-apple-darwin`）と macOS 14 以降だけの未署名 dmg で、ad-hoc 署名（`signingIdentity` が `-`）だけを付ける。公証はしない。Intel と universal は作らない。`v*` タグが `package.json`、`package-lock.json`、`tauri.conf.json`、`Cargo.toml`、`Cargo.lock` の版と一致し、タグのコミットが main に含まれるとき、`.github/workflows/release.yml` が下書き Release を 1 回だけ作り（`scripts/check-release-version.mjs` で照合）、その release id に Windows と Mac のビルドを載せる。公開済みの同じタグには載せない。拡張の版は独立しており、タグとは照合しない。拡張 zip は ubuntu の別ジョブが作る。`manifest.json` と `popup.html` が参照するファイルが無いときは失敗する。Mac は補助プログラムに macOS 27.2 SDK が要るので `xcode-27` ランナーで Xcode 27.2 を選ぶ。`workflow_dispatch` はタグも Release も作らない試しビルドで、成果物は Artifacts に置く。`num_ctx` やモデルの初期値は変えない。16GB 未満向けに既定モデルは切り替えない。コード署名の秘密情報は置かない。
+Windows の配布は未署名の NSIS（`.exe`）である。実行ファイルは `VRCLibMan.exe`。Mac は Apple Silicon（`aarch64-apple-darwin`）と macOS 14 以降だけの未署名 dmg で、ad-hoc 署名（`signingIdentity` が `-`）だけを付ける。公証はしない。Intel と universal は作らない。`v*` タグが `package.json`、`package-lock.json`、`tauri.conf.json`、`Cargo.toml`、`Cargo.lock` の版と一致し、タグのコミットが main に含まれるとき、`.github/workflows/release.yml` が下書き Release を 1 回だけ作り（`scripts/check-release-version.mjs` で照合）、その release id に Windows と Mac のビルドを載せる。公開済みの同じタグには載せない。拡張の版は独立しており、タグとは照合しない。拡張 zip は ubuntu の別ジョブが作る。`manifest.json` と `popup.html` が参照するファイルが無いときは失敗する。Mac は補助プログラムに macOS 27.2 SDK が要るので `xcode-27` ランナーで Xcode 27.2 を選ぶ。`workflow_dispatch` はタグも Release も作らない試しビルドで、成果物は Artifacts に置く。`num_ctx` は8192のまま。モデルの初期値は `qwen3.5:9b` で、保存済みの選択は変えない。コード署名の秘密情報は置かない。
 
 Mac の内蔵ブラウザは `data_directory` を使わない。固定の 16 バイト `data_store_identifier`（`vrclibman-booth!`）でメイン画面と分ける。ログアウトはフォルダ削除ではなく、そのデータストアの `clear_all_browsing_data` と `remove_data_store` である。`vrclibman://` は `.app` を `/Applications` に置いたときだけ動く。
 

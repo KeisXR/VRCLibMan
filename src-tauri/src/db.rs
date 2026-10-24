@@ -4,7 +4,7 @@ use crate::model::{
     Avatar, AvatarCandidate, AvatarInput, BaseBody, BaseBodyInput, CatalogInfo, CatalogRefresh,
     Category, DownloadFact, DownloadFinished, Extraction, ImportReport, IncomingDownload,
     IncomingProduct, IncomingVariation, Knowledge, Link, LocalFile, Product, ProductFlag,
-    ProductUpdate, Settings, SettingsInput, SetupStatus, VariationFact, now_iso,
+    ProductUpdate, ManagedProduct, Settings, SettingsInput, SettingsPatch, SetupStatus, VariationFact, now_iso,
 };
 use crate::resolve::{ResolveInput, resolve_product};
 use crate::scan::ScanOutcome;
@@ -184,6 +184,16 @@ fn migrate(connection: &Connection) -> Result<(), String> {
         "downloadable_id",
         "ALTER TABLE product_files ADD COLUMN downloadable_id TEXT",
     )?;
+    if version < 2 {
+        let tx = connection.unchecked_transaction().sql()?;
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS product_exclusions (
+                booth_id TEXT PRIMARY KEY REFERENCES products(booth_id) ON DELETE CASCADE,
+                excluded_at TEXT NOT NULL
+            ); PRAGMA user_version = 2;",
+        ).sql()?;
+        tx.commit().sql()?;
+    }
     Ok(())
 }
 
@@ -316,6 +326,29 @@ fn normalize_backend(value: &str) -> String {
 }
 
 pub(crate) fn save_settings(connection: &Connection, input: &SettingsInput) -> Result<(), String> {
+    save_settings_values(connection, input, true)
+}
+
+pub(crate) fn update_settings(
+    connection: &Connection,
+    patch: &SettingsPatch,
+) -> Result<Settings, String> {
+    let input = patch.apply(settings(connection)?);
+    save_settings_values(
+        connection,
+        &input,
+        patch.library_folder.is_some() || patch.route_downloads == Some(true),
+    )?;
+    settings(connection)
+}
+
+fn save_settings_values(
+    connection: &Connection,
+    input: &SettingsInput,
+    validate_library: bool,
+) -> Result<(), String> {
+    let base = crate::ollama::validate_base_url(&input.ollama_base_url)?;
+    let model = crate::ollama::validate_model_name(&input.ollama_model)?;
     let (background_mode, launch_at_login) =
         crate::presence::normalize_presence(input.background_mode, input.launch_at_login);
     let library = input.library_folder.trim();
@@ -326,7 +359,7 @@ pub(crate) fn save_settings(connection: &Connection, input: &SettingsInput) -> R
     if input.route_downloads && library.is_empty() {
         return Err("自動整理をオンにする前に、ライブラリのフォルダを選んでください".into());
     }
-    if !library.is_empty() {
+    if validate_library && !library.is_empty() {
         let folder = std::path::Path::new(library);
         if !folder.is_absolute()
             || folder
@@ -355,8 +388,10 @@ pub(crate) fn save_settings(connection: &Connection, input: &SettingsInput) -> R
         }
         crate::scan::scan_block_reason(folder)?;
     }
-    set_setting(connection, "ollama_base_url", input.ollama_base_url.trim())?;
-    set_setting(connection, "ollama_model", input.ollama_model.trim())?;
+    let tx = connection.unchecked_transaction().sql()?;
+    let connection = &tx;
+    set_setting(connection, "ollama_base_url", &base)?;
+    set_setting(connection, "ollama_model", &model)?;
     set_setting(
         connection,
         "confidence_threshold",
@@ -389,7 +424,7 @@ pub(crate) fn save_settings(connection: &Connection, input: &SettingsInput) -> R
         "launch_at_login",
         if launch_at_login { "1" } else { "0" },
     )?;
-    Ok(())
+    tx.commit().sql()
 }
 
 pub(crate) fn booth_page_interval_ms(connection: &Connection) -> Result<u64, String> {
@@ -407,10 +442,6 @@ pub(crate) fn set_booth_page_interval_ms(
         return Err("BOOTH のアクセス間隔は 250、500、1000 ミリ秒から選んでください".into());
     }
     set_setting(connection, "booth_page_interval_ms", &interval_ms.to_string())
-}
-
-pub(crate) fn set_library_folder(connection: &Connection, path: &str) -> Result<(), String> {
-    set_setting(connection, "library_folder", path)
 }
 
 pub(crate) fn import_export_json(
@@ -920,6 +951,9 @@ fn merge_download(
 }
 
 fn apply_listed_compatibility(connection: &mut Connection, booth_id: &str) -> Result<(), String> {
+    if product_excluded(connection, booth_id)? {
+        return Ok(());
+    }
     let existing = require_product(connection, booth_id)?;
     if existing.description_snippet == crate::model::UNAVAILABLE_DESCRIPTION {
         return note_unavailable(connection, booth_id);
@@ -957,6 +991,9 @@ pub(crate) fn apply_extraction(
     extraction: &Extraction,
     threshold: f64,
 ) -> Result<(), String> {
+    if product_excluded(connection, booth_id)? {
+        return Ok(());
+    }
     let existing = require_product(connection, booth_id)?;
     let avatars = load_avatars(connection)?;
     let names = crate::compat::names_for_extraction(
@@ -1125,7 +1162,7 @@ fn established_avatar_sources(
 ) -> Result<HashSet<String>, String> {
     let mut statement = connection
         .prepare(
-            "SELECT booth_id, confidence, user_confirmed FROM products WHERE category = 'avatar'",
+            "SELECT booth_id, confidence, user_confirmed FROM products WHERE category = 'avatar' AND booth_id NOT IN (SELECT booth_id FROM product_exclusions)",
         )
         .sql()?;
     let rows = statement
@@ -1408,15 +1445,30 @@ pub(crate) fn link_file(
     Ok(())
 }
 
+/// Discard work started for a folder that the user has since changed.
+pub(crate) fn apply_library_scan(
+    connection: &mut Connection,
+    root: &str,
+    outcome: &ScanOutcome,
+) -> Result<crate::model::ScanReport, String> {
+    if settings(connection)?.library_folder != root {
+        return Err("調査中にライブラリのフォルダが変更されたため、以前の結果は反映しませんでした".into());
+    }
+    apply_scan(connection, root, outcome)
+}
+
 pub(crate) fn apply_scan(
     connection: &mut Connection,
     root: &str,
     outcome: &ScanOutcome,
 ) -> Result<crate::model::ScanReport, String> {
     let products = load_products(connection)?;
+    let excluded = excluded_product_ids(connection)?;
     let tx = connection.transaction().sql()?;
     tx.execute(
-        "DELETE FROM local_files WHERE link_source IS NULL OR link_source != 'manual'",
+        "DELETE FROM local_files WHERE (link_source IS NULL OR link_source != 'manual')
+         AND COALESCE(linked_product_id, '') NOT IN (SELECT booth_id FROM product_exclusions)
+         AND COALESCE(candidate_product_id, '') NOT IN (SELECT booth_id FROM product_exclusions)",
         [],
     )
     .sql()?;
@@ -1425,6 +1477,19 @@ pub(crate) fn apply_scan(
     let mut seen = HashSet::new();
     for entry in &outcome.entries {
         seen.insert(normalize_path_key(&entry.path));
+        let retained: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM local_files WHERE path = ?1 AND
+             (linked_product_id IN (SELECT booth_id FROM product_exclusions) OR candidate_product_id IN (SELECT booth_id FROM product_exclusions)))",
+            [&entry.path], |row| row.get(0),
+        ).sql()?;
+        if retained {
+            continue;
+        }
+        if entry.labels.iter().any(|label| {
+            excluded.iter().any(|id| contains_booth_id(label, id))
+        }) {
+            continue;
+        }
         let source: Option<String> = tx
             .query_row(
                 "SELECT link_source FROM local_files WHERE path = ?1",
@@ -1537,10 +1602,11 @@ pub(crate) fn products_for_extract(
     force: bool,
 ) -> Result<Vec<ExtractJob>, String> {
     let sql = if force {
-        "SELECT booth_id, title, description_snippet FROM products ORDER BY updated_at DESC"
+        "SELECT booth_id, title, description_snippet FROM products WHERE booth_id NOT IN (SELECT booth_id FROM product_exclusions) ORDER BY updated_at DESC"
     } else {
         "SELECT booth_id, title, description_snippet FROM products
-         WHERE extracted_at IS NULL OR category IS NULL
+         WHERE (extracted_at IS NULL OR category IS NULL)
+           AND booth_id NOT IN (SELECT booth_id FROM product_exclusions)
          ORDER BY imported_at ASC"
     };
     let mut statement = connection.prepare(sql).sql()?;
@@ -1560,7 +1626,8 @@ pub(crate) fn thumbnail_jobs(connection: &Connection) -> Result<Vec<ThumbJob>, S
     let mut statement = connection
         .prepare(
             "SELECT booth_id, thumbnail_url, thumbnail_path FROM products
-             WHERE thumbnail_url IS NOT NULL AND thumbnail_url != ''",
+             WHERE thumbnail_url IS NOT NULL AND thumbnail_url != ''
+               AND booth_id NOT IN (SELECT booth_id FROM product_exclusions)",
         )
         .sql()?;
     let rows = statement
@@ -1596,7 +1663,7 @@ pub(crate) fn product_ids_by_category(
     let mut statement = connection
         .prepare(
             "SELECT booth_id FROM products
-             WHERE category = ?1
+             WHERE category = ?1 AND booth_id NOT IN (SELECT booth_id FROM product_exclusions)
              ORDER BY title COLLATE NOCASE, booth_id",
         )
         .sql()?;
@@ -1607,12 +1674,49 @@ pub(crate) fn product_ids_by_category(
 }
 
 pub(crate) fn load_snapshot(connection: &Connection) -> Result<Snapshot, String> {
+    let products = load_products(connection)?;
+    let active: HashSet<_> = products.iter().map(|p| p.booth_id.as_str()).collect();
+    let excluded = excluded_product_ids(connection)?;
+    let all_links = load_links(connection)?;
+    let links: Vec<_> = all_links
+        .iter()
+        .filter(|link| active.contains(link.product_id.as_str()))
+        .cloned()
+        .collect();
+    let mut avatars = load_avatars(connection)?;
+    let active_bodies: HashSet<_> = products
+        .iter()
+        .filter(|p| p.category == Some(Category::Avatar))
+        .map(|p| p.booth_id.as_str())
+        .collect();
+    let owned: HashSet<_> = links
+        .iter()
+        .filter(|link| active_bodies.contains(link.product_id.as_str()))
+        .map(|link| link.avatar_id.as_str())
+        .collect();
+    // An excluded or invalidated body cannot keep a historical ownership flag visible.
+    for avatar in &mut avatars {
+        avatar.owned = avatar.owned && owned.contains(avatar.id.as_str());
+    }
     Ok(Snapshot {
-        products: load_products(connection)?,
-        files: load_files(connection)?,
-        avatars: load_avatars(connection)?,
+        products,
+        files: load_files(connection)?
+            .into_iter()
+            .filter(|file| {
+                !file
+                    .linked_product_id
+                    .as_ref()
+                    .is_some_and(|id| excluded.contains(id))
+                    && (file.linked_product_id.is_some()
+                        || !file
+                            .candidate_product_id
+                            .as_ref()
+                            .is_some_and(|id| excluded.contains(id)))
+            })
+            .collect(),
+        avatars,
         base_bodies: load_bases(connection)?,
-        links: load_links(connection)?,
+        links,
         variations: load_variations(connection)?,
         download_rows: load_download_rows(connection)?,
         placed_downloads: Vec::new(),
@@ -1621,6 +1725,74 @@ pub(crate) fn load_snapshot(connection: &Connection) -> Result<Snapshot, String>
         remote_checked: true,
         remote_reachable: false,
     })
+}
+
+pub(crate) fn product_excluded(connection: &Connection, booth_id: &str) -> Result<bool, String> {
+    connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM product_exclusions WHERE booth_id = ?1)",
+            [booth_id],
+            |row| row.get(0),
+        )
+        .sql()
+}
+
+fn excluded_product_ids(connection: &Connection) -> Result<HashSet<String>, String> {
+    let mut query = connection
+        .prepare("SELECT booth_id FROM product_exclusions")
+        .sql()?;
+    query
+        .query_map([], |row| row.get(0))
+        .sql()?
+        .collect::<Result<_, _>>()
+        .sql()
+}
+
+pub(crate) fn managed_products(connection: &Connection) -> Result<Vec<ManagedProduct>, String> {
+    let mut query = connection
+        .prepare(
+            "SELECT p.booth_id, p.title, p.shop, p.category, e.booth_id IS NOT NULL
+        FROM products p LEFT JOIN product_exclusions e ON p.booth_id = e.booth_id
+        ORDER BY p.imported_at DESC, p.booth_id",
+        )
+        .sql()?;
+    query
+        .query_map([], |row| {
+            let category: Option<String> = row.get(3)?;
+            Ok(ManagedProduct {
+                booth_id: row.get(0)?,
+                title: row.get(1)?,
+                shop: row.get(2)?,
+                category: category.as_deref().and_then(Category::parse),
+                excluded: row.get(4)?,
+            })
+        })
+        .sql()?
+        .collect::<Result<_, _>>()
+        .sql()
+}
+
+pub(crate) fn set_product_excluded(
+    connection: &mut Connection,
+    booth_id: &str,
+    excluded: bool,
+) -> Result<(), String> {
+    require_product(connection, booth_id)?;
+    let tx = connection.transaction().sql()?;
+    if excluded {
+        tx.execute(
+            "INSERT OR IGNORE INTO product_exclusions (booth_id, excluded_at) VALUES (?1, ?2)",
+            params![booth_id, now_iso()],
+        )
+        .sql()?;
+    } else {
+        tx.execute(
+            "DELETE FROM product_exclusions WHERE booth_id = ?1",
+            [booth_id],
+        )
+        .sql()?;
+    }
+    tx.commit().sql()
 }
 
 fn load_variations(connection: &Connection) -> Result<Vec<VariationFact>, String> {
@@ -1813,6 +1985,9 @@ pub(crate) fn prepare_download(
     if !crate::library_files::valid_booth_id(booth_id) {
         return Err("商品IDを特定できません".into());
     }
+    if product_excluded(connection, booth_id)? {
+        return Err("この商品は除外されています".into());
+    }
     let source = std::path::PathBuf::from(notice.path.trim());
     let downloads = crate::library_files::downloads_folder()?;
     crate::library_files::staged_download_ok(&source, &downloads, booth_id)?;
@@ -1984,6 +2159,9 @@ pub(crate) fn plan_browser_download(
     let booth_id = booth_id.trim();
     if !crate::library_files::valid_booth_id(booth_id) {
         return Err("商品IDを特定できません".into());
+    }
+    if product_excluded(connection, booth_id)? {
+        return Err("この商品は除外されています".into());
     }
     let saved = settings(connection)?;
     if !saved.builtin_browser {
@@ -2737,6 +2915,7 @@ pub(crate) fn settle_dictionary(connection: &mut Connection) -> Result<u32, Stri
         .prepare(
             "SELECT booth_id FROM products
              WHERE user_confirmed = 0 AND links_locked = 0
+               AND booth_id NOT IN (SELECT booth_id FROM product_exclusions)
                AND (extracted_at IS NULL OR booth_id IN (SELECT booth_id FROM avatar_sources))",
         )
         .sql()?;
@@ -2756,6 +2935,9 @@ pub(crate) fn settle_dictionary(connection: &mut Connection) -> Result<u32, Stri
 }
 
 pub(crate) fn skip_model(connection: &mut Connection, booth_id: &str) -> Result<bool, String> {
+    if product_excluded(connection, booth_id)? {
+        return Ok(true);
+    }
     let product = require_product(connection, booth_id)?;
     if product.user_confirmed || product.links_locked {
         return Ok(false);
@@ -2764,6 +2946,9 @@ pub(crate) fn skip_model(connection: &mut Connection, booth_id: &str) -> Result<
 }
 
 fn settle_one(connection: &mut Connection, booth_id: &str, redo: bool) -> Result<bool, String> {
+    if product_excluded(connection, booth_id)? {
+        return Ok(false);
+    }
     let product = require_product(connection, booth_id)?;
     if product.user_confirmed || product.links_locked {
         return Ok(false);
@@ -3351,7 +3536,9 @@ fn product_by_id(connection: &Connection, booth_id: &str) -> Result<Option<Produ
 }
 
 fn load_products(connection: &Connection) -> Result<Vec<Product>, String> {
-    let mut statement = connection.prepare(PRODUCT_SELECT).sql()?;
+    let mut statement = connection.prepare(&format!(
+        "{PRODUCT_SELECT} WHERE booth_id NOT IN (SELECT booth_id FROM product_exclusions)"
+    )).sql()?;
     let rows = statement.query_map([], map_product).sql()?;
     rows.collect::<Result<Vec<_>, _>>().sql()
 }
@@ -3642,6 +3829,302 @@ mod tests {
     use crate::view::{avatar_cards, avatar_detail, queue_page};
 
     #[test]
+    fn version_one_migration_preserves_library_and_saved_model() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(SCHEMA).unwrap();
+        connection.execute_batch("PRAGMA user_version = 1;
+                INSERT INTO settings VALUES ('ollama_model', 'gemma4:12b');
+                INSERT INTO products (booth_id, title, imported_at, updated_at) VALUES ('9001', '既存商品', 't', 't');
+                INSERT INTO local_files (path, filename, linked_product_id, link_source, scanned_at) VALUES ('/tmp/existing.zip', 'existing.zip', '9001', 'manual', 't');").unwrap();
+        migrate(&connection).unwrap();
+        migrate(&connection).unwrap();
+        ensure_ready(&connection).unwrap();
+        assert_eq!(
+            connection
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
+        assert_eq!(settings(&connection).unwrap().ollama_model, "gemma4:12b");
+        assert_eq!(managed_products(&connection).unwrap().len(), 1);
+        assert!(!product_excluded(&connection, "9001").unwrap());
+        assert_eq!(
+            load_files(&connection).unwrap()[0].link_source.as_deref(),
+            Some("manual")
+        );
+    }
+
+    #[test]
+    fn exclusions_hide_products_from_views_and_jobs_and_restore_without_data_loss() {
+        let mut connection = open_memory().unwrap();
+        import_products(&mut connection, &parse_export(SAMPLE).unwrap()).unwrap();
+        apply_extraction(
+            &mut connection,
+            "1001",
+            &extraction(Category::Avatar, &["ライム"], false, 0.99),
+            0.6,
+        )
+        .unwrap();
+        apply_extraction(
+            &mut connection,
+            "1004",
+            &extraction(Category::Outfit, &["ライム"], false, 0.99),
+            0.6,
+        )
+        .unwrap();
+        let original = require_product(&connection, "1004").unwrap();
+        let before = load_snapshot(&connection).unwrap();
+        set_product_excluded(&mut connection, "1004", true).unwrap();
+        set_product_excluded(&mut connection, "1004", true).unwrap();
+        let excluded = load_snapshot(&connection).unwrap();
+        assert_eq!(excluded.products.len(), before.products.len() - 1);
+        assert!(excluded.links.iter().all(|link| link.product_id != "1004"));
+        assert!(
+            crate::view::product_options(&excluded)
+                .iter()
+                .all(|p| p.booth_id != "1004")
+        );
+        assert!(
+            products_for_extract(&connection, true)
+                .unwrap()
+                .iter()
+                .all(|p| p.booth_id != "1004")
+        );
+        assert!(
+            products_for_extract(&connection, false)
+                .unwrap()
+                .iter()
+                .all(|p| p.booth_id != "1004")
+        );
+        assert!(
+            managed_products(&connection)
+                .unwrap()
+                .iter()
+                .any(|p| p.booth_id == "1004" && p.excluded)
+        );
+        apply_extraction(
+            &mut connection,
+            "1004",
+            &extraction(Category::Other, &[], true, 0.1),
+            0.6,
+        )
+        .unwrap();
+        reresolve_all(&mut connection).unwrap();
+        assert_eq!(
+            require_product(&connection, "1004").unwrap().category,
+            original.category
+        );
+        set_product_excluded(&mut connection, "1004", false).unwrap();
+        let restored = load_snapshot(&connection).unwrap();
+        assert_eq!(restored.products.len(), before.products.len());
+        assert!(
+            restored
+                .links
+                .iter()
+                .any(|link| link.product_id == "1004" && link.avatar_id == "lime")
+        );
+        assert_eq!(
+            require_product(&connection, "1004").unwrap().category,
+            original.category
+        );
+        assert!(set_product_excluded(&mut connection, "9999", true).is_err());
+    }
+
+    #[test]
+    fn excluded_body_stays_excluded_after_reimport_and_does_not_count_as_owned() {
+        let mut connection = open_memory().unwrap();
+        import_products(&mut connection, &parse_export(SAMPLE).unwrap()).unwrap();
+        mark_owned_body(&mut connection, "1001").unwrap();
+        assert!(
+            load_snapshot(&connection)
+                .unwrap()
+                .avatars
+                .iter()
+                .any(|a| a.id == "lime" && a.owned)
+        );
+        set_product_excluded(&mut connection, "1001", true).unwrap();
+        let updated = SAMPLE.replace("共通素体", "更新された説明");
+        import_products(&mut connection, &parse_export(&updated).unwrap()).unwrap();
+        ensure_ready(&connection).unwrap();
+        assert!(product_excluded(&connection, "1001").unwrap());
+        let snapshot = load_snapshot(&connection).unwrap();
+        assert!(snapshot.products.iter().all(|p| p.booth_id != "1001"));
+        assert!(snapshot.avatars.iter().any(|a| a.id == "lime" && !a.owned));
+        assert_eq!(crate::view::library_stats(&snapshot, "fixture").products, 5);
+        set_product_excluded(&mut connection, "1001", false).unwrap();
+        assert!(
+            load_snapshot(&connection)
+                .unwrap()
+                .products
+                .iter()
+                .any(|p| p.booth_id == "1001")
+        );
+    }
+
+    #[test]
+    fn rescanning_preserves_excluded_file_links_without_reintroducing_them() {
+        let mut connection = open_memory().unwrap();
+        import_products(
+            &mut connection,
+            &parse_export(&SAMPLE.replace("1004", "91004").replace("1005", "91005")).unwrap(),
+        )
+        .unwrap();
+        let entry = |id: &str| crate::scan::ScanEntry {
+            path: format!("/tmp/vrclibman-exclusions/{id}.zip"),
+            filename: format!("{id}.zip"),
+            is_dir: false,
+            size: 10,
+            labels: vec![format!("{id}.zip")],
+        };
+        let mut outcome = ScanOutcome {
+            entries: vec![entry("91004"), entry("91005")],
+            truncated: false,
+        };
+        apply_scan(&mut connection, "/tmp/vrclibman-exclusions", &outcome).unwrap();
+        set_product_excluded(&mut connection, "91004", true).unwrap();
+        outcome.entries.push(crate::scan::ScanEntry {
+            path: "/tmp/vrclibman-exclusions/new-1004.zip".into(),
+            ..entry("91004")
+        });
+        apply_scan(&mut connection, "/tmp/vrclibman-exclusions", &outcome).unwrap();
+        assert_eq!(load_files(&connection).unwrap().len(), 2);
+        assert_eq!(load_snapshot(&connection).unwrap().files.len(), 1);
+        set_product_excluded(&mut connection, "91004", false).unwrap();
+        let restored = load_snapshot(&connection).unwrap();
+        assert_eq!(restored.files.len(), 2);
+        assert!(
+            restored
+                .files
+                .iter()
+                .any(|f| f.linked_product_id.as_deref() == Some("91004"))
+        );
+    }
+
+    #[test]
+    fn stale_scan_cannot_revert_the_folder_or_replace_newer_results() {
+        let mut connection = open_memory().unwrap();
+        let outcome = ScanOutcome {
+            entries: vec![crate::scan::ScanEntry {
+                path: "/tmp/vrclibman-new/item.zip".into(),
+                filename: "item.zip".into(),
+                is_dir: false,
+                size: 10,
+                labels: vec!["item".into()],
+            }],
+            truncated: false,
+        };
+        set_setting(&connection, "library_folder", "/tmp/vrclibman-new").unwrap();
+        apply_library_scan(&mut connection, "/tmp/vrclibman-new", &outcome).unwrap();
+        let stale = ScanOutcome {
+            entries: vec![],
+            truncated: false,
+        };
+        assert!(apply_library_scan(&mut connection, "/tmp/vrclibman-old", &stale).is_err());
+        assert_eq!(
+            settings(&connection).unwrap().library_folder,
+            "/tmp/vrclibman-new"
+        );
+        assert_eq!(load_files(&connection).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn excluded_products_cannot_start_or_route_downloads() {
+        let mut connection = open_memory().unwrap();
+        import_products(&mut connection, &parse_export(SAMPLE).unwrap()).unwrap();
+        set_product_excluded(&mut connection, "1004", true).unwrap();
+        set_setting(&connection, "route_downloads", "1").unwrap();
+        set_setting(
+            &connection,
+            "library_folder",
+            "/tmp/vrclibman-excluded-downloads",
+        )
+        .unwrap();
+        let notice: DownloadFinished = serde_json::from_value(serde_json::json!({
+            "boothId": "1004", "path": "/tmp/no-file-should-be-touched.zip"
+        }))
+        .unwrap();
+        assert!(
+            prepare_download(&mut connection, &notice)
+                .unwrap_err()
+                .contains("除外")
+        );
+        assert!(
+            plan_browser_download(&connection, "1004", "", "body.zip")
+                .unwrap_err()
+                .contains("除外")
+        );
+    }
+
+    #[test]
+    fn settings_patches_merge_current_values_and_validate_before_writing() {
+        let connection = open_memory().unwrap();
+        update_settings(
+            &connection,
+            &SettingsPatch {
+                ollama_model: Some("gemma4:12b".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        set_setting(&connection, "library_folder", "/unavailable/saved/library").unwrap();
+        set_setting(&connection, "builtin_browser", "1").unwrap();
+        let saved = update_settings(
+            &connection,
+            &SettingsPatch {
+                confidence_threshold: Some(0.75),
+                background_mode: Some(true),
+                launch_at_login: Some(true),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(saved.ollama_model, "gemma4:12b");
+        assert_eq!(saved.confidence_threshold, 0.75);
+        assert!(saved.builtin_browser && saved.background_mode && saved.launch_at_login);
+        let invalid = SettingsPatch {
+            ollama_model: Some("invalid model!".into()),
+            confidence_threshold: Some(0.1),
+            ..Default::default()
+        };
+        assert!(update_settings(&connection, &invalid).is_err());
+        assert_eq!(settings(&connection).unwrap().confidence_threshold, 0.75);
+        assert!(
+            update_settings(
+                &connection,
+                &SettingsPatch {
+                    library_folder: Some("relative".into()),
+                    ..Default::default()
+                }
+            )
+            .is_err()
+        );
+        let saved = update_settings(
+            &connection,
+            &SettingsPatch {
+                background_mode: Some(false),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(!saved.background_mode && !saved.launch_at_login);
+    }
+
+    #[test]
+    fn failed_settings_write_rolls_back_the_entire_patch() {
+        let connection = open_memory().unwrap();
+        connection.execute_batch("CREATE TRIGGER fail_settings BEFORE UPDATE ON settings WHEN NEW.key = 'confidence_threshold' BEGIN SELECT RAISE(ABORT, 'fixture write failure'); END;").unwrap();
+        let patch = SettingsPatch {
+            ollama_model: Some("qwen3.5:4b".into()),
+            confidence_threshold: Some(0.75),
+            ..Default::default()
+        };
+        assert!(update_settings(&connection, &patch).is_err());
+        let saved = settings(&connection).unwrap();
+        assert_eq!(saved.ollama_model, "qwen3.5:9b");
+        assert_eq!(saved.confidence_threshold, 0.6);
+    }
+
+    #[test]
     fn products_by_category_returns_only_requested_category() {
         let connection = open_memory().unwrap();
         for (booth_id, title, category) in [
@@ -3895,7 +4378,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 1);
+        assert_eq!(version, 2);
         let report = import_products(&mut connection, &parsed).unwrap();
         assert_eq!(report.inserted, 7);
         assert_eq!(report.skipped, 0);
@@ -4098,9 +4581,9 @@ mod tests {
     }
 
     #[test]
-    fn fresh_database_defaults_to_gemma_and_keeps_a_saved_model() {
+    fn fresh_database_defaults_to_qwen9b_and_keeps_a_saved_model() {
         let connection = open_memory().unwrap();
-        assert_eq!(settings(&connection).unwrap().ollama_model, "gemma4:12b");
+        assert_eq!(settings(&connection).unwrap().ollama_model, "qwen3.5:9b");
         save_settings(
             &connection,
             &SettingsInput {
@@ -4148,15 +4631,15 @@ mod tests {
         ensure_ready(&paired).unwrap();
         assert!(setup_status(&paired).unwrap().complete);
         let status = setup_status(&paired).unwrap();
-        assert_eq!(status.default_model, "gemma4:12b");
-        assert_eq!(status.model, "gemma4:12b");
+        assert_eq!(status.default_model, "qwen3.5:9b");
+        assert_eq!(status.model, "qwen3.5:9b");
     }
 
     #[test]
     fn builtin_browser_stays_off_until_the_user_enables_it() {
         let connection = open_memory().unwrap();
         assert!(!settings(&connection).unwrap().builtin_browser);
-        assert_eq!(settings(&connection).unwrap().ollama_model, "gemma4:12b");
+        assert_eq!(settings(&connection).unwrap().ollama_model, "qwen3.5:9b");
         save_settings(
             &connection,
             &SettingsInput {
@@ -5479,7 +5962,7 @@ mod tests {
         let saved = settings(&connection).unwrap();
         assert!(!saved.background_mode);
         assert!(!saved.launch_at_login);
-        assert_eq!(saved.ollama_model, "gemma4:12b");
+        assert_eq!(saved.ollama_model, "qwen3.5:9b");
         let base = SettingsInput {
             ollama_base_url: "http://127.0.0.1:11434".into(),
             ollama_model: "gemma4:12b".into(),
@@ -5522,7 +6005,7 @@ mod tests {
     #[test]
     fn opening_the_database_and_the_sweep_do_not_require_booth() {
         let mut connection = open_memory().unwrap();
-        assert_eq!(settings(&connection).unwrap().ollama_model, "gemma4:12b");
+        assert_eq!(settings(&connection).unwrap().ollama_model, "qwen3.5:9b");
         let root = std::env::temp_dir().join(format!(
             "vrclibman-sweep-empty-{}",
             std::process::id()

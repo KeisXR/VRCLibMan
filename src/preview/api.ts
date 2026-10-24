@@ -27,6 +27,16 @@ import type {
   Settings,
 } from "../types";
 
+const excludedProducts = new Set<string>();
+
+function activeProducts(): Product[] { return store.products.filter((p) => !excludedProducts.has(p.boothId)); }
+function activeAvatars(): AvatarRecord[] {
+  return store.avatars.map((avatar) => {
+    const bodies = store.products.filter((p) => p.category === "avatar" && linksOf(p.boothId).includes(avatar.id));
+    return { ...avatar, owned: avatar.owned && bodies.some((p) => !excludedProducts.has(p.boothId)) };
+  });
+}
+
 interface Product {
   boothId: string;
   title: string;
@@ -105,7 +115,7 @@ const extensionLink: ExtensionLink = {
 const store: Store = {
   settings: {
     ollamaBaseUrl: "http://127.0.0.1:11434",
-    ollamaModel: "gemma4:12b",
+    ollamaModel: "qwen3.5:9b",
     confidenceThreshold: 0.6,
     libraryFolder: "C:\\Assets",
     builtinBrowser: false,
@@ -498,7 +508,7 @@ function classify(avatar: AvatarRecord): {
   const specific: { key: string; item: ItemView }[] = [];
   const generic: ItemView[] = [];
   const owned: OwnedBody[] = [];
-  for (const item of store.products) {
+  for (const item of activeProducts()) {
     const linked = new Set(linksOf(item.boothId));
     const inFamily = [...linked].some((id) => family.has(id));
     if (item.category === "avatar") {
@@ -544,7 +554,7 @@ function sectionCount(sections: Section[], key: string): number {
 }
 
 function cards(): AvatarCard[] {
-  return store.avatars
+  return activeAvatars()
     .filter((avatar) => avatar.owned || referencedOnly(avatar.id))
     .map((avatar) => {
       const view = classify(avatar);
@@ -572,17 +582,17 @@ function cards(): AvatarCard[] {
 function referencedOnly(avatarId: string): boolean {
   return store.links.some((link) => {
     if (link.avatarId !== avatarId) return false;
-    const product = store.products.find((item) => item.boothId === link.productId);
+    const product = activeProducts().find((item) => item.boothId === link.productId);
     return product != null && product.category !== "avatar";
   });
 }
 
 function detail(id: string): AvatarDetail {
-  const avatar = store.avatars.find((item) => item.id === id);
+  const avatar = activeAvatars().find((item) => item.id === id);
   if (!avatar) throw new Error("アバターが見つかりません");
   const view = classify(avatar);
   const body = store.baseBodies.find((item) => item.id === avatar.baseBody);
-  const siblings = store.avatars
+  const siblings = activeAvatars()
     .filter(
       (other) =>
         other.id !== avatar.id &&
@@ -610,7 +620,7 @@ function detail(id: string): AvatarDetail {
 
 function candidates() {
   const counts = new Map<string, number>();
-  for (const product of store.products) {
+  for (const product of activeProducts()) {
     for (const name of product.unresolvedNames) {
       counts.set(name, (counts.get(name) ?? 0) + 1);
     }
@@ -633,10 +643,10 @@ function queuePresence(boothId: string): ReturnType<typeof filePresence> {
 }
 
 function queue(kind: string): QueuePage {
-  const unextracted = store.products.filter((item) => item.category == null).length;
-  const needsReview = store.products.filter((item) => item.needsReview && item.category != null).length;
-  const unlinked = store.files.filter((file) => file.linkedProductId == null);
-  const products: QueueProduct[] = store.products
+  const unextracted = activeProducts().filter((item) => item.category == null).length;
+  const needsReview = activeProducts().filter((item) => item.needsReview && item.category != null).length;
+  const unlinked = store.files.filter((file) => file.linkedProductId == null && !excludedProducts.has(file.candidateProductId ?? ""));
+  const products: QueueProduct[] = activeProducts()
     .filter((item) => (kind === "unextracted" ? item.category == null : item.needsReview && item.category != null))
     .map((item) => ({
       boothId: item.boothId,
@@ -663,7 +673,7 @@ function queue(kind: string): QueuePage {
     matchScore: file.matchScore,
     candidateProductId: file.candidateProductId,
     candidateTitle:
-      store.products.find((item) => item.boothId === file.candidateProductId)?.title ?? null,
+      activeProducts().find((item) => item.boothId === file.candidateProductId)?.title ?? null,
   }));
   return {
     unextracted,
@@ -677,8 +687,8 @@ function queue(kind: string): QueuePage {
 function stats(): LibraryStats {
   const page = queue("review");
   return {
-    products: store.products.length,
-    ownedAvatars: store.avatars.filter((avatar) => avatar.owned).length,
+    products: activeProducts().length,
+    ownedAvatars: activeAvatars().filter((avatar) => avatar.owned).length,
     unextracted: page.unextracted,
     needsReview: page.needsReview,
     queueCount: page.unextracted + page.needsReview,
@@ -997,7 +1007,7 @@ async function previewLibraryWalk(): Promise<LibraryWalkReport> {
 
 let boothPageIntervalMs = 1000;
 let importMode: BoothImportMode | null = null;
-const installedModels = ["gemma4:12b", "qwen3:4b"];
+const installedModels = ["qwen3.5:9b", "gemma4:12b", "qwen3:4b"];
 const previewIntegration = {
   paired: true,
   expectedExtensionVersion: extensionManifest.version,
@@ -1010,6 +1020,14 @@ const previewIntegration = {
 export async function dispatch<T>(command: string, args: Record<string, unknown>): Promise<T> {
   notePreviewCall(command);
   switch (command) {
+    case "list_managed_products":
+      return store.products.map((p) => ({ boothId: p.boothId, title: p.title, shop: p.shop, category: p.category, excluded: excludedProducts.has(p.boothId) })) as T;
+    case "set_product_excluded": {
+      const id = String(args.boothId ?? "");
+      if (!store.products.some((p) => p.boothId === id)) throw new Error("商品が見つかりません");
+      if (args.excluded === true) excludedProducts.add(id); else excludedProducts.delete(id);
+      return undefined as T;
+    }
     case "library_stats":
       return stats() as T;
     case "list_avatars":
@@ -1017,7 +1035,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     case "get_avatar":
       return detail(String(args.id ?? "")) as T;
     case "list_products_by_category":
-      return store.products
+      return activeProducts()
         .filter((item) => item.category === args.category)
         .map((item) => itemView(item, false)) as T;
     case "probe_remote_files":
@@ -1026,7 +1044,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     case "list_queue":
       return queue(String(args.kind ?? "review")) as T;
     case "list_product_options":
-      return store.products
+      return activeProducts()
         .map((item) => ({ boothId: item.boothId, title: item.title, shop: item.shop }))
         .sort((left, right) => left.title.localeCompare(right.title, "ja")) as T;
     case "list_knowledge":
@@ -1055,20 +1073,15 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     case "regenerate_extension_token":
       extensionLink.token = extensionLink.token === "K7NP-4Q2M" ? "M8QR-5S3N" : "K7NP-4Q2M";
       return { ...extensionLink } as T;
+    case "update_settings":
     case "save_settings": {
-      const settings = args.settings as Settings;
-      if (!/^http:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i.test(settings.ollamaBaseUrl.replace(/\/$/, ""))) {
-        throw new Error("Ollamaは手元のPC（localhost）だけに接続します");
-      }
+      const settings = command === "update_settings" ? { ...store.settings, ...(args.patch as Partial<Settings>) } : args.settings as Settings;
+      if (!/^http:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i.test(settings.ollamaBaseUrl.replace(/\/$/, ""))) throw new Error("Ollamaは手元のPC（localhost）だけに接続します");
+      if (!/^[a-zA-Z0-9._:/-]{1,80}$/.test(settings.ollamaModel.trim())) throw new Error("モデル名が不正です");
+      if (settings.routeDownloads && !settings.libraryFolder.trim()) throw new Error("自動整理をオンにする前に、ライブラリのフォルダを選んでください");
       const backgroundMode = Boolean(settings.backgroundMode);
-      const launchAtLogin = backgroundMode && Boolean(settings.launchAtLogin);
-      store.settings = {
-        ...settings,
-        backgroundMode,
-        launchAtLogin,
-        confidenceThreshold: Math.min(1, Math.max(0, settings.confidenceThreshold)),
-      };
-      return undefined as T;
+      store.settings = { ...settings, ollamaModel: settings.ollamaModel.trim(), backgroundMode, launchAtLogin: backgroundMode && Boolean(settings.launchAtLogin), confidenceThreshold: Math.min(1, Math.max(0, settings.confidenceThreshold)) };
+      return (command === "update_settings" ? { ...store.settings } : undefined) as T;
     }
     case "import_export":
       return importExport(String(args.json ?? "")) as T;
@@ -1164,7 +1177,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       return {
         complete: store.setupComplete,
         model: store.settings.ollamaModel,
-        defaultModel: "gemma4:12b",
+        defaultModel: "qwen3.5:9b",
         backend: store.settings.llmBackend,
       } as T;
     case "apple_fm_status":

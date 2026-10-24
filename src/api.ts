@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AvatarCard,
+  ManagedProduct,
   BoothImportMode,
   IntegrationStatus,
   AvatarDetail,
@@ -94,6 +95,8 @@ export const api = {
   probeRemoteFiles: (id: string) => call<AvatarDetail>("probe_remote_files", { id }),
   queue: (kind: string, offset = 0, limit = 50) =>
     call<QueuePage>("list_queue", { kind, offset, limit }),
+  managedProducts: () => call<ManagedProduct[]>("list_managed_products"),
+  setProductExcluded: (boothId: string, excluded: boolean) => call<void>("set_product_excluded", { boothId, excluded }),
   productOptions: () => call<ProductOption[]>("list_product_options"),
   knowledge: () => call<Knowledge>("list_knowledge"),
   settings: () => call<Settings>("get_settings"),
@@ -102,6 +105,7 @@ export const api = {
   extensionLink: () => call<ExtensionLink>("extension_link"),
   regenerateExtensionToken: () => call<ExtensionLink>("regenerate_extension_token"),
   saveSettings: (settings: Settings) => call<void>("save_settings", { settings }),
+  updateSettings: (patch: Partial<Settings>) => call<Settings>("update_settings", { patch }),
   boothPageInterval: () => call<number>("get_booth_page_interval"),
   setBoothPageInterval: (intervalMs: number) => call<void>("set_booth_page_interval", { intervalMs }),
   openBoothBrowser: () => call<void>("open_booth_browser"),
@@ -155,10 +159,9 @@ export const api = {
   routeStagedDownload: (path: string) => call<void>("route_staged_download", { path }),
 };
 
-export async function saveLibraryAndScan(folder: string, settings?: Settings): Promise<ScanReport> {
-  const current = settings ?? (await api.settings());
-  await api.saveSettings({ ...current, libraryFolder: folder });
-  return api.scanLibrary(folder);
+export async function saveLibraryAndScan(folder: string): Promise<ScanReport> {
+  const saved = await api.updateSettings({ libraryFolder: folder });
+  return api.scanLibrary(saved.libraryFolder);
 }
 
 export async function revealInFolder(path: string): Promise<void> {

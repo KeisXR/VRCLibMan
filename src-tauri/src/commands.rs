@@ -99,6 +99,29 @@ pub fn set_booth_import_mode(app: AppHandle, state: State<'_, AppState>, mode: S
 }
 
 #[tauri::command]
+pub fn list_managed_products(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::model::ManagedProduct>, String> {
+    let connection = db(&state)?;
+    db::managed_products(&connection)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn set_product_excluded(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    boothId: String,
+    excluded: bool,
+) -> Result<(), String> {
+    let mut connection = db(&state)?;
+    db::set_product_excluded(&mut connection, &boothId, excluded)?;
+    drop(connection);
+    let _ = app.emit("library-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
 pub fn library_stats(state: State<'_, AppState>) -> Result<LibraryStats, String> {
     let mut connection = db(&state)?;
     let snapshot = db::load_snapshot(&mut connection)?;
@@ -246,6 +269,46 @@ pub fn save_settings(
     };
     crate::presence::remember_background(&app, saved.background_mode);
     crate::presence::apply_presence(&app, saved.background_mode, saved.launch_at_login)
+}
+
+#[tauri::command]
+pub fn update_settings(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    patch: crate::model::SettingsPatch,
+) -> Result<Settings, String> {
+    let presence_changed = patch.background_mode.is_some() || patch.launch_at_login.is_some();
+    let (before, saved) = {
+        let connection = db(&state)?;
+        (
+            db::settings(&connection)?,
+            db::update_settings(&connection, &patch)?,
+        )
+    };
+    if presence_changed {
+        if let Err(error) =
+            crate::presence::apply_presence(&app, saved.background_mode, saved.launch_at_login)
+        {
+            let connection = db(&state)?;
+            db::update_settings(
+                &connection,
+                &crate::model::SettingsPatch {
+                    background_mode: Some(before.background_mode),
+                    launch_at_login: Some(before.launch_at_login),
+                    ..Default::default()
+                },
+            )?;
+            crate::presence::remember_background(&app, before.background_mode);
+            let _ = crate::presence::apply_presence(
+                &app,
+                before.background_mode,
+                before.launch_at_login,
+            );
+            return Err(error);
+        }
+        crate::presence::remember_background(&app, saved.background_mode);
+    }
+    Ok(saved)
 }
 
 #[tauri::command]
@@ -525,8 +588,7 @@ pub async fn scan_library(
         .await
         .map_err(|err| format!("スキャンを実行できません: {err}"))??;
     let mut connection = db(&state)?;
-    let report = db::apply_scan(&mut connection, &path, &outcome)?;
-    db::set_library_folder(&mut connection, &path)?;
+    let report = db::apply_library_scan(&mut connection, &path, &outcome)?;
     emit_progress(
         &app,
         "scan",
@@ -584,6 +646,12 @@ pub async fn extract_products(
             cancelled = true;
             break;
         }
+        {
+            let connection = db(&state)?;
+            if db::product_excluded(&connection, &job.booth_id)? {
+                continue;
+            }
+        }
         let label: String = job.title.chars().take(40).collect();
         emit_progress(
             &app,
@@ -606,7 +674,14 @@ pub async fn extract_products(
             processed += 1;
             continue;
         }
-        match classify_product(&client, &settings, job, &keep, &lists, ollama_ready).await {
+        let classified = classify_product(&client, &settings, job, &keep, &lists, ollama_ready).await;
+        {
+            let connection = db(&state)?;
+            if db::product_excluded(&connection, &job.booth_id)? {
+                continue;
+            }
+        }
+        match classified {
             Ok(Classified::Done(extraction)) => {
                 if state.cancel_extract.load(Ordering::Relaxed) {
                     cancelled = true;
