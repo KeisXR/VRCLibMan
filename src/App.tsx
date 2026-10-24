@@ -245,7 +245,7 @@ export default function App() {
               <span className="count">{stats?.queueCount ?? 0}</span>
             </a>
             <a className={route.page === "import" ? "nav-link active" : "nav-link"} href="#/import">
-              取り込み
+              インポート
             </a>
             <a className={route.page === "settings" ? "nav-link active" : "nav-link"} href="#/settings">
               設定

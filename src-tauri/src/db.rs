@@ -323,7 +323,7 @@ pub(crate) fn save_settings(connection: &Connection, input: &SettingsInput) -> R
         return Err("Apple のオンデバイスモデルは、今の Mac では使えません".into());
     }
     if input.route_downloads && library.is_empty() {
-        return Err("振り分けをオンにする前に、ライブラリのフォルダを選んでください".into());
+        return Err("自動整理をオンにする前に、ライブラリのフォルダを選んでください".into());
     }
     if !library.is_empty() {
         let folder = std::path::Path::new(library);
@@ -521,7 +521,7 @@ pub(crate) fn import_products(
     let mut warnings = parsed.warnings.clone();
     if !parsed.products.is_empty() && variations == 0 && downloads == 0 {
         warnings.push(
-            "バリエーションもダウンロードも 0 件です。ファイルの有無は分かりません。拡張の「解析結果をコピー」で構造を確認するか、ライブラリを取り込み直すか、フォルダを調べてください"
+            "バリエーションもダウンロードも 0 件です。ファイルの有無は分かりません。拡張の「解析結果をコピー」で構造を確認するか、ライブラリを再インポートするか、フォルダを調べてください"
                 .into(),
         );
     }
@@ -1786,10 +1786,10 @@ pub(crate) fn prepare_download(
 ) -> Result<DownloadPlan, String> {
     let saved = settings(connection)?;
     if !saved.route_downloads {
-        return Err("ダウンロードの振り分けはオフです".into());
+        return Err("ダウンロードの自動整理はオフです".into());
     }
     if saved.library_folder.trim().is_empty() {
-        return Err("ライブラリのフォルダを選んでから、振り分けをオンにしてください".into());
+        return Err("ライブラリのフォルダを選んでから、自動整理をオンにしてください".into());
     }
     let booth_id = notice.booth_id.trim();
     if !crate::library_files::valid_booth_id(booth_id) {
@@ -1945,9 +1945,9 @@ pub(crate) const BROWSER_AGE_MESSAGE: &str =
     "年齢確認は自動では通過しません。内蔵ブラウザで自分で確認してから、もう一度押してください";
 pub(crate) const BROWSER_DOWNLOAD_FAILED: &str =
     "ダウンロードできませんでした。内蔵ブラウザでログインしているか確認してください";
-pub(crate) const BROWSER_BUSY_MESSAGE: &str = "別のファイルを受け取っています";
+pub(crate) const BROWSER_BUSY_MESSAGE: &str = "別のファイルをダウンロード中です";
 pub(crate) const BROWSER_MISSING_ID_MESSAGE: &str =
-    "この行にはダウンロード番号がありません。拡張を更新して取り込み直してください";
+    "この行にはダウンロード番号がありません。拡張を更新して再インポートしてください";
 
 #[derive(Debug, Clone)]
 pub(crate) struct BrowserFilePlan {
@@ -1972,10 +1972,10 @@ pub(crate) fn plan_browser_download(
         return Err(BROWSER_OFF_MESSAGE.into());
     }
     if !saved.route_downloads {
-        return Err("ダウンロードの振り分けはオフです".into());
+        return Err("ダウンロードの自動整理はオフです".into());
     }
     if saved.library_folder.trim().is_empty() {
-        return Err("ライブラリのフォルダを選んでから、振り分けをオンにしてください".into());
+        return Err("ライブラリのフォルダを選んでから、自動整理をオンにしてください".into());
     }
     let variation = crate::library_files::clean_variation(variation).unwrap_or_default();
     let filename = crate::library_files::safe_filename(filename)
@@ -5236,7 +5236,7 @@ mod tests {
         browser_settings(&connection, &library, true, false).unwrap();
         assert!(plan_browser_download(&connection, "424242", "通常", "2336025")
             .unwrap_err()
-            .contains("振り分けはオフ"));
+            .contains("自動整理はオフ"));
         browser_settings(&connection, &library, true, true).unwrap();
         assert!(plan_browser_download(&connection, "424242", "", "note.txt")
             .unwrap_err()

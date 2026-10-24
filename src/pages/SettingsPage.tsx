@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { api, chooseFolder, openExternal, saveLibraryAndScan } from "../api";
 import { useShell } from "../App";
 import { formatBytes } from "../media";
@@ -15,6 +16,18 @@ const emptyAvatar = {
   builtin: false,
 };
 
+function SettingRow({ label, help, children }: { label: string; help?: ReactNode; children: ReactNode }) {
+  return (
+    <div className="setting-row">
+      <div className="setting-copy">
+        <strong>{label}</strong>
+        {help && <p>{help}</p>}
+      </div>
+      <div className="setting-control">{children}</div>
+    </div>
+  );
+}
+
 export function SettingsPage() {
   const { revision, refresh, notify, fail } = useShell();
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -29,6 +42,7 @@ export function SettingsPage() {
   const [link, setLink] = useState<ExtensionLink | null>(null);
   const [apple, setApple] = useState<AppleFmStatus | null>(null);
   const [catalog, setCatalog] = useState<CatalogInfo | null>(null);
+  const [pulling, setPulling] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -146,6 +160,25 @@ export function SettingsPage() {
     } catch (err) {
       setInstalledSize(null);
       setStatus(errorText(err));
+    }
+  }
+
+  async function pullOllamaModel() {
+    if (!settings) return;
+    if (!window.confirm(`${settings.ollamaModel} を Ollama からダウンロードします。数 GB になることがあります。続けますか？`)) return;
+    setPulling(true);
+    setStatus(`${settings.ollamaModel} を取得しています`);
+    try {
+      await api.saveSettings(settings);
+      await api.pullOllamaModel();
+      await testOllama();
+      notify(`${settings.ollamaModel} を取得しました`);
+    } catch (err) {
+      const message = errorText(err);
+      setStatus(message);
+      fail(message);
+    } finally {
+      setPulling(false);
     }
   }
 
@@ -268,422 +301,104 @@ export function SettingsPage() {
   const avatars = matched.slice(0, 80);
 
   return (
-    <section>
+    <section className="settings-page">
       <div className="page-head">
-        <div>
-          <h1>設定</h1>
-          <p>分類は手元の Ollama だけに頼み、素体の関係はここにある対応表で決めます。</p>
-        </div>
+        <div><h1>設定</h1><p>分類、ファイルの保存先、アプリの動作を管理します。</p></div>
+        {settings && <button className="button primary" type="button" onClick={() => void saveSettings()}>設定を保存</button>}
       </div>
-      {link && (
-        <div className="panel" >
-          <h2>拡張との接続</h2>
-          <p className="meta">
-            拡張は今開いている Booth のページだけを読み、この PC の 127.0.0.1:{link.port} に送ります。
-            アプリは Booth を取りに行きません。下のコードを拡張のポップアップに一度貼ってください。
-            最初に届いた拡張だけを覚えます。コードを作り直すと、その結び付きも外れます。
-            違うコードが続くと、しばらく受け付けません。
-          </p>
-          <label className="field">
-            <span>ペアリングコード</span>
-            <input readOnly value={link.token} />
-          </label>
-          <p className="meta">
-            {link.listening
-              ? `127.0.0.1:${link.port} で待っています。`
-              : link.error || "受信を開始できませんでした。"}
-            {` アプリが閉じているときは、拡張が vrclibman://import で起動します。`}
-          </p>
-          <div className="row-actions">
-            <button className="button" type="button" onClick={() => void regenerateToken()}>
-              コードを作り直す
-            </button>
-          </div>
-        </div>
-      )}
+
       {settings && (
-        <div className="panel" >
-          <h2>内蔵ブラウザ</h2>
-          <p className="meta">
-            既定は拡張機能です。内蔵ブラウザは、自分でログインして使う別のモードです。
-            ページを辿るのはブラウザ画面の「ライブラリ全取得」だけです。一括のダウンロードはしません。年齢確認も自動では進みません。
-            ログイン状態はこのアプリ専用のフォルダに残り、ログアウトでそのフォルダを消します。
-          </p>
-          <div className="row-actions">
-            {settings.builtinBrowser ? (
-              <>
-                <button className="button" type="button" onClick={() => void setBuiltinBrowser(false)}>
-                  内蔵ブラウザを無効にする
-                </button>
-                <button
-                  className="button danger"
-                  type="button"
-                  onClick={() =>
-                    void (async () => {
-                      if (!window.confirm("ブラウザを閉じ、このアプリの中の BOOTH のログイン状態を消します。")) return;
-                      try {
-                        await api.clearBoothSession();
-                        notify("セッションを消しました");
-                      } catch (err) {
-                        fail(errorText(err));
-                      }
-                    })()
-                  }
-                >
-                  ログアウトしてセッションを消す
-                </button>
-              </>
-            ) : (
-              <button className="button primary" type="button" onClick={() => void setBuiltinBrowser(true)}>
-                内蔵ブラウザを有効にする
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-      {catalog && (
-        <div className="panel" >
-          <h2>アバター対応表</h2>
-          <p className="meta">
-            初期の対応表は {catalog.credit}（{catalog.author}）です。{catalog.count} 件を同梱しています。
-            取得日 {catalog.fetchedOn || "未記録"}
-            {catalog.upstreamUpdated ? `、上流の更新 ${catalog.upstreamUpdated}` : ""}。
-            定期的には取りに行きません。ボタンを押したときだけ GitHub から1回取得します。
-          </p>
-          <p className="meta">
-            出典は{" "}
-            <button className="button" type="button" onClick={() => void openExternal(catalog.sourceUrl)}>
-              リポジトリ
-            </button>{" "}
-            と{" "}
-            <button className="button" type="button" onClick={() => void openExternal(catalog.termsUrl)}>
-              利用規約
-            </button>
-            。規約ではコピー、保存、二次利用、商用利用が許されています。正確性の保証はなく、アバターの著作権は各作者にあります。
-            共通素体シート（スペキュラム合金さん）はライセンスが不明なので入れていません。
-          </p>
-          <div className="row-actions">
-            <button className="button primary" type="button" onClick={() => void refreshCatalog()}>
-              対応表を更新
-            </button>
-            <button className="button" type="button" onClick={() => void reopenSetup()}>
-              セットアップを再表示
-            </button>
-          </div>
-        </div>
-      )}
-      {settings && (
-        <div className="panel" >
-          <div className="form-grid">
-            <label className="field">
-              <span>Ollama の URL</span>
-              <input
-                value={settings.ollamaBaseUrl}
-                onChange={(event) => setSettings({ ...settings, ollamaBaseUrl: event.target.value })}
-              />
-            </label>
-            <label className="field">
-              <span>分類</span>
-              <select
-                value={settings.llmBackend}
-                onChange={(event) =>
-                  setSettings({
-                    ...settings,
-                    llmBackend: event.target.value === "apple" ? "apple" : "ollama",
-                  })
-                }
-              >
+        <div className="settings-sections">
+          <section className="settings-section">
+            <header><h2>分類モデル</h2><p>商品説明を分類する、端末内のモデルを選びます。</p></header>
+            <SettingRow label="分類方法" help={apple?.message || "Ollama はこの PC のローカル接続だけを使用します。"}>
+              <select value={settings.llmBackend} onChange={(e) => setSettings({ ...settings, llmBackend: e.target.value === "apple" ? "apple" : "ollama" })}>
                 <option value="ollama">Ollama（既定）</option>
-                {(apple?.availability === "available" || settings.llmBackend === "apple") && (
-                  <option value="apple" disabled={apple?.availability !== "available"}>
-                    Apple のオンデバイスモデル
-                  </option>
-                )}
+                {(apple?.availability === "available" || settings.llmBackend === "apple") && <option value="apple" disabled={apple?.availability !== "available"}>Apple のオンデバイスモデル</option>}
               </select>
-            </label>
-            <label className="field">
-              <span>モデル名</span>
-              <input
-                list="ollama-models"
-                value={settings.ollamaModel}
-                onChange={(event) => setSettings({ ...settings, ollamaModel: event.target.value })}
-              />
-              <datalist id="ollama-models">
-                {models.map((model) => (
-                  <option key={model} value={model} />
-                ))}
-              </datalist>
-            </label>
-            <label className="field">
-              <span>確信度のしきい値</span>
-              <input
-                type="number"
-                min={0}
-                max={1}
-                step={0.05}
-                value={settings.confidenceThreshold}
-                onChange={(event) =>
-                  setSettings({ ...settings, confidenceThreshold: Number(event.target.value) })
-                }
-              />
-            </label>
-            <label className="field span-2">
-              <span>ライブラリのフォルダ</span>
-              <input
-                value={settings.libraryFolder}
-                placeholder="ダウンロードしたファイルの移動先"
-                onChange={(event) => setSettings({ ...settings, libraryFolder: event.target.value })}
-              />
-            </label>
-            <p className="meta span-2">
-              取り込み画面と同じライブラリのフォルダです。選ぶと、その場で保存して中を調べます。ホームフォルダやボリュームの直下は保存できません。
-            </p>
-            <div className="row-actions span-2">
-              <button
-                className="button"
-                type="button"
-                onClick={() => {
-                  if (!settings) return;
-                  void (async () => {
-                    try {
-                      const path = await chooseFolder();
-                      if (!path) return;
-                      const next = { ...settings, libraryFolder: path };
-                      setSettings(next);
-                      const result = await saveLibraryAndScan(path, next);
-                      setSavedFolder(path);
-                      setStatus("");
-                      notify(
-                        `ライブラリのフォルダを保存し、${result.indexed} 件を調べ、${result.linked} 件を商品と結び付けました${result.truncated ? "。上限に達したため途中です" : ""}`,
-                      );
-                      refresh();
-                    } catch (err) {
-                      const message = errorText(err);
-                      setStatus(message);
-                      fail(message);
-                    }
-                  })();
-                }}
-              >
-                ライブラリのフォルダを選ぶ
-              </button>
-            </div>
-            <label className="field span-2">
-              <span>リモートのフォルダ</span>
-              <input
-                value={settings.remoteLibraryFolder}
-                placeholder="ネットワークドライブやマウントしたフォルダ"
-                onChange={(event) => setSettings({ ...settings, remoteLibraryFolder: event.target.value })}
-              />
-            </label>
-            <div className="row-actions span-2">
-              <button
-                className="button"
-                type="button"
-                onClick={() => {
-                  void chooseFolder().then(
-                    (path) => {
-                      if (path) setSettings({ ...settings, remoteLibraryFolder: path });
-                    },
-                    (err: unknown) => fail(errorText(err)),
-                  );
-                }}
-              >
-                リモートのフォルダを選ぶ
-              </button>
-            </div>
-            <label className="field span-2">
-              <span>
-                <input
-                  type="checkbox"
-                  checked={settings.routeDownloads}
-                  onChange={(event) => {
-                    const enabled = event.target.checked;
-                    if (enabled && settings.libraryFolder.trim() === "") {
-                      void (async () => {
-                        try {
-                          const path = await chooseFolder();
-                          if (!path) return;
-                          const next = { ...settings, libraryFolder: path, routeDownloads: true };
-                          setSettings(next);
-                          const result = await saveLibraryAndScan(path, next);
-                          setSavedFolder(path);
-                          setStatus("");
-                          notify(
-                            `ライブラリのフォルダを保存し、${result.indexed} 件を調べ、${result.linked} 件を商品と結び付けました${result.truncated ? "。上限に達したため途中です" : ""}`,
-                          );
-                          refresh();
-                        } catch (err) {
-                          const message = errorText(err);
-                          setStatus(message);
-                          fail(message);
-                        }
-                      })();
-                      return;
-                    }
-                    setSettings({ ...settings, routeDownloads: enabled });
-                  }}
-                />{" "}
-                BOOTH の Unity / VRChat 用ファイルを、ダウンロード時に VRCLibMan へ振り分ける
-              </span>
-            </label>
-            <p className="meta span-2">
-              振り分けは既定でオフです。オンにするときは、移動先のライブラリフォルダが必要です。オンにすると、拡張は自分で押したダウンロードだけを、この PC のダウンロードフォルダの VRCLibMan/商品ID に置き、アプリがライブラリへ移します。内蔵ブラウザを有効にしているときは、未ダウンロードの行を押したその1件も、同じ場所へ受け取ります。それ以外の場所にあるファイルは移動しません。アプリから一括では取りません。リモートの確認は画面を出してから行い、送る・取ってくるは押したファイルだけをコピーします。コピー中は画面の上に表示します。切れている共有先では待たずに未ダウンロードとして表示します。
-            </p>
-            <label className="field span-2">
-              <span>
-                <input
-                  type="checkbox"
-                  checked={settings.backgroundMode}
-                  onChange={(event) => {
-                    const enabled = event.target.checked;
-                    setSettings({
-                      ...settings,
-                      backgroundMode: enabled,
-                      launchAtLogin: enabled ? settings.launchAtLogin : false,
-                    });
-                  }}
-                />{" "}
-                ウィンドウを閉じても、ダウンロードの受け付けを続ける
-              </span>
-            </label>
-            <p className="meta span-2">
-              既定はオフです。オフのときはウィンドウを閉じるとアプリも終了し、トレイは残りません。オンのときはウィンドウを破棄してメモリを放し、プロセスと 17321 の受け付けだけ残します。トレイ（Windows）またはメニューバー（macOS）から開き直すか、終了できます。
-            </p>
-            <label className="field span-2">
-              <span>
-                <input
-                  type="checkbox"
-                  checked={settings.launchAtLogin}
-                  disabled={!settings.backgroundMode}
-                  onChange={(event) => setSettings({ ...settings, launchAtLogin: event.target.checked })}
-                />{" "}
-                ログイン時に起動する
-              </span>
-            </label>
-            <p className="meta span-2">
-              ログイン時の起動は、バックグラウンドをオンにしたときだけ使えます。バックグラウンドをオフにすると、ログイン項目もオフになります。両方オンのとき、ログインから起動したプロセスはウィンドウを出さず、トレイまたはメニューバーから開けます。
-            </p>
-          </div>
-          <div className="row-actions">
-            <button className="button primary" type="button" onClick={() => void saveSettings()}>
-              設定を保存
-            </button>
-            <button className="button" type="button" onClick={() => void testOllama()}>
-              接続を試す
-            </button>
-          </div>
-          {status && <p className="meta">{status}</p>}
-          <p className="meta">
-            既定のモデルは {DEFAULT_OLLAMA_MODEL} です。今の設定は {settings.ollamaModel} です。分類は {settings.llmBackend === "apple" ? "Apple のオンデバイスモデル" : "Ollama"} です。Apple は macOS 27.2 以上で使えるときだけ選べ、選んでも既定のモデル名は変わりません。{apple?.message ? ` ${apple.message}` : ""} 軽い代替は qwen3:4b。
-            {installedSize != null && installedSize > 0 ? ` 入っているサイズは ${formatBytes(installedSize)} です。` : ""}
-            {models.length > 0
-              ? ` 導入済み: ${models.join("、")}。上の欄で選べます。`
-              : " 「接続を試す」で導入済みのモデルを候補に出します。"}
-          </p>
-          <p className="meta">
-            Ollama は http://127.0.0.1 または localhost だけを受け付けます。温度は 0.1 固定です。要確認は、モデルが自分で付けた数値ではなく、名前が商品文と対応表に結び付いたかで決めます。
-          </p>
+            </SettingRow>
+            <SettingRow label="Ollama の URL" help="http://127.0.0.1、localhost、または ::1 だけを使用できます。">
+              <input value={settings.ollamaBaseUrl} onChange={(e) => setSettings({ ...settings, ollamaBaseUrl: e.target.value })} />
+            </SettingRow>
+            <SettingRow label="モデル" help={`既定は ${DEFAULT_OLLAMA_MODEL}。軽い代替は qwen3:4b です。`}>
+              <div className="inline-control">
+                <input list="ollama-models" value={settings.ollamaModel} onChange={(e) => setSettings({ ...settings, ollamaModel: e.target.value })} />
+                <datalist id="ollama-models">{models.map((model) => <option key={model} value={model} />)}</datalist>
+                <button className="button" type="button" disabled={pulling || settings.llmBackend === "apple"} onClick={() => void pullOllamaModel()}>{pulling ? "取得中…" : "モデルを取得"}</button>
+              </div>
+            </SettingRow>
+            <SettingRow label="確信度のしきい値" help="0〜1 で指定します。要確認は名前と対応表の一致も使って判断します。">
+              <input className="short-input" type="number" min={0} max={1} step={0.05} value={settings.confidenceThreshold} onChange={(e) => setSettings({ ...settings, confidenceThreshold: Number(e.target.value) })} />
+            </SettingRow>
+            <div className="section-actions"><button className="button" type="button" onClick={() => void testOllama()}>接続を確認</button><span className="meta">{installedSize ? `モデルサイズ ${formatBytes(installedSize)}` : models.length ? `導入済み: ${models.join("、")}` : "導入済みモデルは未確認です"}</span></div>
+            <details className="settings-details"><summary>分類モデルについて詳しく</summary><p>今の設定は {settings.ollamaModel}、分類は {settings.llmBackend === "apple" ? "Apple のオンデバイスモデル" : "Ollama"} です。Apple は macOS 27.2 以上で使えるときだけ選べ、選んでも既定のモデル名は変わりません。温度は 0.1 固定です。要確認は、モデルが自分で付けた数値ではなく、名前が商品文と対応表に結び付いたかで決めます。</p><p>「モデルを取得」は、押したときだけ Ollama からモデルを1回ダウンロードします。数 GB になることがあります。「接続を確認」で導入済みのモデルを候補に出します。</p></details>
+          </section>
+
+          <section className="settings-section">
+            <header><h2>ライブラリとダウンロード</h2><p>ファイルの保存先と自動整理を設定します。</p></header>
+            <SettingRow label="ライブラリのフォルダ" help="インポート画面と同じフォルダです。選ぶと保存してスキャンします。ホームやボリュームの直下は選べません。">
+              <div className="inline-control"><input value={settings.libraryFolder} placeholder="ダウンロードしたファイルの移動先" onChange={(e) => setSettings({ ...settings, libraryFolder: e.target.value })} /><button className="button" type="button" onClick={() => void (async () => { try { const path = await chooseFolder(); if (!path) return; const next = { ...settings, libraryFolder: path }; setSettings(next); const result = await saveLibraryAndScan(path, next); setSavedFolder(path); setStatus(""); notify(`ライブラリのフォルダを保存し、${result.indexed} 件を調べ、${result.linked} 件を商品と結び付けました${result.truncated ? "。上限に達したため途中です" : ""}`); refresh(); } catch (err) { const message = errorText(err); setStatus(message); fail(message); } })()}>選ぶ</button></div>
+            </SettingRow>
+            <SettingRow label="リモートライブラリ" help="ネットワークドライブやマウント済みのフォルダを指定します。">
+              <div className="inline-control"><input value={settings.remoteLibraryFolder} placeholder="リモートのフォルダ" onChange={(e) => setSettings({ ...settings, remoteLibraryFolder: e.target.value })} /><button className="button" type="button" onClick={() => void chooseFolder().then((path) => { if (path) setSettings({ ...settings, remoteLibraryFolder: path }); }, (err: unknown) => fail(errorText(err)))}>選ぶ</button></div>
+            </SettingRow>
+            <SettingRow label="ダウンロードを自動整理" help="自分でダウンロードしたファイルだけを商品別にライブラリへ移動します。">
+              <label className="switch-label"><input type="checkbox" checked={settings.routeDownloads} onChange={(e) => { const enabled = e.target.checked; if (enabled && !settings.libraryFolder.trim()) { void (async () => { try { const path = await chooseFolder(); if (!path) return; const next = { ...settings, libraryFolder: path, routeDownloads: true }; setSettings(next); const result = await saveLibraryAndScan(path, next); setSavedFolder(path); setStatus(""); notify(`ライブラリのフォルダを保存し、${result.indexed} 件を調べ、${result.linked} 件を商品と結び付けました${result.truncated ? "。上限に達したため途中です" : ""}`); refresh(); } catch (err) { const message = errorText(err); setStatus(message); fail(message); } })(); return; } setSettings({ ...settings, routeDownloads: enabled }); }} />有効にする</label>
+            </SettingRow>
+            <details className="settings-details"><summary>自動整理について詳しく</summary><p>自動整理は既定でオフです。オンにするときは、移動先のライブラリフォルダが必要です。オンにすると、拡張は自分で押したダウンロードだけを、この PC のダウンロードフォルダの VRCLibMan/商品ID に置き、アプリがライブラリへ移します。内蔵ブラウザを有効にしているときは、未ダウンロードの行を押したその1件も、同じ場所へダウンロードします。</p><p>それ以外の場所にあるファイルは移動しません。アプリから一括ではダウンロードしません。リモートの確認は画面を出してから行い、送る・取ってくるは押したファイルだけをコピーします。コピー中は画面の上に表示します。切れている共有先では待たずに未ダウンロードとして表示します。</p></details>
+          </section>
+
+          <section className="settings-section">
+            <header><h2>ブラウザ連携</h2><p>BOOTH を開く方法を選びます。</p></header>
+            <SettingRow label="内蔵ブラウザ" help="既定は拡張機能です。有効化すると確認画面が表示されます。">
+              <div className="inline-control"><button className={`button ${settings.builtinBrowser ? "" : "primary"}`} type="button" onClick={() => void setBuiltinBrowser(!settings.builtinBrowser)}>{settings.builtinBrowser ? "無効にする" : "有効にする"}</button>{settings.builtinBrowser && <button className="button danger" type="button" onClick={() => void (async () => { if (!window.confirm("ブラウザを閉じ、このアプリの中の BOOTH のログイン状態を消します。")) return; try { await api.clearBoothSession(); notify("セッションを消しました"); } catch (err) { fail(errorText(err)); } })()}>ログアウトしてセッションを消す</button>}</div>
+            </SettingRow>
+            <details className="settings-details"><summary>内蔵ブラウザについて詳しく</summary><p>既定は拡張機能です。内蔵ブラウザは、自分でログインして使う別のモードです。ページを辿るのはブラウザ画面の「ライブラリ全取得」だけです。一括のダウンロードはしません。年齢確認も自動では進みません。</p><p>ログイン状態はこのアプリ専用のフォルダに残り、ログアウトでそのフォルダを消します。</p></details>
+          </section>
+
+          <section className="settings-section">
+            <header><h2>起動と常駐</h2><p>ウィンドウを閉じた後の動作を設定します。</p></header>
+            <SettingRow label="バックグラウンドで動作" help="ウィンドウを閉じても拡張機能からのダウンロードを受け付けます。">
+              <label className="switch-label"><input type="checkbox" checked={settings.backgroundMode} onChange={(e) => { const enabled = e.target.checked; setSettings({ ...settings, backgroundMode: enabled, launchAtLogin: enabled ? settings.launchAtLogin : false }); }} />有効にする</label>
+            </SettingRow>
+            <SettingRow label="ログイン時に起動" help="バックグラウンド動作が有効な場合だけ使用できます。">
+              <label className="switch-label"><input type="checkbox" checked={settings.launchAtLogin} disabled={!settings.backgroundMode} onChange={(e) => setSettings({ ...settings, launchAtLogin: e.target.checked })} />有効にする</label>
+            </SettingRow>
+            <details className="settings-details"><summary>起動と常駐について詳しく</summary><p>既定はオフです。オフのときはウィンドウを閉じるとアプリも終了し、トレイは残りません。オンのときはウィンドウを破棄してメモリを放し、プロセスと 17321 の受け付けだけ残します。トレイ（Windows）またはメニューバー（macOS）から開き直すか、終了できます。</p><p>ログイン時の起動は、バックグラウンドをオンにしたときだけ使えます。バックグラウンドをオフにすると、ログイン項目もオフになります。両方オンのとき、ログインから起動したプロセスはウィンドウを出さず、トレイまたはメニューバーから開けます。</p></details>
+          </section>
+
+          {link && <section className="settings-section">
+            <header><h2>拡張機能の接続</h2><p>拡張機能からこの PC へ安全にデータを送ります。</p></header>
+            <SettingRow label="ペアリングコード" help={link.listening ? `127.0.0.1:${link.port} で待機中です。` : link.error || "受信を開始できませんでした。"}>
+              <div className="inline-control"><input readOnly value={link.token} /><button className="button" type="button" onClick={() => void regenerateToken()}>作り直す</button></div>
+            </SettingRow>
+            <details className="settings-details"><summary>接続について詳しく</summary><p>拡張は今開いている Booth のページだけを読み、この PC の 127.0.0.1:{link.port} に送ります。アプリは Booth を取りに行きません。コードを拡張のポップアップに一度貼ってください。最初に届いた拡張だけを覚えます。</p><p>コードを作り直すと、以前のコードと結び付きは外れます。違うコードが続くと、しばらく受け付けません。アプリが閉じているときは、拡張が vrclibman://import で起動します。</p></details>
+          </section>}
+
+          <section className="settings-section">
+            <header><h2>データ</h2><p>アバター対応表と初期データを管理します。</p></header>
+            {catalog && <SettingRow label="同梱の対応表" help={`${catalog.credit}（${catalog.author}）・${catalog.count} 件・取得日 ${catalog.fetchedOn || "未記録"}${catalog.upstreamUpdated ? `・上流 ${catalog.upstreamUpdated}` : ""}`}>
+              <div className="inline-control"><button className="button primary" type="button" onClick={() => void refreshCatalog()}>対応表を更新</button><button className="button" type="button" onClick={() => void openExternal(catalog.sourceUrl)}>出典</button><button className="button" type="button" onClick={() => void openExternal(catalog.termsUrl)}>利用規約</button></div>
+            </SettingRow>}
+            {catalog && <details className="settings-details"><summary>対応表について詳しく</summary><p>定期的には取りに行きません。「対応表を更新」を押したときだけ GitHub から1回取得します。規約ではコピー、保存、二次利用、商用利用が許されています。正確性の保証はなく、アバターの著作権は各作者にあります。共通素体シート（スペキュラム合金さん）はライセンスが不明なので入れていません。</p></details>}
+            <SettingRow label="メンテナンス" help="不足している初期データの追加や、商品の紐づけの再計算を行います。">
+              <div className="inline-control"><button className="button" type="button" onClick={() => void restore()}>初期データを追加</button><button className="button" type="button" onClick={() => void reresolve()}>対応表を再適用</button><button className="button" type="button" onClick={() => void reopenSetup()}>セットアップを再表示</button></div>
+            </SettingRow>
+          </section>
         </div>
       )}
-      <div className="row-actions">
-        <button className="button" type="button" onClick={() => void restore()}>
-          初期データを追加
-        </button>
-        <button className="button" type="button" onClick={() => void reresolve()}>
-          対応表を再適用
-        </button>
-      </div>
-      <div className="knowledge">
-        <div>
-          <input className="search" value={filter} placeholder="対応表を検索" onChange={(event) => setFilter(event.target.value)} />
-          <p className="meta">
-            {knowledge?.avatars.length ?? 0} 件中 {avatars.length} 件を表示しています。名前の一部で絞れます。
-          </p>
-          <div className="list">
-            {avatars.map((record) => (
-              <button
-                key={record.id}
-                className={record.id === avatar.id ? "selected" : ""}
-                type="button"
-                onClick={() => selectAvatar(record)}
-              >
-                {record.displayName}
-                {record.isBuiltin ? " ・初期" : ""}
-              </button>
-            ))}
-          </div>
-          <h2>素体</h2>
-          <div className="list">
-            {(knowledge?.baseBodies ?? []).map((record) => (
-              <button key={record.id} type="button" onClick={() => setBody(record)}>
-                {record.displayName}
-              </button>
-            ))}
+      {status && <p className="settings-status">{status}</p>}
+
+      <section className="settings-section knowledge-section">
+        <header><h2>対応表を編集</h2><p>アバターの別名と共通素体を編集します。</p></header>
+        <div className="knowledge">
+          <div><input className="search" value={filter} placeholder="対応表を検索" onChange={(e) => setFilter(e.target.value)} /><p className="meta">{knowledge?.avatars.length ?? 0} 件中 {avatars.length} 件を表示</p><div className="list">{avatars.map((record) => <button key={record.id} className={record.id === avatar.id ? "selected" : ""} type="button" onClick={() => selectAvatar(record)}>{record.displayName}{record.isBuiltin ? " ・初期" : ""}</button>)}</div><h2>素体</h2><div className="list">{(knowledge?.baseBodies ?? []).map((record) => <button key={record.id} type="button" onClick={() => setBody(record)}>{record.displayName}</button>)}</div></div>
+          <div className="stack">
+            <div className="panel"><h2>{avatar.id ? "アバターを編集" : "アバターを追加"}</h2><label className="field"><span>表示名</span><input value={avatar.displayName} onChange={(e) => setAvatar({ ...avatar, displayName: e.target.value })} /></label><label className="field"><span>別名（カンマ区切り）</span><input value={avatar.aliases} onChange={(e) => setAvatar({ ...avatar, aliases: e.target.value })} /></label><label className="field"><span>素体</span><select value={avatar.baseBody} onChange={(e) => setAvatar({ ...avatar, baseBody: e.target.value })}><option value="">なし</option>{(knowledge?.baseBodies ?? []).map((record: BaseBody) => <option key={record.id} value={record.id}>{record.displayName}</option>)}</select></label><label className="field"><span>メモ</span><textarea value={avatar.notes} onChange={(e) => setAvatar({ ...avatar, notes: e.target.value })} /></label><div className="row-actions"><button className="button primary" type="button" onClick={() => void saveAvatar()}>保存</button><button className="button" type="button" onClick={() => setAvatar(emptyAvatar)}>新規</button><button className="button danger" type="button" disabled={!avatar.id || avatar.builtin} onClick={() => void removeAvatar()}>削除</button></div></div>
+            <div className="panel"><h2>{body.id ? "素体を編集" : "素体を追加"}</h2><label className="field"><span>表示名</span><input value={body.displayName} onChange={(e) => setBody({ ...body, displayName: e.target.value })} /></label><label className="field"><span>根拠のメモ</span><textarea value={body.note} onChange={(e) => setBody({ ...body, note: e.target.value })} /></label><div className="row-actions"><button className="button primary" type="button" onClick={() => void saveBody()}>保存</button><button className="button" type="button" onClick={() => setBody({ id: "", displayName: "", note: "" })}>新規</button><button className="button danger" type="button" disabled={!body.id} onClick={() => void removeBody()}>削除</button></div></div>
           </div>
         </div>
-        <div className="stack">
-          <div className="panel" >
-            <h2 >{avatar.id ? "アバターを編集" : "アバターを追加"}</h2>
-            <label className="field">
-              <span>表示名</span>
-              <input value={avatar.displayName} onChange={(event) => setAvatar({ ...avatar, displayName: event.target.value })} />
-            </label>
-            <label className="field">
-              <span>別名（カンマ区切り）</span>
-              <input value={avatar.aliases} onChange={(event) => setAvatar({ ...avatar, aliases: event.target.value })} />
-            </label>
-            <label className="field">
-              <span>素体</span>
-              <select value={avatar.baseBody} onChange={(event) => setAvatar({ ...avatar, baseBody: event.target.value })}>
-                <option value="">なし</option>
-                {(knowledge?.baseBodies ?? []).map((record: BaseBody) => (
-                  <option key={record.id} value={record.id}>
-                    {record.displayName}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
-              <span>メモ</span>
-              <textarea value={avatar.notes} onChange={(event) => setAvatar({ ...avatar, notes: event.target.value })} />
-            </label>
-            <div className="row-actions">
-              <button className="button primary" type="button" onClick={() => void saveAvatar()}>
-                保存
-              </button>
-              <button className="button" type="button" onClick={() => setAvatar(emptyAvatar)}>
-                新規
-              </button>
-              <button className="button danger" type="button" disabled={!avatar.id || avatar.builtin} onClick={() => void removeAvatar()}>
-                削除
-              </button>
-            </div>
-          </div>
-          <div className="panel" >
-            <h2 >{body.id ? "素体を編集" : "素体を追加"}</h2>
-            <label className="field">
-              <span>表示名</span>
-              <input value={body.displayName} onChange={(event) => setBody({ ...body, displayName: event.target.value })} />
-            </label>
-            <label className="field">
-              <span>根拠のメモ</span>
-              <textarea value={body.note} onChange={(event) => setBody({ ...body, note: event.target.value })} />
-            </label>
-            <div className="row-actions">
-              <button className="button primary" type="button" onClick={() => void saveBody()}>
-                保存
-              </button>
-              <button className="button" type="button" onClick={() => setBody({ id: "", displayName: "", note: "" })}>
-                新規
-              </button>
-              <button className="button danger" type="button" disabled={!body.id} onClick={() => void removeBody()}>
-                削除
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
+      </section>
     </section>
   );
 }

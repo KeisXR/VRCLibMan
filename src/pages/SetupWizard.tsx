@@ -160,7 +160,7 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
       <div className="setup-card panel">
         <p className="meta">初回セットアップ</p>
         <h1>
-          {step === "model" ? "分類用のモデル" : step === "extension" ? "Booth から取り込む" : "閉じたあとの動き"}
+          {step === "model" ? "分類用のモデル" : step === "extension" ? "Booth からインポート" : "閉じたあとの動き"}
         </h1>
         {step === "model" && (
           <>
@@ -241,7 +241,7 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
         )}
         {step === "extension" && (
           <>
-            <p>いつもの取り込みは Chrome 拡張です。次の順で一度だけ結んでください。</p>
+            <p>いつものインポートは Chrome 拡張です。次の順で一度だけ結んでください。</p>
             <ol className="setup-steps">
               <li>Chrome の拡張機能ページでデベロッパーモードをオンにし、「パッケージ化されていない拡張機能を読み込む」から extension フォルダを選びます。</li>
               <li>下のペアリングコードをコピーし、拡張のポップアップに貼って保存します。</li>

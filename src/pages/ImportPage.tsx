@@ -131,7 +131,7 @@ export function ImportPage() {
     <section>
       <div className="page-head">
         <div>
-          <h1>取り込み</h1>
+          <h1>インポート</h1>
           <p>
             拡張が今開いている Booth のページを読み、起動中のこのアプリへ送ります。アプリは Booth を取りに行きません。届かないときは JSON を保存し、ここにドロップできます。
           </p>
@@ -173,7 +173,7 @@ export function ImportPage() {
             checked={extractAfter}
             onChange={(event) => setExtractAfter(event.target.checked)}
           />{" "}
-          取り込んだあと、未抽出の商品を Ollama で分類する
+          インポートしたあと、未抽出の商品を Ollama で分類する
         </span>
       </label>
       <form
@@ -214,7 +214,7 @@ export function ImportPage() {
         <div className="panel">
           <h2>ダウンロードフォルダに残っているファイル</h2>
           <p className="meta">
-            アプリが止まっている間に Downloads/VRCLibMan へ置かれたファイルです。振り分けがオンで、ライブラリのフォルダがあるときだけ移します。安全に特定できないファイルは動かしません。
+            アプリが止まっている間に Downloads/VRCLibMan へ置かれたファイルです。自動整理がオンで、ライブラリのフォルダがあるときだけ移します。安全に特定できないファイルは動かしません。
           </p>
           <ul className="file-list">
             {staged.map((item) => (
