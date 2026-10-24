@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { api, isTauri, listenBoothUsed, listenProgress, onRefresh } from "./api";
+import { api, appVersion, isTauri, listenBoothUsed, listenProgress, onRefresh } from "./api";
 import { AvatarsPage } from "./pages/AvatarsPage";
 import { AvatarDetailPage } from "./pages/AvatarDetailPage";
 import { ImportPage } from "./pages/ImportPage";
@@ -52,6 +52,8 @@ function parseRoute(hash: string): Route {
 }
 
 export default function App() {
+  const [version, setVersion] = useState("");
+  useEffect(() => { void appVersion().then(setVersion, () => setVersion("未確認")); }, []);
   const [hash, setHash] = useState(window.location.hash);
   const [stats, setStats] = useState<LibraryStats | null>(null);
   const [progress, setProgress] = useState<JobProgress | null>(null);
@@ -225,7 +227,7 @@ export default function App() {
 
   return (
     <ShellContext.Provider value={shell}>
-      {setupComplete === false && <SetupWizard onDone={() => setSetupComplete(true)} />}
+      {setupComplete === false && <SetupWizard onDone={() => { setSetupComplete(true); refresh(); }} />}
       <div className="app">
         <aside className="rail">
           <div className="brand">
@@ -257,6 +259,7 @@ export default function App() {
             )}
           </nav>
           <div className="rail-foot">
+            <span className="app-version">{version === "未確認" ? "バージョン未確認" : version ? `v${version}` : "バージョン確認中"}</span>
             {builtinBrowser && (
               <AccountPill
                 account={account}

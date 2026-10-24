@@ -184,6 +184,27 @@ export interface ExtensionLink {
   error: string | null;
 }
 
+export type BoothImportMode = "extension" | "browser" | "both";
+
+export interface ImportReceipt {
+  at: string;
+  products: number;
+  inserted: number;
+  updated: number;
+  unchanged: number;
+  skipped: number;
+}
+
+export interface IntegrationStatus {
+  mode: BoothImportMode;
+  paired: boolean;
+  expectedExtensionVersion: string;
+  extensionVersion: string | null;
+  extensionLastSeenAt: string | null;
+  extensionImport: ImportReceipt | null;
+  browserImport: ImportReceipt | null;
+}
+
 export interface Settings {
   ollamaBaseUrl: string;
   ollamaModel: string;

@@ -443,7 +443,9 @@ fn import_current_page_inner(app: &AppHandle) -> Result<ImportReport, String> {
         .db
         .lock()
         .map_err(|_| "データベースをロックできません".to_string())?;
-    db::import_export_json(&mut connection, &export_json(products))
+    let report = db::import_export_json(&mut connection, &export_json(products))?;
+    let _ = crate::integration::record_import(&connection, "browser", &report);
+    Ok(report)
 }
 
 pub fn close_browser(app: &AppHandle) -> Result<(), String> {
@@ -1477,7 +1479,9 @@ pub async fn import_library(app: AppHandle) -> Result<LibraryWalkReport, String>
                 .db
                 .lock()
                 .map_err(|_| "データベースをロックできません".to_string())?;
-            db::import_export_json(&mut connection, &json)
+            let report = db::import_export_json(&mut connection, &json)?;
+            let _ = crate::integration::record_import(&connection, "browser", &report);
+            Ok::<_, String>(report)
         })
         .await
         .map_err(|err| format!("インポートを実行できません: {err}"))??;

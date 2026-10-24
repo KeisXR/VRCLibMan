@@ -6,6 +6,7 @@ mod commands;
 mod compat;
 mod db;
 mod import_data;
+mod integration;
 mod library_files;
 mod library_walk;
 mod local_import;
@@ -142,6 +143,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::import_export,
             commands::extension_link,
+            commands::integration_status,
+            commands::set_booth_import_mode,
             commands::regenerate_extension_token,
             commands::library_stats,
             commands::list_avatars,

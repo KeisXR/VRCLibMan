@@ -418,6 +418,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn qwen_candidates_use_structured_output_without_thinking() {
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let address = server.server_addr().to_ip().unwrap();
+        let worker = std::thread::spawn(move || {
+            for model in ["qwen3.5:4b", "qwen3.5:9b"] {
+                let mut request = server
+                    .recv_timeout(Duration::from_secs(10))
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(request.url(), "/api/chat");
+                let mut body = String::new();
+                request.as_reader().read_to_string(&mut body).unwrap();
+                let payload: Value = serde_json::from_str(&body).unwrap();
+                assert_eq!(payload["model"], model);
+                assert_eq!(payload["think"], false);
+                assert_eq!(payload["format"]["type"], "object");
+                let answer = serde_json::json!({"message": {"content": "{\"category\":\"outfit\",\"compatible_avatars\":[],\"is_generic\":true,\"confidence\":0.9}"}});
+                request
+                    .respond(tiny_http::Response::from_string(answer.to_string()))
+                    .unwrap();
+            }
+        });
+        tauri::async_runtime::block_on(async {
+            let client = extraction_client().unwrap();
+            for model in ["qwen3.5:4b", "qwen3.5:9b"] {
+                let result = extract_product(
+                    &client,
+                    &format!("http://{address}"),
+                    model,
+                    "ダミー衣装",
+                    "テスト用の汎用衣装",
+                )
+                .await
+                .unwrap();
+                assert_eq!(result.category, Category::Outfit);
+                assert!(result.is_generic);
+            }
+        });
+        worker.join().unwrap();
+    }
+
+    #[test]
     fn installed_size_comes_from_the_selected_model() {
         let parsed = parse_installed_models(
             r#"{"models":[
