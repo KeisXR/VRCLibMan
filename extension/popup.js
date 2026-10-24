@@ -9,6 +9,7 @@ const diagnoseButton = document.querySelector("#diagnose");
 const diagnosisBox = document.querySelector("#diagnosis");
 const tokenInput = document.querySelector("#token");
 const routeInput = document.querySelector("#route-downloads");
+const intervalInput = document.querySelector("#booth-interval");
 const api = () => globalThis.VrcLibManExtract;
 const LOCAL_PORT = 17321;
 const LOCAL_BASE = `http://127.0.0.1:${LOCAL_PORT}`;
@@ -25,7 +26,12 @@ function sleep(ms) {
 }
 
 const requestPolicy = globalThis.VrcLibManRequestPolicy;
-const paceBoothRequest = requestPolicy.createPacer();
+let paceBoothRequest = requestPolicy.createPacer();
+
+// Each user-started import captures the selected pace.
+function resetPacer() {
+  paceBoothRequest = requestPolicy.createPacer(requestPolicy.normalizeIntervalMs(intervalInput.value));
+}
 
 async function fetchWithBackoff(url, options) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -157,6 +163,7 @@ function setBusy(busy) {
   button.disabled = busy;
   allButton.disabled = busy;
   newButton.disabled = busy;
+  intervalInput.disabled = busy;
   saveTokenButton.disabled = busy;
 }
 
@@ -197,6 +204,8 @@ async function refreshLink() {
   const token = await savedToken();
   tokenInput.value = token;
   routeInput.checked = await storedRoute();
+  const storedInterval = await chrome.storage.local.get({ boothIntervalMs: requestPolicy.MIN_INTERVAL_MS });
+  intervalInput.value = String(requestPolicy.normalizeIntervalMs(storedInterval.boothIntervalMs));
   if (!token) {
     linkStatus.textContent = "未ペアリング。アプリの設定に出るコードを貼ってください";
     return;
@@ -376,6 +385,7 @@ button.addEventListener("click", async () => {
 });
 
 async function sendLibrary(updateMode) {
+  resetPacer();
   setBusy(true);
   let products = [];
   try {
@@ -429,6 +439,20 @@ async function sendLibrary(updateMode) {
     setBusy(false);
   }
 }
+
+intervalInput.addEventListener("change", async () => {
+  const next = requestPolicy.normalizeIntervalMs(intervalInput.value);
+  const stored = await chrome.storage.local.get({ boothIntervalMs: requestPolicy.MIN_INTERVAL_MS });
+  const old = requestPolicy.normalizeIntervalMs(stored.boothIntervalMs);
+  if (next === 250 && old !== 250 &&
+      !window.confirm("0.25秒間隔はBOOTHへのアクセス制限やアカウントへの影響が起きる可能性のある高リスク設定です。規約上の安全性は保証されません。この設定を使用しますか？")) {
+    intervalInput.value = String(old);
+    return;
+  }
+  await chrome.storage.local.set({ boothIntervalMs: next });
+  intervalInput.value = String(next);
+  setStatus(`BOOTHへのアクセス間隔を ${next / 1000} 秒に設定しました`);
+});
 
 allButton.addEventListener("click", () => sendLibrary(false));
 newButton.addEventListener("click", () => sendLibrary(true));
