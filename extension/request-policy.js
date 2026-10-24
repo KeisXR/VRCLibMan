@@ -4,6 +4,12 @@
   root.VrcLibManRequestPolicy = api;
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   const MIN_INTERVAL_MS = 1000;
+  const ALLOWED_INTERVALS_MS = [1000, 500, 250];
+
+  function normalizeIntervalMs(value) {
+    const number = Number(value);
+    return ALLOWED_INTERVALS_MS.includes(number) ? number : MIN_INTERVAL_MS;
+  }
   const DEFAULT_RETRY_MS = 10000;
   const MAX_RETRY_MS = 60000;
 
@@ -43,7 +49,8 @@
   }
 
   return {
-    MIN_INTERVAL_MS, DEFAULT_RETRY_MS, MAX_RETRY_MS,
+    MIN_INTERVAL_MS, ALLOWED_INTERVALS_MS, normalizeIntervalMs,
+    DEFAULT_RETRY_MS, MAX_RETRY_MS,
     retryAfterMs, createPacer, isThrottled, canUseJsonFallback,
   };
 });
