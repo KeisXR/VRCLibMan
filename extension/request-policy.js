@@ -38,5 +38,12 @@
     return status === 429 || status === 503;
   }
 
-  return { MIN_INTERVAL_MS, DEFAULT_RETRY_MS, MAX_RETRY_MS, retryAfterMs, createPacer, isThrottled };
+  function canUseJsonFallback(htmlStatus) {
+    return htmlStatus !== 401 && htmlStatus !== 403;
+  }
+
+  return {
+    MIN_INTERVAL_MS, DEFAULT_RETRY_MS, MAX_RETRY_MS,
+    retryAfterMs, createPacer, isThrottled, canUseJsonFallback,
+  };
 });
