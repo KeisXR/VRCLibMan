@@ -366,6 +366,7 @@ async function download(products, source) {
 }
 
 button.addEventListener("click", async () => {
+  resetPacer();
   setBusy(true);
   try {
     setStatus("ページを読んでいます");
