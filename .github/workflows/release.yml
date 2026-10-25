@@ -123,6 +123,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+
       - id: release
         name: create or reuse the draft release
         shell: bash
@@ -144,9 +148,7 @@ jobs:
           if [ -n "${id}" ]; then
             echo "reusing draft release ${id} for ${tag}"
           else
-            sed -e "s/{{APP_VERSION}}/${APP_VERSION}/g" \
-                -e "s/{{EXTENSION_VERSION}}/${EXTENSION_VERSION}/g" \
-                .github/release-notes.md > "${RUNNER_TEMP}/notes.md"
+            node scripts/create-release-notes.mjs "${APP_VERSION}" "${EXTENSION_VERSION}" "${RUNNER_TEMP}/notes.md"
             id=$(jq -n \
               --arg tag "${tag}" \
               --arg name "VRCLibMan ${tag}" \

@@ -46,7 +46,7 @@ pub fn display_token(stored: &str) -> String {
 
 pub fn start_receiver(app: AppHandle) -> Result<(), String> {
     let server = tiny_http::Server::http(bind_addr())
-        .map_err(|err| format!("{LOCAL_IMPORT_PORT} 番を開けません: {err}"))?;
+        .map_err(|err| format!("拡張機能との接続を開始できません。アプリを再起動してください: {err}"))?;
     std::thread::Builder::new()
         .name("vrclibman-import".into())
         .spawn(move || {
@@ -55,7 +55,7 @@ pub fn start_receiver(app: AppHandle) -> Result<(), String> {
                 let _ = request.respond(response);
             }
         })
-        .map_err(|err| format!("受信スレッドを起動できません: {err}"))?;
+        .map_err(|err| format!("拡張機能との接続を開始できません。アプリを再起動してください: {err}"))?;
     Ok(())
 }
 
@@ -76,7 +76,7 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
         discard_body(request);
         return response_for(
             origin.as_deref(),
-            Gate::reject(403, "このオリジンからは受け付けません"),
+            Gate::reject(403, "VRCLibMan の拡張機能から接続してください"),
             None,
         );
     }
@@ -501,19 +501,28 @@ struct Access<'a> {
 
 fn classify(request: RequestView<'_>, access: Access<'_>) -> Gate {
     let Some(origin) = request.origin.filter(|origin| is_extension_origin(origin)) else {
-        return Gate::reject(403, "このオリジンからは受け付けません");
+        return Gate::reject(403, "VRCLibMan の拡張機能から接続してください");
     };
     if access.pinned.is_some_and(|pinned| pinned != origin) {
-        return Gate::reject(403, "別の拡張からは受け付けません");
+        return Gate::reject(
+            403,
+            "別の拡張機能と接続済みです。アプリの設定でペアリングコードを作り直して接続してください",
+        );
     }
     if request.method.eq_ignore_ascii_case("OPTIONS") {
         return Gate::Preflight;
     }
     if access.locked {
-        return Gate::reject(429, "試行が多すぎます。少し待ってからもう一度");
+        return Gate::reject(
+            429,
+            "接続の試行が多すぎます。30 秒待ってからもう一度お試しください",
+        );
     }
     if !token_ok(request.authorization, access.token) {
-        return Gate::reject(401, "ペアリングコードが違います");
+        return Gate::reject(
+            401,
+            "ペアリングコードを確認し、拡張機能に入力し直してください",
+        );
     }
     let path = request.path.split('?').next().unwrap_or("");
     if request.method.eq_ignore_ascii_case("GET") && path == "/health" {
@@ -535,9 +544,15 @@ fn classify(request: RequestView<'_>, access: Access<'_>) -> Gate {
         return Gate::RouteWrite;
     }
     if !matches!(request.method.to_ascii_uppercase().as_str(), "GET" | "POST") {
-        return Gate::reject(405, "受け付けないメソッドです");
+        return Gate::reject(
+            405,
+            "この操作には対応していません。アプリと拡張機能を更新してください",
+        );
     }
-    Gate::reject(404, "受け付けない経路です")
+    Gate::reject(
+        404,
+        "この操作には対応していません。アプリと拡張機能を更新してください",
+    )
 }
 
 fn token_ok(authorization: Option<&str>, expected: &str) -> bool {

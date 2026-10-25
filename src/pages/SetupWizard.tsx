@@ -88,7 +88,7 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
     try {
       const settings = await api.settings();
       await api.saveSettings({ ...settings, llmBackend: "apple" });
-      setMessage("Apple のオンデバイスモデルを使います。Ollama のモデルは取得しません。");
+      setMessage("Apple のオンデバイスモデルを使います。");
       await check();
       setStep("extension");
     } catch (err) {
@@ -138,7 +138,6 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
 
   const presenceReady = backgroundChoice !== "unset" && loginChoice !== "unset";
   const model = selectedModel ?? status?.model ?? DEFAULT_OLLAMA_MODEL;
-  const defaultModel = status?.defaultModel || DEFAULT_OLLAMA_MODEL;
   const usingApple = status?.backend === "apple";
   const appleAvailable = apple?.availability === "available";
   const ready = usingApple || modelInstalled(ollama?.models ?? [], model);
@@ -154,10 +153,10 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
         </h1>
         {step === "model" && (
           <>
-            <p>分類に使うモデルを選んでください。qwen3.5:9b を推奨します。既定は {defaultModel}、保存済みの設定は {status?.model || defaultModel} です。あとから設定でも変更できます。</p>
-            <ModelPicker value={model} models={ollama?.models ?? []} checked={connected} disabled={checking || pulling || usingApple} onChange={setSelectedModel} />
-            {checking && <p className="meta">Ollama 接続確認中</p>}
-            {!checking && !connected && <p className="meta">Ollama にはまだつながっていません。{ollamaError}</p>}
+            <p>商品を分類するモデルを選んでください。あとから設定で変更できます。</p>
+            {!usingApple && <ModelPicker value={model} models={ollama?.models ?? []} checked={connected} disabled={checking || pulling} onChange={setSelectedModel} />}
+            {!usingApple && checking && <p className="meta">Ollama 接続確認中</p>}
+            {!usingApple && !checking && !connected && <p className="meta">Ollama につながりません。{ollamaError}</p>}
             {!checking && connected && !usingApple && <p className="meta">{model || "モデル"} は{ready ? "導入済みです。" : "未導入です。取得するか、別のモデルを選べます。"}</p>}
             {pulling && (
               <div className="progress">
@@ -168,12 +167,12 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
               </div>
             )}
             {appleAvailable && !usingApple && (
-              <p className="meta">この Mac では Apple のオンデバイスモデルも使えます。選ぶと、Ollama のモデルは取得しません。既定は {defaultModel} のままです。</p>
+              <p className="meta">この Mac では Apple のオンデバイスモデルも使えます。追加のモデルダウンロードは不要です。</p>
             )}
-            {!checking && apple && !appleAvailable && apple.message && (
+            {!checking && usingApple && apple && !appleAvailable && apple.message && (
               <p className="meta">{apple.message}</p>
             )}
-            {usingApple && <><p className="meta">分類は Apple のオンデバイスモデルです。Ollama の取得は飛ばします。</p><button className="button" type="button" onClick={() => void api.settings().then(async (settings) => { await api.saveSettings({ ...settings, llmBackend: "ollama" }); await check(); }).catch((err: unknown) => setMessage(errorText(err)))}>Ollama を使う</button></>}
+            {usingApple && <><p className="meta">Apple のオンデバイスモデルで分類します。</p><button className="button" type="button" onClick={() => void api.settings().then(async (settings) => { await api.saveSettings({ ...settings, llmBackend: "ollama" }); await check(); }).catch((err: unknown) => setMessage(errorText(err)))}>Ollama を使う</button></>}
             {message && <p className="meta">{message}</p>}
             <div className="row-actions">
               {appleAvailable && !usingApple && (
@@ -197,7 +196,7 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
         )}
         {step === "extension" && (
           <>
-            <p>どちらの方法で BOOTH のライブラリを読み込むか選んでください。</p>
+            <p>BOOTH のライブラリを読み込む方法を選んでください。</p>
             <BoothImportSettings onFail={setMessage} onReady={setImportReady} navigateBrowser={() => setStep("presence")} />
             {message && <p className="meta" role="status">{message}</p>}
             <div className="row-actions">
@@ -209,9 +208,9 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
         {step === "presence" && (
           <>
             <p>
-              どちらも既定はオフです。オンは選んだときだけ有効になります。あとから設定でも変えられます。
+              あとから設定で変更できます。
             </p>
-            <p>ウィンドウを閉じても、ダウンロードの受け付けを続けますか？</p>
+            <p>ウィンドウを閉じても、商品情報の受信とダウンロード後の自動整理を続けますか？</p>
             <div className="row-actions">
               <button
                 className={backgroundChoice === "on" ? "button primary" : "button"}
@@ -232,9 +231,9 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
               </button>
             </div>
             <p className="meta">
-              オフのときはウィンドウを閉じるとアプリも終了します。オンのときはウィンドウだけ閉じて、トレイ（Windows）またはメニューバー（macOS）から開き直せます。
+              オフにすると、ウィンドウを閉じたときにアプリも終了します。オンにすると、トレイ（Windows）またはメニューバー（macOS）から開き直せます。
             </p>
-            <p>ログインしたときに起動しますか？</p>
+            <p>PC へのログイン時にバックグラウンドで起動しますか？</p>
             <div className="row-actions">
               <button
                 className={loginChoice === "on" ? "button primary" : "button"}
@@ -253,7 +252,7 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
               </button>
             </div>
             <p className="meta">
-              ログイン時の起動は、バックグラウンドをオンにしたときだけ使えます。両方オンのとき、ログインから起動したプロセスはウィンドウを出さず、トレイまたはメニューバーから開けます。
+              バックグラウンド動作がオンのときに選べます。起動後はトレイまたはメニューバーから開けます。
             </p>
             {message && <p className="meta">{message}</p>}
             <div className="row-actions">

@@ -661,7 +661,7 @@ pub async fn extract_products(
 ) -> Result<ExtractReport, String> {
     let running = Arc::clone(&state.extract_running);
     if running.swap(true, Ordering::SeqCst) {
-        return Err("抽出はすでに実行中です".into());
+        return Err("分類はすでに実行中です".into());
     }
     state.cancel_extract.store(false, Ordering::SeqCst);
     let _clear = ClearRunning(running);
@@ -709,7 +709,7 @@ pub async fn extract_products(
             "extract",
             index as u32,
             total,
-            format!("抽出中: {label}"),
+            format!("分類中: {label}"),
         );
         if job.description == crate::model::UNAVAILABLE_DESCRIPTION {
             let mut connection = db(&state)?;
@@ -761,7 +761,7 @@ pub async fn extract_products(
         }
     }
     if processed > 0 {
-        emit_progress(&app, "extract", total, total, "結び付きを再計算しています");
+        emit_progress(&app, "extract", total, total, "分類結果を整理しています");
         let mut connection = db(&state)?;
         db::reresolve_all(&mut connection)?;
     }
@@ -771,9 +771,9 @@ pub async fn extract_products(
         total,
         total,
         if cancelled {
-            "抽出を中断しました".into()
+            "分類を中断しました".into()
         } else {
-            format!("{processed} 件抽出、{failed} 件失敗")
+            format!("{processed} 件分類、{failed} 件失敗")
         },
     );
     Ok(ExtractReport {
@@ -992,6 +992,7 @@ pub async fn pull_ollama_model(app: AppHandle, state: State<'_, AppState>, model
         &settings.ollama_base_url,
         &model,
         |completed, total, status| {
+            let status = ollama::model_download_status(status);
             let current = (completed / 1_000_000) as u32;
             let whole = (total / 1_000_000) as u32;
             let message = if total > 0 {

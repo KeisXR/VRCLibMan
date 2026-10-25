@@ -96,6 +96,7 @@ test("browser controls preserve per-tab history, saved bookmarks, and navigation
       async () => {
         assert.equal(document.querySelector(".browser-window-controls"), null);
         assert.equal(document.querySelector("[data-tauri-drag-region]"), null);
+        assert.equal(document.querySelector(".browser-import"), null);
       },
     );
 
@@ -134,6 +135,7 @@ test("browser controls preserve per-tab history, saved bookmarks, and navigation
       async () => {
         await act(async () => root.render(createElement(BrowserChrome)));
         await wait(() => document.querySelector(".browser-titlebar"));
+        assert.ok(document.querySelector(".browser-import").disabled);
         assert.equal(
           document
             .querySelector(".browser-titlebar")
@@ -168,7 +170,7 @@ test("browser controls preserve per-tab history, saved bookmarks, and navigation
     await t.test(
       "bookmark add, edit, duplicate merge, and delete are reflected in controls",
       async () => {
-        assert.ok(document.querySelector(".browser-import").disabled);
+        assert.equal(document.querySelector(".browser-import"), null);
         await click(byLabel("このページをブックマーク"));
         await click(button("保存"));
         await wait(() => byLabel("one.exampleを編集"));

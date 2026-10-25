@@ -1,7 +1,7 @@
 import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { api, openExternal, openLocal } from "../api";
 import { useShell } from "../App";
-import { confidenceLabel, formatBytes } from "../media";
+import { formatBytes } from "../media";
 import { CATEGORIES, CATEGORY_LABEL } from "../types";
 import type { AvatarCandidate, ProductOption, QueueFile, QueueProduct } from "../types";
 import { FileMark, Thumb, errorText } from "../ui";
@@ -201,22 +201,21 @@ export function QueuePage() {
       <div className="page-head">
         <div>
           <h1>確認</h1>
-          <p>分類できていない商品と、フォルダにあって商品と結び付いていないファイルです。</p>
         </div>
       </div>
       <div className="tabs">
         <button className={kind === "unextracted" ? "tab active" : "tab"} type="button" onClick={() => choose("unextracted")}>
-          未抽出 {counts.unextracted}
+          未分類 {counts.unextracted}
         </button>
         <button className={kind === "review" ? "tab active" : "tab"} type="button" onClick={() => choose("review")}>
           要確認 {counts.needsReview}
         </button>
         <button className={kind === "files" ? "tab active" : "tab"} type="button" onClick={() => choose("files")}>
-          未突合 {counts.unlinkedFiles}
+          商品未設定のファイル {counts.unlinkedFiles}
         </button>
       </div>
       {visible && kind !== "files" && products.length === 0 && <p className="empty">この一覧は空です。</p>}
-      {visible && kind === "files" && files.length === 0 && <p className="empty">未突合のファイルはありません。</p>}
+      {visible && kind === "files" && files.length === 0 && <p className="empty">商品未設定のファイルはありません。</p>}
       {kind === "review" && (
         <CandidateList candidates={candidates} avatarIndex={avatarIndex} onDone={onDone} onError={fail} />
       )}
@@ -290,7 +289,7 @@ const CandidateList = memo(function CandidateList({
     <div className="panel" style={{ marginBottom: 16 }}>
       <h2>新しいアバター候補</h2>
       <p className="meta">
-        商品名の【対応】から拾った、対応表にない名前です。件数はその名前が付いている商品の数です。
+        対応表に未登録のアバター名です。
       </p>
       <div className="stack queue-candidate-list">
         {candidates.map((candidate) => {
@@ -303,7 +302,7 @@ const CandidateList = memo(function CandidateList({
             >
               <div className="candidate">
                 <strong>{candidate.name}</strong>
-                <span className="meta">{candidate.productCount} 件</span>
+                <span className="meta">関連商品 {candidate.productCount} 件</span>
                 <button className="button primary" type="button" onClick={() => void register(candidate.name)}>
                   アバターとして登録
                 </button>
@@ -373,7 +372,7 @@ function AliasCombo({
         ref={inputRef}
         className="search"
         value={query}
-        placeholder="別名を絞り込む"
+        placeholder="登録先のアバターを検索"
         role="combobox"
         aria-expanded="true"
         aria-autocomplete="list"
@@ -395,7 +394,7 @@ function AliasCombo({
         }}
       />
       <p className="meta alias-preview">
-        {pending ? `${suggestion} → ${pending.displayName}` : `${suggestion} → 一致する別名がありません`}
+        {pending ? `${suggestion} → ${pending.displayName}` : `${suggestion} → 一致するアバターがありません`}
       </p>
       <div className="alias-options" role="listbox">
         {hits.map((avatar, index) => (
@@ -520,7 +519,7 @@ const ProductEditor = memo(function ProductEditor({
             />
           </h2>
           <div className="meta">
-            {product.shop || "ショップ不明"} ・ 確信度 {confidenceLabel(product.confidence)}
+            {product.shop || "ショップ不明"}
           </div>
           {product.descriptionSnippet && <p className="meta">{product.descriptionSnippet.slice(0, 280)}</p>}
           <button className="button" type="button" onClick={() => void openExternal(product.url)}>
@@ -641,7 +640,7 @@ const FileEditor = memo(function FileEditor({
       <div>
         <h2 className="card-title">{file.filename}</h2>
         <div className="meta">
-          {file.isDir ? "フォルダ" : "ファイル"} ・ {formatBytes(file.size)} ・ スコア {file.matchScore.toFixed(2)}
+          {file.isDir ? "フォルダ" : "ファイル"} ・ {formatBytes(file.size)}
         </div>
         <button className="button" type="button" onClick={() => void openLocal(file.path)}>
           開く

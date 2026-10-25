@@ -93,7 +93,7 @@ export function AppUpdater({
                 ? `v${status?.version} の準備ができました`
                 : phase === "installing"
                   ? "更新を適用中…"
-                  : "操作したときだけ GitHub Releases に更新を確認します。";
+                  : "「更新を確認」を押すと、新しいバージョンを確認できます。";
 
   return (
     <div className="app-updater">
@@ -165,7 +165,7 @@ export function AppUpdater({
         </details>
       )}
       <p className="meta">
-        ダウンロード後に署名を検証します。アプリと拡張機能の更新は別です。
+        拡張機能は別途更新してください。
       </p>
     </div>
   );

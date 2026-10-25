@@ -228,7 +228,7 @@ where
         .map_err(|err| format!("画面の処理を予約できません: {err}"))?;
         receiver
             .recv()
-            .map_err(|_| "画面の処理が返りませんでした".to_string())?
+            .map_err(|_| "画面の処理を完了できませんでした。もう一度お試しください".to_string())?
     })
     .await
     .map_err(|err| format!("画面の処理を実行できません: {err}"))?
@@ -280,7 +280,7 @@ fn import_current_page_inner(app: &AppHandle) -> Result<ImportReport, String> {
         .map_err(|err| format!("ページを読めません: {err}"))?;
     let raw = receiver
         .recv_timeout(Duration::from_secs(8))
-        .map_err(|_| "ページの読み取りが返りませんでした".to_string())?;
+        .map_err(|_| "ページの読み取りがタイムアウトしました。もう一度お試しください".to_string())?;
     let (href, products) = parse_page_read(&raw)?;
     if let Ok(url) = Url::parse(&href) {
         browser_log(app, &format!("インポート対象 {}", public_url(&url)));
@@ -1106,7 +1106,7 @@ async fn eval_label(app: &AppHandle, label: &str, script: String) -> Result<Stri
     tauri::async_runtime::spawn_blocking(move || {
         receiver
             .recv_timeout(Duration::from_secs(15))
-            .map_err(|_| "ページの読み取りが返りませんでした".to_string())
+            .map_err(|_| "ページの読み取りがタイムアウトしました。もう一度お試しください".to_string())
     })
     .await
     .map_err(|err| format!("ページを読めません: {err}"))?
@@ -1203,7 +1203,7 @@ async fn wait_until_settled(app: &AppHandle, target: &url::Url) -> Result<String
             return Err(WALK_CANCELLED.into());
         }
         if started.elapsed() > Duration::from_secs(20) {
-            return Err("ページの読み込みが返りませんでした".into());
+            return Err("ページの読み込みがタイムアウトしました。もう一度お試しください".into());
         }
         let raw = eval_booth(app, PROBE_JS.to_string()).await?;
         let (href, ready) = parse_probe(&raw)?;
@@ -1618,7 +1618,7 @@ mod tests {
         assert!(!line.contains('?'));
         assert!(!line.contains("サンプル"));
         let summary = library_walk::final_counts_line(2, 4, 3, 1);
-        assert_eq!(summary, "商品 2、ファイル 4、名前あり 3、名前なし 1");
+        assert_eq!(summary, "商品 2 件、ファイル 4 件");
         assert!(!summary.contains('?'));
     }
 

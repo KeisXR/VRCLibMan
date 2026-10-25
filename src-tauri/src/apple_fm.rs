@@ -224,10 +224,18 @@ pub fn parse_availability(line: &str) -> Result<AppleStatus, String> {
         .unwrap_or("");
     let message = if availability == "available" {
         "Apple のオンデバイスモデルを使えます".into()
-    } else if reason.is_empty() {
-        "Apple のオンデバイスモデルは今は使えません".into()
     } else {
-        format!("Apple のオンデバイスモデルは今は使えません（{reason}）")
+        match reason {
+            "deviceNotEligible" => "この Mac は Apple のオンデバイスモデルに対応していません",
+            "appleIntelligenceNotEnabled" => {
+                "Mac の設定で Apple Intelligence を有効にしてください"
+            }
+            "modelNotReady" => {
+                "Apple のオンデバイスモデルを準備中です。しばらくしてから再確認してください"
+            }
+            _ => "Apple のオンデバイスモデルは今は使えません",
+        }
+        .into()
     };
     Ok(AppleStatus {
         availability,
@@ -282,7 +290,7 @@ impl Resident {
             "instructions": instructions,
         });
         let line = serde_json::to_string(&request)
-            .map_err(|_| AppleError::Message("依頼を書けません".into()))?;
+            .map_err(|_| AppleError::Message("分類処理を開始できませんでした".into()))?;
         writeln!(self.stdin, "{line}")
             .and_then(|_| self.stdin.flush())
             .map_err(|_| AppleError::Message("Apple のオンデバイスモデルへ送れません".into()))?;

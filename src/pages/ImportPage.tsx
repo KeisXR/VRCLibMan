@@ -32,6 +32,7 @@ export function ImportPage() {
   const [unextracted, setUnextracted] = useState<number | null>(null);
   const [progress, setProgress] = useState<JobProgress | null>(null);
   const [extracting, setExtracting] = useState(false);
+  const [classificationErrors, setClassificationErrors] = useState<string[]>([]);
   const [receiverStatus, setReceiverStatus] = useState("確認中");
   const [staged, setStaged] = useState<StagedDownload[]>([]);
 
@@ -49,11 +50,9 @@ export function ImportPage() {
         setReceiverStatus(
           !link.listening
             ? link.error || "受信できません"
-            : next.extensionLastSeenAt
-              ? "拡張から通信を受信済み（現在の接続状態は未確認）"
-              : next.paired
-                ? "ペアリング済み・通信は未確認"
-                : "受信待機中・未ペアリング",
+            : next.paired
+              ? "ペアリング済み"
+              : "ペアリングすると、拡張機能から商品情報を送れます",
         );
       },
       (err: unknown) => {
@@ -102,14 +101,16 @@ export function ImportPage() {
       notify(`${result.inserted} 件追加、${result.updated} 件更新しました`);
       refresh();
       if (extractAfter && result.inserted + result.updated > 0) {
+        setClassificationErrors([]);
         setExtracting(true);
         const extracted = await api.extractProducts(false);
         notify(
           extracted.cancelled
-            ? "抽出を中断しました"
-            : `${extracted.processed} 件抽出し、${extracted.failed} 件失敗しました`,
+            ? "分類を中断しました"
+            : `${extracted.processed} 件を分類しました${extracted.failed > 0 ? `（${extracted.failed} 件失敗）` : ""}`,
         );
-        if (extracted.errors.length > 0) fail(extracted.errors.join(" / "));
+        setClassificationErrors(extracted.errors);
+        if (extracted.failed > 0) fail(`${extracted.failed} 件の商品を分類できませんでした。分類結果の詳細を確認してください。`);
         refresh();
       }
     } catch (err) {
@@ -138,7 +139,7 @@ export function ImportPage() {
       const result = await saveLibraryAndScan(path);
       setLibraryFolder(path);
       notify(
-        `設定と同じライブラリのフォルダを保存し、${result.indexed} 件を調べ、${result.linked} 件を商品と結び付けました${result.truncated ? "。上限に達したため途中です" : ""}`,
+        `${result.indexed} 件を調べ、${result.linked} 件を商品と結び付けました${result.truncated ? "。上限に達したため途中です" : ""}`,
       );
       refresh();
     } catch (err) {
@@ -158,15 +159,17 @@ export function ImportPage() {
       return;
     setBusy(true);
     setExtracting(true);
+    setClassificationErrors([]);
     setProgress(null);
     try {
       const result = await api.extractProducts(force);
       notify(
         result.cancelled
-          ? "抽出を中断しました"
-          : `${result.processed} 件抽出し、${result.failed} 件失敗しました`,
+          ? "分類を中断しました"
+          : `${result.processed} 件を分類しました${result.failed > 0 ? `（${result.failed} 件失敗）` : ""}`,
       );
-      if (result.errors.length > 0) fail(result.errors.join(" / "));
+      setClassificationErrors(result.errors);
+      if (result.failed > 0) fail(`${result.failed} 件の商品を分類できませんでした。分類結果の詳細を確認してください。`);
       refresh();
     } catch (err) {
       fail(errorText(err));
@@ -210,13 +213,13 @@ export function ImportPage() {
           <h1>インポート</h1>
           <p>
             BOOTH から読み込む → 分類 →
-            手元のファイルと結び付ける、の順に進めます。ユーザーが開いたページや、ボタンで指定した範囲だけを読み込みます。
+            手元のファイルと結び付ける、の順に進めます。
           </p>
         </div>
       </div>
       {!isTauri() && (
         <p className="note">
-          いまはブラウザ確認用の見本です。抽出、フォルダスキャン、Ollama、サムネイル保存はデスクトップアプリで動きます。
+          見本データを表示しています。実際の分類やファイル操作はデスクトップアプリで利用できます。
         </p>
       )}
       <div className="settings-sections">
@@ -228,11 +231,14 @@ export function ImportPage() {
             </p>
           </header>
           <details className="settings-details"><summary>商品を管理・除外</summary><ProductExclusions /></details>
-          <SettingRow label="拡張機能" help={receiverStatus}>
+          {integration?.mode !== "browser" && <><SettingRow label="拡張機能" help={receiverStatus}>
             <a className="button" href="#/settings">
               読み込み方とペアリングの設定
             </a>
           </SettingRow>
+          <details className="settings-details">
+            <summary>拡張機能の使い方・受信履歴</summary>
+            <ExtensionInstructions />
           {integration?.extensionLastSeenAt && (
             <p className="section-note">
               最後の通信:{" "}
@@ -251,10 +257,8 @@ export function ImportPage() {
               {integration.extensionImport.unchanged}）
             </p>
           )}
-          <details className="settings-details">
-            <summary>拡張の使い方</summary>
-            <ExtensionInstructions />
-          </details>
+          </details></>}
+          {integration?.mode !== "extension" && <>
           <SettingRow
             label="内蔵ブラウザ"
             help={
@@ -267,20 +271,23 @@ export function ImportPage() {
               className="button"
               href={builtinBrowser ? "#/browser" : "#/settings"}
             >
-              {builtinBrowser ? "内蔵ブラウザを開く" : "読み込み方を選ぶ"}
+              {builtinBrowser ? "ブラウザ画面へ" : "読み込み方を選ぶ"}
             </a>
           </SettingRow>
           {integration?.browserImport && (
-            <p className="section-note">
+            <details className="settings-details"><summary>内蔵ブラウザの受信履歴</summary><p className="section-note">
               内蔵ブラウザの最終読み込み:{" "}
               {new Date(integration.browserImport.at).toLocaleString("ja-JP")}{" "}
               ・{integration.browserImport.products} 件
-            </p>
+            </p></details>
           )}
+          </>}
           {report && (
             <div className="section-body">
               <strong>直前の JSON インポート結果</strong>
-              <p
+              <p>{report.inserted} 件追加、{report.updated} 件更新しました。</p>
+              {report.warnings.length > 0 && <p className="warn-text">{report.warnings.slice(0, 3).join(" ")}</p>}
+              <details className="settings-details"><summary>読み込み結果の詳細</summary><p
                 className={
                   report.variations === 0 && report.downloads === 0
                     ? "meta warn-text"
@@ -289,15 +296,12 @@ export function ImportPage() {
               >
                 追加 {report.inserted} / 更新 {report.updated} / 変化なし{" "}
                 {report.unchanged} / スキップ {report.skipped}
-                {" / "}バリエーション {report.variations} / ダウンロード{" "}
+                {" / "}バリエーション {report.variations} / ファイル情報{" "}
                 {report.downloads}
                 {report.unnamedDownloads > 0
                   ? `（名前なし ${report.unnamedDownloads}）`
                   : ""}
-                {report.warnings.length > 0
-                  ? `。${report.warnings.slice(0, 3).join(" ")}`
-                  : ""}
-              </p>
+              </p></details>
             </div>
           )}
         </section>
@@ -309,8 +313,8 @@ export function ImportPage() {
           <SettingRow
             label={
               unextracted == null
-                ? "未抽出の件数を確認中"
-                : `未抽出 ${unextracted} 件`
+                ? "未分類の件数を確認中"
+                : `未分類 ${unextracted} 件`
             }
             help="分類モデルは設定で選べます。"
           >
@@ -321,7 +325,7 @@ export function ImportPage() {
                 disabled={busy || unextracted === 0}
                 onClick={() => void extract(false)}
               >
-                未抽出を分類
+                未分類を分類
               </button>
               <button
                 className="button"
@@ -345,7 +349,7 @@ export function ImportPage() {
           <details className="settings-details">
             <summary>すべて再分類</summary>
             <p>
-              既存の分類結果を上書きすることがあります。実行前に確認します。手動で固定した情報は維持します。
+              既存の分類結果を上書きすることがあります。手動で固定した情報は維持します。
             </p>
             <button
               className="button"
@@ -356,6 +360,12 @@ export function ImportPage() {
               すべて再分類
             </button>
           </details>
+          {classificationErrors.length > 0 && (
+            <details className="settings-details">
+              <summary>分類結果の詳細</summary>
+              <ul>{classificationErrors.map((message, index) => <li key={index}>{message}</li>)}</ul>
+            </details>
+          )}
         </section>
         <section className="settings-section">
           <header>
@@ -368,7 +378,7 @@ export function ImportPage() {
             label="ライブラリのフォルダ"
             help={
               libraryFolder ||
-              "まだ選んでいません。設定と同じフォルダを使います。"
+              "ファイルを保存しているフォルダを選んでください。"
             }
           >
             <button
@@ -384,8 +394,7 @@ export function ImportPage() {
             <div className="panel">
               <h2>ダウンロードフォルダに残っているファイル</h2>
               <p className="meta">
-                アプリが止まっている間に Downloads/VRCLibMan
-                へ置かれたファイルです。自動整理がオンで、ライブラリのフォルダがあるときだけ移します。安全に特定できないファイルは動かしません。
+                ダウンロード後に自動整理されなかったファイルです。自動整理と保存先を設定すると、ライブラリへ移動できます。
               </p>
               <ul className="file-list">
                 {staged.map((item) => (
@@ -410,13 +419,11 @@ export function ImportPage() {
         <section className="settings-section">
           <header>
             <h2>その他</h2>
-            <p>予備の読み込みや補助操作です。</p>
           </header>
           <details className="settings-details">
             <summary>JSON ファイルから読み込む</summary>
             <p>
-              拡張から直接届かなかったときの予備です。拡張で保存した自分の JSON
-              を読み込みます。
+              拡張機能で保存した JSON ファイルを読み込みます。
             </p>{" "}
             <div
               className={over ? "drop over" : "drop"}
@@ -451,8 +458,7 @@ export function ImportPage() {
                   disabled={busy}
                   onChange={(event) => setExtractAfter(event.target.checked)}
                 />{" "}
-                この JSON
-                をインポートしたあと、未抽出の商品を設定中のモデルで分類する
+                読み込み後に未分類の商品を分類する
               </span>
             </label>
           </details>
@@ -471,7 +477,7 @@ export function ImportPage() {
                   .then(
                     (id) => {
                       notify(
-                        `無料の商品 ${id} を追加しました。確認タブの未抽出に出ます`,
+                        `商品 ${id} を無料商品として登録しました。確認画面の未分類に表示されます`,
                       );
                       setFreeUrl("");
                       refresh();
@@ -483,8 +489,7 @@ export function ImportPage() {
             >
               <h2 style={{ marginTop: 0 }}>ライブラリにない無料商品</h2>
               <p className="meta">
-                商品ページの URL
-                を貼ると項目だけ作ります。ページは取りに行きません。拡張でそのページを送るか、無料のファイルを自分でダウンロードしたときも、同じ項目に足せます。
+                商品 URL を登録します。商品情報は自動取得しません。商品名や説明を読み込むには、拡張機能から商品ページを送ってください。
               </p>
               <label className="field">
                 <span>商品 URL</span>
@@ -499,7 +504,7 @@ export function ImportPage() {
                 type="submit"
                 disabled={busy || freeUrl.trim() === ""}
               >
-                無料の項目を追加
+                無料商品を登録
               </button>
             </form>
           </details>

@@ -12,6 +12,8 @@ import test from "node:test";
 import { updaterConfig } from "../scripts/configure-updater.mjs";
 import { createUpdaterManifest } from "../scripts/create-updater-manifest.mjs";
 import { stageUpdaterArtifacts } from "../scripts/stage-updater-artifacts.mjs";
+import { createReleaseNotes } from "../scripts/create-release-notes.mjs";
+import { spawnSync } from "node:child_process";
 
 const pubkey = readFileSync(
   new URL("../src-tauri/test-fixtures/updater/public-key.txt", import.meta.url),
@@ -44,6 +46,35 @@ const input = {
   notes: "変更点\nテスト",
   now: new Date("2026-10-25T00:00:00Z"),
 };
+
+test("release notes use only the selected version's changes", () => {
+  const template = readFileSync(new URL("../.github/release-notes.md", import.meta.url), "utf8");
+  const notes = createReleaseNotes({
+    appVersion: "99.0.0",
+    extensionVersion: "2.0.1",
+    template,
+    changes: "- この版だけの変更\n",
+  });
+  assert.match(notes, /## v99\.0\.0 の変更/);
+  assert.match(notes, /vrclibman-booth-export-2\.0\.1\.zip/);
+  assert.match(notes, /この版だけの変更/);
+  assert.ok(!notes.includes("{{"));
+  assert.ok(!notes.includes("v0.1.8 の変更"));
+  assert.throws(() => createReleaseNotes({ appVersion: "99.0.0", extensionVersion: "1", template, changes: "  " }), /変更内容/);
+});
+
+test("a release without its own notes cannot reuse an older version's changes", () => {
+  const directory = mkdtempSync(join(tmpdir(), "vrclibman-release-notes-"));
+  try {
+    const destination = join(directory, "notes.md");
+    const result = spawnSync(process.execPath, ["scripts/create-release-notes.mjs", "99.0.0", "1.0", destination], { encoding: "utf8" });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /99\.0\.0\.md/);
+    assert.deepEqual(readdirSync(directory), []);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test("dry-run artifacts preserve package, signature and public key for both platforms", () => {
   const directory = mkdtempSync(join(tmpdir(), "vrclibman-updater-stage-"));

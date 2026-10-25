@@ -1,6 +1,9 @@
 const status = document.querySelector("#status");
 document.querySelector("#extension-version").textContent = `拡張機能 v${chrome.runtime.getManifest().version}`;
 const linkStatus = document.querySelector("#link-status");
+const connectionSettings = document.querySelector("#connection-settings");
+const resultDetails = document.querySelector("#result-details");
+const resultBreakdown = document.querySelector("#result-breakdown");
 const button = document.querySelector("#export");
 const allButton = document.querySelector("#export-all");
 const newButton = document.querySelector("#export-new");
@@ -56,7 +59,7 @@ async function fetchWithBackoff(url, options) {
 async function currentTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id || !tab.url || !/^https:\/\/([^/]+\.)?booth\.pm\//.test(tab.url)) {
-    throw new Error("Booth の商品ページかライブラリを開いてから実行してください");
+    throw new Error("BOOTHの商品ページかライブラリを開いてから実行してください");
   }
   return tab;
 }
@@ -94,6 +97,7 @@ async function readLibraryPages(startUrl, knownIds) {
   let taken = api().takeUntilKnown(first.products, knownIds);
   let products = api().dedupeProducts(taken.products);
   let stopped = taken.stopped;
+  let pagesRead = 1;
   const lastPage = api().libraryLastPage(first.doc, firstUrl);
   try {
     for (let page = 2; page <= lastPage && !stopped; page += 1) {
@@ -104,6 +108,7 @@ async function readLibraryPages(startUrl, knownIds) {
         throw new Error(`ライブラリ ${page} ページ目を読めませんでした (${response.status})`);
       }
       const parsed = parseHtml(await response.text(), pageUrl);
+      pagesRead = page;
       if (parsed.products.length === 0) break;
       taken = api().takeUntilKnown(parsed.products, knownIds);
       products = api().dedupeProducts(products.concat(taken.products));
@@ -114,7 +119,7 @@ async function readLibraryPages(startUrl, knownIds) {
     error.libraryPages = lastPage;
     throw error;
   }
-  return { products, lastPage, stopped };
+  return { products, pagesRead, stopped };
 }
 
 function needsDetail(product) {
@@ -161,6 +166,10 @@ async function enrich(products) {
 }
 
 function setBusy(busy) {
+  if (busy) {
+    resultDetails.hidden = true;
+    resultBreakdown.textContent = "";
+  }
   button.disabled = busy;
   allButton.disabled = busy;
   newButton.disabled = busy;
@@ -190,9 +199,9 @@ async function probe(token) {
       credentials: "omit",
       headers: { Authorization: `Bearer ${token}`, "X-VRCLibMan-Extension-Version": chrome.runtime.getManifest().version },
     });
-    return response.ok;
+    return response.status;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -209,12 +218,21 @@ async function refreshLink() {
   intervalInput.value = String(requestPolicy.normalizeIntervalMs(storedInterval.boothIntervalMs));
   if (!token) {
     linkStatus.textContent = "未ペアリング。アプリの設定に出るコードを貼ってください";
+    connectionSettings.open = true;
     return;
   }
-  const reachable = await probe(token);
+  const status = await probe(token);
+  const reachable = status !== null && status >= 200 && status < 300;
   linkStatus.textContent = reachable
-    ? "ペアリング済み。アプリは起動しています"
-    : "ペアリング済み。アプリは起動していません";
+    ? "アプリに接続しています"
+    : status === 401
+      ? "コードが一致しません。アプリの設定からコピーし直してください"
+      : status === 403
+        ? "この拡張機能は接続を許可されていません。アプリでコードを作り直してください"
+        : status === 429
+          ? "接続の試行が続いています。少し待ってから確認してください"
+          : "アプリに接続できません。アプリの起動とコードを確認してください";
+  connectionSettings.open = !reachable;
   if (!reachable) return;
   try {
     const response = await fetch(`${LOCAL_BASE}/route-downloads`, {
@@ -267,7 +285,7 @@ async function knownIdsWithWake(token) {
       if (!isUnreachable(error)) throw error;
     }
   }
-  throw new Error("アプリを起動できませんでした。更新モードは、インポート済みかをアプリに確認します");
+  throw new Error("新しい購入だけを送るには、アプリとの接続が必要です。アプリを起動してから再実行してください");
 }
 
 async function postImport(token, payload) {
@@ -333,18 +351,22 @@ async function deliver(products, source) {
     }
   }
   await download(products, source);
-  return "アプリを起動できませんでした。JSONを保存したので、アプリのインポート画面へドロップしてください";
+  return "アプリに接続できませんでした。JSONを保存したので、アプリのインポート画面へドロップしてください";
 }
 
 function sentText(report, products) {
   const parts = [
-    `${products.length} 件を送りました。新規 ${report.inserted ?? 0}、更新 ${report.updated ?? 0}、変更なし ${report.unchanged ?? 0}`,
+    `商品情報を ${products.length} 件送りました。追加 ${report.inserted ?? 0} 件、更新 ${report.updated ?? 0} 件`,
   ];
-  if (report.skipped) parts.push(`スキップ ${report.skipped}`);
+  const details = [`変更なし ${report.unchanged ?? 0} 件`];
+  if (report.skipped) parts.push(`読み込めなかった商品 ${report.skipped} 件`);
   if (typeof report.variations === "number" || typeof report.downloads === "number") {
-    parts.push(`バリエーション ${report.variations ?? 0}、ダウンロード ${report.downloads ?? 0}`);
+    details.push(`バリエーション ${report.variations ?? 0} 件、ファイル情報 ${report.downloads ?? 0} 件`);
   }
-  if (Array.isArray(report.warnings) && report.warnings.length > 0) parts.push(report.warnings[0]);
+  if (report.unnamedDownloads) details.push(`ファイル名未取得 ${report.unnamedDownloads} 件`);
+  resultBreakdown.textContent = details.join("。");
+  resultDetails.hidden = false;
+  if (Array.isArray(report.warnings)) parts.push(...report.warnings);
   return parts.join("。");
 }
 
@@ -400,7 +422,7 @@ async function sendLibrary(updateMode) {
     if (updateMode) {
       const token = await savedToken();
       if (!token) {
-        setStatus("更新モードにはペアリングコードが必要です。アプリの設定のコードを貼ってください");
+        setStatus("新しい購入だけを送るにはペアリングが必要です。アプリの設定のコードを貼ってください");
         return;
       }
       knownIds = await knownIdsWithWake(token);
@@ -421,7 +443,7 @@ async function sendLibrary(updateMode) {
       return;
     }
     const stopNote = updateMode && collected.stopped ? "。インポート済みの商品があったので、そこまでで止めました" : "";
-    setStatus(`${await deliver(products, source)}（${collected.lastPage} ページ分）${stopNote}`);
+    setStatus(`${await deliver(products, source)}（${collected.pagesRead} ページを確認）${stopNote}`);
     await refreshLink();
   } catch (error) {
     const partial = error instanceof Error && Array.isArray(error.partialProducts) ? error.partialProducts : products;
@@ -481,9 +503,9 @@ diagnoseButton.addEventListener("click", async () => {
     diagnosisBox.value = text;
     try {
       await navigator.clipboard.writeText(text);
-      setStatus("解析結果をコピーしました。商品名やファイル名は含めていません");
+      setStatus("診断情報をコピーしました。商品名やファイル名は含めていません");
     } catch {
-      setStatus("解析結果を下の欄に出しました。商品名やファイル名は含めていません");
+      setStatus("診断情報を下の欄に出しました。商品名やファイル名は含めていません");
     }
   } catch (error) {
     setStatus(error instanceof Error ? error.message : String(error));
@@ -512,7 +534,7 @@ routeInput.addEventListener("change", async () => {
       setStatus(data.error || "自動整理の設定をアプリへ保存できませんでした");
     }
   } catch {
-    setStatus("アプリが起動していないので、拡張側だけ覚えました");
+    setStatus("アプリに接続できないため、拡張機能側に設定を保存しました");
   }
 });
 

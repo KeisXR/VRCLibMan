@@ -44,7 +44,6 @@ export function AvatarsPage() {
       <div className="page-head">
         <div>
           <h1>アバター</h1>
-          <p>持っているアバターと、衣装の対応先として出てくるだけの名前を分けています。</p>
         </div>
         <div className="toolbar">
           <input
@@ -63,14 +62,13 @@ export function AvatarsPage() {
       </div>
       {cards && cards.length === 0 && (
         <div className="empty">
-          まだ持っているアバターがありません。Booth の拡張で今見ているページを JSON
-          にし、インポートから読み込み、ローカルの Ollama で分類すると、ここへ並びます。
+          アバターはまだ登録されていません。<a href="#/import">インポート</a>から BOOTH の商品を読み込んでください。
         </div>
       )}
       {cards && cards.length > 0 && filtered.length === 0 && <div className="empty">一致するアバターがありません。</div>}
       <AvatarGroups title={onlyOwned ? "" : "持っているアバター"} cards={filtered.filter((card) => card.owned)} grouped={grouped} />
       {!onlyOwned && (
-        <AvatarGroups title="衣装の対応先" cards={filtered.filter((card) => !card.owned)} grouped={grouped} note="ライブラリの衣装や小物から名前が出ているだけで、所持アバターとしては記録していません。" />
+        <AvatarGroups title="衣装の対応先" cards={filtered.filter((card) => !card.owned)} grouped={grouped} note="所持が登録されていないアバターです。" />
       )}
     </section>
   );
@@ -123,8 +121,6 @@ function AvatarGroups({
                 <Thumb path={card.thumbnailPath} url={card.thumbnailUrl} name={card.displayName} />
                 <div>
                   <h2 className="card-title">{card.displayName}</h2>
-                  <div className="meta">{card.owned ? "所持" : "対応先"}</div>
-                  {card.isPlaceholder && <div className="meta">仮の名前です。設定で既存のアバターへ統合できます。</div>}
                   <div className="pills">
                     <span className="pill">{CATEGORY_LABEL.outfit} {card.outfitCount}</span>
                     <span className="pill">{CATEGORY_LABEL.hair} {card.hairCount}</span>

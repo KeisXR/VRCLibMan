@@ -399,15 +399,17 @@ export function BrowserChrome({
         >
           {bookmarked ? "★" : "☆"}
         </button>
-        <button
-          className="browser-import"
-          type="button"
-          disabled={disabled || !canImport}
-          title="BOOTHのライブラリをインポート"
-          onClick={() => void importPage()}
-        >
-          インポート
-        </button>
+        {!embedded && (
+          <button
+            className="browser-import"
+            type="button"
+            disabled={disabled || !canImport}
+            title="BOOTHのライブラリをインポート"
+            onClick={() => void importPage()}
+          >
+            インポート
+          </button>
+        )}
       </div>
       <div className="browser-bookmarks" aria-label="ブックマークバー">
         {state.bookmarks.map((bookmark) => (
