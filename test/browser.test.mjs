@@ -92,6 +92,14 @@ test("browser controls preserve per-tab history, saved bookmarks, and navigation
     const first = (await api.browserState()).activeId;
 
     await t.test(
+      "embedded controls do not expose host window buttons or drag regions",
+      async () => {
+        assert.equal(document.querySelector(".browser-window-controls"), null);
+        assert.equal(document.querySelector("[data-tauri-drag-region]"), null);
+      },
+    );
+
+    await t.test(
       "switching tabs and closing an inactive tab preserves each native-history model",
       async () => {
         await navigate("https://one.example/start");
@@ -118,6 +126,42 @@ test("browser controls preserve per-tab history, saved bookmarks, and navigation
         );
         assert.equal((await api.browserState()).activeId, first);
         assert.equal(address(), "https://one.example/next");
+      },
+    );
+
+    await t.test(
+      "standalone titlebar includes window controls; macOS reserves native button space",
+      async () => {
+        await act(async () => root.render(createElement(BrowserChrome)));
+        await wait(() => document.querySelector(".browser-titlebar"));
+        assert.equal(
+          document
+            .querySelector(".browser-titlebar")
+            .getAttribute("data-tauri-drag-region"),
+          "deep",
+        );
+        assert.equal(
+          document.querySelectorAll(".browser-window-controls button").length,
+          3,
+        );
+        assert.ok(byLabel("ウィンドウを最小化"));
+        assert.ok(byLabel("ウィンドウを最大化"));
+        assert.ok(byLabel("ブラウザウィンドウを閉じる"));
+        assert.equal(
+          document
+            .querySelector(".browser-window-controls")
+            .getAttribute("data-tauri-drag-region"),
+          "false",
+        );
+        navigator.userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)";
+        await act(async () => root.render(createElement(BrowserChrome)));
+        assert.ok(document.querySelector(".browser-titlebar.macos"));
+        assert.equal(document.querySelector(".browser-window-controls"), null);
+        navigator.userAgent = "test";
+        await act(async () =>
+          root.render(createElement(BrowserChrome, { embedded: true })),
+        );
+        await wait(() => !document.querySelector(".browser-titlebar"));
       },
     );
 

@@ -513,6 +513,9 @@ fn install_browser_menu(app: &AppHandle, window: &Window) -> Result<(), String> 
     .map_err(|e| e.to_string())?;
     menu.append(&controls).map_err(|e| e.to_string())?;
     window.set_menu(menu).map_err(|e| e.to_string())?;
+    // Keep native accelerators registered without an Alt-activated menu bar.
+    #[cfg(not(target_os = "macos"))]
+    window.hide_menu().map_err(|e| e.to_string())?;
     window.on_menu_event(|window, event| {
         let app = window.app_handle().clone();
         if !window.is_focused().unwrap_or(false)
@@ -524,34 +527,40 @@ fn install_browser_menu(app: &AppHandle, window: &Window) -> Result<(), String> 
         if !action.starts_with("browser-") {
             return;
         }
-        tauri::async_runtime::spawn(async move {
-            let _ = browser::dispatch_ui(app.clone(), move |handle| {
-                let result = match action.as_str() {
-                    "browser-new-tab" => new_tab(handle, None),
-                    "browser-close-tab" => {
-                        active_view(handle).and_then(|view| close_tab(handle, view.label()))
-                    }
-                    "browser-reload" => reload(handle),
-                    "browser-back" => history(handle, false),
-                    "browser-forward" => history(handle, true),
-                    "browser-address" => Ok(()),
-                    _ => Ok(()),
-                };
-                if action == "browser-address" || action == "browser-new-tab" {
-                    if let Some(view) = handle.get_webview(TOOLBAR_LABEL) {
-                        let _ = view.set_focus();
-                    }
-                    let _ = handle.emit_to(TOOLBAR_LABEL, "browser-focus-address", ());
-                }
-                if let Err(error) = result {
-                    let _ = handle.emit("browser-operation-error", error);
-                }
-                Ok(())
-            })
-            .await;
-        });
+        dispatch_shortcut(&app, &action);
     });
     Ok(())
+}
+
+pub(crate) fn dispatch_shortcut(app: &AppHandle, action: &str) {
+    let app = app.clone();
+    let action = action.to_string();
+    tauri::async_runtime::spawn(async move {
+        let _ = browser::dispatch_ui(app.clone(), move |handle| {
+            let result = match action.as_str() {
+                "browser-new-tab" => new_tab(handle, None),
+                "browser-close-tab" => {
+                    active_view(handle).and_then(|view| close_tab(handle, view.label()))
+                }
+                "browser-reload" => reload(handle),
+                "browser-back" => history(handle, false),
+                "browser-forward" => history(handle, true),
+                "browser-address" => Ok(()),
+                _ => Ok(()),
+            };
+            if action == "browser-address" || action == "browser-new-tab" {
+                if let Some(view) = handle.get_webview(TOOLBAR_LABEL) {
+                    let _ = view.set_focus();
+                }
+                let _ = handle.emit_to(TOOLBAR_LABEL, "browser-focus-address", ());
+            }
+            if let Err(error) = result {
+                let _ = handle.emit("browser-operation-error", error);
+            }
+            Ok(())
+        })
+        .await;
+    });
 }
 
 pub fn open(app: &AppHandle) -> Result<(), String> {
@@ -565,10 +574,17 @@ pub fn open(app: &AppHandle) -> Result<(), String> {
     if let Some(probe) = app.get_webview_window("booth-probe") {
         let _ = probe.destroy();
     }
-    let window = WindowBuilder::new(app, browser::WINDOW_LABEL)
+    let builder = WindowBuilder::new(app, browser::WINDOW_LABEL)
         .title("ブラウザ — VRCLibMan")
         .inner_size(1200.0, 850.0)
-        .min_inner_size(640.0, 480.0)
+        .min_inner_size(640.0, 480.0);
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true);
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.decorations(false);
+    let window = builder
         .build()
         .map_err(|e| format!("ブラウザを開けません: {e}"))?;
     {
@@ -593,6 +609,9 @@ pub fn open(app: &AppHandle) -> Result<(), String> {
             .map_err(|e| format!("操作バーを開けません: {e}"))?;
         mount_tab(app, &window, checked_url(app, browser::LIBRARY_URL)?)?;
         install_browser_menu(app, &window)?;
+        // Child webviews do not install Tauri's Windows resize borders themselves.
+        #[cfg(windows)]
+        window.set_resizable(true).map_err(|e| e.to_string())?;
         Ok::<_, String>(())
     })();
     if let Err(error) = result {

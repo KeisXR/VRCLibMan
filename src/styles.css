@@ -733,6 +733,14 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .browser-chrome { width: 100%; background: var(--bg); color: var(--text); font-size: 13px; }
 .browser-chrome.embedded { margin-top: 12px; border: 1px solid var(--line); border-radius: var(--radius-control); overflow: hidden; }
 .browser-tabs-row { height: 36px; display: flex; align-items: stretch; gap: 4px; padding: 0 8px; }
+.browser-titlebar { padding-right: 0; user-select: none; }
+.browser-titlebar.macos { padding-left: 84px; padding-right: 8px; }
+.browser-titlebar .browser-tabs { flex: 0 1 auto; }
+.browser-window-drag-space { flex: 1 0 32px; }
+.browser-window-controls { flex: 0 0 auto; display: flex; align-self: stretch; }
+.browser-chrome .browser-window-controls button { display: grid; place-items: center; width: 46px; padding: 0; border-radius: 0; }
+.browser-window-controls svg { fill: none; stroke: currentColor; stroke-width: 1; }
+.browser-chrome .browser-window-controls .browser-window-close:hover:not(:disabled) { color: #fff; background: #c42b1c; }
 .browser-tabs { display: flex; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: thin; }
 .browser-tab { display: flex; align-items: center; flex: 0 1 210px; min-width: 95px; border-radius: 8px 8px 0 0; }
 .browser-tab.active { background: var(--surface); }
