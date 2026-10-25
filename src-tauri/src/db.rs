@@ -3051,7 +3051,34 @@ fn settle_named_original_body(connection: &mut Connection, product: &Product) ->
     if name == "名称未設定" || crate::normalize::is_blocked_avatar_label(&name) {
         return Ok(false);
     }
-    mark_owned_body(connection, &product.booth_id)?;
+    let avatars = load_avatars(connection)?;
+    let names = vec![name];
+    let output = resolve_product(
+        &ResolveInput {
+            booth_id: &product.booth_id,
+            title: &product.title,
+            description: &product.description_snippet,
+            category: Some(Category::Avatar),
+            raw_names: &names,
+            is_generic: false,
+            confidence: Some(1.0),
+            user_confirmed: true,
+            threshold: settings(connection)?.confidence_threshold,
+            allow_create: true,
+        },
+        &avatars,
+    );
+    // A failed name inference is an unresolved product, not a database failure.
+    // In particular, do not fall back to other names outside the quotation.
+    let Some(avatar_id) = output.avatar_ids.first() else {
+        return Ok(false);
+    };
+    let tx = connection.transaction().sql()?;
+    for draft in &output.created_avatars {
+        insert_placeholder(&tx, &draft.id, &draft.display_name, &draft.aliases)?;
+    }
+    save_owned_body(&tx, product, avatar_id)?;
+    tx.commit().sql()?;
     Ok(true)
 }
 
@@ -3151,6 +3178,12 @@ pub(crate) fn mark_owned_body(
         }
         id
     };
+    save_owned_body(connection, &product, &avatar_id)?;
+    Ok(avatar_id)
+}
+
+fn save_owned_body(connection: &Connection, product: &Product, avatar_id: &str) -> Result<(), String> {
+    let booth_id = &product.booth_id;
     connection
         .execute(
             "UPDATE avatars SET owned = 1 WHERE id = ?1",
@@ -3169,9 +3202,9 @@ pub(crate) fn mark_owned_body(
         )
         .sql()?;
     if !product.links_locked {
-        replace_links(connection, booth_id, &[avatar_id.clone()], "owned")?;
+        replace_links(connection, booth_id, &[avatar_id.to_string()], "owned")?;
     }
-    Ok(avatar_id)
+    Ok(())
 }
 
 pub(crate) fn known_booth_ids(connection: &Connection) -> Result<Vec<String>, String> {
@@ -5375,6 +5408,80 @@ mod tests {
         let after = load_snapshot(&mut connection).unwrap();
         assert_eq!(after.avatars.iter().filter(|a| a.display_name == "輝夜").count(), 1);
         assert!(after.avatars.iter().any(|a| a.display_name == "輝夜" && a.owned));
+    }
+
+    #[test]
+    fn quoted_body_identity_wins_over_known_names_outside_the_quotation() {
+        for (index, title, expected_name, expected_id) in [
+            (0, "オリジナル3Dモデル「輝夜」 ライム対応", "輝夜", "owned-8800780"),
+            (1, "オリジナル3Dモデル「プラム」 ライム対応", "プラム", "plum"),
+        ] {
+            let mut connection = open_memory().unwrap();
+            let booth_id = format!("880078{index}");
+            let json = serde_json::json!({"boothId": booth_id, "title": title}).to_string();
+            import_products(&mut connection, &parse_export(&json).unwrap()).unwrap();
+            reresolve_all(&mut connection).unwrap();
+            let snapshot = load_snapshot(&mut connection).unwrap();
+            let owned = snapshot.avatars.iter().find(|a| a.id == expected_id).unwrap();
+            assert_eq!(owned.display_name, expected_name);
+            assert!(owned.owned);
+            assert_eq!(link_ids(&connection, &booth_id).unwrap(), vec![expected_id.to_string()]);
+            assert!(!snapshot.avatars.iter().find(|a| a.id == "lime").unwrap().owned);
+        }
+    }
+
+    #[test]
+    fn failed_body_name_inference_does_not_block_import_or_reopening() {
+        struct Temp(std::path::PathBuf);
+        impl Drop for Temp {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let dir = Temp(std::env::temp_dir().join(format!(
+            "vrclibman-unresolved-body-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        )));
+        let path = dir.0.join("library.sqlite");
+        let parsed = parse_export(r#"{"boothId":"8800782","title":"オリジナル3Dモデル「ReviewOnlyBody」","description":"ReviewOnlyBody（朏）"}"#).unwrap();
+        {
+            let mut connection = open(&path).unwrap();
+            import_products(&mut connection, &parsed).unwrap();
+            let product = require_product(&connection, "8800782").unwrap();
+            assert!(product.needs_review);
+            assert!(!product.user_confirmed);
+            assert!(product.extracted_at.is_none());
+            assert!(link_ids(&connection, "8800782").unwrap().is_empty());
+        }
+        {
+            let mut connection = open(&path).unwrap();
+            settle_dictionary(&mut connection).unwrap();
+            let product = require_product(&connection, "8800782").unwrap();
+            assert!(product.needs_review);
+            assert!(product.extracted_at.is_none());
+            assert!(link_ids(&connection, "8800782").unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn automatic_body_registration_propagates_database_errors_and_rolls_back() {
+        let mut connection = open_memory().unwrap();
+        let parsed = parse_export(r#"{"boothId":"8800783","title":"オリジナル3Dモデル「輝夜」"}"#).unwrap();
+        upsert(&connection, &parsed.products[0]).unwrap();
+        connection.execute_batch(
+            "CREATE TRIGGER fail_body_link BEFORE INSERT ON product_avatars
+             BEGIN SELECT RAISE(ABORT, 'fixture body link failure'); END;"
+        ).unwrap();
+        let error = settle_dictionary(&mut connection).unwrap_err();
+        assert!(error.contains("fixture body link failure"));
+        assert!(!avatar_exists(&connection, "owned-8800783").unwrap());
+        let product = require_product(&connection, "8800783").unwrap();
+        assert!(product.extracted_at.is_none());
+        assert!(!product.user_confirmed);
     }
 
     #[test]
