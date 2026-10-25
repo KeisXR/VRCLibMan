@@ -1000,6 +1000,9 @@ fn apply_listed_compatibility(connection: &mut Connection, booth_id: &str) -> Re
     if existing.links_locked {
         return Ok(());
     }
+    if settle_named_original_body(connection, &existing)? {
+        return Ok(());
+    }
     let avatars = load_avatars(connection)?;
     let listed = crate::compat::listed_avatar_names(&existing.description_snippet, &avatars);
     if listed.is_empty() {
@@ -3002,7 +3005,10 @@ fn settle_one(connection: &mut Connection, booth_id: &str, redo: bool) -> Result
     if product.extracted_at.is_some() && !redo {
         return Ok(false);
     }
-    // Avatar bodies that are not in the profile list stay in the queue for a manual ownership mark.
+    if settle_named_original_body(connection, &product)? {
+        return Ok(true);
+    }
+    // Other bodies outside the profile list still need a manual ownership mark.
     let avatars = load_avatars(connection)?;
     let pieces = crate::compat::explicit_dedication_pieces(&product.title, &avatars);
     if pieces.is_empty() {
@@ -3025,6 +3031,27 @@ fn settle_one(connection: &mut Connection, booth_id: &str, redo: bool) -> Result
         },
         threshold,
     )?;
+    Ok(true)
+}
+
+// A single quoted name in an explicit original-model title identifies the body
+// without using compatibility names from its description as ownership evidence.
+fn settle_named_original_body(connection: &mut Connection, product: &Product) -> Result<bool, String> {
+    if product.extracted_at.is_some()
+        || product.user_confirmed
+        || product.links_locked
+        || product.category.is_some_and(|category| category != Category::Avatar)
+        || product.description_snippet == crate::model::UNAVAILABLE_DESCRIPTION
+        || crate::compat::strong_category_override(&product.title) != Some(Category::Avatar)
+        || crate::normalize::quoted_segments(&product.title).len() != 1
+    {
+        return Ok(false);
+    }
+    let name = crate::normalize::suggested_display_name(&product.title);
+    if name == "名称未設定" || crate::normalize::is_blocked_avatar_label(&name) {
+        return Ok(false);
+    }
+    mark_owned_body(connection, &product.booth_id)?;
     Ok(true)
 }
 
@@ -5206,7 +5233,8 @@ mod tests {
     #[test]
     fn a_low_confidence_placeholder_stays_in_review() {
         let mut connection = open_memory().unwrap();
-        let json = r#"{"products":[{"boothId":"3001","title":"オリジナル3Dモデル「架空ちゃん」","shop":"s","description":"架空ちゃんです。"}]}"#;
+        // No explicit original-model title: this case still depends on model extraction.
+        let json = r#"{"products":[{"boothId":"3001","title":"架空ちゃん","shop":"s","description":"架空ちゃんです。"}]}"#;
         import_products(&mut connection, &parse_export(json).unwrap()).unwrap();
         apply_extraction(
             &mut connection,
@@ -5323,11 +5351,56 @@ mod tests {
     }
 
     #[test]
+    fn a_named_original_avatar_outside_the_catalog_is_owned_on_import() {
+        let mut connection = open_memory().unwrap();
+        let json = r#"{"products":[
+            {"boothId":"8800771","title":"九尾オリジナル3Dモデル「輝夜」-kaguya-","description":"対応アバター\nライム\n利用規約"},
+            {"boothId":"8800772","title":"【輝夜対応】衣装","description":"衣装です。"}
+        ]}"#;
+        import_products(&mut connection, &parse_export(json).unwrap()).unwrap();
+        reresolve_all(&mut connection).unwrap();
+        let snapshot = load_snapshot(&mut connection).unwrap();
+        let body = snapshot.products.iter().find(|p| p.booth_id == "8800771").unwrap();
+        assert_eq!(body.category, Some(Category::Avatar));
+        assert!(!body.needs_review);
+        let kaguya = snapshot.avatars.iter().find(|a| a.display_name == "輝夜").unwrap();
+        assert!(kaguya.owned);
+        assert!(kaguya.aliases.iter().any(|alias| alias.eq_ignore_ascii_case("kaguya")));
+        assert!(snapshot.links.iter().any(|link| link.product_id == "8800771" && link.avatar_id == kaguya.id));
+        assert!(snapshot.links.iter().any(|link| link.product_id == "8800772" && link.avatar_id == kaguya.id));
+        assert!(!snapshot.avatars.iter().find(|a| a.id == "lime").unwrap().owned);
+        // Reimport and reopening must not duplicate or forget the owned body.
+        import_products(&mut connection, &parse_export(json).unwrap()).unwrap();
+        settle_dictionary(&mut connection).unwrap();
+        let after = load_snapshot(&mut connection).unwrap();
+        assert_eq!(after.avatars.iter().filter(|a| a.display_name == "輝夜").count(), 1);
+        assert!(after.avatars.iter().any(|a| a.display_name == "輝夜" && a.owned));
+    }
+
+    #[test]
+    fn named_original_bodies_settle_existing_imports_but_preserve_manual_decisions() {
+        let mut connection = open_memory().unwrap();
+        let parsed = parse_export(r#"{"boothId":"8800773","title":"九尾オリジナル3Dモデル「輝夜」-kaguya-"}"#).unwrap();
+        upsert(&connection, &parsed.products[0]).unwrap();
+        connection.execute("UPDATE products SET category = 'outfit', category_locked = 1 WHERE booth_id = '8800773'", []).unwrap();
+        settle_dictionary(&mut connection).unwrap();
+        assert_eq!(require_product(&connection, "8800773").unwrap().category, Some(Category::Outfit));
+        assert!(link_ids(&connection, "8800773").unwrap().is_empty());
+        connection.execute("UPDATE products SET category = NULL, category_locked = 0, links_locked = 1 WHERE booth_id = '8800773'", []).unwrap();
+        settle_dictionary(&mut connection).unwrap();
+        assert!(link_ids(&connection, "8800773").unwrap().is_empty());
+        connection.execute("UPDATE products SET links_locked = 0 WHERE booth_id = '8800773'", []).unwrap();
+        settle_dictionary(&mut connection).unwrap();
+        let snapshot = load_snapshot(&mut connection).unwrap();
+        assert!(snapshot.avatars.iter().any(|a| a.display_name == "輝夜" && a.owned));
+    }
+
+    #[test]
     fn an_unlisted_avatar_body_stays_unowned_until_marked() {
         let mut connection = open_memory().unwrap();
         let json = r#"{
             "products": [
-                {"boothId":"3001","title":"オリジナル3Dモデル「架空丸」","shop":"s","description":"架空丸です。"},
+                {"boothId":"3001","title":"架空丸","shop":"s","description":"架空丸です。"},
                 {"boothId":"3002","title":"【桔梗対応】パーカー","shop":"s","description":"衣装です。"}
             ]
         }"#;
