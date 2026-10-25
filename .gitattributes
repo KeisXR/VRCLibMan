@@ -1,2 +1,5 @@
+# 語リストはハッシュで固定しているので、改行を変換しない。
+src-tauri/resources/wordlists/** -text
+
 # This signature fixture must retain its exact bytes on every platform.
 src-tauri/test-fixtures/updater/payload.txt -text
