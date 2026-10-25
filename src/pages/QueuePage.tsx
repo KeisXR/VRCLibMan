@@ -526,7 +526,7 @@ const ProductEditor = memo(function ProductEditor({
           <button className="button" type="button" onClick={() => void openExternal(product.url)}>
             BOOTH を開く
           </button>
-          <ExcludeProductButton boothId={product.boothId} />
+          <ExcludeProductButton boothId={product.boothId} title={product.title} />
         </div>
       </div>
       {product.unresolvedNames.length > 0 && (

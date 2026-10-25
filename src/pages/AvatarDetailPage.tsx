@@ -307,7 +307,7 @@ export function ItemCard({ item }: { item: ItemView }) {
           )}
         </div>
       </div>
-      <div className="row-actions"><button className="button" type="button" onClick={() => void openExternal(item.url)}>BOOTH</button><ExcludeProductButton boothId={item.boothId} /></div>
+      <div className="row-actions"><button className="button" type="button" onClick={() => void openExternal(item.url)}>BOOTH</button><ExcludeProductButton boothId={item.boothId} title={item.title} /></div>
     </article>
   );
 }

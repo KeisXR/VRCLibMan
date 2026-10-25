@@ -453,6 +453,11 @@ span.account-avatar { background: var(--button); }
 }
 .checks label { display: flex; gap: 6px; align-items: center; font-size: 13px; }
 .row-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
+.product-actions { position: relative; display: inline-flex; vertical-align: middle; }
+.product-actions-trigger { width: 32px; height: 32px; background: transparent; box-shadow: none; color: var(--text-secondary); font-size: 22px; }
+.product-actions-panel { position: absolute; z-index: 10; top: calc(100% + 4px); right: 0; padding: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-control); box-shadow: var(--shadow); white-space: nowrap; }
+.product-actions-panel .button { width: 100%; text-align: left; }
+
 .drop {
   border: 0;
   border-radius: var(--radius-lg);

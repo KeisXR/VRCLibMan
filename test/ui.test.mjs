@@ -314,6 +314,37 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         );
       },
     );
+    await t.test("product exclusion requires opening other actions first", async () => {
+      const worlds = await api.productsByCategory("world");
+      const target = worlds[0];
+      await route("#/worlds");
+      const card = () => [...document.querySelectorAll(".item")].find((node) => node.textContent.includes(target.title));
+      await wait(card);
+      const trigger = () => card().querySelector(".product-actions-trigger");
+      assert.equal(button("一覧から除外", card()), undefined);
+      await click(trigger());
+      assert.equal(trigger().getAttribute("aria-expanded"), "true");
+      assert.ok(button("一覧から除外", card()));
+      assert.ok(!(await api.managedProducts()).find((p) => p.boothId === target.boothId).excluded);
+      await act(async () => {
+        const event = new window.Event("keydown", { bubbles: true });
+        event.key = "Escape";
+        document.dispatchEvent(event);
+        await delay();
+      });
+      assert.equal(trigger().getAttribute("aria-expanded"), "false");
+      await click(trigger());
+      await act(async () => {
+        document.body.dispatchEvent(new window.Event("pointerdown", { bubbles: true }));
+        await delay();
+      });
+      assert.equal(button("一覧から除外", card()), undefined);
+      await click(trigger());
+      await click(button("一覧から除外", card()));
+      await wait(() => !card());
+      assert.ok((await api.managedProducts()).find((p) => p.boothId === target.boothId).excluded);
+      await api.setProductExcluded(target.boothId, false);
+    });
     await t.test(
       "avatar pages separate adjustment candidates and keep worlds in their library",
       async () => {
