@@ -268,7 +268,7 @@ fn update_error(context: &str, error: &tauri_plugin_updater::Error) -> String {
     use tauri_plugin_updater::Error;
     let detail = match error {
         Error::ReleaseNotFound => {
-            "公開済みの更新情報が見つかりません。公開前の場合は GitHub Releases から手動で更新してください。"
+            "更新情報が見つかりません。GitHub Releases で最新バージョンを確認してください。"
         }
         Error::TargetNotFound(_) | Error::TargetsNotFound(_) => {
             "この OS・CPU 向けの更新ファイルがありません。"

@@ -188,25 +188,26 @@ pub async fn extract_product(
 
 pub fn parse_extraction(raw: &str) -> Result<Extraction, String> {
     let without_think = strip_think(raw);
-    let json = json_object(&without_think).ok_or("抽出結果のJSONが見つかりません")?;
+    let json = json_object(&without_think)
+        .ok_or("分類結果を読み取れませんでした。もう一度分類してください")?;
     let value: Value =
-        serde_json::from_str(json).map_err(|err| format!("抽出結果のJSONが壊れています: {err}"))?;
+        serde_json::from_str(json).map_err(|err| format!("分類結果を読み取れませんでした: {err}"))?;
     let category = value
         .get("category")
         .and_then(Value::as_str)
         .and_then(Category::parse)
-        .ok_or("category が不正です")?;
+        .ok_or("分類結果の商品カテゴリを読み取れませんでした。もう一度分類してください")?;
     let is_generic = value
         .get("is_generic")
         .and_then(Value::as_bool)
-        .ok_or("is_generic が不正です")?;
+        .ok_or("分類結果の汎用・専用の区別を読み取れませんでした。もう一度分類してください")?;
     let confidence = value
         .get("confidence")
         .and_then(Value::as_f64)
-        .ok_or("confidence が不正です")?;
+        .ok_or("分類結果の確信度を読み取れませんでした。もう一度分類してください")?;
     let mut names = Vec::new();
     let Some(list) = value.get("compatible_avatars").and_then(Value::as_array) else {
-        return Err("compatible_avatars が不正です".into());
+        return Err("分類結果の対応アバターを読み取れませんでした。もう一度分類してください".into());
     };
     for item in list {
         let Some(name) = item.as_str() else {
@@ -286,6 +287,22 @@ pub async fn pull_model(
         }
     }
     Ok(())
+}
+
+pub fn model_download_status(status: &str) -> &'static str {
+    if status.starts_with("pulling manifest") {
+        "モデルの情報を確認しています"
+    } else if status.starts_with("pulling ") {
+        "モデルをダウンロードしています"
+    } else if status.starts_with("verifying ") {
+        "ダウンロードしたモデルを確認しています"
+    } else if status.starts_with("writing ") || status.starts_with("removing ") {
+        "モデルを保存しています"
+    } else if status == "success" {
+        "モデルを取得しました"
+    } else {
+        "モデルを取得しています"
+    }
 }
 
 pub fn pull_client() -> Result<reqwest::Client, String> {

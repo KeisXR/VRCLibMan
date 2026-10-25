@@ -11,7 +11,7 @@ export const EXTENSION_RELEASES_URL =
   "https://github.com/KeisXR/VRCLibMan/releases";
 export const LIBRARY_URL = "https://accounts.booth.pm/library";
 export const BUILTIN_BROWSER_CONFIRM =
-  "内蔵ブラウザでは、このアプリの中で BOOTH / pixiv にメールアドレスとパスワードでログインします。ログイン状態はアプリ専用の WebView データストアに保存されます。ファイルの「ダウンロード」を押した場合、アプリは BOOTH 用クッキーを読み出し、その 1 件の BOOTH 向けダウンロード要求に使用します。クッキーは VRCLibMan 独自の外部サーバーやダウンロード先の別ドメインには送りません。拡張機能でページを書き出すより、アカウントへのリスク（制限や停止を含む）が高くなることがあります。年齢確認を自動で進めることはありません。ページを辿るのは、ブラウザ画面の「ライブラリ全取得」を押したときだけです。一括のダウンロードはしません。ご自身の判断で使ってください。有効にしますか？";
+  "内蔵ブラウザで BOOTH / pixiv にログインし、ログイン状態をアプリ専用の保存場所に保持します。ファイルの「ダウンロード」を押すと、その 1 件の BOOTH 向け要求に BOOTH のクッキーを使います。クッキーを開発者のサーバーや別ドメインには送りません。拡張機能より、アカウントが制限・停止されるリスクが高くなることがあります。ライブラリのページ巡回は「ライブラリ全取得」を押したときだけ行い、年齢確認の自動通過や一括ダウンロードはしません。有効にしますか？";
 
 export function ExtensionInstructions() {
   return (
@@ -34,10 +34,6 @@ export function ExtensionInstructions() {
           にログインし、拡張の「ライブラリをすべて送る」か「新しい購入だけ送る」を押します。
         </li>
       </ol>
-      <p className="meta">
-        配布形式は今後変わる可能性があります。現在は Releases の拡張 zip
-        を使ってください。
-      </p>
       <button
         className="button"
         type="button"
@@ -147,8 +143,7 @@ export function BoothImportSettings({
           読み込み方を確認
         </button>
       )}
-      <fieldset className="import-methods" disabled={!state || busy}>
-        <legend>BOOTH の購入情報の読み込み方</legend>
+      <fieldset className="import-methods" aria-label="BOOTH の購入情報の読み込み方" disabled={!state || busy}>
         {(
           [
             [
@@ -159,7 +154,7 @@ export function BoothImportSettings({
             [
               "browser",
               "アプリの内蔵ブラウザ",
-              "アプリ内の別ウィンドウで BOOTH にログインします。拡張は不要です。メールアドレスとパスワードでのログインを想定し、ログイン状態はアプリ専用の保存場所に残ります。",
+              "アプリの別ウィンドウで BOOTH にログインします。拡張は不要で、ログイン状態はアプリ専用の保存場所に残ります。",
             ],
             [
               "both",
@@ -184,7 +179,7 @@ export function BoothImportSettings({
         ))}
       </fieldset>
       <p className="meta">
-        選択はその場で保存します。あとから設定で変更できます。ユーザーが開いたページや、ボタンで指定した範囲を読み込みます。無人での巡回や、一括ダウンロードは行いません。
+        選択は自動保存されます。あとから変更できます。
       </p>
       {state && state.mode !== "browser" && (
         <div className="import-guidance">
@@ -198,7 +193,7 @@ export function BoothImportSettings({
               </label>
               <p className="meta">
                 {link.listening
-                  ? `127.0.0.1:${link.port} で受信待機中`
+                  ? "拡張機能からの受信を待っています"
                   : link.error || "受信を開始できませんでした"}
               </p>
               <div className="row-actions">
@@ -239,13 +234,7 @@ export function BoothImportSettings({
         <div className="import-guidance">
           <h3>内蔵ブラウザで読み込む</h3>
           <p>
-            内蔵ブラウザを有効にしました。ブラウザ画面で別ウィンドウを開き、BOOTH
-            にログインしてページを読み込みます。
-          </p>
-          <p className="meta">
-            ログアウトすると専用のログイン状態を消せます。1
-            件の「ダウンロード」を押したときだけ、その BOOTH
-            向けの要求にクッキーを使います。年齢確認は自動で進めません。
+            ブラウザ画面から別ウィンドウを開き、BOOTH にログインして商品情報を読み込みます。
           </p>
           <a
             className="button"

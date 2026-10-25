@@ -280,8 +280,7 @@ export default function App() {
             )}
             <div className="rail-meta">
               {stats ? `${stats.products} 商品` : "読み込み中"}
-              <br />
-              {isTauri() ? stats?.ollamaModel : "ブラウザ確認用"}
+              {!isTauri() && <><br />ブラウザ確認用</>}
             </div>
           </div>
         </aside>
@@ -436,7 +435,7 @@ function AccountPill({
         <div className="account-popover" role="menu">
           {confirming ? (
             <div className="account-confirm">
-              <p>ログアウトしますか</p>
+              <p>内蔵ブラウザの全サイトからログアウトし、閲覧データを削除しますか？</p>
               <button type="button" disabled={busy} onClick={() => void confirmLogout()}>
                 ログアウト
               </button>

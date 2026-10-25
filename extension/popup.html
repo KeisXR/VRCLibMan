@@ -7,33 +7,47 @@
   </head>
   <body>
     <h1>VRCLibMan</h1>
-    <p>今開いているページをアプリへ送ります。説明の補完にログイン情報は使いません。</p>
-    <p id="link-status">接続を確認しています</p>
-    <label>
-      ペアリングコード
-      <input id="token" type="text" autocomplete="off" spellcheck="false" />
-    </label>
-    <button id="save-token" class="secondary" type="button">コードを保存</button>
-    <label for="booth-interval">BOOTHへのアクセス間隔
-      <select id="booth-interval">
-        <option value="1000">1.0秒（推奨・初期値）</option>
-        <option value="500">0.5秒（やや速い）</option>
-        <option value="250">0.25秒（高リスク）</option>
-      </select>
-    </label>
-    <p class="hint">短い間隔ほどアクセス制限・アカウントへの影響の可能性があります。高速設定でもアクセス制限は回避しません。</p>
+    <p>BOOTHの商品情報をVRCLibManへ送ります。</p>
+    <p id="link-status" role="status">接続を確認しています</p>
+    <details id="connection-settings" open>
+      <summary>接続設定</summary>
+      <label>
+        ペアリングコード
+        <input id="token" type="text" autocomplete="off" spellcheck="false" />
+      </label>
+      <button id="save-token" class="secondary" type="button">コードを保存して接続を確認</button>
+    </details>
     <button id="export" type="button">このページを送る</button>
     <button id="export-all" class="secondary" type="button">ライブラリをすべて送る</button>
     <button id="export-new" class="secondary" type="button">新しい購入だけ送る</button>
     <button id="open-library" class="secondary" type="button">ライブラリを開く</button>
-    <button id="diagnose" class="secondary" type="button">解析結果をコピー</button>
-    <textarea id="diagnosis" readonly hidden></textarea>
     <label class="check">
       <input id="route-downloads" type="checkbox" />
-      <span>ダウンロードを VRCLibMan へ自動整理する（既定オフ）</span>
+      <span>ダウンロードしたファイルを自動整理する</span>
     </label>
-    <p class="hint">自分で押した BOOTH の Unity / VRChat 用ファイルだけを Downloads/VRCLibMan/商品ID に置きます。アプリがライブラリのフォルダへ移します。一括では取りません。</p>
-    <p id="status"></p>
+    <p class="hint">BOOTHでダウンロードしたUnity / VRChat用ファイルを、アプリのライブラリフォルダへ移します。</p>
+    <p id="status" role="status"></p>
+    <details id="result-details" hidden>
+      <summary>読み込み結果の詳細</summary>
+      <p id="result-breakdown"></p>
+    </details>
+    <details>
+      <summary>詳細設定</summary>
+      <label for="booth-interval">BOOTHへのアクセス間隔
+        <select id="booth-interval">
+          <option value="1000">1.0秒（推奨）</option>
+          <option value="500">0.5秒（やや速い）</option>
+          <option value="250">0.25秒（高リスク）</option>
+        </select>
+      </label>
+      <p class="hint">短い間隔ほどアクセス制限・アカウントへの影響の可能性があります。高速設定でもアクセス制限は回避しません。</p>
+      <p class="hint">自動整理では、ダウンロードフォルダの VRCLibMan/商品ID を経由してファイルを移します。アプリへ接続できない場合は、そのフォルダに残ります。</p>
+    </details>
+    <details>
+      <summary>トラブルシューティング</summary>
+      <button id="diagnose" class="secondary" type="button">診断情報をコピー</button>
+      <textarea id="diagnosis" readonly hidden></textarea>
+    </details>
     <footer class="popup-footer">
       <p id="extension-version" class="hint"></p>
       <details class="privacy-notice">

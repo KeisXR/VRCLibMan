@@ -91,33 +91,36 @@ export function BrowserPage({ enabled }: { enabled: boolean }) {
       <div className="page-head">
         <div>
           <h1>ブラウザ</h1>
-          <p>タブやブックマークでサイトを開き、BOOTH のライブラリとギフトをインポートします。</p>
+          <p>BOOTHのライブラリとギフトの商品情報を読み込みます。</p>
         </div>
       </div>
       {!enabled && (
         <p className="note">
-          内蔵ブラウザはオフです。設定で有効にすると使えます。既定のインポートは拡張機能のままです。
+          内蔵ブラウザはオフです。設定で有効にできます。
         </p>
       )}
       {enabled && (
         <div className="panel">
           <p className="meta">
-            ブラウザは別ウィンドウで開きます。ログインと年齢確認は自分で行ってください。
-            「ライブラリ全取得」はライブラリのあとギフトを、1ページずつ間隔を空けて読みます。ファイルはダウンロードしません。
+            ログインと年齢確認は、開いたブラウザで行ってください。
+            「ライブラリ全取得」はライブラリとギフトの商品情報を読み込みます。ファイルはダウンロードしません。
           </p>
-          <label className="field" style={{ maxWidth: 300, marginBottom: 8 }}>
-            <span>BOOTHへのアクセス間隔（ライブラリ全取得）</span>
-            <select
-              value={intervalMs}
-              disabled={busy || !intervalReady}
-              onChange={(event) => void changeInterval(Number(event.target.value))}
-            >
-              <option value={1000}>1.0秒（推奨・初期値）</option>
-              <option value={500}>0.5秒（やや速い）</option>
-              <option value={250}>0.25秒（高リスク）</option>
-            </select>
-          </label>
-          <p className="meta">短い間隔はアクセス制限やアカウントへの影響の可能性があります。高速設定でも制限を回避するものではありません。</p>
+          <details className="settings-details">
+            <summary>アクセス間隔</summary>
+            <label className="field" style={{ maxWidth: 300, marginBottom: 8 }}>
+              <span>BOOTHへのアクセス間隔（ライブラリ全取得）</span>
+              <select
+                value={intervalMs}
+                disabled={busy || !intervalReady}
+                onChange={(event) => void changeInterval(Number(event.target.value))}
+              >
+                <option value={1000}>1.0秒（推奨）</option>
+                <option value={500}>0.5秒（やや速い）</option>
+                <option value={250}>0.25秒（高リスク）</option>
+              </select>
+            </label>
+            <p className="meta">短い間隔はアクセス制限やアカウントへの影響の可能性があります。高速設定でも制限を回避するものではありません。</p>
+          </details>
           <div className="row-actions">
             <button className="button primary" type="button" disabled={busy} onClick={() => void run(() => api.openBoothBrowser())}>
               ブラウザを開く
@@ -134,6 +137,8 @@ export function BrowserPage({ enabled }: { enabled: boolean }) {
               disabled={busy}
               onClick={() =>
                 void run(async () => {
+                  setReport(null);
+                  setWalkReport(null);
                   const result = await api.importBoothPage();
                   setReport(result);
                   notify(`${result.inserted} 件追加、${result.updated} 件更新しました`);
@@ -153,10 +158,11 @@ export function BrowserPage({ enabled }: { enabled: boolean }) {
                   setWalking(true);
                   setBusy(true);
                   setWalkReport(null);
+                  setReport(null);
                   try {
                     const result = await api.importBoothLibrary();
                     setWalkReport(result);
-                    const counts = `商品 ${result.products}、ファイル ${result.files}、名前あり ${result.namedFiles}、名前なし ${result.unnamedFiles}`;
+                    const counts = `追加 ${result.inserted} 件、更新 ${result.updated} 件`;
                     if (result.notice) fail(`${counts}。${result.notice}`);
                     else if (result.cancelled) notify(`中止しました。${counts}`);
                     else notify(counts);
@@ -190,42 +196,59 @@ export function BrowserPage({ enabled }: { enabled: boolean }) {
                 void run(async () => {
                   if (!window.confirm("ブラウザを閉じ、内蔵ブラウザで開いたすべてのサイトのログイン状態と閲覧データを消します。ブックマークは残ります。")) return;
                   await api.clearBoothSession();
-                  notify("セッションを消しました");
+                  notify("内蔵ブラウザの閲覧データを削除しました");
                 })
               }
             >
-              ログアウトしてセッションを消す
+              内蔵ブラウザの閲覧データを削除
             </button>
           </div>
           {walking && walkMessage && <p className="meta">{walkMessage}</p>}
           {walkReport && (
-            <p className="meta">
-              商品 {walkReport.products}、ファイル {walkReport.files}、名前あり {walkReport.namedFiles}、名前なし{" "}
-              {walkReport.unnamedFiles}
-              {walkReport.cancelled ? "。中止しました" : ""}
-              {walkReport.notice ? `。${walkReport.notice}` : ""}
-              。新規 {walkReport.inserted}、更新 {walkReport.updated}、変更なし {walkReport.unchanged}
-            </p>
+            <>
+              <p className="meta">
+                追加 {walkReport.inserted} 件、更新 {walkReport.updated} 件
+                {walkReport.cancelled ? "。中止しました" : ""}
+                {walkReport.notice ? `。${walkReport.notice}` : ""}
+              </p>
+              <details className="settings-details">
+                <summary>読み込み結果の詳細</summary>
+                <p className="meta">
+                  商品情報 {walkReport.products} 件、変更なし {walkReport.unchanged} 件、
+                  ファイル情報 {walkReport.files} 件（ファイル名あり {walkReport.namedFiles} 件、未取得 {walkReport.unnamedFiles} 件）
+                </p>
+              </details>
+            </>
           )}
           {report && (
-            <p className="meta">
-              新規 {report.inserted}、更新 {report.updated}、変更なし {report.unchanged}
-              、バリエーション {report.variations}、ダウンロード {report.downloads}
-              {report.unnamedDownloads > 0 ? `（名前なし ${report.unnamedDownloads}）` : ""}
-              {report.skipped > 0 ? `、スキップ ${report.skipped}` : ""}
-              {report.warnings.length > 0 ? `。${report.warnings[0]}` : ""}
-            </p>
+            <>
+              <p className="meta">
+                追加 {report.inserted} 件、更新 {report.updated} 件
+                {report.skipped > 0 ? `。読み込めなかった商品 ${report.skipped} 件` : ""}
+                {report.warnings.length > 0 ? `。${report.warnings.join("。")}` : ""}
+              </p>
+              <details className="settings-details">
+                <summary>読み込み結果の詳細</summary>
+                <p className="meta">
+                  変更なし {report.unchanged} 件、バリエーション {report.variations} 件、ファイル情報 {report.downloads} 件
+                  {report.unnamedDownloads > 0 ? `（ファイル名未取得 ${report.unnamedDownloads} 件）` : ""}
+                </p>
+              </details>
+            </>
           )}
-          <div className="row-actions" style={{ marginTop: 12 }}>
-            <button className="button" type="button" disabled={busy} onClick={() => void refreshLog()}>
-              診断を更新
-            </button>
-          </div>
-          <p className="meta">
-            記録にパスワードやページのクエリは入れません。
-            {logPath ? ` ファイルは ${logPath} です。` : ""}
-          </p>
-          <pre className="browser-log">{logText || "まだ記録はありません"}</pre>
+          <details className="settings-details">
+            <summary>トラブルシューティング</summary>
+            <div className="row-actions" style={{ marginTop: 12 }}>
+              <button className="button" type="button" disabled={busy} onClick={() => void refreshLog()}>
+                診断情報を更新
+              </button>
+            </div>
+            <p className="meta">
+              記録にパスワードやページのクエリは入れません。
+              {logPath ? ` ファイルは ${logPath} です。` : ""}
+            </p>
+            <pre className="browser-log">{logText || "まだ記録はありません"}</pre>
+          </details>
         </div>
       )}
     </section>

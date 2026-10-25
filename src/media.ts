@@ -22,7 +22,7 @@ export const FILE_PRESENCE_LABEL: Record<FilePresence, string> = {
   partial: "一部あり",
   remote: "リモート",
   missing: "未ダウンロード",
-  unknown: "不明",
+  unknown: "ファイル情報なし",
 };
 
 export function filePresence(
@@ -40,9 +40,4 @@ export function filePresence(
   if (remote > 0 && missing > 0) return "partial";
   if (remote > 0) return "remote";
   return "missing";
-}
-
-export function confidenceLabel(value: number | null): string {
-  if (value == null) return "未抽出";
-  return `${Math.round(value * 100)}%`;
 }

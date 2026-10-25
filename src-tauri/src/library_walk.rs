@@ -86,12 +86,12 @@ pub fn progress_line(
     page: u32,
     last_page: u32,
     products: u32,
-    files: u32,
-    named_files: u32,
-    unnamed_files: u32,
+    _files: u32,
+    _named_files: u32,
+    _unnamed_files: u32,
 ) -> String {
     format!(
-        "{} {page}/{last_page} ページ（商品 {products}、ファイル {files}、名前あり {named_files}、名前なし {unnamed_files}）",
+        "{} {page}/{last_page} ページ（商品 {products} 件）",
         section_label(section)
     )
 }
@@ -99,10 +99,10 @@ pub fn progress_line(
 pub fn final_counts_line(
     products: u32,
     files: u32,
-    named_files: u32,
-    unnamed_files: u32,
+    _named_files: u32,
+    _unnamed_files: u32,
 ) -> String {
-    format!("商品 {products}、ファイル {files}、名前あり {named_files}、名前なし {unnamed_files}")
+    format!("商品 {products} 件、ファイル {files} 件")
 }
 
 /// 拡張の `libraryPageUrl` と同じく `page` だけを付ける。
@@ -779,7 +779,7 @@ mod tests {
             collected.named_files,
             collected.unnamed_files,
         );
-        assert_eq!(summary, "商品 1、ファイル 2、名前あり 1、名前なし 1");
+        assert_eq!(summary, "商品 1 件、ファイル 2 件");
         for line in lines.iter().chain(std::iter::once(&summary)) {
             assert!(!line.contains("サンプル商品"));
             assert!(!line.contains("sample_body"));

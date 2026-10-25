@@ -78,6 +78,11 @@ select {
 label.check { display: flex; gap: 8px; align-items: flex-start; color: var(--text); }
 label.check input { width: auto; margin: 3px 0 0; }
 .hint { font-size: 12px; }
+details { margin: 12px 0; }
+summary { width: fit-content; cursor: pointer; }
+summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+details > label, details > p { margin-top: 8px; }
+.check { margin-top: 16px; }
 .popup-footer {
   margin-top: 12px;
   padding-top: 8px;
@@ -86,8 +91,6 @@ label.check input { width: auto; margin: 3px 0 0; }
   font-size: 12px;
 }
 .popup-footer #extension-version { margin: 0 0 4px; }
-.privacy-notice summary { width: fit-content; cursor: pointer; }
-.privacy-notice summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .privacy-notice p { margin: 8px 0 0; }
 #link-status { color: var(--text); }
 #status { min-height: 2.5em; }

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "VRCLibMan Booth Export",
-  "version": "0.1.13",
-  "description": "ログイン済みの Booth ページから、今見えている商品だけを手元のアプリへ送ります。パスワードやクッキーはアプリへ渡しません。",
+  "version": "0.1.14",
+  "description": "BOOTHの商品情報・購入情報を、同じPCのVRCLibManへ送ります。パスワードやCookieはアプリへ渡しません。",
   "permissions": ["activeTab", "scripting", "downloads", "storage"],
   "host_permissions": ["https://booth.pm/*", "https://*.booth.pm/*", "http://127.0.0.1:17321/*"],
   "background": {

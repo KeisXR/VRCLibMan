@@ -51,7 +51,7 @@ test("setup, import and version flows with synthetic local data", async (t) => {
     const { modelInstalled } = await server.ssrLoadModule("/src/models.ts");
     const wait = async (check) => {
       for (let i = 0; i < 300; i++) {
-        if (check()) return;
+        if (await check()) return;
         await act(delay);
       }
       assert.fail(
@@ -202,6 +202,19 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         await click(button("中断"));
         assert.ok(stopped);
         await wait(() => !button("すべて再分類").disabled);
+        api.extractProducts = async () => ({
+          processed: 0,
+          failed: 2,
+          cancelled: false,
+          errors: ["商品A: 分類モデルの応答の詳細", "商品B: 接続エラーの詳細"],
+        });
+        await click(button("すべて再分類"));
+        await wait(() => document.querySelector(".banner.error")?.textContent.includes("2 件"));
+        assert.ok(!document.querySelector(".banner.error").textContent.includes("商品A"));
+        const errorDetails = [...document.querySelectorAll("main details")].find((node) => node.querySelector("summary")?.textContent === "分類結果の詳細");
+        assert.ok(errorDetails);
+        assert.ok(!errorDetails.hasAttribute("open"));
+        assert.ok(errorDetails.textContent.includes("商品A: 分類モデルの応答の詳細"));
         const event = new window.Event("drop", {
           bubbles: true,
           cancelable: true,
@@ -227,7 +240,7 @@ test("setup, import and version flows with synthetic local data", async (t) => {
           await delay();
         });
         await wait(() => text().includes("直前の JSON インポート結果"));
-        assert.ok(text().includes("無料の項目を追加"));
+        assert.ok(text().includes("無料商品を登録"));
         assert.ok(button("サムネイルを保存"));
       },
     );
@@ -246,7 +259,7 @@ test("setup, import and version flows with synthetic local data", async (t) => {
           `v${packageJson.version}`,
         );
         assert.ok(text().includes(`アプリ v${packageJson.version}`));
-        assert.ok(text().includes(`想定する拡張 v${manifest.version}`));
+        assert.ok(text().includes(`推奨する拡張 v${manifest.version}`));
         assert.ok(text().includes("拡張を更新してください"));
         assert.match(extensionVersionMessage("0.1.12", "0.1.12"), /一致/);
         assert.match(extensionVersionMessage("0.1.12", "0.1.11"), /更新/);
@@ -258,12 +271,13 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       "settings selections apply immediately without a save button",
       async () => {
         assert.equal(button("設定を保存"), undefined);
-        assert.ok(text().includes("変更は自動で保存・適用"));
+        assert.ok(text().includes("一般設定は自動保存"));
+        assert.ok(text().includes("対応表の編集は保存ボタンで確定"));
         await click(radio("qwen3.5:4b"));
-        await wait(() => text().includes("今の設定は qwen3.5:4b"));
+        await wait(async () => (await api.settings()).ollamaModel === "qwen3.5:4b");
         assert.equal((await api.settings()).ollamaModel, "qwen3.5:4b");
         await click(radio("qwen3.5:9b"));
-        await wait(() => text().includes("今の設定は qwen3.5:9b"));
+        await wait(async () => (await api.settings()).ollamaModel === "qwen3.5:9b");
         assert.equal((await api.settings()).ollamaModel, "qwen3.5:9b");
         assert.equal(pulls.length, 1);
       },
@@ -321,10 +335,10 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       const card = () => [...document.querySelectorAll(".item")].find((node) => node.textContent.includes(target.title));
       await wait(card);
       const trigger = () => card().querySelector(".product-actions-trigger");
-      assert.equal(button("一覧から除外", card()), undefined);
+      assert.equal(button("管理対象から除外", card()), undefined);
       await click(trigger());
       assert.equal(trigger().getAttribute("aria-expanded"), "true");
-      assert.ok(button("一覧から除外", card()));
+      assert.ok(button("管理対象から除外", card()));
       assert.ok(!(await api.managedProducts()).find((p) => p.boothId === target.boothId).excluded);
       await act(async () => {
         const event = new window.Event("keydown", { bubbles: true });
@@ -338,9 +352,9 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         document.body.dispatchEvent(new window.Event("pointerdown", { bubbles: true }));
         await delay();
       });
-      assert.equal(button("一覧から除外", card()), undefined);
+      assert.equal(button("管理対象から除外", card()), undefined);
       await click(trigger());
-      await click(button("一覧から除外", card()));
+      await click(button("管理対象から除外", card()));
       await wait(() => !card());
       assert.ok((await api.managedProducts()).find((p) => p.boothId === target.boothId).excluded);
       await api.setProductExcluded(target.boothId, false);
@@ -410,6 +424,34 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       },
     );
     await t.test(
+      "import guidance follows the selected method and logout explains its deletion scope",
+      async () => {
+        const { requestRefresh } = await server.ssrLoadModule("/src/api.ts");
+        await act(async () => {
+          await api.setBoothImportMode("browser");
+          requestRefresh();
+          await delay();
+        });
+        await route("#/import");
+        await wait(() => document.querySelector('main a[href="#/browser"]'));
+        await wait(() => !document.querySelector("main").textContent.includes("ペアリング"));
+        assert.ok(!document.querySelector("main").textContent.includes("拡張機能の使い方・受信履歴"));
+        await wait(() => document.querySelector(".account-menu .account-pill"));
+        await click(document.querySelector(".account-menu .account-pill"));
+        await click(button("ログアウト", document.querySelector(".account-popover")));
+        assert.match(document.querySelector(".account-confirm").textContent, /全サイト.*閲覧データ.*削除/);
+        await click(button("キャンセル", document.querySelector(".account-confirm")));
+        await act(async () => {
+          document.body.dispatchEvent(new window.Event("pointerdown", { bubbles: true }));
+          await api.setBoothImportMode("extension");
+          requestRefresh();
+          await delay();
+        });
+        await wait(() => document.querySelector("main").textContent.includes("拡張機能の使い方・受信履歴"));
+        assert.ok(!document.querySelector('main a[href="#/browser"]'));
+      },
+    );
+    await t.test(
       "Apple model setup remains available with Ollama offline",
       async () => {
         const { requestRefresh } = await server.ssrLoadModule("/src/api.ts");
@@ -466,7 +508,7 @@ test("extension popup displays manifest version and sends it only on local reque
     },
     fetch: async (url, options) => {
       requests.push({ url, options });
-      return { ok: true, json: async () => ({ enabled: false }) };
+      return { ok: true, status: 200, json: async () => ({ enabled: false }) };
     },
   });
   vm.runInContext(readFileSync("extension/request-policy.js", "utf8"), context);

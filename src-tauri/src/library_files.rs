@@ -593,7 +593,9 @@ fn move_file(source: &Path, dest: &Path) -> Result<(), String> {
         return Ok(());
     }
     std::fs::copy(source, dest).map_err(|err| format!("ファイルを移動できません: {err}"))?;
-    std::fs::remove_file(source).map_err(|err| format!("移動元を消せません: {err}"))?;
+    std::fs::remove_file(source).map_err(|err| {
+        format!("コピーは完了しましたが、元のファイルを削除できませんでした: {err}")
+    })?;
     Ok(())
 }
 

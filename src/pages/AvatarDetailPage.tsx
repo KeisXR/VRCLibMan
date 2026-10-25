@@ -1,7 +1,7 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { api, listenBoothFile, openExternal, openLocal, revealInFolder } from "../api";
 import { useShell } from "../App";
-import { FILE_PRESENCE_LABEL, confidenceLabel, filePresence, formatBytes } from "../media";
+import { FILE_PRESENCE_LABEL, filePresence, formatBytes } from "../media";
 import { CATEGORY_LABEL } from "../types";
 import type { AvatarDetail, BoothFileStatus, DownloadView, ItemView, Knowledge } from "../types";
 import { FileMark, Thumb, errorText } from "../ui";
@@ -70,13 +70,18 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
         <div>
           <h1>{detail.displayName}</h1>
           <p>
-            {detail.owned ? "所持アバター" : "衣装の対応先。所持アバターとしては記録していません。"}
-            {detail.aliases.length > 0 ? ` ・ 別名 ${detail.aliases.join(" / ")}` : ""}
+            {detail.owned ? "所持アバター" : "所持未登録"}
             {detail.baseBodyName ? ` ・ ${detail.baseBodyName}` : ""}
           </p>
         </div>
       </div>
-      {detail.baseBodyNote && <p className="note">{detail.baseBodyNote}</p>}
+      {(detail.aliases.length > 0 || detail.baseBodyNote) && (
+        <details className="generic">
+          <summary>アバターの情報</summary>
+          {detail.aliases.length > 0 && <p className="meta">別名: {detail.aliases.join(" / ")}</p>}
+          {detail.baseBodyNote && <p className="meta">{detail.baseBodyNote}</p>}
+        </details>
+      )}
       {detail.siblings.length > 0 && (
         <div className="siblings">
           {detail.siblings.map((sibling) => (
@@ -86,7 +91,7 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
           ))}
         </div>
       )}
-      <div className={detail.isBuiltin ? "split" : "split with-side"}>
+      <div className="split">
         <div>
           {detail.ownedProducts.map((owned) => (
             <article className="item owned" key={owned.boothId}>
@@ -96,7 +101,7 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
                 <div className="meta">{owned.shop}</div>
               </div>
               <button className="button" type="button" onClick={() => void openExternal(owned.url)}>
-                Booth
+                BOOTH
               </button>
             </article>
           ))}
@@ -126,28 +131,29 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
           {detail.unsupportedOutfits.length > 0 && <UnsupportedOutfits key={detail.id} items={detail.unsupportedOutfits} />}
         </div>
         {!detail.isBuiltin && (
-          <aside className="panel" style={{ padding: 14 }}>
-            <h2 style={{ marginTop: 0 }}>既存のアバターへ統合</h2>
-            <p className="meta">
-              {detail.isPlaceholder
-                ? "商品名から仮で作った項目です。対応表にあるアバターへまとめると、衣装の紐づけも移ります。"
-                : "この項目を別のアバターへまとめます。初期データのアバター自体は統合先にだけ選べます。"}
-            </p>
-            <label className="field">
-              <span>統合先</span>
-              <select value={intoId} onChange={(event) => setIntoId(event.target.value)}>
-                <option value="">選ぶ</option>
-                {targets.map((avatar) => (
-                  <option key={avatar.id} value={avatar.id}>
-                    {avatar.displayName}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button className="button primary" type="button" disabled={!intoId} onClick={() => void merge()}>
-              統合する
-            </button>
-          </aside>
+          <details className="generic">
+            <summary>アバターを編集</summary>
+            <div className="panel" style={{ padding: 14 }}>
+              <h2 style={{ marginTop: 0 }}>既存のアバターへ統合</h2>
+              <p className="meta">
+                商品の対応先と別名を統合先へまとめ、この項目を削除します。
+              </p>
+              <label className="field">
+                <span>統合先</span>
+                <select value={intoId} onChange={(event) => setIntoId(event.target.value)}>
+                  <option value="">選ぶ</option>
+                  {targets.map((avatar) => (
+                    <option key={avatar.id} value={avatar.id}>
+                      {avatar.displayName}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button className="button primary" type="button" disabled={!intoId} onClick={() => void merge()}>
+                統合する
+              </button>
+            </div>
+          </details>
         )}
       </div>
     </section>
@@ -174,15 +180,15 @@ function UnsupportedOutfits({ items }: { items: ItemView[] }) {
       className="generic unsupported-outfits"
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary>非対応の衣装 {items.length} 件</summary>
+      <summary>ほかの衣装 {items.length} 件</summary>
       {open && (
         <>
           <p className="meta">
-            このアバターや共通素体への対応が登録されていない衣装です。もちふぃった～などで調整する際の候補として表示しています。
+            このアバターや共通素体への対応が登録されていない衣装です。対応の有無は商品ページで確認してください。もちふぃった～などで調整する衣装の候補としても使えます。
           </p>
           <input
             className="search"
-            aria-label="非対応の衣装を検索"
+            aria-label="ほかの衣装を検索"
             placeholder="商品名・ショップ名・商品IDで検索"
             value={query}
             onChange={(event) => {
@@ -263,7 +269,6 @@ export function ItemCard({ item }: { item: ItemView }) {
           {item.shop}
           {item.viaBaseBody ? " ・ 同じ素体" : ""}
           {item.isGeneric ? " ・ 汎用" : ""}
-          {` ・ 確信度 ${confidenceLabel(item.confidence)}`}
         </div>
         {item.isAdult && item.descriptionSnippet && (
           <details className="adult-note">
@@ -412,7 +417,7 @@ function DownloadFiles({
     <>
       {unnamed && (
         <p className="meta">
-          ファイル名がない行は番号だけ出しています。拡張を更新してライブラリを再インポートすると、名前が付きます。
+          ファイル名を取得できていません。BOOTH から商品情報を読み込み直してください。
         </p>
       )}
       <ul className="file-list">

@@ -38,7 +38,6 @@ export function WorldsPage() {
       <div className="page-head">
         <div>
           <h1>ワールド</h1>
-          <p>インポートしたワールド商品を、アバターとの結び付きに関係なく表示します。</p>
         </div>
         <input
           className="search"

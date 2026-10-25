@@ -68,7 +68,7 @@ export function ExcludeProductButton({ boothId, title }: { boothId: string; titl
                 .finally(() => setBusy(false));
             }}
           >
-            一覧から除外
+            管理対象から除外
           </button>
         </div>
       )}
@@ -118,7 +118,7 @@ export function ProductExclusions() {
       notify(
         product.excluded
           ? "除外を解除しました"
-          : "一覧と分類の対象から除外しました",
+          : "管理対象から除外しました",
       );
       refresh();
     } catch (err) {
@@ -135,8 +135,7 @@ export function ProductExclusions() {
   return (
     <div className="product-exclusions">
       <p>
-        VRChat・Unity
-        と関係のない商品は除外できます。除外は再インポート後も維持され、いつでも元に戻せます。手元のファイルは削除しません。
+        除外した商品は表示・分類・ファイル整理の対象から外れます。再読み込み後も維持され、いつでも元に戻せます。手元のファイルは削除しません。
       </p>
       <div className="exclusion-filters">
         <label className="field">

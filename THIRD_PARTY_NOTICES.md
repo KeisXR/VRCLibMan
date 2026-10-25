@@ -1,6 +1,6 @@
 # Third-party notices
 
-VRCLibMan bundles the word lists below so a guardrail retry can mask text on this computer. The app does not download them at runtime. The files are unmodified from the pinned commits.
+VRCLibMan includes the following word lists, unmodified from the pinned commits.
 
 ## inappropriate-words-ja
 
