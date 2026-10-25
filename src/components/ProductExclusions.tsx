@@ -1,36 +1,78 @@
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { useShell } from "../App";
 import { CATEGORY_LABEL } from "../types";
 import type { ManagedProduct } from "../types";
 import { errorText } from "../ui";
 
-export function ExcludeProductButton({ boothId }: { boothId: string }) {
+export function ExcludeProductButton({ boothId, title }: { boothId: string; title: string }) {
   const { refresh, notify, fail } = useShell();
   const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
+  const container = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const outside = (event: PointerEvent) => {
+      if (!container.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        trigger.current?.focus();
+      }
+    };
+    document.addEventListener("pointerdown", outside);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", outside);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [open]);
+
   return (
-    <button
-      className="button"
-      type="button"
-      disabled={busy}
-      onClick={() => {
-        setBusy(true);
-        void api
-          .setProductExcluded(boothId, true)
-          .then(
-            () => {
-              notify(
-                "除外しました。インポートの「商品を管理・除外」から元に戻せます",
-              );
-              refresh();
-            },
-            (err: unknown) => fail(errorText(err)),
-          )
-          .finally(() => setBusy(false));
-      }}
-    >
-      {busy ? "除外中…" : "除外"}
-    </button>
+    <div className="product-actions" ref={container} onBlur={(event) => {
+      if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+    }}>
+      <button
+        ref={trigger}
+        className="icon-button product-actions-trigger"
+        type="button"
+        aria-label={`${title}のその他の操作`}
+        title="その他の操作"
+        aria-expanded={open}
+        disabled={busy}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span aria-hidden="true">⋯</span>
+      </button>
+      {open && (
+        <div className="product-actions-panel">
+          <button
+            className="button danger"
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setOpen(false);
+              setBusy(true);
+              void api
+                .setProductExcluded(boothId, true)
+                .then(
+                  () => {
+                    notify("除外しました。インポートの「商品を管理・除外」から元に戻せます");
+                    refresh();
+                  },
+                  (err: unknown) => fail(errorText(err)),
+                )
+                .finally(() => setBusy(false));
+            }}
+          >
+            一覧から除外
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
