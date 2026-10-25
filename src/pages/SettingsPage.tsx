@@ -11,6 +11,7 @@ import { BoothImportSettings } from "../components/BoothImportSettings";
 import { MODEL_CHOICES, modelDownloadPrompt } from "../models";
 import { useSettingsAutosave } from "../useSettingsAutosave";
 import { extensionVersionMessage } from "../versions";
+import { AppUpdater } from "../components/AppUpdater";
 
 const emptyAvatar = {
   id: "",
@@ -22,7 +23,7 @@ const emptyAvatar = {
 };
 
 export function SettingsPage() {
-  const { revision, refresh, notify, fail } = useShell();
+  const { revision, refresh, notify, fail, workInProgress } = useShell();
   const lastScannedFolder = useRef<string | null>(null);
   const { settings, phase: savePhase, error: saveError, change: changeSettings, hydrate, ticket, flush } = useSettingsAutosave((saved, patch) => {
     refresh();
@@ -346,10 +347,13 @@ export function SettingsPage() {
 
           <section className="settings-section">
             <header><h2>データ</h2><p>バージョン、アバター対応表と初期データを確認します。</p></header>
-            <SettingRow label="バージョン" help="アプリと拡張機能は別のバージョン番号です。外部への更新確認はしません。">
+            <SettingRow label="バージョン" help="アプリと拡張機能は別のバージョン番号です。">
               <div className="version-info"><p>アプリ v{version || "確認中"}</p>
                 {integration && <><p>想定する拡張 v{integration.expectedExtensionVersion}</p><p>最後に通信した拡張 {integration.extensionVersion ? `v${integration.extensionVersion}` : "未確認"}</p><p className={integration.extensionVersion && integration.extensionVersion !== integration.expectedExtensionVersion ? "warn-text" : "meta"}>{extensionVersionMessage(integration.expectedExtensionVersion, integration.extensionVersion)}</p></>}
               </div>
+            </SettingRow>
+            <SettingRow label="アプリの更新" help="公開済みの配布版を確認して、アプリ内で更新します。ライブラリと設定は引き継ぎます。">
+              <AppUpdater beforeInstall={flush} workInProgress={workInProgress} />
             </SettingRow>
             {catalog && <SettingRow label="同梱の対応表" help={`${catalog.credit}（${catalog.author}）・${catalog.count} 件・取得日 ${catalog.fetchedOn || "未記録"}${catalog.upstreamUpdated ? `・上流 ${catalog.upstreamUpdated}` : ""}`}>
               <div className="inline-control"><button className="button primary" type="button" onClick={() => void refreshCatalog()}>対応表を更新</button><button className="button" type="button" onClick={() => void openExternal(catalog.sourceUrl)}>出典</button><button className="button" type="button" onClick={() => void openExternal(catalog.termsUrl)}>利用規約</button></div>
@@ -364,6 +368,7 @@ export function SettingsPage() {
               <p>アカウント情報・購入情報・設定は端末内で扱います。分類には同じ端末の Ollama または Apple のオンデバイスモデルを使用します。</p>
               <p>内蔵ブラウザでの閲覧やログインには、開いたサイトとの通信を行います。ログイン状態とブックマークは端末内に保存し、選択したファイルのダウンロード時には BOOTH の Cookie を利用します。</p>
               <p>各サイトのログイン状態と閲覧データは「ログアウトしてセッションを消す」で削除できます。ライブラリ情報・設定・ブックマークは残ります。</p>
+              <p>更新を確認・ダウンロードするときは GitHub と通信します。ライブラリや購入情報は送信しません。</p>
             </details>
           </section>
         </div>

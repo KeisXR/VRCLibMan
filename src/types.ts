@@ -376,3 +376,14 @@ export type BrowserAction =
   | { kind: "selectTab" | "closeTab"; tabId: string }
   | { kind: "back" | "forward" | "reload" | "stop" }
   | { kind: "toolbarHeight"; height: number };
+
+export interface AppUpdateStatus {
+  revision: number;
+  phase: "unavailable" | "idle" | "checking" | "current" | "available" | "downloading" | "ready" | "installing";
+  version: string | null;
+  notes: string | null;
+  downloaded: number;
+  total: number | null;
+  error: string | null;
+  message: string | null;
+}

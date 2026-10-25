@@ -1,14 +1,15 @@
 name: release
 
 # Pushing a v* tag builds the Windows NSIS installer and the Apple Silicon dmg,
-# zips the Chrome extension, and puts all three on a DRAFT GitHub Release.
+# signs updater bundles, zips the Chrome extension, and creates a DRAFT GitHub Release.
 # Nothing is published until someone presses "Publish release".
 #
 # workflow_dispatch is a dry run: it runs the same checks and builds on the chosen
 # branch and keeps the files as workflow artifacts. It creates no tag and no release.
 #
 # Intel and universal macOS builds are not produced (see AGENTS.md).
-# No signing secrets are used: Windows is unsigned, macOS is ad-hoc signed only.
+# Updater signatures use a Tauri key (see docs/updater.md). OS code signing is
+# unchanged: Windows is unsigned, macOS is ad-hoc signed only.
 on:
   push:
     tags:
@@ -65,6 +66,12 @@ jobs:
 
       - name: install dependencies
         run: npm ci
+
+      - name: verify updater signing configuration
+        env:
+          TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: node scripts/configure-updater.mjs "${{ runner.temp }}/updater.conf.json"
 
       - name: type check
         run: npx tsc --noEmit
@@ -240,20 +247,61 @@ jobs:
       - name: install frontend dependencies
         run: npm ci
 
+      - name: configure updater public key
+        env:
+          TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: node scripts/configure-updater.mjs "${{ runner.temp }}/updater.conf.json"
+
       - id: tauri
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           # Empty on workflow_dispatch: build only, no release.
           releaseId: ${{ needs.create-release.outputs.release_id }}
           uploadUpdaterJson: false
+          uploadUpdaterSignatures: true
           uploadWorkflowArtifacts: ${{ env.IS_RELEASE != 'true' }}
           workflowArtifactNamePattern: "${{ matrix.name }}-[bundle]"
-          args: ${{ matrix.args }}
+          args: ${{ matrix.args }} --config "${{ runner.temp }}/updater.conf.json"
 
       - name: list the built files
         shell: bash
         env:
           ARTIFACT_PATHS: ${{ steps.tauri.outputs.artifactPaths }}
         run: echo "${ARTIFACT_PATHS}"
+
+  updater-manifest:
+    name: publish complete updater manifest
+    needs: [verify, create-release, build]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+      - name: verify both platforms and upload latest.json to the draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+          APP_VERSION: ${{ needs.verify.outputs.app_version }}
+        run: |
+          set -euo pipefail
+          stage="${RUNNER_TEMP}/updater"
+          mkdir -p "${stage}/signatures"
+          # Only modify a draft. Publishing remains a separate, explicit action.
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" > "${stage}/release.json"
+          jq -e '.draft == true' "${stage}/release.json" > /dev/null
+          jq -r '.body' "${stage}/release.json" > "${stage}/notes.md"
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets" > "${stage}/assets.json"
+          gh release download "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --pattern '*.sig' --dir "${stage}/signatures"
+          node scripts/create-updater-manifest.mjs "${APP_VERSION}" "${GITHUB_REPOSITORY}" \
+            "${stage}/assets.json" "${stage}/signatures" "${stage}/notes.md" "${stage}/latest.json"
+          gh release upload "${GITHUB_REF_NAME}" "${stage}/latest.json" --repo "${GITHUB_REPOSITORY}" --clobber

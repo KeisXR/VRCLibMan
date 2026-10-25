@@ -1036,6 +1036,11 @@ const previewIntegration = {
 export async function dispatch<T>(command: string, args: Record<string, unknown>): Promise<T> {
   notePreviewCall(command);
   switch (command) {
+    case "updater_status":
+    case "check_app_update":
+    case "download_app_update":
+    case "install_app_update":
+      return { revision: 0, phase: "unavailable", version: null, notes: null, downloaded: 0, total: null, error: null, message: "アプリ内更新はインストールした配布版で利用できます。" } as T;
     case "list_managed_products":
       return store.products.map((p) => ({ boothId: p.boothId, title: p.title, shop: p.shop, category: p.category, excluded: excludedProducts.has(p.boothId) })) as T;
     case "set_product_excluded": {

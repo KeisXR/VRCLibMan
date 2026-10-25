@@ -17,6 +17,52 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 struct ClearRunning(Arc<std::sync::atomic::AtomicBool>);
 
+fn trusted_updater(view: &tauri::Webview) -> Result<(), String> {
+    if view.label() == "main" {
+        Ok(())
+    } else {
+        Err("この画面からアプリを更新する権限がありません".into())
+    }
+}
+
+#[tauri::command]
+pub fn updater_status(
+    view: tauri::Webview,
+    state: State<'_, crate::updater::UpdateState>,
+) -> Result<crate::updater::Status, String> {
+    trusted_updater(&view)?;
+    state.status()
+}
+
+#[tauri::command]
+pub async fn check_app_update(
+    view: tauri::Webview,
+    app: AppHandle,
+    state: State<'_, crate::updater::UpdateState>,
+) -> Result<crate::updater::Status, String> {
+    trusted_updater(&view)?;
+    crate::updater::check(&app, &state).await
+}
+
+#[tauri::command]
+pub async fn download_app_update(
+    view: tauri::Webview,
+    state: State<'_, crate::updater::UpdateState>,
+) -> Result<crate::updater::Status, String> {
+    trusted_updater(&view)?;
+    crate::updater::download(&state).await
+}
+
+#[tauri::command]
+pub async fn install_app_update(
+    view: tauri::Webview,
+    app: AppHandle,
+    state: State<'_, crate::updater::UpdateState>,
+) -> Result<crate::updater::Status, String> {
+    trusted_updater(&view)?;
+    crate::updater::install(&app, &state).await
+}
+
 impl Drop for ClearRunning {
     fn drop(&mut self) {
         self.0.store(false, Ordering::SeqCst);
