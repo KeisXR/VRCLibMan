@@ -268,6 +268,20 @@ jobs:
           workflowArtifactNamePattern: "${{ matrix.name }}-[bundle]"
           args: ${{ matrix.args }} --config "${{ runner.temp }}/updater.conf.json"
 
+      # tauri-action's workflow artifacts omit .sig and .app.tar.gz files.
+      - name: stage signed updater files for dry-run verification
+        if: env.IS_RELEASE != 'true'
+        env:
+          ARTIFACT_PATHS: ${{ steps.tauri.outputs.artifactPaths }}
+        run: node scripts/stage-updater-artifacts.mjs "${{ matrix.name }}" dist-artifacts/updater "${{ runner.temp }}/updater.conf.json"
+
+      - uses: actions/upload-artifact@v6
+        if: env.IS_RELEASE != 'true'
+        with:
+          name: updater-${{ matrix.name }}
+          path: dist-artifacts/updater/*
+          if-no-files-found: error
+
       - name: list the built files
         shell: bash
         env:
