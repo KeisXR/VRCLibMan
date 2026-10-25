@@ -30,7 +30,7 @@ Windows x64 の NSIS 配布版と Apple Silicon Mac の .app が対象です。�
    gh variable set TAURI_UPDATER_PUBLIC_KEY --repo KeisXR/VRCLibMan < /安全な保存先/vrclibman-updater.key.pub
    ```
 
-3. release ワークフローを「Run workflow」で試します。署名付きの更新ファイルと `.sig` を Artifacts で確認できます。タグも Release も作りません。
+3. release ワークフローを「Run workflow」で試します。Artifacts の `updater-windows-x64` / `updater-macos-aarch64` に更新ファイル・`.sig`・検証用の公開鍵を保存します。タグも Release も作りません。
 4. 通常どおり版を上げて main にマージし、`v<版>` タグを push します。Windows・Mac 両方のビルドと、最後の `publish complete updater manifest` が成功するまで待ちます。
 5. 下書き Release のインストーラ、dmg、`.app.tar.gz`、対応する `.sig`、拡張 zip、`latest.json` を確認して公開します。`latest.json` には `windows-x86_64` と `darwin-aarch64` の両方が必要です。
 

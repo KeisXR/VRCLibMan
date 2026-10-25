@@ -110,6 +110,7 @@ VRCVideoCacher の拡張が手元のアプリへ POST するのと同じ運び�
 - 更新先は本体公開後の GitHub Releases の `latest/download/latest.json`。HTTPS、署名と署名された版の検証、既定の新しい版だけの比較を維持する。アプリへ GitHub token・秘密鍵を含めない。リモート WebView とブラウザ操作バーには更新コマンドを許可しない。プラグインの JS 用 updater / process 権限も追加しない。
 - 検証済みのバイト列と更新状態はプロセス内に保持し、ウィンドウ再作成後も参照できる。適用前に未保存の設定を保存し、分類・ライブラリ全取得・BOOTH ダウンロード中の適用は Rust でも拒否する。ライブラリ・設定を削除しない。
 - release は Actions Secret `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` と Variable `TAURI_UPDATER_PUBLIC_KEY` を使う。`configure-updater.mjs` の追加設定で公開鍵と `createUpdaterArtifacts` を渡す。秘密鍵はリポジトリに置かない。両 OS のビルド完了後に一つのジョブで `latest.json` を作る。欠落した成果物・署名のまま公開用情報を作らない。初回設定と実機検証の手順は `docs/updater.md`。
+- `tauri-action` の通常の workflow Artifacts は更新用 `.app.tar.gz` / `.sig` を含まないので、試しビルドは `stage-updater-artifacts.mjs` で更新ファイル・署名・公開鍵を別途保存する。Windows MSVC のライブラリテストは、Tauri の生成済み resource を明示的にリンクし、Common Controls v6 の manifest を含める。
 
 ### 内蔵ブラウザ
 

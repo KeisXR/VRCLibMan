@@ -30,6 +30,12 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
 
+// Reuse the manifest that tauri-build generates for the app. Without it the
+// Windows test loader cannot resolve Common Controls v6's TaskDialogIndirect.
+#[cfg(all(test, windows, target_env = "msvc"))]
+#[link(name = "resource")]
+unsafe extern "C" {}
+
 pub struct AppState {
     pub db: Mutex<rusqlite::Connection>,
     pub cancel_extract: AtomicBool,

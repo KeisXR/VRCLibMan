@@ -1,8 +1,17 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { updaterConfig } from "../scripts/configure-updater.mjs";
 import { createUpdaterManifest } from "../scripts/create-updater-manifest.mjs";
+import { stageUpdaterArtifacts } from "../scripts/stage-updater-artifacts.mjs";
 
 const pubkey = readFileSync(
   new URL("../src-tauri/test-fixtures/updater/public-key.txt", import.meta.url),
@@ -35,6 +44,79 @@ const input = {
   notes: "変更点\nテスト",
   now: new Date("2026-10-25T00:00:00Z"),
 };
+
+test("dry-run artifacts preserve package, signature and public key for both platforms", () => {
+  const directory = mkdtempSync(join(tmpdir(), "vrclibman-updater-stage-"));
+  try {
+    for (const [target, name] of [
+      ["windows-x64", names[0]],
+      ["macos-aarch64", "VRCLibMan.app.tar.gz"],
+    ]) {
+      const artifact = join(directory, name);
+      writeFileSync(artifact, "test updater bytes");
+      writeFileSync(`${artifact}.sig`, signature);
+      const destination = join(directory, target);
+      stageUpdaterArtifacts({
+        target,
+        paths: [artifact, `${artifact}.sig`, "unrelated.dmg"],
+        destination,
+        pubkey,
+      });
+      assert.deepEqual(
+        readdirSync(destination).sort(),
+        [name, `${name}.sig`, "updater-public-key.txt"].sort(),
+      );
+      assert.equal(
+        readFileSync(join(destination, name), "utf8"),
+        "test updater bytes",
+      );
+      assert.equal(
+        readFileSync(join(destination, `${name}.sig`), "utf8"),
+        signature,
+      );
+      assert.equal(
+        readFileSync(
+          join(destination, "updater-public-key.txt"),
+          "utf8",
+        ).trim(),
+        pubkey,
+      );
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("dry-run artifacts reject missing signatures, keys, and empty packages", () => {
+  const directory = mkdtempSync(join(tmpdir(), "vrclibman-updater-stage-"));
+  try {
+    const artifact = join(directory, names[0]);
+    writeFileSync(artifact, "");
+    writeFileSync(`${artifact}.sig`, signature);
+    const input = {
+      target: "windows-x64",
+      paths: [artifact, `${artifact}.sig`],
+      destination: join(directory, "out"),
+      pubkey,
+    };
+    assert.throws(
+      () => stageUpdaterArtifacts({ ...input, paths: [artifact] }),
+      /署名/,
+    );
+    assert.throws(() => stageUpdaterArtifacts({ ...input, paths: [] }), /特定/);
+    assert.throws(
+      () => stageUpdaterArtifacts({ ...input, pubkey: "" }),
+      /公開鍵/,
+    );
+    assert.throws(() => stageUpdaterArtifacts(input), /空/);
+    assert.throws(
+      () => stageUpdaterArtifacts({ ...input, target: "unsupported" }),
+      /対象/,
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test("release builds require a signing key and embed only the public key", () => {
   assert.throws(() => updaterConfig({}), /登録/);
