@@ -34,7 +34,17 @@ export function createUpdaterManifest({
     if (!artifact || !sigAsset)
       throw new Error(`${target} の更新ファイルまたは署名がありません`);
     const expectedUrl = `https://github.com/${repository}/releases/download/v${version}/${name}`;
-    if (artifact.browser_download_url !== expectedUrl)
+    // GitHub uses an untagged-* download path while a release is still a draft.
+    // Publish changes it to the version tag; clients must receive that final URL.
+    const draftPrefix = `https://github.com/${repository}/releases/download/`;
+    const draftPath = artifact.browser_download_url?.startsWith(draftPrefix)
+      ? artifact.browser_download_url.slice(draftPrefix.length).split("/")
+      : [];
+    const validDraftUrl =
+      draftPath.length === 2 &&
+      /^untagged-[a-f0-9]+$/i.test(draftPath[0]) &&
+      draftPath[1] === name;
+    if (artifact.browser_download_url !== expectedUrl && !validDraftUrl)
       throw new Error(`${target} の更新先 URL が一致しません`);
     const signed = signature(`${name}.sig`).trim();
     const decoded = Buffer.from(signed, "base64").toString("utf8");
@@ -47,7 +57,7 @@ export function createUpdaterManifest({
     }
     platforms[target] = {
       signature: signed,
-      url: artifact.browser_download_url,
+      url: expectedUrl,
     };
   }
   return { version, notes, pub_date: now.toISOString(), platforms };

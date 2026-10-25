@@ -160,6 +160,46 @@ test("complete manifest uses public asset URLs and both exact target keys", () =
   );
 });
 
+test("draft assets produce their final published tag URLs", () => {
+  const draftAssets = assets.map((asset) => ({
+    ...asset,
+    browser_download_url: asset.browser_download_url.replace(
+      "/download/v99.0.0/",
+      "/download/untagged-5efe83da0d55e6f01fb3/",
+    ),
+  }));
+  const manifest = createUpdaterManifest({ ...input, assets: draftAssets });
+  assert.equal(
+    manifest.platforms["windows-x86_64"].url,
+    assets[0].browser_download_url,
+  );
+  assert.equal(
+    manifest.platforms["darwin-aarch64"].url,
+    assets[2].browser_download_url,
+  );
+  assert.ok(!JSON.stringify(manifest).includes("untagged-"));
+  for (const invalid of [
+    "/download/untagged-not-an-id/",
+    "/download/untagged-1234/../",
+    "/download/v98.0.0/",
+  ]) {
+    assert.throws(
+      () =>
+        createUpdaterManifest({
+          ...input,
+          assets: draftAssets.map((asset) => ({
+            ...asset,
+            browser_download_url: asset.browser_download_url.replace(
+              "/download/untagged-5efe83da0d55e6f01fb3/",
+              invalid,
+            ),
+          })),
+        }),
+      /URL/,
+    );
+  }
+});
+
 test("partial or mixed releases never produce a manifest", () => {
   for (const asset of assets) {
     assert.throws(
