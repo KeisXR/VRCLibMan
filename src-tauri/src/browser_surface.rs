@@ -99,7 +99,7 @@ pub fn booth_view(app: &AppHandle) -> Option<Webview> {
     ids.into_iter()
         .filter_map(|id| app.get_webview(&id))
         .find(|view| {
-            view.url().ok().is_some_and(|url| {
+            crate::browser_url::current_url(view).ok().is_some_and(|url| {
                 let host = url.host_str().unwrap_or("");
                 url.scheme() == "https" && (host == "booth.pm" || host.ends_with(".booth.pm"))
             })
@@ -227,13 +227,14 @@ fn native_history(
 
 pub fn state(app: &AppHandle) -> Result<BrowserState, String> {
     if let Ok(view) = active_view(app) {
-        if let Ok(url) = view.url() {
+        if let Ok(url) = crate::browser_url::current_url(&view) {
             let mut state = surface();
             state
                 .session
                 .update(view.label(), |tab| tab.url = url.to_string());
+            drop(state);
+            refresh_history(&view);
         }
-        refresh_history(&view);
     }
     let (tabs, active_id) = {
         let state = surface();

@@ -270,7 +270,7 @@ fn import_current_page_inner(app: &AppHandle) -> Result<ImportReport, String> {
     if library_walk_running() { return Err("ライブラリのインポート中です".into()); }
     browser_log(app, "インポートを開始");
     let window = crate::browser_surface::active_view(app)?;
-    let current_url = window.url().map_err(|_| "ページのURLを読めません".to_string())?;
+    let current_url = crate::browser_url::current_url(&window)?;
     library_page_for_import(current_url.as_str())?;
     let (sender, receiver) = std::sync::mpsc::channel();
     window
@@ -286,7 +286,7 @@ fn import_current_page_inner(app: &AppHandle) -> Result<ImportReport, String> {
         browser_log(app, &format!("インポート対象 {}", public_url(&url)));
     }
     library_page_for_import(&href)?;
-    if window.url().map_err(|_| "ページのURLを読めません".to_string())?.as_str() != href {
+    if crate::browser_url::current_url(&window)?.as_str() != href {
         return Err("読み取り中にページが変わりました。もう一度インポートしてください".into());
     }
     let state = app.state::<crate::AppState>();
