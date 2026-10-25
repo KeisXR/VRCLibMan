@@ -6,6 +6,12 @@ VRCLibMan {{APP_VERSION}}（同梱の拡張は {{EXTENSION_VERSION}}）
 - Mac: `VRCLibMan_{{APP_VERSION}}_aarch64.dmg`（Apple Silicon、macOS 14 以降）
 - Chrome / Edge 拡張: `vrclibman-booth-export-{{EXTENSION_VERSION}}.zip`
 
+## v0.1.7 の変更
+
+- 「輝夜」など、対応表にないアバター本体の所有判定を改善しました。
+- 商品の除外操作を「その他」メニューへ移動して表示を整理しました。
+- README にライセンスの案内を追加しました。
+
 ## 注意
 
 - Windows 版は未署名です。SmartScreen が「Windows によって PC が保護されました」と出すことがあります。「詳細情報」から「実行」を選んでください。
