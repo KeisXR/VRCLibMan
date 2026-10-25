@@ -1,0 +1,53 @@
+name: finalize updater manifest
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing draft release tag (for example v0.1.8)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: finalize-updater-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+      - name: regenerate updater metadata on an existing draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          node -e 'if (!/^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(process.env.RELEASE_TAG)) throw new Error("Release tag is invalid")'
+          git merge-base --is-ancestor "${RELEASE_TAG}^{commit}" origin/main
+          stage="${RUNNER_TEMP}/updater-finalize"
+          mkdir -p "${stage}/signatures"
+          git show "${RELEASE_TAG}:package.json" > "${stage}/package.json"
+          version=$(node -p "JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8')).version" "${stage}/package.json")
+          test "${RELEASE_TAG}" = "v${version}"
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" --jq '.[]' > "${stage}/releases.jsonl"
+          jq -s --arg tag "${RELEASE_TAG}" '[.[] | select(.tag_name == $tag)]' "${stage}/releases.jsonl" > "${stage}/matches.json"
+          jq -e 'length == 1 and .[0].draft == true' "${stage}/matches.json" > /dev/null
+          id=$(jq -r '.[0].id' "${stage}/matches.json")
+          jq -r '.[0].body' "${stage}/matches.json" > "${stage}/notes.md"
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${id}/assets" > "${stage}/assets.json"
+          gh release download "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --pattern '*.sig' --dir "${stage}/signatures"
+          node scripts/create-updater-manifest.mjs "${version}" "${GITHUB_REPOSITORY}" \
+            "${stage}/assets.json" "${stage}/signatures" "${stage}/notes.md" "${stage}/latest.json"
+          # Refuse a release that was published while the metadata was being generated.
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${id}" --jq '.draft' | grep -qx true
+          gh release upload "${RELEASE_TAG}" "${stage}/latest.json" --repo "${GITHUB_REPOSITORY}" --clobber
