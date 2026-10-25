@@ -7,6 +7,7 @@ import {
 } from "../api";
 import type { BrowserAction, BrowserBookmark, BrowserState } from "../types";
 import { errorText } from "../ui";
+import { BrowserTitleBar } from "./BrowserTitleBar";
 
 const HOME = "https://accounts.booth.pm/library";
 const emptyState: BrowserState = {
@@ -158,6 +159,8 @@ export function BrowserChrome({
   }, []);
 
   useEffect(() => {
+    // Native accelerators also work when an external tab has keyboard focus.
+    if (!embedded && isTauri()) return;
     function shortcut(event: KeyboardEvent) {
       if (!(event.ctrlKey || event.metaKey) || event.altKey || disabled) return;
       if (event.key.toLowerCase() === "l") {
@@ -180,7 +183,7 @@ export function BrowserChrome({
     }
     window.addEventListener("keydown", shortcut);
     return () => window.removeEventListener("keydown", shortcut);
-  }, [action, disabled, state.activeId]);
+  }, [action, disabled, state.activeId, embedded]);
 
   async function saveBookmark() {
     if (!edit) return;
@@ -237,9 +240,10 @@ export function BrowserChrome({
       className={embedded ? "browser-chrome embedded" : "browser-chrome"}
       ref={controls}
     >
-      <div className="browser-tabs-row">
+      <BrowserTitleBar embedded={embedded} onError={setError}>
         <div
           className="browser-tabs"
+          data-tauri-drag-region={embedded ? undefined : "false"}
           role="tablist"
           aria-label="ブラウザのタブ"
         >
@@ -300,7 +304,7 @@ export function BrowserChrome({
         >
           ＋
         </button>
-      </div>
+      </BrowserTitleBar>
       <div className="browser-navigation">
         <button
           className="browser-icon"

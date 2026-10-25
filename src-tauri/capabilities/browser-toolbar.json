@@ -3,5 +3,11 @@
   "identifier": "browser-toolbar",
   "description": "Local browser controls only; remote tab webviews receive no application capabilities",
   "webviews": ["booth-toolbar"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close"
+  ]
 }
