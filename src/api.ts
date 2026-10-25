@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AvatarCard,
+  BrowserState,
+  BrowserAction,
   ManagedProduct,
   BoothImportMode,
   IntegrationStatus,
@@ -108,6 +110,10 @@ export const api = {
   updateSettings: (patch: Partial<Settings>) => call<Settings>("update_settings", { patch }),
   boothPageInterval: () => call<number>("get_booth_page_interval"),
   setBoothPageInterval: (intervalMs: number) => call<void>("set_booth_page_interval", { intervalMs }),
+  browserState: () => call<BrowserState>("browser_state"),
+  browserAction: (action: BrowserAction) => call<BrowserState>("browser_action", { action }),
+  saveBrowserBookmark: (originalUrl: string | null, title: string, url: string) => call<BrowserState>("save_browser_bookmark", { originalUrl, title, url }),
+  deleteBrowserBookmark: (url: string) => call<BrowserState>("delete_browser_bookmark", { url }),
   openBoothBrowser: () => call<void>("open_booth_browser"),
   boothAccount: () => call<BoothAccount>("booth_account"),
   showBoothLibrary: () => call<void>("show_booth_library"),
@@ -198,4 +204,16 @@ export async function openLocal(path: string): Promise<void> {
   }
   const { openPath } = await import("@tauri-apps/plugin-opener");
   await openPath(path);
+}
+
+export function listenBrowserChanged(onChanged: () => void): Promise<() => void> {
+  if (!isTauri()) return import("./preview/browser").then(({ onPreviewBrowserChanged }) => onPreviewBrowserChanged(onChanged));
+  return import("@tauri-apps/api/event").then(({ listen }) => listen("browser-state-changed", onChanged));
+}
+
+export async function listenBrowserControlEvents(onFocus: () => void, onError: (message: string) => void): Promise<() => void> {
+  if (!isTauri()) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  const [focus, error] = await Promise.all([listen("browser-focus-address", onFocus), listen<string>("browser-operation-error", (event) => onError(event.payload))]);
+  return () => { focus(); error(); };
 }

@@ -19,7 +19,6 @@ const LOG_NAME: &str = "booth-browser.log";
 pub const WINDOW_LABEL: &str = "booth";
 /// ログイン確認とセッション読み取りだけの隠した窓。ダウンロードでは見せない。
 const PROBE_LABEL: &str = "booth-probe";
-const BROWSER_USED_EVENT: &str = "booth-browser-used";
 pub const LIBRARY_URL: &str = "https://accounts.booth.pm/library";
 #[cfg(any(not(target_os = "macos"), test))]
 const SESSION_DIR_NAME: &str = "booth-browser";
@@ -135,7 +134,7 @@ fn log_path(app: &AppHandle) -> Result<PathBuf, String> {
         .join(LOG_NAME))
 }
 
-fn browser_log(app: &AppHandle, message: &str) {
+pub(crate) fn browser_log(app: &AppHandle, message: &str) {
     let stamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
     let line = format!("{stamp} {message}\n");
     eprintln!("VRCLibMan: {message}");
@@ -169,55 +168,6 @@ pub fn public_url(url: &Url) -> String {
     format!("{}://{host}{}", url.scheme(), url.path())
 }
 
-/// メールとパスワードのログインで出る別窓は、同じ窓で開く。
-/// Google や年齢確認、それ以外のサイトは開かない。
-pub fn open_in_same_window(url: &Url) -> bool {
-    if url.scheme() != "https" {
-        return false;
-    }
-    let host = url.host_str().unwrap_or("");
-    let known = host == "booth.pm"
-        || host.ends_with(".booth.pm")
-        || host == "pixiv.net"
-        || host.ends_with(".pixiv.net");
-    if !known {
-        return false;
-    }
-    let path = url.path().to_ascii_lowercase();
-    let query = url.query().unwrap_or("").to_ascii_lowercase();
-    !is_age_gate(&path, &query)
-}
-
-fn open_popup_in_same_window(app: &AppHandle, url: Url) {
-    if should_follow_popup(&url, download_job_armed()) {
-        browser_log(
-            app,
-            &format!("別窓の要求を今の窓で開きます {}", public_url(&url)),
-        );
-        if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
-            if window.navigate(url).is_err() {
-                browser_log(app, "別窓の移動に失敗しました");
-            }
-        }
-        return;
-    }
-    browser_log(app, &format!("別窓の要求は開きません {}", public_url(&url)));
-}
-
-/// 受け取り中だけ、署名付きの別ホストも同じ窓で開く。クエリは記録しない。
-/// 年齢確認の URL は、受け取り中でも開かない。
-pub fn should_follow_popup(url: &Url, armed: bool) -> bool {
-    if open_in_same_window(url) {
-        return true;
-    }
-    if !armed || url.scheme() != "https" {
-        return false;
-    }
-    let path = url.path().to_ascii_lowercase();
-    let query = url.query().unwrap_or("").to_ascii_lowercase();
-    !is_age_gate(&path, &query)
-}
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowserDiagnostic {
@@ -240,7 +190,7 @@ pub fn diagnostic(app: &AppHandle) -> Result<BrowserDiagnostic, String> {
     })
 }
 
-fn browser_enabled(app: &AppHandle) -> Result<(), String> {
+pub(crate) fn browser_enabled(app: &AppHandle) -> Result<(), String> {
     let state = app.state::<crate::AppState>();
     let connection = state
         .db
@@ -253,7 +203,7 @@ fn browser_enabled(app: &AppHandle) -> Result<(), String> {
 }
 
 #[cfg(any(not(target_os = "macos"), test))]
-fn local_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn local_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_local_data_dir()
         .map_err(|err| format!("保存先を読めません: {err}"))
@@ -285,121 +235,18 @@ where
 }
 
 pub fn open_browser(app: &AppHandle) -> Result<(), String> {
-    // 設定の確認はここで終わらせ、データベースのロックを持ったまま窓を作らない。
-    if let Err(err) = browser_enabled(app) {
-        browser_log(app, &format!("内蔵ブラウザは使えません: {err}"));
-        return Err(err);
-    }
-    if let Some(probe) = app.get_webview_window(PROBE_LABEL) {
-        let _ = probe.destroy();
-    }
-    if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
-        browser_log(app, "既にある窓を前面に出します");
+    if let Some(window) = crate::browser_surface::host_window(app) {
         let _ = window.show();
-        let _ = window.unminimize();
-        let _ = window.set_focus();
-        return Ok(());
     }
-    let url = Url::parse(LIBRARY_URL).map_err(|err| err.to_string())?;
-    let for_popup = app.clone();
-    let mut builder = WebviewWindowBuilder::new(app, WINDOW_LABEL, WebviewUrl::External(url))
-        .title("BOOTH")
-        .inner_size(1100.0, 800.0)
-        .focused(true)
-        .on_page_load(|window, payload| {
-            if payload.url().scheme() != "https" && payload.url().scheme() != "http" {
-                return;
-            }
-            let kind = match payload.event() {
-                tauri::webview::PageLoadEvent::Started => "読み始め",
-                tauri::webview::PageLoadEvent::Finished => "読み終わり",
-            };
-            browser_log(
-                window.app_handle(),
-                &format!("{kind} {}", public_url(payload.url())),
-            );
-            if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
-                && !library_walk_running()
-            {
-                let _ = window.emit(BROWSER_USED_EVENT, ());
-            }
-        })
-        .on_new_window(move |url, _features| {
-            open_popup_in_same_window(&for_popup, url);
-            tauri::webview::NewWindowResponse::Deny
-        })
-        .on_download(|_webview, event| handle_booth_download(event));
-    // WKWebView already sends a Safari user agent. Leave it unchanged unless Booth
-    // starts rejecting the embedded login; then set one current Safari string here.
-    #[cfg(not(target_os = "macos"))]
-    {
-        let dir = session_dir(&local_data_dir(app)?);
-        if !session_dir_is_safe(&local_data_dir(app)?, &dir) {
-            return Err("セッションの場所が不正です".into());
-        }
-        std::fs::create_dir_all(&dir)
-            .map_err(|err| format!("セッション用のフォルダを作れません: {err}"))?;
-        // メイン画面の EBWebView とは別フォルダ。同じ data_directory だと
-        // WebView2 がロックして、新しい窓だけが止まる。
-        builder = builder.data_directory(dir.clone());
-        browser_log(app, &format!("セッションフォルダ {}", dir.display()));
-    }
-    #[cfg(target_os = "macos")]
-    {
-        builder = builder.data_store_identifier(BOOTH_DATA_STORE_ID);
-        browser_log(app, "セッションは macOS のデータストアです");
-    }
-    browser_log(app, "窓を作っています");
-    let window = match builder.build() {
-        Ok(window) => window,
-        Err(err) => {
-            let message = format!("ブラウザを開けません: {err}");
-            browser_log(app, &message);
-            return Err(message);
-        }
-    };
-    let app_for_close = app.clone();
-    window.on_window_event(move |event| {
-        if let tauri::WindowEvent::Destroyed = event {
-            let _ = app_for_close.emit(BROWSER_USED_EVENT, ());
-        }
-    });
-    browser_log(app, "窓を開きました");
-    Ok(())
+    crate::browser_surface::open(app)
 }
 
 pub fn show_library(app: &AppHandle) -> Result<(), String> {
-    browser_enabled(app)?;
-    open_browser(app)?;
-    browser_log(app, "ライブラリへ移動します");
-    let window = app
-        .get_webview_window(WINDOW_LABEL)
-        .ok_or("ブラウザを開いてから移動してください")?;
-    let url = Url::parse(LIBRARY_URL).map_err(|err| err.to_string())?;
-    window.navigate(url).map_err(|err| {
-        let message = format!("ライブラリを開けません: {err}");
-        browser_log(app, &message);
-        message
-    })
+    crate::browser_surface::navigate(app, LIBRARY_URL)
 }
 
 pub fn browse_history(app: &AppHandle, forward: bool) -> Result<(), String> {
-    browser_enabled(app)?;
-    let window = app
-        .get_webview_window(WINDOW_LABEL)
-        .ok_or("ブラウザを開いてから移動してください")?;
-    let script = if forward {
-        browser_log(app, "進む");
-        "history.forward()"
-    } else {
-        browser_log(app, "戻る");
-        "history.back()"
-    };
-    window.eval(script).map_err(|err| {
-        let message = format!("移動できません: {err}");
-        browser_log(app, &message);
-        message
-    })
+    crate::browser_surface::history(app, forward)
 }
 
 pub fn import_current_page(app: &AppHandle) -> Result<ImportReport, String> {
@@ -420,10 +267,11 @@ pub fn import_current_page(app: &AppHandle) -> Result<ImportReport, String> {
 
 fn import_current_page_inner(app: &AppHandle) -> Result<ImportReport, String> {
     browser_enabled(app)?;
+    if library_walk_running() { return Err("ライブラリのインポート中です".into()); }
     browser_log(app, "インポートを開始");
-    let window = app
-        .get_webview_window(WINDOW_LABEL)
-        .ok_or("ブラウザを開いて、ライブラリのページを表示してからインポートしてください")?;
+    let window = crate::browser_surface::active_view(app)?;
+    let current_url = window.url().map_err(|_| "ページのURLを読めません".to_string())?;
+    library_page_for_import(current_url.as_str())?;
     let (sender, receiver) = std::sync::mpsc::channel();
     window
         .eval_with_callback(page_script(), move |result| {
@@ -438,6 +286,9 @@ fn import_current_page_inner(app: &AppHandle) -> Result<ImportReport, String> {
         browser_log(app, &format!("インポート対象 {}", public_url(&url)));
     }
     library_page_for_import(&href)?;
+    if window.url().map_err(|_| "ページのURLを読めません".to_string())?.as_str() != href {
+        return Err("読み取り中にページが変わりました。もう一度インポートしてください".into());
+    }
     let state = app.state::<crate::AppState>();
     let mut connection = state
         .db
@@ -449,11 +300,8 @@ fn import_current_page_inner(app: &AppHandle) -> Result<ImportReport, String> {
 }
 
 pub fn close_browser(app: &AppHandle) -> Result<(), String> {
-    browser_log(app, "窓を閉じます");
-    if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
-        let _ = window.destroy();
-    }
-    Ok(())
+    request_library_walk_cancel();
+    crate::browser_surface::close(app)
 }
 
 /// WINDOW_LABEL が残っているあいだは、同じユーザーデータに二本目の WebView を作らない。
@@ -479,9 +327,11 @@ pub fn logout_order(window_label_exists: bool) -> LogoutOrder {
 
 /// 見えている窓と、同じプロファイルの隠した窓を UI スレッドで捨てる。build は呼ばない。
 fn destroy_session_windows(app: &AppHandle) -> bool {
-    let mut closed = false;
+    let mut closed = crate::browser_surface::host_window(app).is_some();
+    request_library_walk_cancel();
+    let _ = crate::browser_surface::close(app);
     for label in [WINDOW_LABEL, PROBE_LABEL] {
-        if let Some(window) = app.get_webview_window(label) {
+        if let Some(window) = app.get_window(label) {
             let _ = window.destroy();
             closed = true;
         }
@@ -492,13 +342,13 @@ fn destroy_session_windows(app: &AppHandle) -> bool {
     closed
 }
 
-/// 内蔵ブラウザの BOOTH / pixiv セッションだけを消す。
+/// 内蔵ブラウザ専用プロファイルの全サイトのセッションを消す。
 /// 同じユーザーデータに WebView2 が残ったまま次の窓を作ると固まるので、
 /// 先に UI スレッドで窓を壊してから、保存してあるプロファイルを消す。
 pub async fn clear_session(app: &AppHandle) -> Result<(), String> {
     browser_log(app, "セッションを消します");
     let (existed, closed) = dispatch_ui(app.clone(), |handle| {
-        let existed = handle.get_webview_window(WINDOW_LABEL).is_some();
+        let existed = crate::browser_surface::host_window(handle).is_some();
         let closed = destroy_session_windows(handle);
         if existed && logout_may_build_webview(true) {
             return Err("表示中のブラウザがあるので、別の窓は作りません".into());
@@ -512,6 +362,8 @@ pub async fn clear_session(app: &AppHandle) -> Result<(), String> {
         })
         .await;
     }
+    #[cfg(target_os = "linux")]
+    crate::browser_linux::clear_profile_cache(app).await?;
     match logout_order(existed) {
         LogoutOrder::DestroyThenClear | LogoutOrder::ClearOnly => clear_stored_profile(app).await,
     }
@@ -618,7 +470,7 @@ fn job_lock() -> std::sync::MutexGuard<'static, Option<ArmedDownload>> {
     DOWNLOAD_JOB.0.lock().unwrap_or_else(|err| err.into_inner())
 }
 
-fn download_job_armed() -> bool {
+pub(crate) fn download_job_armed() -> bool {
     job_lock().is_some()
 }
 
@@ -712,7 +564,7 @@ fn unique_staging_name(dir: &Path, preferred: &str) -> String {
     }
 }
 
-fn handle_booth_download(event: DownloadEvent<'_>) -> bool {
+pub(crate) fn handle_booth_download(event: DownloadEvent<'_>) -> bool {
     match event {
         DownloadEvent::Requested { url, destination } => {
             // 全取得の途中では、ページが始めたダウンロードを保存しない。
@@ -854,7 +706,7 @@ impl Drop for ProbeTurn {
 
 /// 隠した窓。visible は false、タスクバーに出さない、フォーカスしない。
 fn open_profile_probe(app: &AppHandle, url: Url) -> Result<(), String> {
-    if app.get_webview_window(WINDOW_LABEL).is_some() {
+    if crate::browser_surface::host_window(app).is_some() {
         return Err("表示中のブラウザがあるので、別の窓は作りません".into());
     }
     if let Some(window) = app.get_webview_window(PROBE_LABEL) {
@@ -887,6 +739,8 @@ fn open_profile_probe(app: &AppHandle, url: Url) -> Result<(), String> {
     let window = builder
         .build()
         .map_err(|_| "ログイン状態を確認できません".to_string())?;
+    #[cfg(target_os = "linux")]
+    crate::browser_linux::remember_profile(window.as_ref())?;
     let _ = window.hide();
     Ok(())
 }
@@ -915,7 +769,7 @@ async fn booth_cookie_header(
         .await
         .map_err(|_| crate::quiet::QuietError::Failed)?;
     let created = dispatch_ui(app.clone(), move |handle| {
-        if handle.get_webview_window(WINDOW_LABEL).is_some() {
+        if crate::browser_surface::host_window(handle).is_some() {
             return Ok(false);
         }
         let blank =
@@ -929,9 +783,9 @@ async fn booth_cookie_header(
     let url_for_cookies = url.clone();
     let header = tauri::async_runtime::spawn_blocking(move || {
         let label = if created { PROBE_LABEL } else { WINDOW_LABEL };
-        let window = app_for_cookies
-            .get_webview_window(label)
-            .ok_or_else(|| "ログイン状態を確認できません".to_string())?;
+        let window = if created {
+            app_for_cookies.get_webview(label).ok_or_else(|| "ログイン状態を確認できません".to_string())?
+        } else { crate::browser_surface::active_view(&app_for_cookies)? };
         crate::quiet::session_header(&window, &url_for_cookies)
     })
     .await;
@@ -1239,9 +1093,9 @@ async fn eval_label(app: &AppHandle, label: &str, script: String) -> Result<Stri
     let label = label.to_string();
     let (sender, receiver) = std::sync::mpsc::channel();
     dispatch_ui(app.clone(), move |handle| {
-        let window = handle
-            .get_webview_window(&label)
-            .ok_or("ブラウザが開いていません")?;
+        let window = if label == WINDOW_LABEL {
+            crate::browser_surface::active_view(handle)?
+        } else { handle.get_webview(&label).ok_or("ブラウザが開いていません")? };
         window
             .eval_with_callback(script, move |result| {
                 let _ = sender.send(result);
@@ -1267,7 +1121,7 @@ pub async fn read_booth_account(app: AppHandle) -> Result<crate::quiet::BoothAcc
         .map_err(|_| "ログイン状態を確認できません".to_string())?;
     let library = Url::parse(LIBRARY_URL).map_err(|_| "ページのURLを読めません".to_string())?;
     let created = dispatch_ui(app.clone(), move |handle| {
-        if handle.get_webview_window(WINDOW_LABEL).is_some() {
+        if crate::browser_surface::host_window(handle).is_some() {
             return Ok(false);
         }
         open_profile_probe(handle, library)?;
@@ -1279,7 +1133,7 @@ pub async fn read_booth_account(app: AppHandle) -> Result<crate::quiet::BoothAcc
     } else {
         eval_label(
             &app,
-            WINDOW_LABEL,
+            crate::browser_surface::booth_view(&app).ok_or("BOOTHのタブを開くとアカウントを確認できます")?.label(),
             crate::quiet::account_script().to_string(),
         )
         .await
@@ -1326,13 +1180,11 @@ async fn navigate_booth(
 ) -> Result<(), String> {
     let label = section_label(section);
     dispatch_ui(app.clone(), move |handle| {
-        if handle.get_webview_window(WINDOW_LABEL).is_none() {
+        if crate::browser_surface::host_window(handle).is_none() {
             open_browser(handle)?;
         }
         browser_enabled(handle)?;
-        let window = handle
-            .get_webview_window(WINDOW_LABEL)
-            .ok_or("ブラウザを開いてからインポートしてください")?;
+        let window = crate::browser_surface::active_view(handle)?;
         browser_log(
             handle,
             &format!("{label} の {page} ページ目を開きます {}", public_url(&url)),
@@ -1581,26 +1433,13 @@ mod tests {
     }
 
     #[test]
-    fn login_popups_stay_on_pixiv_or_booth_and_skip_secrets() {
+    fn booth_operation_logs_skip_url_secrets() {
         let login = Url::parse("https://accounts.pixiv.net/login?return_to=secret-token").unwrap();
-        assert!(open_in_same_window(&login));
         assert_eq!(public_url(&login), "https://accounts.pixiv.net/login");
         assert!(!public_url(&login).contains("secret"));
         let library = Url::parse("https://accounts.booth.pm/library?page=2").unwrap();
-        assert!(open_in_same_window(&library));
         assert_eq!(public_url(&library), "https://accounts.booth.pm/library");
-        assert!(!open_in_same_window(
-            &Url::parse("https://accounts.google.com/o/oauth2/auth?code=secret").unwrap()
-        ));
-        assert!(!open_in_same_window(
-            &Url::parse("https://accounts.booth.pm/age_verification?r18=1").unwrap()
-        ));
-        assert!(!open_in_same_window(
-            &Url::parse("http://accounts.pixiv.net/login").unwrap()
-        ));
-        assert!(!open_in_same_window(
-            &Url::parse("https://evil.example/login").unwrap()
-        ));
+
     }
 
     #[test]
@@ -1701,11 +1540,8 @@ mod tests {
             }
             other => panic!("expected a save path, got {other:?}"),
         }
-        assert!(!should_follow_popup(&signed, false));
-        assert!(should_follow_popup(&signed, true));
         assert_eq!(public_url(&signed), "https://cdn.example.test/files/a");
         let gate = Url::parse("https://cdn.example.test/age_verification?r18=1").unwrap();
-        assert!(!should_follow_popup(&gate, true));
         assert!(matches!(
             decide_download(Some(&job), &gate, Path::new("page.html")),
             DownloadChoiceResult::Reject { age_gate: true }

@@ -3,6 +3,7 @@ import { api, listenProgress } from "../api";
 import { useShell } from "../App";
 import type { ImportReport, LibraryWalkReport } from "../types";
 import { errorText } from "../ui";
+import { BrowserChrome } from "../components/BrowserChrome";
 
 export function BrowserPage({ enabled }: { enabled: boolean }) {
   const { refresh, notify, fail, refreshAccount } = useShell();
@@ -90,7 +91,7 @@ export function BrowserPage({ enabled }: { enabled: boolean }) {
       <div className="page-head">
         <div>
           <h1>ブラウザ</h1>
-          <p>自分で BOOTH にログインし、今のページか、ライブラリとギフトを1ページずつインポートします。</p>
+          <p>タブやブックマークでサイトを開き、BOOTH のライブラリとギフトをインポートします。</p>
         </div>
       </div>
       {!enabled && (
@@ -124,13 +125,8 @@ export function BrowserPage({ enabled }: { enabled: boolean }) {
             <button className="button" type="button" disabled={busy} onClick={() => void run(() => api.showBoothLibrary())}>
               ライブラリを開く
             </button>
-            <button className="button" type="button" disabled={busy} onClick={() => void run(() => api.browseBoothHistory(false))}>
-              戻る
-            </button>
-            <button className="button" type="button" disabled={busy} onClick={() => void run(() => api.browseBoothHistory(true))}>
-              進む
-            </button>
           </div>
+          <BrowserChrome embedded onImported={() => { refresh(); refreshAccount(); }} />
           <div className="row-actions" style={{ marginTop: 12 }}>
             <button
               className="button primary"
@@ -192,7 +188,7 @@ export function BrowserPage({ enabled }: { enabled: boolean }) {
               disabled={busy}
               onClick={() =>
                 void run(async () => {
-                  if (!window.confirm("ブラウザを閉じ、このアプリの中の BOOTH のログイン状態を消します。")) return;
+                  if (!window.confirm("ブラウザを閉じ、内蔵ブラウザで開いたすべてのサイトのログイン状態と閲覧データを消します。ブックマークは残ります。")) return;
                   await api.clearBoothSession();
                   notify("セッションを消しました");
                 })

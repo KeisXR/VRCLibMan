@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "browser-toolbar",
+  "description": "Local browser controls only; remote tab webviews receive no application capabilities",
+  "webviews": ["booth-toolbar"],
+  "permissions": ["core:default"]
+}

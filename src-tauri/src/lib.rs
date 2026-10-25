@@ -1,5 +1,9 @@
 mod apple_fm;
 mod browser;
+#[cfg(target_os = "linux")]
+mod browser_linux;
+mod browser_tabs;
+mod browser_surface;
 mod mask;
 mod catalog;
 mod commands;
@@ -190,6 +194,10 @@ pub fn run() {
             commands::push_remote_file,
             commands::cache_thumbnails,
             commands::open_booth_browser,
+            commands::browser_state,
+            commands::browser_action,
+            commands::save_browser_bookmark,
+            commands::delete_browser_bookmark,
             commands::show_booth_library,
             commands::browse_booth_history,
             commands::import_booth_page,

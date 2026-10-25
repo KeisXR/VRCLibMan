@@ -366,3 +366,13 @@ export interface AvatarInput {
   aliases: string[];
   notes: string;
 }
+
+export interface BrowserBookmark { title: string; url: string; }
+export interface BrowserTab { id: string; url: string; title: string; loading: boolean; canGoBack: boolean; canGoForward: boolean; }
+export interface BrowserState { open: boolean; tabs: BrowserTab[]; activeId: string | null; bookmarks: BrowserBookmark[]; busy: boolean; }
+export type BrowserAction =
+  | { kind: "newTab"; url?: string }
+  | { kind: "navigate"; url: string }
+  | { kind: "selectTab" | "closeTab"; tabId: string }
+  | { kind: "back" | "forward" | "reload" | "stop" }
+  | { kind: "toolbarHeight"; height: number };

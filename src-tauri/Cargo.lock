@@ -3838,6 +3838,8 @@ version = "0.1.4"
 dependencies = [
  "chrono",
  "getrandom 0.3.4",
+ "gtk",
+ "objc2",
  "regex",
  "reqwest",
  "rusqlite",
@@ -3855,6 +3857,7 @@ dependencies = [
  "unicode-normalization",
  "url",
  "walkdir",
+ "webkit2gtk",
 ]
 
 [[package]]

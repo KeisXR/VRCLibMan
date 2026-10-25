@@ -727,3 +727,39 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .exclusion-list .meta { display: block; font-size: 12px; }
 .exclusion-list .button { flex: 0 0 auto; }
 @media (max-width: 760px) { .exclusion-filters { grid-template-columns: 1fr; } }
+
+/* Browser controls are usable in their own window or inside a future docked panel. */
+.browser-toolbar-window { overflow: hidden; }
+.browser-chrome { width: 100%; background: var(--bg); color: var(--text); font-size: 13px; }
+.browser-chrome.embedded { margin-top: 12px; border: 1px solid var(--line); border-radius: var(--radius-control); overflow: hidden; }
+.browser-tabs-row { height: 36px; display: flex; align-items: stretch; gap: 4px; padding: 0 8px; }
+.browser-tabs { display: flex; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: thin; }
+.browser-tab { display: flex; align-items: center; flex: 0 1 210px; min-width: 95px; border-radius: 8px 8px 0 0; }
+.browser-tab.active { background: var(--surface); }
+.browser-tab [role=tab] { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; height: 36px; padding: 0 10px; text-align: left; background: none; }
+.browser-tab [role=tab] span:last-child { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.browser-tab-close { flex: 0 0 26px; padding: 0; height: 26px; background: none; }
+.browser-navigation { display: flex; align-items: center; gap: 4px; height: 44px; padding: 4px 8px; box-sizing: border-box; background: var(--surface); }
+.browser-chrome button { appearance: none; border: 0; border-radius: 6px; background-color: transparent; box-shadow: none; cursor: pointer; white-space: nowrap; }
+.browser-chrome button:hover:not(:disabled) { background-color: var(--hover); }
+.browser-chrome .button.primary { background: var(--button); color: var(--button-text); }
+.browser-chrome button:disabled { cursor: default; opacity: .4; }
+.browser-icon { flex: 0 0 32px; height: 32px; padding: 0; font-size: 19px; background: none; }
+.browser-address { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 100px; }
+.browser-address input { width: 100%; min-width: 0; height: 32px; box-sizing: border-box; border: 1px solid var(--line); border-radius: 8px; background: var(--sunken); padding: 0 10px; }
+.browser-address button { height: 30px; padding: 0 10px; }
+.browser-import { height: 32px; padding: 0 10px; }
+.browser-bookmarks { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 8px; overflow-x: auto; scrollbar-width: thin; background: var(--surface); border-bottom: 1px solid var(--line); box-sizing: border-box; }
+.browser-bookmark { display: inline-flex; align-items: center; flex-shrink: 0; }
+.browser-bookmark button { height: 25px; background: none; padding: 0 6px; font-size: 12px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+.browser-bookmark .bookmark-edit { width: 22px; padding: 0; }
+.browser-bookmark-editor { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.browser-bookmark-editor label { display: flex; align-items: center; gap: 8px; flex: 1 1 230px; }
+.browser-bookmark-editor input { flex: 1; min-width: 0; height: 32px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--sunken); }
+.browser-status { min-height: 24px; box-sizing: border-box; padding: 3px 10px; font-size: 12px; overflow-wrap: anywhere; }
+.browser-chrome { container-type: inline-size; }
+@container (max-width: 520px) {
+  .browser-navigation .browser-import { display: none; }
+  .browser-navigation > .browser-icon:nth-child(4) { display: none; }
+}
+@container (max-width: 360px) { .browser-address > button { display: none; } }
