@@ -1,5 +1,6 @@
 mod apple_fm;
 mod browser;
+mod browser_url;
 #[cfg(target_os = "linux")]
 mod browser_linux;
 mod browser_tabs;
