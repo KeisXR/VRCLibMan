@@ -305,7 +305,7 @@ fn initial_download_cookie<'a>(
 
 /// ワーカー側から呼ぶ。UI スレッドや dispatch_ui の中では呼ばない。
 pub fn session_header(
-    window: &tauri::webview::WebviewWindow<tauri::Wry>,
+    window: &tauri::Webview<tauri::Wry>,
     url: &Url,
 ) -> Result<String, String> {
     let cookies = window

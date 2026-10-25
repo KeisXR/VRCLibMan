@@ -462,9 +462,12 @@ pub async fn browse_booth_history(app: tauri::AppHandle, forward: bool) -> Resul
 #[tauri::command]
 pub async fn import_booth_page(app: tauri::AppHandle) -> Result<ImportReport, String> {
     // ページ読み取りの待ちを UI スレッドに載せない。
-    tauri::async_runtime::spawn_blocking(move || crate::browser::import_current_page(&app))
+    let handle = app.clone();
+    let report = tauri::async_runtime::spawn_blocking(move || crate::browser::import_current_page(&handle))
         .await
-        .map_err(|err| err.to_string())?
+        .map_err(|err| err.to_string())??;
+    let _ = app.emit("library-changed", ());
+    Ok(report)
 }
 
 #[tauri::command]
@@ -472,7 +475,9 @@ pub async fn import_booth_library(
     app: tauri::AppHandle,
 ) -> Result<crate::browser::LibraryWalkReport, String> {
     // 移動と eval は import_library の中で dispatch_ui に渡す。
-    crate::browser::import_library(app).await
+    let report = crate::browser::import_library(app.clone()).await?;
+    let _ = app.emit("library-changed", ());
+    Ok(report)
 }
 
 #[tauri::command]
@@ -1029,4 +1034,112 @@ pub async fn cache_thumbnails(app: AppHandle, state: State<'_, AppState>) -> Res
         format!("{saved} 件のサムネイルを保存しました"),
     );
     Ok(saved)
+}
+
+fn trusted_browser_controls(view: &tauri::Webview) -> Result<(), String> {
+    if matches!(view.label(), "main" | crate::browser_tabs::TOOLBAR_LABEL) {
+        Ok(())
+    } else {
+        Err("この画面からブラウザを操作する権限がありません".into())
+    }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum BrowserAction {
+    NewTab { url: Option<String> },
+    Navigate { url: String },
+    SelectTab { tab_id: String },
+    CloseTab { tab_id: String },
+    Back,
+    Forward,
+    Reload,
+    Stop,
+    ToolbarHeight { height: f64 },
+}
+
+#[tauri::command]
+pub async fn browser_state(
+    app: AppHandle,
+    webview: tauri::Webview,
+) -> Result<crate::browser_tabs::BrowserState, String> {
+    trusted_browser_controls(&webview)?;
+    crate::browser::dispatch_ui(app, crate::browser_surface::state).await
+}
+
+#[tauri::command]
+pub async fn browser_action(
+    app: AppHandle,
+    webview: tauri::Webview,
+    action: BrowserAction,
+) -> Result<crate::browser_tabs::BrowserState, String> {
+    trusted_browser_controls(&webview)?;
+    crate::browser::dispatch_ui(app, move |handle| {
+        use crate::browser_surface as surface;
+        match action {
+            BrowserAction::NewTab { url } => surface::new_tab(handle, url.as_deref())?,
+            BrowserAction::Navigate { url } => surface::navigate(handle, &url)?,
+            BrowserAction::SelectTab { tab_id } => surface::select(handle, &tab_id)?,
+            BrowserAction::CloseTab { tab_id } => surface::close_tab(handle, &tab_id)?,
+            BrowserAction::Back => surface::history(handle, false)?,
+            BrowserAction::Forward => surface::history(handle, true)?,
+            BrowserAction::Reload => surface::reload(handle)?,
+            BrowserAction::Stop => surface::stop(handle)?,
+            BrowserAction::ToolbarHeight { height } => surface::toolbar_height(handle, height)?,
+        }
+        surface::state(handle)
+    })
+    .await
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn save_browser_bookmark(
+    app: AppHandle,
+    webview: tauri::Webview,
+    originalUrl: Option<String>,
+    title: String,
+    url: String,
+) -> Result<crate::browser_tabs::BrowserState, String> {
+    trusted_browser_controls(&webview)?;
+    crate::browser::dispatch_ui(app, move |handle| {
+        {
+            let state = handle.state::<AppState>();
+            let connection = state
+                .db
+                .lock()
+                .map_err(|_| "データベースをロックできません".to_string())?;
+            db::save_browser_bookmark(&connection, originalUrl.as_deref(), &title, &url)?;
+        }
+        let _ = handle.emit("browser-state-changed", ());
+        crate::browser_surface::state(handle)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn delete_browser_bookmark(
+    app: AppHandle,
+    webview: tauri::Webview,
+    url: String,
+) -> Result<crate::browser_tabs::BrowserState, String> {
+    trusted_browser_controls(&webview)?;
+    crate::browser::dispatch_ui(app, move |handle| {
+        {
+            let state = handle.state::<AppState>();
+            let connection = state
+                .db
+                .lock()
+                .map_err(|_| "データベースをロックできません".to_string())?;
+            db::delete_browser_bookmark(&connection, &url)?;
+        }
+        let _ = handle.emit("browser-state-changed", ());
+        crate::browser_surface::state(handle)
+    })
+    .await
 }

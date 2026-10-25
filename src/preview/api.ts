@@ -1,7 +1,9 @@
+import { previewBrowserState, previewBrowserAction, previewSaveBookmark, previewDeleteBookmark, previewOpenBrowser, previewCloseBrowser } from "./browser";
 import extensionManifest from "../../extension/manifest.json";
 import { filePresence } from "../media";
 import type {
   AvatarCard,
+  BrowserAction,
   IntegrationStatus,
   BoothImportMode,
   AvatarDetail,
@@ -1360,13 +1362,15 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     case "refresh_avatar_catalog":
     case "booth_browser_log":
       return { path: "", text: "見本では記録はありません" } as T;
-    case "open_booth_browser":
-    case "show_booth_library":
-    case "browse_booth_history":
-    case "import_booth_library":
-      return (await previewLibraryWalk()) as T;
-    case "close_booth_browser":
-      return undefined as T;
+    case "browser_state": return previewBrowserState() as T;
+    case "browser_action": return previewBrowserAction(args.action as BrowserAction) as T;
+    case "save_browser_bookmark": return previewSaveBookmark(args.originalUrl as string | null, String(args.title ?? ""), String(args.url ?? "")) as T;
+    case "delete_browser_bookmark": return previewDeleteBookmark(String(args.url ?? "")) as T;
+    case "open_booth_browser": previewOpenBrowser(); return undefined as T;
+    case "show_booth_library": previewBrowserAction({ kind: "navigate", url: "https://accounts.booth.pm/library" }); return undefined as T;
+    case "browse_booth_history": previewBrowserAction({ kind: args.forward ? "forward" : "back" }); return undefined as T;
+    case "import_booth_library": return (await previewLibraryWalk()) as T;
+    case "close_booth_browser": previewCloseBrowser(); return undefined as T;
     case "cancel_booth_library":
       previewLibraryCancel = true;
       return undefined as T;

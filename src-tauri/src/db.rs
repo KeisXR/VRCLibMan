@@ -427,6 +427,45 @@ fn save_settings_values(
     tx.commit().sql()
 }
 
+pub(crate) fn browser_bookmarks(
+    connection: &Connection,
+) -> Result<Vec<crate::browser_tabs::Bookmark>, String> {
+    match setting(connection, "browser_bookmarks")? {
+        Some(raw) => serde_json::from_str(&raw).map_err(|_| "ブックマークを読めません".into()),
+        None => Ok(vec![
+            crate::browser_tabs::Bookmark::new("BOOTH", "https://booth.pm/")?,
+            crate::browser_tabs::Bookmark::new("購入ライブラリ", crate::browser::LIBRARY_URL)?,
+        ]),
+    }
+}
+
+pub(crate) fn save_browser_bookmark(
+    connection: &Connection,
+    original: Option<&str>,
+    title: &str,
+    url: &str,
+) -> Result<(), String> {
+    let mut bookmarks = browser_bookmarks(connection)?;
+    crate::browser_tabs::save_bookmark(&mut bookmarks, original, title, url)?;
+    set_setting(
+        connection,
+        "browser_bookmarks",
+        &serde_json::to_string(&bookmarks)
+            .map_err(|_| "ブックマークを保存できません".to_string())?,
+    )
+}
+
+pub(crate) fn delete_browser_bookmark(connection: &Connection, url: &str) -> Result<(), String> {
+    let mut bookmarks = browser_bookmarks(connection)?;
+    bookmarks.retain(|bookmark| bookmark.url != url);
+    set_setting(
+        connection,
+        "browser_bookmarks",
+        &serde_json::to_string(&bookmarks)
+            .map_err(|_| "ブックマークを保存できません".to_string())?,
+    )
+}
+
 pub(crate) fn booth_page_interval_ms(connection: &Connection) -> Result<u64, String> {
     let stored = setting(connection, "booth_page_interval_ms")?
         .and_then(|value| value.parse::<u64>().ok())
@@ -3827,6 +3866,23 @@ mod tests {
     use super::*;
     use crate::import_data::parse_export;
     use crate::view::{avatar_cards, avatar_detail, queue_page};
+
+    #[test]
+    fn bookmarks_persist_edits_and_intentionally_empty_lists() {
+        let connection = open_memory().unwrap();
+        assert_eq!(browser_bookmarks(&connection).unwrap().len(), 2);
+        save_browser_bookmark(&connection, None, "テストのサイト", "https://example.com/path?q=1").unwrap();
+        ensure_ready(&connection).unwrap();
+        assert!(browser_bookmarks(&connection).unwrap().iter().any(|item| item.title == "テストのサイト" && item.url == "https://example.com/path?q=1"));
+        save_browser_bookmark(&connection, Some("https://example.com/path?q=1"), "変更した名前", "https://example.com/other").unwrap();
+        assert!(browser_bookmarks(&connection).unwrap().iter().any(|item| item.title == "変更した名前"));
+        let before = browser_bookmarks(&connection).unwrap();
+        assert!(save_browser_bookmark(&connection, None, "不正", "javascript:alert(1)").is_err());
+        assert_eq!(browser_bookmarks(&connection).unwrap(), before);
+        for item in before { delete_browser_bookmark(&connection, &item.url).unwrap(); }
+        ensure_ready(&connection).unwrap();
+        assert!(browser_bookmarks(&connection).unwrap().is_empty());
+    }
 
     #[test]
     fn version_one_migration_preserves_library_and_saved_model() {

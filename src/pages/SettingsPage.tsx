@@ -341,7 +341,7 @@ export function SettingsPage() {
           <section className="settings-section">
             <header><h2>BOOTH の読み込み方</h2><p>拡張機能・内蔵ブラウザ・併用を選び、その場で保存します。</p></header>
             <div className="section-body"><BoothImportSettings onFail={fail} onChange={() => refresh()} /></div>
-            {settings.builtinBrowser && <div className="section-actions"><button className="button danger" type="button" onClick={() => void (async () => { if (!window.confirm("ブラウザを閉じ、このアプリの中の BOOTH のログイン状態を消します。")) return; try { await api.clearBoothSession(); notify("セッションを消しました"); } catch (err) { fail(errorText(err)); } })()}>ログアウトしてセッションを消す</button></div>}
+            {settings.builtinBrowser && <div className="section-actions"><button className="button danger" type="button" onClick={() => void (async () => { if (!window.confirm("ブラウザを閉じ、内蔵ブラウザで開いたすべてのサイトのログイン状態と閲覧データを消します。ブックマークは残ります。")) return; try { await api.clearBoothSession(); notify("セッションを消しました"); } catch (err) { fail(errorText(err)); } })()}>ログアウトしてセッションを消す</button></div>}
           </section>
 
           <section className="settings-section">
@@ -362,8 +362,8 @@ export function SettingsPage() {
               <summary>プライバシー</summary>
               <p>本アプリには、利用者の情報を開発者へ送信する機能はありません。</p>
               <p>アカウント情報・購入情報・設定は端末内で扱います。分類には同じ端末の Ollama または Apple のオンデバイスモデルを使用します。</p>
-              <p>BOOTH／pixiv でのログインや閲覧には、そのサービスとの通信を行います。内蔵ブラウザのログイン状態は端末内に保存し、選択したファイルのダウンロード時には BOOTH の Cookie を利用します。</p>
-              <p>ログイン状態は「ログアウトしてセッションを消す」で削除できます。ライブラリ情報や設定は、この操作では削除されません。</p>
+              <p>内蔵ブラウザでの閲覧やログインには、開いたサイトとの通信を行います。ログイン状態とブックマークは端末内に保存し、選択したファイルのダウンロード時には BOOTH の Cookie を利用します。</p>
+              <p>各サイトのログイン状態と閲覧データは「ログアウトしてセッションを消す」で削除できます。ライブラリ情報・設定・ブックマークは残ります。</p>
             </details>
           </section>
         </div>
