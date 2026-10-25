@@ -24,6 +24,7 @@ mod resolve;
 mod scan;
 mod thumb;
 mod view;
+mod updater;
 
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
@@ -58,11 +59,13 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .on_window_event(|window, event| {
             presence::handle_main_close(window, event);
         })
         .setup(|app| {
             use tauri_plugin_deep_link::DeepLinkExt;
+            updater::initialize(app.handle());
             let directory = app.path().app_data_dir()?;
             std::fs::create_dir_all(&directory)?;
             let thumbs = directory.join("thumbs");
@@ -145,6 +148,10 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::updater_status,
+            commands::check_app_update,
+            commands::download_app_update,
+            commands::install_app_update,
             commands::import_export,
             commands::extension_link,
             commands::integration_status,

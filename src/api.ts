@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AppUpdateStatus,
   AvatarCard,
   BrowserState,
   BrowserAction,
@@ -44,6 +45,13 @@ export async function appVersion(): Promise<string> {
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
+
+export const appUpdater = {
+  status: () => call<AppUpdateStatus>("updater_status"),
+  check: () => call<AppUpdateStatus>("check_app_update"),
+  download: () => call<AppUpdateStatus>("download_app_update"),
+  install: () => call<AppUpdateStatus>("install_app_update"),
+};
 
 const refreshBus = new EventTarget();
 

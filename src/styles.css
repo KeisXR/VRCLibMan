@@ -776,3 +776,9 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
   .browser-navigation > .browser-icon:nth-child(4) { display: none; }
 }
 @container (max-width: 360px) { .browser-address > button { display: none; } }
+.app-updater { width: 100%; }
+.app-updater > p { margin: 0 0 10px; }
+.app-updater .inline-control { flex-wrap: wrap; }
+.app-updater > progress { width: 100%; margin-bottom: 10px; accent-color: var(--accent); }
+.app-updater .meta { margin: 10px 0 0; }
+.update-notes { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; overflow: auto; }
