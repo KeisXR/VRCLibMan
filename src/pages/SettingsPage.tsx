@@ -325,10 +325,6 @@ export function SettingsPage() {
           </section>
 
           <section className="settings-section">
-            <header><h2>ブラウザ連携</h2><p>BOOTH を開く方法を選びます。</p></header>
-          </section>
-
-          <section className="settings-section">
             <header><h2>起動と常駐</h2><p>ウィンドウを閉じた後の動作を設定します。</p></header>
             <SettingRow label="バックグラウンドで動作" help="ウィンドウを閉じても拡張機能からのダウンロードを受け付けます。">
               <label className="switch-label"><input type="checkbox" checked={settings.backgroundMode} onChange={(e) => { const enabled = e.target.checked; changeSettings({ backgroundMode: enabled, launchAtLogin: enabled ? settings.launchAtLogin : false }); }} />有効にする</label>
