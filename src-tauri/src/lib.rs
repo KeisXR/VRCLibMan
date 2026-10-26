@@ -13,6 +13,7 @@ mod db;
 mod import_data;
 mod integration;
 mod library_files;
+mod remote_sync;
 mod library_walk;
 mod local_import;
 mod matching;
@@ -138,6 +139,7 @@ pub fn run() {
                     *slot = left;
                 }
             }
+            crate::remote_sync::start(app.handle());
             let _ = presence::sync_login_item(
                 app.handle(),
                 presence::autostart_should_enable(background_mode, launch_at_login),
@@ -206,6 +208,7 @@ pub fn run() {
             commands::add_free_product,
             commands::pull_remote_file,
             commands::push_remote_file,
+            commands::remote_sync_status,
             commands::cache_thumbnails,
             commands::open_booth_browser,
             commands::browser_state,

@@ -281,6 +281,11 @@ pub fn list_knowledge(state: State<'_, AppState>) -> Result<Knowledge, String> {
 }
 
 #[tauri::command]
+pub fn remote_sync_status(app: AppHandle) -> Result<crate::remote_sync::Status, String> {
+    crate::remote_sync::status(&app)
+}
+
+#[tauri::command]
 pub fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
     let mut connection = db(&state)?;
     db::settings(&mut connection)
@@ -305,6 +310,7 @@ pub fn save_settings(
                 library_folder: settings.library_folder,
                 builtin_browser: settings.builtin_browser,
                 remote_library_folder: settings.remote_library_folder,
+                remote_auto_sync: settings.remote_auto_sync,
                 route_downloads: settings.route_downloads,
                 llm_backend: settings.llm_backend,
                 background_mode: settings.background_mode,
@@ -313,6 +319,7 @@ pub fn save_settings(
         )?;
         db::settings(&connection)?
     };
+    crate::remote_sync::wake(&app);
     crate::presence::remember_background(&app, saved.background_mode);
     crate::presence::apply_presence(&app, saved.background_mode, saved.launch_at_login)
 }
@@ -331,6 +338,9 @@ pub fn update_settings(
             db::update_settings(&connection, &patch)?,
         )
     };
+    if patch.remote_auto_sync.is_some() || patch.remote_library_folder.is_some() {
+        crate::remote_sync::wake(&app);
+    }
     if presence_changed {
         if let Err(error) =
             crate::presence::apply_presence(&app, saved.background_mode, saved.launch_at_login)

@@ -212,10 +212,19 @@ export interface Settings {
   libraryFolder: string;
   builtinBrowser: boolean;
   remoteLibraryFolder: string;
+  remoteAutoSync: boolean;
   routeDownloads: boolean;
   llmBackend: "ollama" | "apple";
   backgroundMode: boolean;
   launchAtLogin: boolean;
+}
+
+export interface RemoteSyncStatus {
+  running: boolean;
+  copied: number;
+  skipped: number;
+  lastCompletedAt: string | null;
+  error: string | null;
 }
 
 export interface StagedDownload {

@@ -121,6 +121,7 @@ const store: Store = {
     confidenceThreshold: 0.6,
     libraryFolder: "C:\\Assets",
     builtinBrowser: false,
+    remoteAutoSync: false,
     remoteLibraryFolder: "\\\\nas\\vrclibman",
     routeDownloads: false,
     llmBackend: "ollama",
@@ -1094,11 +1095,14 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     case "regenerate_extension_token":
       extensionLink.token = extensionLink.token === "K7NP-4Q2M" ? "M8QR-5S3N" : "K7NP-4Q2M";
       return { ...extensionLink } as T;
+    case "remote_sync_status":
+      return { running: false, copied: 0, skipped: 0, lastCompletedAt: null, error: null } as T;
     case "update_settings":
     case "save_settings": {
       const settings = command === "update_settings" ? { ...store.settings, ...(args.patch as Partial<Settings>) } : args.settings as Settings;
       if (!/^http:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i.test(settings.ollamaBaseUrl.replace(/\/$/, ""))) throw new Error("Ollamaは手元のPC（localhost）だけに接続します");
       if (!/^[a-zA-Z0-9._:/-]{1,80}$/.test(settings.ollamaModel.trim())) throw new Error("モデル名が不正です");
+      if (settings.remoteAutoSync && !settings.remoteLibraryFolder.trim()) throw new Error("自動同期をオンにする前に、リモートライブラリのフォルダを選んでください");
       if (settings.routeDownloads && !settings.libraryFolder.trim()) throw new Error("自動整理をオンにする前に、ライブラリのフォルダを選んでください");
       const backgroundMode = Boolean(settings.backgroundMode);
       store.settings = { ...settings, ollamaModel: settings.ollamaModel.trim(), backgroundMode, launchAtLogin: backgroundMode && Boolean(settings.launchAtLogin), confidenceThreshold: Math.min(1, Math.max(0, settings.confidenceThreshold)) };

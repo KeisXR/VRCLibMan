@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, appVersion, chooseFolder, openExternal } from "../api";
 import { useShell } from "../App";
 import { formatBytes } from "../media";
-import type { AppleFmStatus, AvatarRecord, BaseBody, CatalogInfo, IntegrationStatus, Knowledge } from "../types";
+import type { AppleFmStatus, AvatarRecord, BaseBody, CatalogInfo, IntegrationStatus, Knowledge, RemoteSyncStatus } from "../types";
 import { errorText } from "../ui";
 import { SettingRow } from "../components/SettingRow";
 import { ModelPicker } from "../components/ModelPicker";
@@ -48,6 +48,20 @@ export function SettingsPage() {
   const [apple, setApple] = useState<AppleFmStatus | null>(null);
   const [catalog, setCatalog] = useState<CatalogInfo | null>(null);
   const [pulling, setPulling] = useState(false);
+  const [remoteSync, setRemoteSync] = useState<RemoteSyncStatus | null>(null);
+
+  useEffect(() => {
+    if (!settings?.remoteAutoSync) return;
+    let cancelled = false;
+    const update = () => void api.remoteSyncStatus().then(
+      (next) => { if (!cancelled) setRemoteSync(next); },
+      (err: unknown) => { if (!cancelled) setRemoteSync({ running: false, copied: 0, skipped: 0, lastCompletedAt: null, error: errorText(err) }); },
+    );
+    setRemoteSync(null);
+    update();
+    const timer = window.setInterval(update, 3000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [settings?.remoteAutoSync, settings?.remoteLibraryFolder]);
 
   useEffect(() => {
     let cancelled = false;
@@ -309,9 +323,13 @@ export function SettingsPage() {
               <div className="inline-control"><input value={settings.libraryFolder} placeholder="ダウンロードしたファイルの移動先" onChange={(e) => changeSettings({ libraryFolder: e.target.value, ...(!e.target.value.trim() ? { routeDownloads: false } : {}) }, 300)} onBlur={flushSettings} /><button className="button" type="button" onClick={() => void chooseLibrary()}>選ぶ</button></div>
             </SettingRow>
             <SettingRow label="リモートライブラリ" help="ネットワークドライブやマウント済みのフォルダを指定します。">
-              <div className="inline-control"><input value={settings.remoteLibraryFolder} placeholder="リモートのフォルダ" onChange={(e) => changeSettings({ remoteLibraryFolder: e.target.value }, 300)} onBlur={flushSettings} /><button className="button" type="button" onClick={() => void chooseFolder().then((path) => { if (path) changeSettings({ remoteLibraryFolder: path }); }, (err: unknown) => fail(errorText(err)))}>選ぶ</button></div>
+              <div className="inline-control"><input value={settings.remoteLibraryFolder} placeholder="リモートのフォルダ" onChange={(e) => changeSettings({ remoteLibraryFolder: e.target.value, remoteAutoSync: false }, 300)} onBlur={flushSettings} /><button className="button" type="button" onClick={() => void chooseFolder().then((path) => { if (path) changeSettings({ remoteLibraryFolder: path, remoteAutoSync: false }); }, (err: unknown) => fail(errorText(err)))}>選ぶ</button></div>
             </SettingRow>
-            <details className="settings-details"><summary>リモートライブラリについて</summary><p>「リモートへコピー」「ローカルへコピー」を押したファイルだけをコピーします。接続できない共有先のファイルは利用できません。</p></details>
+            <SettingRow label="リモートへ自動同期" help="アプリ起動中、登録済みの手元のファイルを約1分ごとにリモートへコピーします。">
+              <label className="switch-label"><input type="checkbox" checked={settings.remoteAutoSync} disabled={!settings.remoteLibraryFolder.trim()} onChange={(e) => changeSettings({ remoteAutoSync: e.target.checked })} />有効にする</label>
+            </SettingRow>
+            {settings.remoteAutoSync && <div className="section-body"><p className="meta" role="status">{remoteSync?.running ? `同期中（${remoteSync.copied} 件コピー済み）` : remoteSync?.error ? `同期を再試行します: ${remoteSync.error}` : remoteSync?.lastCompletedAt ? `最終確認: ${new Date(remoteSync.lastCompletedAt).toLocaleString("ja-JP")}（${remoteSync.copied} 件コピー、${remoteSync.skipped} 件は同名ファイルあり）` : "同期を待っています"}</p></div>}
+            <details className="settings-details"><summary>リモートライブラリについて</summary><p>自動同期は既定でオフです。オンにすると、登録済みのファイルをリモートの商品IDフォルダへコピーします。保存先を変更すると自動同期はオフになります。除外した商品と未登録のファイルは対象外です。同名ファイルは上書きせず、ローカルとリモートのファイルを削除しません。</p><p>接続できないときは後で再試行します。オフにしても、処理中の1件は完了する場合があります。リモートから取得する場合は「ローカルへコピー」を使ってください。</p></details>
             <SettingRow label="ダウンロードを自動整理" help="自分でダウンロードしたファイルだけを商品別にライブラリへ移動します。">
               <label className="switch-label"><input type="checkbox" checked={settings.routeDownloads} onChange={(e) => void changeRouting(e.target.checked)} />有効にする</label>
             </SettingRow>
@@ -320,7 +338,7 @@ export function SettingsPage() {
 
           <section className="settings-section">
             <header><h2>起動と常駐</h2><p>ウィンドウを閉じた後の動作を設定します。</p></header>
-            <SettingRow label="バックグラウンドで動作" help="ウィンドウを閉じても、商品情報の受信とダウンロード後の自動整理を続けます。">
+            <SettingRow label="バックグラウンドで動作" help="ウィンドウを閉じても、商品情報の受信・自動整理・リモートへの自動同期を続けます。">
               <label className="switch-label"><input type="checkbox" checked={settings.backgroundMode} onChange={(e) => { const enabled = e.target.checked; changeSettings({ backgroundMode: enabled, launchAtLogin: enabled ? settings.launchAtLogin : false }); }} />有効にする</label>
             </SettingRow>
             <SettingRow label="ログイン時に起動" help="バックグラウンド動作が有効な場合だけ使用できます。">

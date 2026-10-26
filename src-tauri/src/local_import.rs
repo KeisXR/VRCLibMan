@@ -284,6 +284,7 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
                         library_folder: settings.library_folder,
                         builtin_browser: settings.builtin_browser,
                         remote_library_folder: settings.remote_library_folder,
+                        remote_auto_sync: settings.remote_auto_sync,
                         route_downloads: enabled,
                         llm_backend: settings.llm_backend,
                         background_mode: settings.background_mode,

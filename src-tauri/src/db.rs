@@ -259,6 +259,7 @@ fn ensure_ready(connection: &Connection) -> Result<(), String> {
         ("builtin_browser", "0"),
         ("booth_page_interval_ms", "1000"),
         ("remote_library_folder", ""),
+        ("remote_auto_sync", "0"),
         ("route_downloads", "0"),
         ("llm_backend", "ollama"),
         ("background_mode", "0"),
@@ -308,6 +309,7 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
         library_folder: setting(connection, "library_folder")?.unwrap_or_default(),
         builtin_browser: setting(connection, "builtin_browser")?.as_deref() == Some("1"),
         remote_library_folder: setting(connection, "remote_library_folder")?.unwrap_or_default(),
+        remote_auto_sync: setting(connection, "remote_auto_sync")?.as_deref() == Some("1"),
         route_downloads: setting(connection, "route_downloads")?.as_deref() == Some("1"),
         llm_backend: normalize_backend(
             &setting(connection, "llm_backend")?.unwrap_or_else(|| "ollama".into()),
@@ -355,6 +357,9 @@ fn save_settings_values(
     let backend = normalize_backend(&input.llm_backend);
     if backend == "apple" && !crate::apple_fm::can_select(None) {
         return Err("Apple のオンデバイスモデルは、今の Mac では使えません".into());
+    }
+    if input.remote_auto_sync {
+        crate::remote_sync::validate_root(input.remote_library_folder.trim())?;
     }
     if input.route_downloads && library.is_empty() {
         return Err("自動整理をオンにする前に、ライブラリのフォルダを選んでください".into());
@@ -407,6 +412,11 @@ fn save_settings_values(
         connection,
         "remote_library_folder",
         input.remote_library_folder.trim(),
+    )?;
+    set_setting(
+        connection,
+        "remote_auto_sync",
+        if input.remote_auto_sync { "1" } else { "0" },
     )?;
     set_setting(
         connection,
@@ -4719,6 +4729,7 @@ mod tests {
                 library_folder: String::new(),
                 builtin_browser: false,
                 remote_library_folder: String::new(),
+                remote_auto_sync: false,
                 route_downloads: false,
                 llm_backend: "ollama".into(),
                 background_mode: false,
@@ -4775,6 +4786,7 @@ mod tests {
                 library_folder: String::new(),
                 builtin_browser: true,
                 remote_library_folder: String::new(),
+                remote_auto_sync: false,
                 route_downloads: false,
                 llm_backend: "ollama".into(),
                 background_mode: false,
@@ -5831,6 +5843,7 @@ mod tests {
                 library_folder: String::new(),
                 builtin_browser: false,
                 remote_library_folder: String::new(),
+                remote_auto_sync: false,
                 route_downloads: true,
                 llm_backend: "ollama".into(),
                 background_mode: false,
@@ -5847,6 +5860,7 @@ mod tests {
                 library_folder: library.display().to_string(),
                 builtin_browser: false,
                 remote_library_folder: String::new(),
+                remote_auto_sync: false,
                 route_downloads: true,
                 llm_backend: "ollama".into(),
                 background_mode: false,
@@ -5958,6 +5972,7 @@ mod tests {
                 library_folder: library.display().to_string(),
                 builtin_browser: browser,
                 remote_library_folder: String::new(),
+                remote_auto_sync: false,
                 route_downloads: route,
                 llm_backend: "ollama".into(),
                 background_mode: false,
@@ -6216,6 +6231,7 @@ mod tests {
             library_folder: String::new(),
             builtin_browser: false,
             remote_library_folder: String::new(),
+            remote_auto_sync: false,
             route_downloads: false,
             llm_backend: "ollama".into(),
             background_mode: false,
@@ -6372,6 +6388,7 @@ mod tests {
                 library_folder: library.display().to_string(),
                 builtin_browser: false,
                 remote_library_folder: String::new(),
+                remote_auto_sync: false,
                 route_downloads: true,
                 llm_backend: "ollama".into(),
                 background_mode: false,
