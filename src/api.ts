@@ -30,6 +30,7 @@ import type {
   QueuePage,
   ScanReport,
   Settings,
+  RemoteSyncStatus,
   StagedDownload,
   ItemView,
 } from "./types";
@@ -110,6 +111,7 @@ export const api = {
   productOptions: () => call<ProductOption[]>("list_product_options"),
   knowledge: () => call<Knowledge>("list_knowledge"),
   settings: () => call<Settings>("get_settings"),
+  remoteSyncStatus: () => call<RemoteSyncStatus>("remote_sync_status"),
   integrationStatus: () => call<IntegrationStatus>("integration_status"),
   setBoothImportMode: (mode: BoothImportMode) => call<void>("set_booth_import_mode", { mode }),
   extensionLink: () => call<ExtensionLink>("extension_link"),

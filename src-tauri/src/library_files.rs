@@ -686,6 +686,68 @@ pub(crate) fn push_file(
     Ok(dest)
 }
 
+/// Publish a complete file without replacing a remote file, even if another
+/// process creates the destination after our existence check.
+pub(crate) fn push_missing_file(
+    source: &Path,
+    remote_root: &Path,
+    booth_id: &str,
+    filename: &str,
+) -> Result<bool, String> {
+    // Automatic sync runs on one dedicated worker. Keep filesystem operations
+    // on that worker so a blocked share cannot accumulate detached probe threads.
+    if !remote_root.is_absolute() || !remote_root.is_dir() {
+        return Err("リモートのフォルダに届きません。接続後に再試行します".into());
+    }
+    let dest = library_destination(remote_root, booth_id, filename)?;
+    let parent = dest.parent().ok_or("同期先を確認できません")?;
+    std::fs::create_dir_all(parent).map_err(|err| format!("同期先を作れません: {err}"))?;
+    let root = remote_root
+        .canonicalize()
+        .map_err(|err| format!("同期先を確認できません: {err}"))?;
+    let parent_canon = parent
+        .canonicalize()
+        .map_err(|err| format!("同期先を確認できません: {err}"))?;
+    if !parent_canon.starts_with(&root) {
+        return Err("送信先がリモートの外です".into());
+    }
+    match std::fs::symlink_metadata(&dest) {
+        Ok(_) => return Ok(false),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(format!("同期先を確認できません: {err}")),
+    }
+    let before = std::fs::symlink_metadata(source)
+        .map_err(|err| format!("同期元を確認できません: {err}"))?;
+    if !before.is_file() || before.file_type().is_symlink() {
+        return Err("同期元は通常のファイルを指定してください".into());
+    }
+    let mut input =
+        std::fs::File::open(source).map_err(|err| format!("同期元を開けません: {err}"))?;
+    let mut temp = tempfile::Builder::new()
+        .prefix(".vrclibman-sync-")
+        .tempfile_in(dest.parent().unwrap())
+        .map_err(|err| format!("同期用の一時ファイルを作れません: {err}"))?;
+    let copied =
+        std::io::copy(&mut input, &mut temp).map_err(|err| format!("同期できません: {err}"))?;
+    let after = input
+        .metadata()
+        .map_err(|err| format!("同期元を確認できません: {err}"))?;
+    if copied != before.len()
+        || after.len() != before.len()
+        || after.modified().ok() != before.modified().ok()
+    {
+        return Err("同期中に元のファイルが変更されました。次の同期で再試行します".into());
+    }
+    temp.as_file()
+        .sync_all()
+        .map_err(|err| format!("同期ファイルを保存できません: {err}"))?;
+    match temp.persist_noclobber(dest) {
+        Ok(_) => Ok(true),
+        Err(err) if err.error.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+        Err(err) => Err(format!("同期ファイルを保存できません: {}", err.error)),
+    }
+}
+
 fn copy_confirmed(source: &Path, dest: &Path) -> Result<(), String> {
     match probe_file(source, PROBE_TIMEOUT) {
         Probe::Present => {}

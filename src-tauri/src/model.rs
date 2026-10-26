@@ -279,6 +279,7 @@ pub struct Settings {
     pub library_folder: String,
     pub builtin_browser: bool,
     pub remote_library_folder: String,
+    pub remote_auto_sync: bool,
     pub route_downloads: bool,
     pub llm_backend: String,
     pub background_mode: bool,
@@ -296,6 +297,8 @@ pub struct SettingsInput {
     pub builtin_browser: bool,
     #[serde(default)]
     pub remote_library_folder: String,
+    #[serde(default)]
+    pub remote_auto_sync: bool,
     #[serde(default)]
     pub route_downloads: bool,
     #[serde(default = "default_llm_backend")]
@@ -315,6 +318,7 @@ pub struct SettingsPatch {
     pub library_folder: Option<String>,
     pub builtin_browser: Option<bool>,
     pub remote_library_folder: Option<String>,
+    pub remote_auto_sync: Option<bool>,
     pub route_downloads: Option<bool>,
     pub llm_backend: Option<String>,
     pub background_mode: Option<bool>,
@@ -341,6 +345,7 @@ impl SettingsPatch {
                 .remote_library_folder
                 .clone()
                 .unwrap_or(current.remote_library_folder),
+            remote_auto_sync: self.remote_auto_sync.unwrap_or(current.remote_auto_sync),
             route_downloads: self.route_downloads.unwrap_or(current.route_downloads),
             llm_backend: self.llm_backend.clone().unwrap_or(current.llm_backend),
             background_mode: self.background_mode.unwrap_or(current.background_mode),

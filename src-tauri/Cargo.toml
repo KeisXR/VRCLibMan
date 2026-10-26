@@ -29,6 +29,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 getrandom = "0.3"
 tiny_http = "0.12"
+tempfile = "3.27"
 # deep-link 2.6.2 builds a rust-ini 0.21 ParseOption literal. 0.21.3 added fields.
 rust-ini = "=0.21.1"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
