@@ -722,9 +722,9 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
   gap: 8px;
   margin-bottom: 8px;
   padding: 10px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  background: var(--surface-elevated);
+  background: var(--surface);
   font-size: 12px;
   line-height: 1.4;
 }
