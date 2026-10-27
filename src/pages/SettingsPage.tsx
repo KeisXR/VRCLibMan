@@ -11,6 +11,7 @@ import { MODEL_CHOICES, modelDownloadPrompt } from "../models";
 import { useSettingsAutosave } from "../useSettingsAutosave";
 import { extensionVersionMessage } from "../versions";
 import { AppUpdater } from "../components/AppUpdater";
+import { ClassificationFeedback } from "../components/ClassificationFeedback";
 import { OllamaMemoryControls } from "../components/OllamaMemoryControls";
 
 const emptyAvatar = {
@@ -435,6 +436,14 @@ export function SettingsPage() {
           </div>
         </div>
       </section>
+
+      <details className="settings-section debug-section">
+        <summary>
+          <span className="debug-summary-title">デバッグ</span>
+          <span className="debug-summary-help">分類ルールの改善に渡すデータです。普段は閉じておきます。</span>
+        </summary>
+        <ClassificationFeedback />
+      </details>
     </section>
   );
 }

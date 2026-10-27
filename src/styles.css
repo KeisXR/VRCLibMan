@@ -968,11 +968,61 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 }
 .settings-status { position: sticky; bottom: var(--space-3); z-index: 2; margin: var(--space-3) 0; padding: 10px 14px; border-radius: var(--radius-control); background: var(--surface); box-shadow: var(--shadow); }
 .knowledge-section { margin-top: var(--space-4); padding-bottom: var(--space-4); }
+.debug-section { margin-top: var(--space-4); }
+.debug-section > summary {
+  padding: var(--space-4) var(--space-5);
+  cursor: pointer;
+}
+.debug-section > summary .debug-summary-title { font-size: 17px; font-weight: 700; }
+.debug-section > summary .debug-summary-help {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 400;
+}
+.debug-section[open] > summary { border-bottom: 1px solid var(--line); }
+.debug-section .inline-control { flex-wrap: wrap; }
+.scope-choices {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.scope-choices label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  font-size: 13px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.scope-choices label:has(input:checked) {
+  border-color: var(--button);
+  background: var(--surface-secondary);
+  font-weight: 650;
+}
+.scope-choices input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--button);
+}
 .knowledge-section .knowledge { padding: var(--space-4) var(--space-5) 0; }
 @media (max-width: 760px) {
   .setting-row { grid-template-columns: 1fr; gap: var(--space-2); }
   .setting-control, .switch-label { justify-content: flex-start; }
   .inline-control { justify-content: flex-start; flex-wrap: wrap; }
+  .scope-choices { justify-content: flex-start; }
   .setting-control .version-info { text-align: left; }
   .inline-control > input, .inline-control > select { flex: 1 1 240px; }
   .knowledge-section .knowledge { grid-template-columns: 1fr; }
