@@ -80,6 +80,7 @@ pub struct ItemView {
 pub struct GenreProducts {
     pub items: Vec<ItemView>,
     pub counts: HashMap<String, u32>,
+    pub total: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -272,6 +273,28 @@ pub fn products_by_ids(snapshot: &Snapshot, ids: &[String]) -> Vec<ItemView> {
         .filter_map(|id| snapshot.products.iter().find(|product| product.booth_id == *id))
         .map(|product| item_view(snapshot, product, false))
         .collect()
+}
+
+/// `all_ids` is every product of the kind (for the genre counts), `ids` the selected genre.
+pub fn genre_products(snapshot: &Snapshot, all_ids: &[String], ids: &[String]) -> GenreProducts {
+    let wanted: HashSet<&str> = all_ids.iter().map(String::as_str).collect();
+    let mut counts = HashMap::new();
+    let mut total = 0;
+    for product in snapshot
+        .products
+        .iter()
+        .filter(|product| wanted.contains(product.booth_id.as_str()))
+    {
+        total += 1;
+        if let Some(genre) = &product.genre {
+            *counts.entry(genre.clone()).or_insert(0) += 1;
+        }
+    }
+    GenreProducts {
+        items: products_by_ids(snapshot, ids),
+        counts,
+        total,
+    }
 }
 
 fn file_presence(snapshot: &Snapshot, booth_id: &str) -> String {
@@ -1006,6 +1029,34 @@ mod tests {
                 .map(|item| item.booth_id.as_str())
                 .collect::<Vec<_>>(),
             vec!["a", "b", "c"]
+        );
+    }
+
+    #[test]
+    fn genre_products_count_every_genre_of_the_kind_and_list_only_the_selected_one() {
+        let mut snapshot = sample();
+        snapshot.products[3].genre = Some("outfit".into());
+        snapshot.products[4].genre = Some("gimmick".into());
+        snapshot.products[5].genre = Some("hair".into());
+        snapshot.products[6].genre = None;
+        let all: Vec<String> = ["4", "5", "6", "7"]
+            .iter()
+            .map(|id| id.to_string())
+            .collect();
+        let selected = vec!["6".to_string()];
+        let result = genre_products(&snapshot, &all, &selected);
+        assert_eq!(result.total, 4);
+        assert_eq!(result.counts.get("outfit"), Some(&1));
+        assert_eq!(result.counts.get("gimmick"), Some(&1));
+        assert_eq!(result.counts.get("hair"), Some(&1));
+        assert_eq!(result.counts.values().sum::<u32>(), 3);
+        assert_eq!(
+            result
+                .items
+                .iter()
+                .map(|item| item.booth_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["6"]
         );
     }
 }

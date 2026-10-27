@@ -424,6 +424,52 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       },
     );
     await t.test(
+      "asset page browses products by genre through the hash route",
+      async () => {
+        const main = () => document.querySelector("main");
+        const tabs = () => [...document.querySelectorAll(".genre-tabs a")];
+        const activeTab = () => document.querySelector('.genre-tabs a[aria-current="page"]');
+        assert.ok(document.querySelector('.rail a[href="#/assets"]'));
+        const all = await api.productsByGenre("asset");
+        assert.ok(all.total > 0);
+        assert.ok(all.items.every((item) => item.category && item.category !== "avatar" && item.category !== "world"));
+        await route("#/assets");
+        await wait(() => main().querySelector("h1")?.textContent === "アセット");
+        await wait(() => main().querySelector(".item"));
+        assert.equal(tabs().length, 15);
+        assert.equal(activeTab().textContent, `すべて${all.total}`);
+        assert.equal(main().querySelectorAll(".item").length, all.items.length);
+        assert.ok(!main().textContent.includes("見本のワールド小物"));
+        assert.ok(!main().textContent.includes("説明がまだないアクセサリ"));
+
+        const eye = await api.productsByGenre("asset", "eye_texture");
+        assert.ok(eye.items.length > 0);
+        assert.ok(eye.items.every((item) => item.genre === "eye_texture"));
+        assert.equal(eye.total, all.total);
+        assert.ok(tabs().some((node) => node.getAttribute("href") === "#/assets/eye_texture"));
+        await route("#/assets/eye_texture");
+        await wait(() => activeTab()?.textContent.startsWith("アイテクスチャ"));
+        await wait(() => main().querySelectorAll(".item").length === eye.items.length);
+        assert.ok(main().textContent.includes(eye.items[0].title));
+        assert.ok(activeTab().textContent.endsWith(String(eye.counts.eye_texture)));
+
+        await route("#/assets/pose");
+        await wait(() => main().textContent.includes("「ポーズ」の商品はまだありません。"));
+        assert.ok(activeTab().classList.contains("tab-zero"));
+
+        await route("#/assets/not-a-genre");
+        await wait(() => main().textContent.includes("指定されたジャンルが見つからないため"));
+        await wait(() => activeTab()?.textContent.startsWith("すべて"));
+
+        const { filterItems, genreHref } = await server.ssrLoadModule("/src/components/GenreBrowser.tsx");
+        assert.equal(filterItems(all.items, "一致しない見本文字列").length, 0);
+        assert.equal(filterItems(all.items, "  ").length, all.items.length);
+        assert.ok(filterItems(all.items, eye.items[0].shop).length > 0);
+        assert.equal(genreHref("#/assets", null), "#/assets");
+        assert.equal(genreHref("#/assets", "eye_texture"), "#/assets/eye_texture");
+      },
+    );
+    await t.test(
       "import guidance follows the selected method and logout explains its deletion scope",
       async () => {
         const { requestRefresh } = await server.ssrLoadModule("/src/api.ts");
