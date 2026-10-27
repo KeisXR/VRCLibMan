@@ -324,10 +324,12 @@ export function SettingsPage() {
                     onStatus={setOllamaStatus}
                   />
                 </SettingRow>
-                <div className="section-actions">
-                  <button className="button" type="button" onClick={() => void testOllama()}>接続を確認</button>
-                  <span className="meta">{installedSize ? `モデルサイズ ${formatBytes(installedSize)}` : models.length ? `導入済み: ${models.join("、")}` : "導入済みモデル：未確認"}</span>
-                </div>
+                <SettingRow label="接続確認" help="Ollama への接続と、選択中モデルの導入状況を確認します。">
+                  <div className="inline-control">
+                    <button className="button" type="button" onClick={() => void testOllama()}>接続を確認</button>
+                    <span className="meta">{installedSize ? `モデルサイズ ${formatBytes(installedSize)}` : models.length ? `導入済み: ${models.join("、")}` : "導入済みモデル：未確認"}</span>
+                  </div>
+                </SettingRow>
               </>
             )}
             <details className="settings-details">
