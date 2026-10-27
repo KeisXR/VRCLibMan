@@ -825,8 +825,10 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
   gap: 8px;
   margin-bottom: 8px;
   width: 100%;
+  max-width: 100%;
   box-sizing: border-box;
   padding: 10px;
+  overflow: hidden;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: var(--surface);
@@ -835,15 +837,18 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 }
 .sidebar-updater-row {
   display: flex;
-  align-items: stretch;
+  align-items: center;
+  width: 100%;
   min-width: 0;
   gap: 0;
 }
 .sidebar-updater.faint .sidebar-updater-main { color: var(--text-secondary); }
 .sidebar-updater-main {
   flex: 1 1 auto;
+  width: 0;
   min-width: 0;
   padding: 0;
+  overflow: hidden;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -852,6 +857,8 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
   font-size: inherit;
   line-height: inherit;
   text-align: left;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   cursor: pointer;
 }
 .sidebar-updater-main:hover { color: var(--text); }
