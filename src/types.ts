@@ -239,6 +239,8 @@ export interface Settings {
   uiRailWidth: number;
   uiGenreWidth: number;
   uiGenreCollapsed: boolean;
+  checkUpdateOnStartup: boolean;
+  uiUpdateDismissedVersion: string;
 }
 
 export interface RemoteSyncStatus {

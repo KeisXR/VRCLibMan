@@ -283,6 +283,8 @@ fn ensure_ready(connection: &Connection) -> Result<(), String> {
         ("ui_rail_width", "232"),
         ("ui_genre_width", "200"),
         ("ui_genre_collapsed", "0"),
+        ("check_update_on_startup", "0"),
+        ("ui_update_dismissed_version", ""),
     ] {
         connection
             .execute(
@@ -346,6 +348,9 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
                 .unwrap_or(200),
         ),
         ui_genre_collapsed: setting(connection, "ui_genre_collapsed")?.as_deref() == Some("1"),
+        check_update_on_startup: setting(connection, "check_update_on_startup")?.as_deref() == Some("1"),
+        ui_update_dismissed_version: setting(connection, "ui_update_dismissed_version")?
+            .unwrap_or_default(),
     })
 }
 
@@ -479,6 +484,12 @@ fn save_settings_values(
         "ui_genre_collapsed",
         if input.ui_genre_collapsed { "1" } else { "0" },
     )?;
+    set_setting(
+        connection,
+        "check_update_on_startup",
+        if input.check_update_on_startup { "1" } else { "0" },
+    )?;
+    set_setting(connection, "ui_update_dismissed_version", &input.ui_update_dismissed_version)?;
     tx.commit().sql()
 }
 
@@ -4868,6 +4879,8 @@ mod tests {
                 ui_rail_width: 232,
                 ui_genre_width: 200,
                 ui_genre_collapsed: false,
+                check_update_on_startup: false,
+                ui_update_dismissed_version: String::new(),
             },
         )
         .unwrap();
@@ -4928,6 +4941,8 @@ mod tests {
                 ui_rail_width: 232,
                 ui_genre_width: 200,
                 ui_genre_collapsed: false,
+                check_update_on_startup: false,
+                ui_update_dismissed_version: String::new(),
             },
         )
         .unwrap();
@@ -5988,6 +6003,8 @@ mod tests {
                 ui_rail_width: 232,
                 ui_genre_width: 200,
                 ui_genre_collapsed: false,
+                check_update_on_startup: false,
+                ui_update_dismissed_version: String::new(),
             },
         );
         assert!(refused.unwrap_err().contains("ライブラリ"));
@@ -6008,6 +6025,8 @@ mod tests {
                 ui_rail_width: 232,
                 ui_genre_width: 200,
                 ui_genre_collapsed: false,
+                check_update_on_startup: false,
+                ui_update_dismissed_version: String::new(),
             },
         )
         .unwrap();
@@ -6123,6 +6142,8 @@ mod tests {
                 ui_rail_width: 232,
                 ui_genre_width: 200,
                 ui_genre_collapsed: false,
+                check_update_on_startup: false,
+                ui_update_dismissed_version: String::new(),
             },
         )
     }
@@ -6385,6 +6406,8 @@ mod tests {
             ui_rail_width: 232,
             ui_genre_width: 200,
             ui_genre_collapsed: false,
+            check_update_on_startup: false,
+            ui_update_dismissed_version: String::new(),
         };
         save_settings(&connection, &base).unwrap();
         let saved = settings(&connection).unwrap();
@@ -6545,6 +6568,8 @@ mod tests {
                 ui_rail_width: 232,
                 ui_genre_width: 200,
                 ui_genre_collapsed: false,
+                check_update_on_startup: false,
+                ui_update_dismissed_version: String::new(),
             },
         )
         .unwrap();

@@ -363,6 +363,16 @@ export function SettingsPage() {
                 </>}
               </div>
             </SettingRow>
+            <SettingRow label="起動時にアップデートを確認" help="配布版の起動時に、GitHub へ1回だけ更新を確認します。オフのときは手動の「更新を確認」だけです。">
+              <label className="switch-label">
+                <input
+                  type="checkbox"
+                  checked={settings.checkUpdateOnStartup}
+                  onChange={(e) => changeSettings({ checkUpdateOnStartup: e.target.checked })}
+                />
+                有効にする
+              </label>
+            </SettingRow>
             <SettingRow label="アプリの更新" help="公開済みの配布版を確認して、アプリ内で更新します。ライブラリと設定は引き継ぎます。">
               <AppUpdater beforeInstall={flush} workInProgress={workInProgress} />
             </SettingRow>
