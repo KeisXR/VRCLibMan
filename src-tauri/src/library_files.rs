@@ -1,5 +1,6 @@
 use crate::model::{DownloadFact, FilePlace, LocalFile, PlacedDownload};
 use crate::view::Snapshot;
+use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
@@ -795,6 +796,75 @@ pub(crate) fn fill_places(snapshot: &mut Snapshot, remote_folder: &str) {
     fill_places_inner(snapshot, remote_folder, true);
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProductRemoteProbe {
+    pub booth_id: String,
+    pub remote_checked: bool,
+    pub remote_reachable: bool,
+}
+
+/// Local placement for the whole library, then remote lookup for the given products only.
+pub(crate) fn probe_remote_for_products(
+    snapshot: &mut Snapshot,
+    remote_folder: &str,
+    booth_ids: &[String],
+) -> Vec<ProductRemoteProbe> {
+    use crate::model::FilePlace;
+    use std::collections::HashSet;
+
+    fill_local_places(snapshot, remote_folder);
+    let remote_folder = remote_folder.trim();
+    if booth_ids.is_empty() {
+        return Vec::new();
+    }
+    if remote_folder.is_empty() {
+        return booth_ids
+            .iter()
+            .map(|id| ProductRemoteProbe {
+                booth_id: id.clone(),
+                remote_checked: true,
+                remote_reachable: false,
+            })
+            .collect();
+    }
+    let id_set: HashSet<&str> = booth_ids.iter().map(|id| id.as_str()).collect();
+    let remote_root = Path::new(remote_folder);
+    let root_ok = probe_path(remote_root, PROBE_TIMEOUT) == Probe::Present;
+    let mut reachable: HashMap<String, bool> = booth_ids
+        .iter()
+        .map(|id| (id.clone(), root_ok))
+        .collect();
+    for placed in &mut snapshot.placed_downloads {
+        if !id_set.contains(placed.booth_id.as_str()) {
+            continue;
+        }
+        if placed.state == FilePlace::Local {
+            continue;
+        }
+        if !reachable.get(&placed.booth_id).copied().unwrap_or(false) {
+            continue;
+        }
+        match locate_remote(remote_root, &placed.booth_id, &placed.filename) {
+            RemoteHit::Found(path) => {
+                placed.remote_path = Some(path.display().to_string());
+                placed.state = FilePlace::Remote;
+            }
+            RemoteHit::Missing => {}
+            RemoteHit::Unreachable => {
+                reachable.insert(placed.booth_id.clone(), false);
+            }
+        };
+    }
+    booth_ids
+        .iter()
+        .map(|id| ProductRemoteProbe {
+            booth_id: id.clone(),
+            remote_checked: true,
+            remote_reachable: reachable.get(id).copied().unwrap_or(false),
+        })
+        .collect()
+}
+
 fn fill_places_inner(snapshot: &mut Snapshot, remote_folder: &str, probe_remote: bool) {
     let remote_folder = remote_folder.trim();
     snapshot.remote_configured = !remote_folder.is_empty();
@@ -1304,5 +1374,115 @@ mod tests {
         assert!(!looks_like_login_page(b"PK\x03\x04dummy"));
         assert!(!looks_like_login_page(&[0x1f, 0x8b, 0x08, 0x00]));
         assert!(!looks_like_login_page(b"{ \"asset\": true }"));
+    }
+
+    fn probe_product(id: &str) -> crate::model::Product {
+        crate::model::Product {
+            booth_id: id.into(),
+            title: id.into(),
+            shop: "S".into(),
+            url: format!("https://example.test/{id}"),
+            description_snippet: String::new(),
+            thumbnail_url: None,
+            thumbnail_path: None,
+            category: None,
+            category_locked: false,
+            genre: None,
+            genre_locked: false,
+            compatible_avatars: Vec::new(),
+            unresolved_names: Vec::new(),
+            is_generic: false,
+            confidence: None,
+            links_locked: false,
+            user_confirmed: false,
+            needs_review: false,
+            imported_at: String::new(),
+            updated_at: String::new(),
+            extracted_at: None,
+        }
+    }
+
+    fn probe_download(booth_id: &str, filename: &str) -> DownloadFact {
+        DownloadFact {
+            booth_id: booth_id.into(),
+            variation: String::new(),
+            filename: filename.into(),
+            size_bytes: Some(1),
+            downloaded: false,
+            local_path: None,
+        }
+    }
+
+    #[test]
+    fn probe_remote_for_products_only_touches_requested_ids() {
+        use crate::view::Snapshot;
+
+        let root = fixture_root("probe-products");
+        let remote = root.join("remote");
+        let booth_a = "424242";
+        let booth_b = "525252";
+        std::fs::create_dir_all(remote.join(booth_a)).unwrap();
+        std::fs::write(remote.join(booth_a).join("a.zip"), b"a").unwrap();
+        let mut snapshot = Snapshot {
+            products: vec![probe_product(booth_a), probe_product(booth_b)],
+            files: Vec::new(),
+            avatars: Vec::new(),
+            base_bodies: Vec::new(),
+            links: Vec::new(),
+            variations: Vec::new(),
+            download_rows: vec![probe_download(booth_a, "a.zip"), probe_download(booth_b, "b.zip")],
+            placed_downloads: Vec::new(),
+            product_flags: Vec::new(),
+            remote_configured: false,
+            remote_checked: false,
+            remote_reachable: false,
+        };
+        let probes = probe_remote_for_products(&mut snapshot, remote.to_str().unwrap(), &[booth_a.into()]);
+        assert_eq!(probes.len(), 1);
+        assert!(probes[0].remote_checked);
+        assert!(probes[0].remote_reachable);
+        let a = snapshot
+            .placed_downloads
+            .iter()
+            .find(|row| row.booth_id == booth_a)
+            .unwrap();
+        assert_eq!(a.state, FilePlace::Remote);
+        let b = snapshot
+            .placed_downloads
+            .iter()
+            .find(|row| row.booth_id == booth_b)
+            .unwrap();
+        assert_eq!(b.state, FilePlace::Missing);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn probe_remote_for_products_marks_unreachable_without_hanging() {
+        use crate::view::Snapshot;
+
+        let mut snapshot = Snapshot {
+            products: Vec::new(),
+            files: Vec::new(),
+            avatars: Vec::new(),
+            base_bodies: Vec::new(),
+            links: Vec::new(),
+            variations: Vec::new(),
+            download_rows: vec![probe_download("424242", "a.zip")],
+            placed_downloads: Vec::new(),
+            product_flags: Vec::new(),
+            remote_configured: false,
+            remote_checked: false,
+            remote_reachable: false,
+        };
+        let dead = Instant::now();
+        let probes = probe_remote_for_products(
+            &mut snapshot,
+            "/tmp/vrclibman-no-such-remote-root",
+            &["424242".into()],
+        );
+        assert_eq!(probes.len(), 1);
+        assert!(probes[0].remote_checked);
+        assert!(!probes[0].remote_reachable);
+        assert!(dead.elapsed() < Duration::from_secs(2));
     }
 }

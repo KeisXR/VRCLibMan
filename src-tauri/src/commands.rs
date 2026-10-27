@@ -244,6 +244,43 @@ pub async fn probe_remote_files(app: AppHandle, id: String) -> Result<AvatarDeta
 }
 
 #[tauri::command]
+pub async fn probe_remote_products(
+    app: AppHandle,
+    ids: Vec<String>,
+) -> Result<Vec<crate::view::RemoteProductProbe>, String> {
+    tauri::async_runtime::spawn_blocking(move || probe_remote_products_blocking(&app, ids))
+        .await
+        .map_err(|err| format!("リモートを確認できません: {err}"))?
+}
+
+fn probe_remote_products_blocking(
+    app: &AppHandle,
+    ids: Vec<String>,
+) -> Result<Vec<crate::view::RemoteProductProbe>, String> {
+    let mut ids: Vec<String> = ids
+        .into_iter()
+        .filter(|id| crate::library_files::valid_booth_id(id))
+        .collect();
+    ids.sort();
+    ids.dedup();
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let state = app.state::<AppState>();
+    let (mut snapshot, remote) = {
+        let mut connection = state
+            .db
+            .lock()
+            .map_err(|_| "データベースをロックできません".to_string())?;
+        let snapshot = db::load_snapshot(&mut connection)?;
+        let remote = db::settings(&mut connection)?.remote_library_folder;
+        (snapshot, remote)
+    };
+    let probes = crate::library_files::probe_remote_for_products(&mut snapshot, &remote, &ids);
+    Ok(crate::view::remote_product_probes(&snapshot, &probes))
+}
+
+#[tauri::command]
 pub fn get_booth_page_interval(state: State<'_, AppState>) -> Result<u64, String> {
     let connection = db(&state)?;
     db::booth_page_interval_ms(&connection)

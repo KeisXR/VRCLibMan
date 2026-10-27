@@ -116,6 +116,7 @@ export const api = {
   productsByCategory: (category: string) => call<ItemView[]>("list_products_by_category", { category }),
   productsByGenre: (kind: GenreKind, genre?: string | null) => call<GenreProducts>("list_products_by_genre", { kind, genre: genre ?? null }),
   probeRemoteFiles: (id: string) => call<AvatarDetail>("probe_remote_files", { id }),
+  probeRemoteProducts: (ids: string[]) => call<import("./types").RemoteProductProbe[]>("probe_remote_products", { ids }),
   queue: (kind: string, offset = 0, limit = 50) =>
     call<QueuePage>("list_queue", { kind, offset, limit }),
   managedProducts: () => call<ManagedProduct[]>("list_managed_products"),
