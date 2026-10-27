@@ -822,43 +822,60 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .sidebar-updater {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   margin-bottom: 8px;
   width: 100%;
+  box-sizing: border-box;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-elevated);
+  font-size: 12px;
+  line-height: 1.4;
 }
-.sidebar-updater-row { display: flex; align-items: stretch; gap: 4px; }
+.sidebar-updater-row {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  gap: 0;
+}
 .sidebar-updater.faint .sidebar-updater-main { color: var(--text-secondary); }
 .sidebar-updater-main {
   flex: 1 1 auto;
   min-width: 0;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--text);
   font: inherit;
-  font-size: 12px;
-  line-height: 1.35;
+  font-size: inherit;
+  line-height: inherit;
   text-align: left;
   cursor: pointer;
 }
-.sidebar-updater-main:hover { background: var(--hover); }
+.sidebar-updater-main:hover { color: var(--text); }
 .sidebar-updater-main:disabled { opacity: 0.6; cursor: default; }
 .sidebar-updater-dismiss {
   flex: 0 0 auto;
+  align-self: center;
   width: 28px;
+  height: 28px;
+  margin-left: 8px;
+  padding: 0;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-left: 1px solid var(--border);
+  border-radius: 0;
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
   font-size: 14px;
+  line-height: 1;
   cursor: pointer;
 }
-.sidebar-updater-dismiss:hover { background: var(--hover); color: var(--text); }
+.sidebar-updater-dismiss:hover { background: var(--surface-hover); color: var(--text); }
 .sidebar-updater-progress { width: 100%; height: 4px; margin: 0; accent-color: var(--accent); }
 .setting-control .settings-details { padding: var(--space-2) 0 0; }
-.app-updater .inline-control { justify-content: flex-start; }
 
 .app-version { font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
 .import-page .setting-copy p { overflow-wrap: anywhere; }
