@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { ItemCard } from "../pages/AvatarDetailPage";
-import { GENRE_LABEL, GENRE_UNSET } from "../types";
+import { GENRE_LABEL, GENRE_UNSET, genresForKind } from "../types";
 import { useGenreBrowse } from "../genreBrowseContext";
 import { filterItems, genreHref, selectedGenre } from "../genreBrowseUtils";
 
@@ -23,7 +23,25 @@ export function GenreBrowser({ title, lede }: { title: string; lede?: string }) 
         <details className="genre-mobile-picker">
           <summary>ジャンル：{selectedLabel} ▾</summary>
           <nav className="genre-mobile-nav" aria-label="ジャンル（狭い画面）">
-            <a href={genreHref(basePath, null)}>すべて</a>
+            <a href={genreHref(basePath, null)} aria-current={selected === null ? "page" : undefined}>すべて</a>
+            {genresForKind(kind).map((value) => (
+              <a
+                key={value}
+                href={genreHref(basePath, value)}
+                aria-current={selected === value ? "page" : undefined}
+                className={(data?.counts[value] ?? 0) === 0 ? "genre-link-zero" : undefined}
+              >
+                {GENRE_LABEL[value] ?? value}
+              </a>
+            ))}
+            {(data?.counts[GENRE_UNSET] ?? 0) > 0 || selected === GENRE_UNSET ? (
+              <a
+                href={genreHref(basePath, GENRE_UNSET)}
+                aria-current={selected === GENRE_UNSET ? "page" : undefined}
+              >
+                {GENRE_LABEL[GENRE_UNSET]}
+              </a>
+            ) : null}
           </nav>
         </details>
       )}
