@@ -439,6 +439,14 @@ span.account-avatar { background: var(--button); }
 }
 .tab:hover { background: var(--hover); color: var(--text); }
 .tab.active { background: var(--surface); color: var(--text); font-weight: 650; box-shadow: var(--shadow); }
+a.tab { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
+.tab-count { font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.tab.active .tab-count { color: var(--text-secondary); }
+.tab-zero { color: var(--faint); }
+.genre-notice { margin-bottom: var(--space-4); padding: var(--space-3) var(--space-4); }
+.genre-result { margin: 0 0 var(--space-2); }
+.empty > p { margin: 0 0 var(--space-2); }
+.empty > p:last-child { margin-bottom: 0; }
 .queue-card { padding: var(--space-3); display: grid; gap: var(--space-3); }
 .queue-main { display: grid; grid-template-columns: 64px 1fr; gap: var(--space-3); }
 .checks {

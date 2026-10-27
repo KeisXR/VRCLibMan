@@ -33,6 +33,8 @@ import type {
   RemoteSyncStatus,
   StagedDownload,
   ItemView,
+  GenreKind,
+  GenreProducts,
 } from "./types";
 
 export async function appVersion(): Promise<string> {
@@ -103,7 +105,7 @@ export const api = {
   avatars: () => call<AvatarCard[]>("list_avatars"),
   avatar: (id: string) => call<AvatarDetail>("get_avatar", { id }),
   productsByCategory: (category: string) => call<ItemView[]>("list_products_by_category", { category }),
-  productsByGenre: (kind: "asset" | "world", genre?: string | null) => call<{ items: ItemView[]; counts: Record<string, number> }>("list_products_by_genre", { kind, genre }),
+  productsByGenre: (kind: GenreKind, genre?: string | null) => call<GenreProducts>("list_products_by_genre", { kind, genre: genre ?? null }),
   probeRemoteFiles: (id: string) => call<AvatarDetail>("probe_remote_files", { id }),
   queue: (kind: string, offset = 0, limit = 50) =>
     call<QueuePage>("list_queue", { kind, offset, limit }),

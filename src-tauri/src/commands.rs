@@ -204,11 +204,7 @@ pub fn list_products_by_genre(state: State<'_, AppState>, kind: String, genre: O
     let mut snapshot = db::load_snapshot(&mut connection)?;
     let remote = db::settings(&mut connection)?.remote_library_folder;
     crate::library_files::fill_local_places(&mut snapshot, &remote);
-    let mut counts = std::collections::HashMap::new();
-    for product in snapshot.products.iter().filter(|product| all_ids.contains(&product.booth_id)) {
-        if let Some(value) = &product.genre { *counts.entry(value.clone()).or_insert(0) += 1; }
-    }
-    Ok(GenreProducts { items: view::products_by_ids(&snapshot, &ids), counts })
+    Ok(view::genre_products(&snapshot, &all_ids, &ids))
 }
 
 fn load_avatar(app: &AppHandle, id: &str, probe_remote: bool) -> Result<AvatarDetail, String> {

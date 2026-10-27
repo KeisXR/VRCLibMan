@@ -7,16 +7,26 @@ import { QueuePage } from "./pages/QueuePage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { BrowserPage } from "./pages/BrowserPage";
 import { WorldsPage } from "./pages/WorldsPage";
+import { AssetsPage } from "./pages/AssetsPage";
 import { SetupWizard } from "./pages/SetupWizard";
 import type { BoothAccount, JobProgress, LibraryStats } from "./types";
 import { errorText } from "./ui";
 
-type Page = "avatars" | "avatar" | "worlds" | "queue" | "import" | "settings" | "browser";
+type Page = "avatars" | "avatar" | "assets" | "worlds" | "queue" | "import" | "settings" | "browser";
 
 interface Route {
   page: Page;
   id?: string;
   fileBoothId?: string;
+  genre?: string;
+}
+
+function decodePart(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
 interface ShellValue {
@@ -45,6 +55,9 @@ function parseRoute(hash: string): Route {
       id: decodeURIComponent(parts[1]),
       fileBoothId: parts[2] === "files" && parts[3] ? decodeURIComponent(parts[3]) : undefined,
     };
+  }
+  if (parts[0] === "assets") {
+    return { page: "assets", genre: parts[1] ? decodePart(parts[1]) : undefined };
   }
   if (parts[0] === "worlds" || parts[0] === "queue" || parts[0] === "import" || parts[0] === "settings" || parts[0] === "browser") {
     return { page: parts[0] };
@@ -222,7 +235,7 @@ export default function App() {
   const density =
     route.page === "settings"
       ? "density-roomy"
-      : route.page === "avatars" || route.page === "avatar" || route.page === "worlds" || route.page === "queue"
+      : route.page === "avatars" || route.page === "avatar" || route.page === "assets" || route.page === "worlds" || route.page === "queue"
         ? "density-compact"
         : "";
 
@@ -239,6 +252,9 @@ export default function App() {
             <a className={route.page === "avatars" || route.page === "avatar" ? "nav-link active" : "nav-link"} href="#/">
               アバター
               <span className="count">{stats?.ownedAvatars ?? 0}</span>
+            </a>
+            <a className={route.page === "assets" ? "nav-link active" : "nav-link"} href="#/assets">
+              アセット
             </a>
             <a className={route.page === "worlds" ? "nav-link active" : "nav-link"} href="#/worlds">
               ワールド
@@ -302,6 +318,7 @@ export default function App() {
             {route.page === "avatar" && route.id && (
               <AvatarDetailPage id={route.id} fileBoothId={route.fileBoothId} />
             )}
+            {route.page === "assets" && <AssetsPage genre={route.genre} />}
             {route.page === "worlds" && <WorldsPage />}
             {route.page === "queue" && <QueuePage />}
             {route.page === "import" && <ImportPage />}

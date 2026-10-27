@@ -87,8 +87,20 @@ interface Store {
   remoteChecked: boolean;
 }
 
+// Sample genres only; the real classification lives in Rust (genre.rs).
+const PREVIEW_GENRE: Record<string, string> = {
+  outfit: "outfit",
+  hair: "hair",
+  accessory: "accessory",
+  texture: "makeup_skin",
+  gimmick: "gimmick",
+  world: "world",
+  other: "other",
+};
+
 function product(partial: Partial<Product> & Pick<Product, "boothId" | "title" | "category">): Product {
   return {
+    genre: partial.category ? PREVIEW_GENRE[partial.category] ?? null : null,
     shop: "",
     descriptionSnippet: "",
     url: `https://booth.pm/ja/items/${partial.boothId}`,
@@ -213,6 +225,7 @@ const store: Store = {
       title: "瞳のテクスチャ集",
       shop: "サンプル工房",
       category: "texture",
+      genre: "eye_texture",
       confidence: 1,
     }),
     product({
@@ -346,6 +359,7 @@ store.products.push(
     title: "見本のワールド小物",
     shop: "見本",
     category: "world",
+    genre: "furniture_props",
     descriptionSnippet: "ワールドに置く小物です。",
   }),
 );
@@ -1067,9 +1081,11 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
         .map((item) => itemView(item, false)) as T;
     case "list_products_by_genre": {
       const kind = String(args.kind); const wanted = args.genre == null ? null : String(args.genre);
-      const rows = activeProducts().filter((item) => kind === "world" ? item.category === "world" : item.category !== "world" && item.category !== "avatar");
+      if (kind !== "asset" && kind !== "world") throw new Error("ジャンルの種類が不正です");
+      // Same as Rust: unclassified products (no category) are not listed by genre.
+      const rows = activeProducts().filter((item) => item.category != null && (kind === "world" ? item.category === "world" : item.category !== "world" && item.category !== "avatar"));
       const counts: Record<string, number> = {}; for (const item of rows) if (item.genre) counts[item.genre] = (counts[item.genre] ?? 0) + 1;
-      return { items: rows.filter((item) => !wanted || item.genre === wanted).sort((a,b) => a.title.localeCompare(b.title, "ja")).map((item) => itemView(item, false)), counts } as T;
+      return { items: rows.filter((item) => !wanted || item.genre === wanted).sort((a,b) => a.title.localeCompare(b.title, "ja")).map((item) => itemView(item, false)), counts, total: rows.length } as T;
     }
     case "probe_remote_files":
       store.remoteChecked = true;
