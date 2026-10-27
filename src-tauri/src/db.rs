@@ -1253,6 +1253,15 @@ pub(crate) fn apply_extraction(
         replace_links(&tx, booth_id, &output.avatar_ids, "extracted")?;
     }
     tx.commit().sql()?;
+    // The model records an owned-<booth id> placeholder and source "extracted"
+    // without setting avatars.owned. Settle afterwards so a later reclassify
+    // does not leave that body unowned. Guards in settle_named_original_body
+    // still reject locked, confirmed, excluded, and multi-quote titles.
+    let placeholder = format!("owned-{booth_id}");
+    if category == Some(Category::Avatar) && linked_ids.iter().any(|id| id == &placeholder) {
+        let updated = require_product(connection, booth_id)?;
+        settle_named_original_body(connection, &updated)?;
+    }
     Ok(())
 }
 
@@ -3206,7 +3215,11 @@ pub(crate) fn settle_dictionary(connection: &mut Connection) -> Result<u32, Stri
             "SELECT booth_id FROM products
              WHERE user_confirmed = 0 AND links_locked = 0
                AND booth_id NOT IN (SELECT booth_id FROM product_exclusions)
-               AND (extracted_at IS NULL OR booth_id IN (SELECT booth_id FROM avatar_sources))",
+               AND (
+                 extracted_at IS NULL
+                 OR booth_id IN (SELECT booth_id FROM avatar_sources)
+                 OR (category = 'avatar' AND extracted_at IS NOT NULL)
+               )",
         )
         .sql()?;
     let ids: Vec<String> = statement
@@ -3217,11 +3230,94 @@ pub(crate) fn settle_dictionary(connection: &mut Connection) -> Result<u32, Stri
     drop(statement);
     let mut settled = 0;
     for id in ids {
+        // Already-classified avatars are selected broadly, then kept only when
+        // the title is one quoted original-model name tied to an unowned link.
+        // That check uses NFKC helpers in Rust rather than SQL LIKE.
+        if !settle_dictionary_includes(connection, &id)? {
+            continue;
+        }
         if settle_one(connection, &id, false)? {
             settled += 1;
         }
     }
     Ok(settled)
+}
+
+fn settle_dictionary_includes(connection: &Connection, booth_id: &str) -> Result<bool, String> {
+    let product = require_product(connection, booth_id)?;
+    if product.extracted_at.is_none() || catalog_body(connection, booth_id)?.is_some() {
+        return Ok(true);
+    }
+    repairable_extracted_original_body(connection, &product)
+}
+
+fn single_quoted_original_title(title: &str) -> bool {
+    crate::compat::strong_category_override(title) == Some(Category::Avatar)
+        && crate::normalize::quoted_segments(title).len() == 1
+}
+
+fn repairable_extracted_original_body(
+    connection: &Connection,
+    product: &Product,
+) -> Result<bool, String> {
+    if product.category != Some(Category::Avatar) || product.extracted_at.is_none() {
+        return Ok(false);
+    }
+    if product.user_confirmed
+        || product.links_locked
+        || (product.category_locked && product.category != Some(Category::Avatar))
+        || product.description_snippet == crate::model::UNAVAILABLE_DESCRIPTION
+        || product_excluded(connection, &product.booth_id)?
+        || !single_quoted_original_title(&product.title)
+    {
+        return Ok(false);
+    }
+    unowned_link_matches_quote(connection, product)
+}
+
+fn unowned_link_matches_quote(connection: &Connection, product: &Product) -> Result<bool, String> {
+    let segments = crate::normalize::quoted_segments(&product.title);
+    let Some(segment) = segments.first() else {
+        return Ok(false);
+    };
+    if segments.len() != 1 {
+        return Ok(false);
+    }
+    let quoted = crate::normalize::normalize_label(segment);
+    if quoted.is_empty() {
+        return Ok(false);
+    }
+    let mut statement = connection
+        .prepare(
+            "SELECT avatars.display_name, avatars.aliases_json, avatars.owned
+             FROM product_avatars
+             JOIN avatars ON avatars.id = product_avatars.avatar_id
+             WHERE product_avatars.product_id = ?1",
+        )
+        .sql()?;
+    let rows = statement
+        .query_map(params![product.booth_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })
+        .sql()?;
+    for row in rows {
+        let (display, aliases_json, owned) = row.sql()?;
+        if owned != 0 {
+            continue;
+        }
+        if crate::normalize::normalize_label(&display) == quoted
+            || parse_list(&aliases_json)
+                .iter()
+                .any(|alias| crate::normalize::normalize_label(alias) == quoted)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 pub(crate) fn skip_model(connection: &mut Connection, booth_id: &str) -> Result<bool, String> {
@@ -3250,11 +3346,14 @@ fn settle_one(connection: &mut Connection, booth_id: &str, redo: bool) -> Result
         write_catalog_body(connection, booth_id, &avatar_id, &display)?;
         return Ok(true);
     }
-    if product.extracted_at.is_some() && !redo {
-        return Ok(false);
-    }
+    // redo (skip_model) and startup repair both reach this before the model.
+    // An already-classified original-model body must win here, not after another
+    // extraction that would only rewrite the same unowned placeholder.
     if settle_named_original_body(connection, &product)? {
         return Ok(true);
+    }
+    if product.extracted_at.is_some() && !redo {
+        return Ok(false);
     }
     // Other bodies outside the profile list still need a manual ownership mark.
     let avatars = load_avatars(connection)?;
@@ -3285,14 +3384,17 @@ fn settle_one(connection: &mut Connection, booth_id: &str, redo: bool) -> Result
 
 // A single quoted name in an explicit original-model title identifies the body
 // without using compatibility names from its description as ownership evidence.
+// extracted_at is intentionally not a guard: a model run can already have stored
+// category avatar and an owned-<id> link while leaving avatars.owned at 0.
 fn settle_named_original_body(connection: &mut Connection, product: &Product) -> Result<bool, String> {
-    if product.extracted_at.is_some()
+    // A model-set avatar category is allowed, and so is an unlocked category
+    // (unset, or not category_locked). A category locked to something else is not.
+    if product_excluded(connection, &product.booth_id)?
         || product.user_confirmed
         || product.links_locked
-        || product.category.is_some_and(|category| category != Category::Avatar)
+        || (product.category_locked && product.category != Some(Category::Avatar))
         || product.description_snippet == crate::model::UNAVAILABLE_DESCRIPTION
-        || crate::compat::strong_category_override(&product.title) != Some(Category::Avatar)
-        || crate::normalize::quoted_segments(&product.title).len() != 1
+        || !single_quoted_original_title(&product.title)
     {
         return Ok(false);
     }
@@ -5877,6 +5979,299 @@ mod tests {
         settle_dictionary(&mut connection).unwrap();
         let snapshot = load_snapshot(&mut connection).unwrap();
         assert!(snapshot.avatars.iter().any(|a| a.display_name == "輝夜" && a.owned));
+    }
+
+    fn insert_dummy_product(connection: &Connection, booth_id: &str, title: &str, description: &str) {
+        let json = serde_json::json!({
+            "boothId": booth_id,
+            "title": title,
+            "description": description,
+        })
+        .to_string();
+        let parsed = parse_export(&json).unwrap();
+        upsert(connection, &parsed.products[0]).unwrap();
+    }
+
+    fn force_stuck_classified(connection: &Connection, booth_id: &str, display: &str) {
+        let avatar_id = format!("owned-{booth_id}");
+        connection
+            .execute(
+                "UPDATE products SET category = 'avatar', category_locked = 0, links_locked = 0,
+                 user_confirmed = 0, needs_review = 0, is_generic = 0, confidence = 0.9,
+                 extracted_at = '2026-01-01T00:00:00Z', classifier_version = 2,
+                 compatible_avatars_json = ?1, unresolved_names_json = '[]'
+                 WHERE booth_id = ?2",
+                params![to_json(&vec![display.to_string()]).unwrap(), booth_id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO avatars
+                 (id, display_name, base_body, aliases_json, is_builtin, owned, notes)
+                 VALUES (?1, ?2, NULL, '[]', 0, 0, '')",
+                params![avatar_id, display],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE avatars SET owned = 0, display_name = ?2 WHERE id = ?1",
+                params![avatar_id, display],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "DELETE FROM product_avatars WHERE product_id = ?1",
+                params![booth_id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO product_avatars (product_id, avatar_id, source) VALUES (?1, ?2, 'extracted')",
+                params![booth_id, avatar_id],
+            )
+            .unwrap();
+    }
+
+    fn assert_owned_original(connection: &Connection, booth_id: &str, display: &str) {
+        let avatar_id = format!("owned-{booth_id}");
+        let snapshot = load_snapshot(connection).unwrap();
+        let matched: Vec<_> = snapshot
+            .avatars
+            .iter()
+            .filter(|avatar| avatar.display_name == display)
+            .collect();
+        assert_eq!(matched.len(), 1, "{display}");
+        assert!(matched[0].owned, "{display}");
+        assert_eq!(matched[0].id, avatar_id);
+        assert!(
+            snapshot.links.iter().any(|link| {
+                link.product_id == booth_id && link.avatar_id == avatar_id && link.source == "owned"
+            }),
+            "{booth_id} {:?}",
+            snapshot
+                .links
+                .iter()
+                .filter(|link| link.product_id == booth_id)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    fn assert_still_unowned(connection: &Connection, booth_id: &str, display: &str) {
+        let avatar_id = format!("owned-{booth_id}");
+        let owned: i64 = connection
+            .query_row(
+                "SELECT owned FROM avatars WHERE id = ?1",
+                params![avatar_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(owned, 0, "{display}");
+        let source: String = connection
+            .query_row(
+                "SELECT source FROM product_avatars WHERE product_id = ?1 AND avatar_id = ?2",
+                params![booth_id, avatar_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(source, "extracted", "{display}");
+        let copies: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM avatars WHERE display_name = ?1",
+                params![display],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(copies, 1, "{display}");
+    }
+
+    #[test]
+    fn model_classified_quoted_original_body_becomes_owned() {
+        let mut connection = open_memory().unwrap();
+        let booth_id = "7701001";
+        let json = serde_json::json!({
+            "boothId": booth_id,
+            "title": "オリジナル3Dモデル「テスト子」-testko-",
+            "description": "テスト子のダミー説明です。",
+        })
+        .to_string();
+        import_products(&mut connection, &parse_export(&json).unwrap()).unwrap();
+        // The model path used to leave this body classified but unowned.
+        force_stuck_classified(&connection, booth_id, "テスト子");
+        apply_extraction(
+            &mut connection,
+            booth_id,
+            &extraction(Category::Avatar, &["テスト子"], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        assert_owned_original(&connection, booth_id, "テスト子");
+        settle_dictionary(&mut connection).unwrap();
+        assert_owned_original(&connection, booth_id, "テスト子");
+    }
+
+    #[test]
+    fn skip_model_owns_a_classified_quoted_original_body_without_the_model() {
+        let mut connection = open_memory().unwrap();
+        let booth_id = "7701002";
+        insert_dummy_product(
+            &connection,
+            booth_id,
+            "オリジナル3Dモデル「テスト子」-testko-",
+            "テスト子のダミー説明です。",
+        );
+        force_stuck_classified(&connection, booth_id, "テスト子");
+        let settled = skip_model(&mut connection, booth_id).unwrap();
+        assert!(settled);
+        assert_owned_original(&connection, booth_id, "テスト子");
+        let copies: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM avatars WHERE display_name = 'テスト子'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(copies, 1);
+    }
+
+    #[test]
+    fn quoted_original_body_guards_stay_unowned() {
+        let mut connection = open_memory().unwrap();
+        let cases = [
+            ("7701101", "オリジナル3Dモデル「テスト錠」-testjo-", "テスト錠", "locked"),
+            ("7701102", "オリジナル3Dモデル「テスト鎖」-testsa-", "テスト鎖", "links"),
+            ("7701103", "オリジナル3Dモデル「テスト認」-testnin-", "テスト認", "confirmed"),
+            ("7701104", "オリジナル3Dモデル「テスト甲」「テスト乙」", "テスト甲", "quotes"),
+            ("7701105", "オリジナル3Dモデル「テスト除」-testjo-", "テスト除", "excluded"),
+            ("7701106", "オリジナル3Dモデル「テスト無」-testmu-", "テスト無", "unavailable"),
+        ];
+        for (booth_id, title, display, _kind) in cases {
+            insert_dummy_product(&connection, booth_id, title, "ダミー説明です。");
+            force_stuck_classified(&connection, booth_id, display);
+        }
+        connection
+            .execute(
+                "UPDATE products SET category = 'outfit', category_locked = 1 WHERE booth_id = '7701101'",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE products SET links_locked = 1 WHERE booth_id = '7701102'",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE products SET user_confirmed = 1 WHERE booth_id = '7701103'",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE products SET description_snippet = ?1 WHERE booth_id = '7701106'",
+                params![crate::model::UNAVAILABLE_DESCRIPTION],
+            )
+            .unwrap();
+        set_product_excluded(&mut connection, "7701105", true).unwrap();
+
+        settle_dictionary(&mut connection).unwrap();
+        for (booth_id, _title, display, _kind) in cases {
+            let product = require_product(&connection, booth_id).unwrap();
+            assert!(
+                !settle_named_original_body(&mut connection, &product).unwrap(),
+                "{display}"
+            );
+            let _ = skip_model(&mut connection, booth_id).unwrap();
+            assert_still_unowned(&connection, booth_id, display);
+        }
+    }
+
+    #[test]
+    fn reimport_does_not_duplicate_a_quoted_original_body() {
+        let mut connection = open_memory().unwrap();
+        let booth_id = "7701003";
+        let json = serde_json::json!({
+            "boothId": booth_id,
+            "title": "オリジナル3Dモデル「テスト子」-testko-",
+            "description": "テスト子のダミー説明です。",
+        })
+        .to_string();
+        let parsed = parse_export(&json).unwrap();
+        import_products(&mut connection, &parsed).unwrap();
+        apply_extraction(
+            &mut connection,
+            booth_id,
+            &extraction(Category::Avatar, &["テスト子"], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        import_products(&mut connection, &parsed).unwrap();
+        settle_dictionary(&mut connection).unwrap();
+        assert_owned_original(&connection, booth_id, "テスト子");
+
+        let stuck = "7701004";
+        insert_dummy_product(
+            &connection,
+            stuck,
+            "オリジナル3Dモデル「テスト再」-testre-",
+            "テスト再のダミー説明です。",
+        );
+        force_stuck_classified(&connection, stuck, "テスト再");
+        let again = serde_json::json!({
+            "boothId": stuck,
+            "title": "オリジナル3Dモデル「テスト再」-testre-",
+            "description": "テスト再のダミー説明です。",
+        })
+        .to_string();
+        import_products(&mut connection, &parse_export(&again).unwrap()).unwrap();
+        assert_owned_original(&connection, stuck, "テスト再");
+        assert_owned_original(&connection, booth_id, "テスト子");
+    }
+
+    #[test]
+    fn startup_repairs_a_classified_quoted_original_body() {
+        struct Temp(std::path::PathBuf);
+        impl Drop for Temp {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let dir = Temp(std::env::temp_dir().join(format!(
+            "vrclibman-owned-body-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        )));
+        std::fs::create_dir_all(&dir.0).unwrap();
+        let path = dir.0.join("library.sqlite");
+        {
+            let connection = open(&path).unwrap();
+            insert_dummy_product(
+                &connection,
+                "7701005",
+                "オリジナル3Dモデル「テスト子」-testko-",
+                "テスト子のダミー説明です。",
+            );
+            force_stuck_classified(&connection, "7701005", "テスト子");
+            let owned: i64 = connection
+                .query_row(
+                    "SELECT owned FROM avatars WHERE id = 'owned-7701005'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(owned, 0);
+        }
+        {
+            let connection = open(&path).unwrap();
+            assert_owned_original(&connection, "7701005", "テスト子");
+        }
+        {
+            let connection = open(&path).unwrap();
+            assert_owned_original(&connection, "7701005", "テスト子");
+        }
     }
 
     #[test]
