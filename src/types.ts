@@ -72,6 +72,13 @@ export interface DownloadView {
   remotePath: string | null;
 }
 
+export interface RemoteProductProbe {
+  boothId: string;
+  remoteChecked: boolean;
+  remoteReachable: boolean;
+  downloads: DownloadView[];
+}
+
 export interface ItemView {
   boothId: string;
   title: string;
@@ -224,6 +231,13 @@ export interface IntegrationStatus {
   browserImport: ImportReceipt | null;
 }
 
+export type ExtractTarget = "unclassified" | "stale" | "all";
+
+export interface ClassificationStatus {
+  classifierVersion: number;
+  staleCount: number;
+}
+
 export interface Settings {
   ollamaBaseUrl: string;
   ollamaModel: string;
@@ -237,6 +251,11 @@ export interface Settings {
   backgroundMode: boolean;
   launchAtLogin: boolean;
   unloadOllamaAfterClassification: boolean;
+  classificationDismissedVersion: number;
+  uiRailWidth: number;
+  uiGenreWidth: number;
+  checkUpdateOnStartup: boolean;
+  uiUpdateDismissedVersion: string;
 }
 
 export interface RemoteSyncStatus {

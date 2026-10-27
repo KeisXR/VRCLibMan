@@ -9,7 +9,15 @@ import { BrowserPage } from "./pages/BrowserPage";
 import { WorldsPage } from "./pages/WorldsPage";
 import { AssetsPage } from "./pages/AssetsPage";
 import { SetupWizard } from "./pages/SetupWizard";
+import { GenreColumn } from "./components/GenreColumn";
+import { ResizeSeparator } from "./components/ResizeSeparator";
+import { GenreBrowseProvider } from "./genreBrowseContext";
+import { useAppLayout } from "./useAppLayout";
+import { UI_GENRE_WIDTH, UI_RAIL_WIDTH } from "./uiLayout";
+import { AppUpdaterProvider, useStartupUpdateCheck } from "./useAppUpdater";
+import { SidebarUpdaterBadge } from "./components/SidebarUpdaterBadge";
 import type { BoothAccount, JobProgress, LibraryStats } from "./types";
+import { SidebarClassificationHint } from "./components/SidebarClassificationHint";
 import { errorText } from "./ui";
 
 type Page = "avatars" | "avatar" | "assets" | "worlds" | "queue" | "import" | "settings" | "browser";
@@ -78,6 +86,7 @@ export default function App() {
   const [account, setAccount] = useState<BoothAccount | null>(null);
   const accountReload = useRef<() => void>(() => {});
   const [setupComplete, setSetupComplete] = useState<boolean | null>(null);
+  const [checkUpdateOnStartup, setCheckUpdateOnStartup] = useState(false);
   const route = useMemo(() => parseRoute(hash), [hash]);
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -128,7 +137,10 @@ export default function App() {
     let cancelled = false;
     api.settings().then(
       (value) => {
-        if (!cancelled) setBuiltinBrowser(value.builtinBrowser);
+        if (!cancelled) {
+          setBuiltinBrowser(value.builtinBrowser);
+          setCheckUpdateOnStartup(value.checkUpdateOnStartup);
+        }
       },
       () => {
         if (!cancelled) setBuiltinBrowser(false);
@@ -238,11 +250,51 @@ export default function App() {
       : route.page === "avatars" || route.page === "avatar" || route.page === "assets" || route.page === "worlds" || route.page === "queue"
         ? "density-compact"
         : "";
+  const browseKind = route.page === "assets" ? "asset" : route.page === "worlds" ? "world" : null;
+  const browseBase = browseKind === "asset" ? "#/assets" : "#/worlds";
+  const layout = useAppLayout(browseKind !== null);
+
+  const mainPane = (
+    <div className="main" ref={contentRef}>
+      <div className="topbar">
+        {error && <div className="banner error">{error}</div>}
+        {notice && <div className="banner notice">{notice}</div>}
+        {progress && (
+          <div className="progress">
+            <p>{progress.message}</p>
+            <div className={progress.total > 0 ? "track" : "track indeterminate"}>
+              <span style={{ width: progress.total > 0 ? `${percent}%` : undefined }} />
+            </div>
+          </div>
+        )}
+      </div>
+      <main className={`content ${density}`}>
+        {route.page === "avatars" && <AvatarsPage />}
+        {route.page === "avatar" && route.id && (
+          <AvatarDetailPage id={route.id} fileBoothId={route.fileBoothId} />
+        )}
+        {route.page === "assets" && <AssetsPage />}
+        {route.page === "worlds" && <WorldsPage />}
+        {route.page === "queue" && <QueuePage />}
+        {route.page === "import" && <ImportPage />}
+        {route.page === "settings" && <SettingsPage />}
+        {route.page === "browser" && <BrowserPage enabled={builtinBrowser} />}
+      </main>
+    </div>
+  );
+
+  const openAppUpdateSettings = useCallback(() => {
+    window.location.hash = "#/settings";
+    window.setTimeout(() => {
+      document.getElementById("settings-app-update")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 0);
+  }, []);
 
   return (
+    <AppUpdaterProvider>
     <ShellContext.Provider value={shell}>
       {setupComplete === false && <SetupWizard onDone={() => { setSetupComplete(true); refresh(); }} />}
-      <div className="app">
+      <div className="app app-shell" style={layout.gridStyle}>
         <aside className="rail">
           <div className="brand">
             <strong>VRCLibMan</strong>
@@ -276,6 +328,9 @@ export default function App() {
             )}
           </nav>
           <div className="rail-foot">
+            <SidebarClassificationHint revision={revision} />
+            <StartupUpdateCheck enabled={checkUpdateOnStartup} />
+            <SidebarUpdaterBadge onOpenSettings={openAppUpdateSettings} />
             <span className="app-version">{version === "未確認" ? "バージョン未確認" : version ? `v${version}` : "バージョン確認中"}</span>
             {builtinBrowser && (
               <AccountPill
@@ -300,35 +355,56 @@ export default function App() {
             </div>
           </div>
         </aside>
-        <div className="main" ref={contentRef}>
-          <div className="topbar">
-            {error && <div className="banner error">{error}</div>}
-            {notice && <div className="banner notice">{notice}</div>}
-            {progress && (
-              <div className="progress">
-                <p>{progress.message}</p>
-                <div className={progress.total > 0 ? "track" : "track indeterminate"}>
-                  <span style={{ width: progress.total > 0 ? `${percent}%` : undefined }} />
-                </div>
-              </div>
+        <ResizeSeparator
+          label="メインサイドバーの幅"
+          value={layout.railWidth}
+          min={UI_RAIL_WIDTH.min}
+          max={UI_RAIL_WIDTH.max}
+          onChange={layout.setRailWidth}
+          onCommit={layout.persistRail}
+          onReset={() => {
+            layout.setRailWidth(UI_RAIL_WIDTH.default);
+            layout.persistRail(UI_RAIL_WIDTH.default);
+          }}
+        />
+        {browseKind ? (
+          <GenreBrowseProvider
+            kind={browseKind}
+            genre={route.genre ?? null}
+            basePath={browseBase}
+            narrowLayout={layout.narrow}
+          >
+            {layout.genreVisible && (
+              <GenreColumn />
             )}
-          </div>
-          <main className={`content ${density}`}>
-            {route.page === "avatars" && <AvatarsPage />}
-            {route.page === "avatar" && route.id && (
-              <AvatarDetailPage id={route.id} fileBoothId={route.fileBoothId} />
+            {layout.genreVisible && (
+              <ResizeSeparator
+                label="ジャンル列の幅"
+                value={layout.genreWidth}
+                min={UI_GENRE_WIDTH.min}
+                max={UI_GENRE_WIDTH.max}
+                onChange={layout.setGenreWidth}
+                onCommit={layout.persistGenre}
+                onReset={() => {
+                  layout.setGenreWidth(UI_GENRE_WIDTH.default);
+                  layout.persistGenre(UI_GENRE_WIDTH.default);
+                }}
+              />
             )}
-            {route.page === "assets" && <AssetsPage genre={route.genre} />}
-            {route.page === "worlds" && <WorldsPage genre={route.genre} />}
-            {route.page === "queue" && <QueuePage />}
-            {route.page === "import" && <ImportPage />}
-            {route.page === "settings" && <SettingsPage />}
-            {route.page === "browser" && <BrowserPage enabled={builtinBrowser} />}
-          </main>
-        </div>
+            {mainPane}
+          </GenreBrowseProvider>
+        ) : (
+          mainPane
+        )}
       </div>
     </ShellContext.Provider>
+    </AppUpdaterProvider>
   );
+}
+
+function StartupUpdateCheck({ enabled }: { enabled: boolean }) {
+  useStartupUpdateCheck(enabled);
+  return null;
 }
 
 function accountLabel(account: BoothAccount | null): string {

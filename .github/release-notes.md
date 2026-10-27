@@ -10,6 +10,10 @@ VRCLibMan {{APP_VERSION}}（同梱の拡張は {{EXTENSION_VERSION}}）
 
 {{CHANGES}}
 
+## 再分類のおすすめ
+
+{{RECLASSIFY_NOTE}}
+
 初回インストールには上記の exe / dmg を使用します。更新用の `.app.tar.gz`・`.sig`・`latest.json` はアプリ内更新で使用します。
 
 アプリ内更新を利用できない版からは、上記のインストーラで手動更新してください。ライブラリと設定は引き継がれます。

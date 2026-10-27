@@ -181,8 +181,8 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         assert.ok(!drop.closest("details").hasAttribute("open"));
         let forcedCalls = 0;
         let finish;
-        api.extractProducts = (force) => {
-          assert.equal(force, true);
+        api.extractProducts = (target) => {
+          assert.equal(target, "all");
           forcedCalls++;
           return new Promise((resolve) => {
             finish = resolve;
@@ -427,8 +427,8 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       "asset page browses products by genre through the hash route",
       async () => {
         const main = () => document.querySelector("main");
-        const tabs = () => [...document.querySelectorAll(".genre-tabs a")];
-        const activeTab = () => document.querySelector('.genre-tabs a[aria-current="page"]');
+        const tabs = () => [...document.querySelectorAll(".genre-rail-nav a")];
+        const activeTab = () => document.querySelector('.genre-rail-nav a[aria-current="page"]');
         assert.ok(document.querySelector('.rail a[href="#/assets"]'));
         const all = await api.productsByGenre("asset");
         assert.ok(all.total > 0);
@@ -455,7 +455,7 @@ test("setup, import and version flows with synthetic local data", async (t) => {
 
         await route("#/assets/pose");
         await wait(() => main().textContent.includes("「ポーズ」の商品はまだありません。"));
-        assert.ok(activeTab().classList.contains("tab-zero"));
+        assert.ok(activeTab().classList.contains("genre-link-zero"));
 
         await route("#/assets/not-a-genre");
         await wait(() => main().textContent.includes("指定されたジャンルが見つからないため"));
@@ -473,8 +473,8 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       "world page browses world products by genre and keeps the old route",
       async () => {
         const main = () => document.querySelector("main");
-        const tabs = () => [...document.querySelectorAll(".genre-tabs a")];
-        const activeTab = () => document.querySelector('.genre-tabs a[aria-current="page"]');
+        const tabs = () => [...document.querySelectorAll(".genre-rail-nav a")];
+        const activeTab = () => document.querySelector('.genre-rail-nav a[aria-current="page"]');
         const items = () => main().querySelectorAll(".item");
         const legacy = await api.productsByCategory("world");
         const all = await api.productsByGenre("world");
@@ -517,7 +517,7 @@ test("setup, import and version flows with synthetic local data", async (t) => {
 
         await route("#/worlds/lighting_postprocess");
         await wait(() => main().textContent.includes("「ライティング・ポストプロセス」の商品はまだありません。"));
-        assert.ok(activeTab().classList.contains("tab-zero"));
+        assert.ok(activeTab().classList.contains("genre-link-zero"));
 
         await route("#/worlds/hair");
         await wait(() => main().textContent.includes("指定されたジャンルが見つからないため"));

@@ -39,18 +39,20 @@ pub async fn check_app_update(
     view: tauri::Webview,
     app: AppHandle,
     state: State<'_, crate::updater::UpdateState>,
+    manual: Option<bool>,
 ) -> Result<crate::updater::Status, String> {
     trusted_updater(&view)?;
-    crate::updater::check(&app, &state).await
+    crate::updater::check(&app, &state, manual.unwrap_or(true)).await
 }
 
 #[tauri::command]
 pub async fn download_app_update(
     view: tauri::Webview,
+    app: AppHandle,
     state: State<'_, crate::updater::UpdateState>,
 ) -> Result<crate::updater::Status, String> {
     trusted_updater(&view)?;
-    crate::updater::download(&state).await
+    crate::updater::download(&app, &state).await
 }
 
 #[tauri::command]
@@ -242,6 +244,43 @@ pub async fn probe_remote_files(app: AppHandle, id: String) -> Result<AvatarDeta
 }
 
 #[tauri::command]
+pub async fn probe_remote_products(
+    app: AppHandle,
+    ids: Vec<String>,
+) -> Result<Vec<crate::view::RemoteProductProbe>, String> {
+    tauri::async_runtime::spawn_blocking(move || probe_remote_products_blocking(&app, ids))
+        .await
+        .map_err(|err| format!("リモートを確認できません: {err}"))?
+}
+
+fn probe_remote_products_blocking(
+    app: &AppHandle,
+    ids: Vec<String>,
+) -> Result<Vec<crate::view::RemoteProductProbe>, String> {
+    let mut ids: Vec<String> = ids
+        .into_iter()
+        .filter(|id| crate::library_files::valid_booth_id(id))
+        .collect();
+    ids.sort();
+    ids.dedup();
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let state = app.state::<AppState>();
+    let (mut snapshot, remote) = {
+        let mut connection = state
+            .db
+            .lock()
+            .map_err(|_| "データベースをロックできません".to_string())?;
+        let snapshot = db::load_snapshot(&mut connection)?;
+        let remote = db::settings(&mut connection)?.remote_library_folder;
+        (snapshot, remote)
+    };
+    let probes = crate::library_files::probe_remote_for_products(&mut snapshot, &remote, &ids);
+    Ok(crate::view::remote_product_probes(&snapshot, &probes))
+}
+
+#[tauri::command]
 pub fn get_booth_page_interval(state: State<'_, AppState>) -> Result<u64, String> {
     let connection = db(&state)?;
     db::booth_page_interval_ms(&connection)
@@ -328,6 +367,11 @@ pub fn save_settings(
                 background_mode: settings.background_mode,
                 launch_at_login: settings.launch_at_login,
                 unload_ollama_after_classification: settings.unload_ollama_after_classification,
+                classification_dismissed_version: settings.classification_dismissed_version,
+                ui_rail_width: settings.ui_rail_width,
+                ui_genre_width: settings.ui_genre_width,
+                check_update_on_startup: settings.check_update_on_startup,
+                ui_update_dismissed_version: settings.ui_update_dismissed_version,
             },
         )?;
         db::settings(&connection)?
@@ -677,10 +721,18 @@ pub async fn scan_library(
 }
 
 #[tauri::command]
+pub fn classification_status(
+    state: State<'_, crate::AppState>,
+) -> Result<crate::model::ClassificationStatus, String> {
+    let connection = db(&state)?;
+    db::classification_status(&connection)
+}
+
+#[tauri::command]
 pub async fn extract_products(
     app: AppHandle,
     state: State<'_, AppState>,
-    force: bool,
+    target: String,
 ) -> Result<ExtractReport, String> {
     let running = Arc::clone(&state.extract_running);
     if running.swap(true, Ordering::SeqCst) {
@@ -690,7 +742,7 @@ pub async fn extract_products(
     let _clear = ClearRunning(running);
     let jobs: Vec<ExtractJob> = {
         let mut connection = db(&state)?;
-        db::products_for_extract(&mut connection, force)?
+        db::products_for_extract(&mut connection, db::parse_extract_target(&target)?)?
     };
     let settings = {
         let mut connection = db(&state)?;

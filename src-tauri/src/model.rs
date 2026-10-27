@@ -274,6 +274,13 @@ pub struct ExtractReport {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ClassificationStatus {
+    pub classifier_version: i32,
+    pub stale_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ExtensionLink {
     pub token: String,
     pub port: u16,
@@ -295,6 +302,11 @@ pub struct Settings {
     pub llm_backend: String,
     pub background_mode: bool,
     pub launch_at_login: bool,
+    pub classification_dismissed_version: i32,
+    pub ui_rail_width: u32,
+    pub ui_genre_width: u32,
+    pub check_update_on_startup: bool,
+    pub ui_update_dismissed_version: String,
     pub unload_ollama_after_classification: bool,
 }
 
@@ -319,6 +331,16 @@ pub struct SettingsInput {
     pub background_mode: bool,
     #[serde(default)]
     pub launch_at_login: bool,
+    #[serde(default)]
+    pub classification_dismissed_version: i32,
+    #[serde(default = "default_ui_rail_width")]
+    pub ui_rail_width: u32,
+    #[serde(default = "default_ui_genre_width")]
+    pub ui_genre_width: u32,
+    #[serde(default)]
+    pub check_update_on_startup: bool,
+    #[serde(default)]
+    pub ui_update_dismissed_version: String,
     #[serde(default = "default_unload_ollama_after_classification")]
     pub unload_ollama_after_classification: bool,
 }
@@ -341,6 +363,11 @@ pub struct SettingsPatch {
     pub llm_backend: Option<String>,
     pub background_mode: Option<bool>,
     pub launch_at_login: Option<bool>,
+    pub classification_dismissed_version: Option<i32>,
+    pub ui_rail_width: Option<u32>,
+    pub ui_genre_width: Option<u32>,
+    pub check_update_on_startup: Option<bool>,
+    pub ui_update_dismissed_version: Option<String>,
     pub unload_ollama_after_classification: Option<bool>,
 }
 
@@ -369,6 +396,18 @@ impl SettingsPatch {
             llm_backend: self.llm_backend.clone().unwrap_or(current.llm_backend),
             background_mode: self.background_mode.unwrap_or(current.background_mode),
             launch_at_login: self.launch_at_login.unwrap_or(current.launch_at_login),
+            classification_dismissed_version: self
+                .classification_dismissed_version
+                .unwrap_or(current.classification_dismissed_version),
+            ui_rail_width: self.ui_rail_width.unwrap_or(current.ui_rail_width),
+            ui_genre_width: self.ui_genre_width.unwrap_or(current.ui_genre_width),
+            check_update_on_startup: self
+                .check_update_on_startup
+                .unwrap_or(current.check_update_on_startup),
+            ui_update_dismissed_version: self
+                .ui_update_dismissed_version
+                .clone()
+                .unwrap_or(current.ui_update_dismissed_version),
             unload_ollama_after_classification: self
                 .unload_ollama_after_classification
                 .unwrap_or(current.unload_ollama_after_classification),
@@ -378,6 +417,22 @@ impl SettingsPatch {
 
 fn default_llm_backend() -> String {
     "ollama".into()
+}
+
+fn default_ui_rail_width() -> u32 {
+    232
+}
+
+fn default_ui_genre_width() -> u32 {
+    200
+}
+
+pub(crate) fn clamp_ui_rail_width(value: u32) -> u32 {
+    value.clamp(180, 360)
+}
+
+pub(crate) fn clamp_ui_genre_width(value: u32) -> u32 {
+    value.clamp(160, 320)
 }
 
 #[derive(Debug, Clone, Serialize)]
