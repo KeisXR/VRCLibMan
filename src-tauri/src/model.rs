@@ -287,6 +287,8 @@ pub struct Settings {
     pub llm_backend: String,
     pub background_mode: bool,
     pub launch_at_login: bool,
+    pub ui_rail_width: u32,
+    pub ui_genre_width: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -310,6 +312,10 @@ pub struct SettingsInput {
     pub background_mode: bool,
     #[serde(default)]
     pub launch_at_login: bool,
+    #[serde(default = "default_ui_rail_width")]
+    pub ui_rail_width: u32,
+    #[serde(default = "default_ui_genre_width")]
+    pub ui_genre_width: u32,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -326,6 +332,8 @@ pub struct SettingsPatch {
     pub llm_backend: Option<String>,
     pub background_mode: Option<bool>,
     pub launch_at_login: Option<bool>,
+    pub ui_rail_width: Option<u32>,
+    pub ui_genre_width: Option<u32>,
 }
 
 impl SettingsPatch {
@@ -353,12 +361,30 @@ impl SettingsPatch {
             llm_backend: self.llm_backend.clone().unwrap_or(current.llm_backend),
             background_mode: self.background_mode.unwrap_or(current.background_mode),
             launch_at_login: self.launch_at_login.unwrap_or(current.launch_at_login),
+            ui_rail_width: self.ui_rail_width.unwrap_or(current.ui_rail_width),
+            ui_genre_width: self.ui_genre_width.unwrap_or(current.ui_genre_width),
         }
     }
 }
 
 fn default_llm_backend() -> String {
     "ollama".into()
+}
+
+fn default_ui_rail_width() -> u32 {
+    232
+}
+
+fn default_ui_genre_width() -> u32 {
+    200
+}
+
+pub(crate) fn clamp_ui_rail_width(value: u32) -> u32 {
+    value.clamp(180, 360)
+}
+
+pub(crate) fn clamp_ui_genre_width(value: u32) -> u32 {
+    value.clamp(160, 320)
 }
 
 #[derive(Debug, Clone, Serialize)]

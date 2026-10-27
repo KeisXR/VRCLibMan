@@ -143,6 +143,8 @@ const store: Store = {
     llmBackend: "ollama",
     backgroundMode: false,
     launchAtLogin: false,
+    uiRailWidth: 232,
+    uiGenreWidth: 200,
   },
   setupComplete: false,
   baseBodies: [
