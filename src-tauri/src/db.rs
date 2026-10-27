@@ -1619,6 +1619,45 @@ pub(crate) fn unpin_product_classification(
     Ok(snapshot)
 }
 
+/// Add one manual avatar link and lock links so reresolve keeps it.
+/// Category and genre locks stay as they are, so this is not a classification pin.
+pub(crate) fn attach_product_to_avatar(
+    connection: &mut Connection,
+    avatar_id: &str,
+    booth_id: &str,
+) -> Result<(), String> {
+    if !avatar_exists(connection, avatar_id)? {
+        return Err(format!("アバター {avatar_id} が対応表にありません"));
+    }
+    if product_excluded(connection, booth_id)? {
+        return Err("この商品は除外されています".into());
+    }
+    let product = require_product(connection, booth_id)?;
+    match product.category {
+        Some(Category::Avatar) => {
+            return Err("アバター本体は衣装として追加できません".into());
+        }
+        Some(Category::World) => {
+            return Err("ワールドはアバターに追加できません".into());
+        }
+        _ => {}
+    }
+    let tx = connection.transaction().sql()?;
+    tx.execute(
+        "INSERT INTO product_avatars (product_id, avatar_id, source) VALUES (?1, ?2, 'manual')
+         ON CONFLICT(product_id, avatar_id) DO UPDATE SET source = 'manual'",
+        params![booth_id, avatar_id],
+    )
+    .sql()?;
+    tx.execute(
+        "UPDATE products SET links_locked = 1, updated_at = ?1 WHERE booth_id = ?2",
+        params![now_iso(), booth_id],
+    )
+    .sql()?;
+    tx.commit().sql()?;
+    Ok(())
+}
+
 pub(crate) fn update_product(
     connection: &mut Connection,
     update: &ProductUpdate,
@@ -7103,6 +7142,115 @@ mod tests {
         let hair = require_product(&connection, "424242").unwrap();
         assert_eq!(hair.category, Some(Category::Hair));
         assert_eq!(hair.genre.as_deref(), Some("hair"));
+    }
+
+    #[test]
+    fn manual_avatar_attach_locks_the_link_without_pinning_classification() {
+        let mut connection = open_memory().unwrap();
+        let id = add_free_product(&mut connection, "https://booth.pm/ja/items/515151").unwrap();
+        apply_extraction(
+            &mut connection,
+            &id,
+            &extraction(Category::Gimmick, &[], true, 0.9),
+            0.6,
+        )
+        .unwrap();
+        connection
+            .execute(
+                "INSERT INTO product_avatars (product_id, avatar_id, source) VALUES ('515151', 'plum', 'extracted')",
+                [],
+            )
+            .unwrap();
+        let before = require_product(&connection, "515151").unwrap();
+        assert_eq!(before.category, Some(Category::Gimmick));
+        assert!(!before.category_locked && !before.genre_locked && !before.links_locked);
+        assert!(!before.user_confirmed);
+
+        attach_product_to_avatar(&mut connection, "lime", "515151").unwrap();
+        attach_product_to_avatar(&mut connection, "lime", "515151").unwrap();
+        let attached = require_product(&connection, "515151").unwrap();
+        assert_eq!(attached.category, Some(Category::Gimmick));
+        assert_eq!(attached.genre, before.genre);
+        assert!(!attached.category_locked && !attached.genre_locked);
+        assert!(attached.links_locked);
+        assert!(!attached.user_confirmed);
+        assert_eq!(
+            link_rows(&connection, "515151"),
+            vec![
+                ("lime".to_string(), "manual".to_string()),
+                ("plum".to_string(), "extracted".to_string()),
+            ]
+        );
+
+        reresolve_all(&mut connection).unwrap();
+        assert_eq!(
+            link_rows(&connection, "515151"),
+            vec![
+                ("lime".to_string(), "manual".to_string()),
+                ("plum".to_string(), "extracted".to_string()),
+            ]
+        );
+
+        let resent = parse_export(
+            r#"[{"boothId":"515151","title":"見本のギミック","shop":"見本","description":"対応アバター\nライム_ver1.00 https://booth.pm/ja/items/1001\n基本仕様\n布です。"}]"#,
+        )
+        .unwrap();
+        import_products(&mut connection, &resent).unwrap();
+        let reimported = require_product(&connection, "515151").unwrap();
+        assert!(reimported.category.is_none());
+        assert!(!reimported.category_locked && !reimported.genre_locked);
+        assert!(reimported.links_locked);
+        assert!(!reimported.user_confirmed);
+        assert!(reimported.needs_review);
+        assert_eq!(
+            link_rows(&connection, "515151"),
+            vec![
+                ("lime".to_string(), "manual".to_string()),
+                ("plum".to_string(), "extracted".to_string()),
+            ]
+        );
+        let detail = avatar_detail(&load_snapshot(&connection).unwrap(), "lime").unwrap();
+        assert!(section_items(&detail, "uncategorized").iter().any(|(booth_id, _)| booth_id == "515151"));
+
+        apply_extraction(
+            &mut connection,
+            "515151",
+            &extraction(Category::Hair, &["ライム"], false, 0.99),
+            0.6,
+        )
+        .unwrap();
+        let reclassified = require_product(&connection, "515151").unwrap();
+        assert_eq!(reclassified.category, Some(Category::Hair));
+        assert!(!reclassified.category_locked && !reclassified.genre_locked);
+        assert!(reclassified.links_locked);
+        assert!(link_rows(&connection, "515151").iter().any(|(avatar, source)| avatar == "lime" && source == "manual"));
+
+        let world = add_free_product(&mut connection, "https://booth.pm/ja/items/525252").unwrap();
+        apply_extraction(&mut connection, &world, &extraction(Category::World, &[], false, 0.9), 0.6).unwrap();
+        assert!(attach_product_to_avatar(&mut connection, "lime", "525252").unwrap_err().contains("ワールド"));
+        assert!(link_rows(&connection, "525252").is_empty());
+
+        let body = add_free_product(&mut connection, "https://booth.pm/ja/items/535353").unwrap();
+        apply_extraction(&mut connection, &body, &extraction(Category::Avatar, &["ライム"], false, 0.9), 0.6).unwrap();
+        assert!(attach_product_to_avatar(&mut connection, "plum", "535353").unwrap_err().contains("アバター本体"));
+        assert!(!link_rows(&connection, "535353").iter().any(|(avatar, _)| avatar == "plum"));
+
+        let hidden = add_free_product(&mut connection, "https://booth.pm/ja/items/545454").unwrap();
+        set_product_excluded(&mut connection, &hidden, true).unwrap();
+        assert!(attach_product_to_avatar(&mut connection, "lime", "545454").unwrap_err().contains("除外"));
+        assert!(attach_product_to_avatar(&mut connection, "missing", "515151").is_err());
+        assert!(attach_product_to_avatar(&mut connection, "lime", "999999").is_err());
+    }
+
+    fn link_rows(connection: &Connection, booth_id: &str) -> Vec<(String, String)> {
+        let mut statement = connection
+            .prepare("SELECT avatar_id, source FROM product_avatars WHERE product_id = ?1 ORDER BY avatar_id")
+            .unwrap();
+        statement
+            .query_map(params![booth_id], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
     }
 
     fn section_items(detail: &crate::view::AvatarDetail, category: &str) -> Vec<(String, bool)> {

@@ -183,6 +183,7 @@ export interface ProductOption {
   boothId: string;
   title: string;
   shop: string;
+  category: Category | null;
 }
 
 export interface AvatarRecord {

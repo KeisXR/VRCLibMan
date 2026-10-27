@@ -429,6 +429,22 @@ span.account-avatar { background: var(--button); }
   margin-bottom: var(--space-5);
 }
 .page-head h1 { margin: 0; font-size: 28px; font-weight: 650; letter-spacing: -0.03em; }
+.avatar-add { position: relative; align-self: center; }
+.avatar-add-panel {
+  position: absolute;
+  z-index: 12;
+  top: calc(100% + 6px);
+  right: 0;
+  width: min(320px, 80vw);
+  padding: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  box-shadow: var(--shadow);
+}
+.avatar-add-panel .search { width: 100%; min-width: 0; }
+.avatar-add-panel .picker { margin-top: 8px; }
+.avatar-add-panel .picker .button { width: 100%; text-align: left; }
 .panel h2, .section h2 { margin: 0 0 var(--space-2); font-size: 16px; font-weight: 650; }
 .page-head p, .lede { margin: 6px 0 0; color: var(--text-secondary); }
 .toolbar {

@@ -189,6 +189,7 @@ pub fn run() {
             commands::move_product_genre,
             commands::restore_product_classification,
             commands::unpin_product_classification,
+            commands::attach_product_to_avatar,
             commands::link_file,
             commands::save_avatar,
             commands::delete_avatar,

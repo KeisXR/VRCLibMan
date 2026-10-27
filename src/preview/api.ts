@@ -1286,7 +1286,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       return queue(String(args.kind ?? "review")) as T;
     case "list_product_options":
       return activeProducts()
-        .map((item) => ({ boothId: item.boothId, title: item.title, shop: item.shop }))
+        .map((item) => ({ boothId: item.boothId, title: item.title, shop: item.shop, category: item.category }))
         .sort((left, right) => left.title.localeCompare(right.title, "ja")) as T;
     case "list_knowledge":
       return { avatars: store.avatars, baseBodies: store.baseBodies } satisfies Knowledge as T;
@@ -1339,6 +1339,22 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       return undefined as T;
     case "unpin_product_classification":
       return unpinPreviewClassification(String(args.boothId ?? "")) as T;
+    case "attach_product_to_avatar": {
+      const avatarId = String(args.avatarId ?? "");
+      const boothId = String(args.boothId ?? "");
+      if (!store.avatars.some((avatar) => avatar.id === avatarId)) {
+        throw new Error(`アバター ${avatarId} が対応表にありません`);
+      }
+      if (excludedProducts.has(boothId)) throw new Error("この商品は除外されています");
+      const item = store.products.find((product) => product.boothId === boothId);
+      if (!item) throw new Error("商品が見つかりません");
+      if (item.category === "avatar") throw new Error("アバター本体は衣装として追加できません");
+      if (item.category === "world") throw new Error("ワールドはアバターに追加できません");
+      const existing = store.links.find((link) => link.productId === boothId && link.avatarId === avatarId);
+      if (!existing) store.links.push({ productId: boothId, avatarId });
+      item.linksLocked = true;
+      return undefined as T;
+    }
     case "link_file": {
       const file = store.files.find((item) => item.path === args.path);
       if (!file) throw new Error("ファイルがスキャン結果にありません");

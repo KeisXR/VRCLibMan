@@ -63,6 +63,17 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       [...scope.querySelectorAll("button")].find(
         (node) => node.textContent === name,
       );
+    const typeInto = async (node, value) => {
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+        setter.call(node, value);
+        const propsKey = Object.keys(node).find((name) => name.startsWith("__reactProps$"));
+        const onChange = propsKey ? node[propsKey].onChange : null;
+        if (onChange) onChange({ target: node, currentTarget: node });
+        else node.dispatchEvent(new window.Event("input", { bubbles: true }));
+        await delay();
+      });
+    };
     const click = async (node) => {
       assert.ok(node, "click target exists");
       assert.ok(!node.disabled, "click target is enabled");
@@ -665,6 +676,37 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         const current = [...main().querySelectorAll(".item")].find((node) => node.textContent.includes("瞳のテクスチャ集"));
         return current && !current.textContent.includes("手動");
       });
+    });
+    await t.test("avatar detail attaches an item without pinning its classification", async () => {
+      const main = () => document.querySelector("main");
+      await route("#/avatar/lime");
+      await wait(() => main().querySelector("h1")?.textContent === "ライム");
+      assert.equal(document.querySelector(".avatar-add-panel"), null);
+      await click(button("アイテムを追加"));
+      await wait(() => button("汎用ペンライト", document.querySelector(".avatar-add-panel")));
+      const panel = document.querySelector(".avatar-add-panel");
+      assert.ok(!panel.textContent.includes("見本のワールド小物"));
+      assert.ok(!panel.textContent.includes("オリジナル3Dモデル"));
+      const input = panel.querySelector("input");
+      await typeInto(input, "見本のワールド");
+      await wait(() => panel.textContent.includes("追加できる商品がありません"));
+      await typeInto(input, "汎用ペンライト");
+      await wait(() => button("汎用ペンライト", panel));
+      await click(button("汎用ペンライト", panel));
+      await wait(() => text().includes("アイテムを追加しました"));
+      await wait(() => {
+        const section = [...main().querySelectorAll(".section")].find((node) => node.querySelector("h2")?.textContent === "ギミック");
+        return section?.textContent.includes("汎用ペンライト");
+      });
+      const card = [...main().querySelectorAll(".section .item")].find((node) => node.textContent.includes("汎用ペンライト"));
+      assert.ok(card);
+      assert.ok(!card.textContent.includes("手動"));
+      const detail = await api.avatar("lime");
+      const item = detail.sections.flatMap((section) => section.items).find((row) => row.boothId === "8800103");
+      assert.equal(item.category, "gimmick");
+      assert.equal(item.classificationPinned, false);
+      await assert.rejects(() => api.attachProductToAvatar("lime", "8901001"), /ワールド/);
+      await assert.rejects(() => api.attachProductToAvatar("lime", "4876459"), /アバター本体/);
     });
     await t.test(
       "Apple model setup remains available with Ollama offline",

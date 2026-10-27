@@ -669,6 +669,17 @@ pub fn unpin_product_classification(
 
 #[tauri::command]
 #[allow(non_snake_case)]
+pub fn attach_product_to_avatar(
+    state: State<'_, AppState>,
+    avatarId: String,
+    boothId: String,
+) -> Result<(), String> {
+    let mut connection = db(&state)?;
+    db::attach_product_to_avatar(&mut connection, &avatarId, &boothId)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
 pub fn link_file(
     state: State<'_, AppState>,
     path: String,

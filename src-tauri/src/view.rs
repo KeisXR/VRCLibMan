@@ -223,6 +223,7 @@ pub struct ProductOption {
     pub booth_id: String,
     pub title: String,
     pub shop: String,
+    pub category: Option<Category>,
 }
 
 struct Classified {
@@ -502,6 +503,7 @@ pub fn product_options(snapshot: &Snapshot) -> Vec<ProductOption> {
             booth_id: product.booth_id.clone(),
             title: product.title.clone(),
             shop: product.shop.clone(),
+            category: product.category,
         })
         .collect();
     options.sort_by(|left, right| left.title.cmp(&right.title));
