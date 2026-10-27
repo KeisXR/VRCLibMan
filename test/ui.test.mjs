@@ -63,6 +63,17 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       [...scope.querySelectorAll("button")].find(
         (node) => node.textContent === name,
       );
+    const typeInto = async (node, value) => {
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+        setter.call(node, value);
+        const propsKey = Object.keys(node).find((name) => name.startsWith("__reactProps$"));
+        const onChange = propsKey ? node[propsKey].onChange : null;
+        if (onChange) onChange({ target: node, currentTarget: node });
+        else node.dispatchEvent(new window.Event("input", { bubbles: true }));
+        await delay();
+      });
+    };
     const click = async (node) => {
       assert.ok(node, "click target exists");
       assert.ok(!node.disabled, "click target is enabled");
@@ -566,6 +577,152 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         assert.ok(!document.querySelector('main a[href="#/browser"]'));
       },
     );
+    await t.test("genre move menu pins a product and can be undone from the notice", async () => {
+      const { requestRefresh } = await server.ssrLoadModule("/src/api.ts");
+      const main = () => document.querySelector("main");
+      const refresh = async () => {
+        await act(async () => {
+          requestRefresh();
+          await delay();
+        });
+      };
+      await route("#/assets/eye_texture");
+      await wait(() => main().textContent.includes("瞳のテクスチャ集"));
+      const all = document.querySelector('.genre-rail-nav a[href="#/assets"]');
+      const pose = document.querySelector('.genre-rail-nav a[href="#/assets/pose"]');
+      assert.equal(all.getAttribute("data-drop-genre"), null);
+      assert.equal(pose.getAttribute("data-drop-genre"), "pose");
+      assert.ok(pose.classList.contains("genre-link-zero"));
+      assert.equal(document.querySelector(".genre-rail-other"), null);
+      assert.equal(document.querySelector(".item").getAttribute("draggable"), "true");
+
+      const card = [...main().querySelectorAll(".item")].find((node) => node.textContent.includes("瞳のテクスチャ集"));
+      await click(card.querySelector(".product-actions-trigger"));
+      await wait(() => button("移動", card));
+      await click(button("移動", card));
+      const panel = card.querySelector(".genre-move-panel");
+      assert.ok(panel);
+      assert.ok(button("アセット", panel));
+      assert.ok(button("ワールド", panel));
+      await click(button("ポーズ", panel));
+      await wait(() => button("元に戻す"));
+      await wait(() => !main().textContent.includes("瞳のテクスチャ集"));
+
+      await route("#/assets/pose");
+      await wait(() => main().textContent.includes("瞳のテクスチャ集"));
+      await wait(() => [...main().querySelectorAll(".badge")].some((node) => node.textContent === "手動"));
+      const moved = await api.productsByGenre("asset", "pose");
+      assert.ok(moved.items.some((item) => item.classificationPinned && item.genre === "pose" && item.category === "gimmick"));
+
+      await click(button("元に戻す"));
+      await refresh();
+      await route("#/assets/eye_texture");
+      await wait(() => main().textContent.includes("瞳のテクスチャ集"));
+      assert.ok(!main().textContent.includes("手動"));
+
+      const dragged = [...main().querySelectorAll(".item")].find((node) => node.textContent.includes("瞳のテクスチャ集"));
+      assert.equal(dragged.getAttribute("draggable"), "true");
+      for (const image of dragged.querySelectorAll("img")) {
+        assert.equal(image.getAttribute("draggable"), "false");
+      }
+      const store = new Map();
+      const dataTransfer = {
+        effectAllowed: "none",
+        dropEffect: "none",
+        types: [],
+        setData(type, value) {
+          store.set(type, value);
+          this.types = [...store.keys()];
+        },
+        getData: (type) => store.get(type) ?? "",
+      };
+      const drag = (node, type) => {
+        const event = new window.Event(type, { bubbles: true, cancelable: true });
+        Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
+        node.dispatchEvent(event);
+      };
+      await act(async () => {
+        drag(dragged.querySelector(".product-actions-trigger"), "dragstart");
+        await delay();
+      });
+      assert.equal(store.size, 0);
+      assert.equal(dataTransfer.effectAllowed, "none");
+      await act(async () => {
+        drag(dragged, "dragstart");
+        await delay();
+      });
+      assert.equal(dataTransfer.effectAllowed, "move");
+      assert.equal(dataTransfer.getData("text/plain"), "8800120");
+      await wait(() => document.querySelector(".genre-rail-other"));
+      const poseAgain = document.querySelector('.genre-rail-nav a[href="#/assets/pose"]');
+      await act(async () => {
+        drag(poseAgain, "dragover");
+        await delay();
+      });
+      await wait(() => poseAgain.classList.contains("drag-over"));
+      await act(async () => {
+        drag(poseAgain, "drop");
+        drag(dragged, "dragend");
+        await delay();
+      });
+      await wait(() => button("元に戻す"));
+      await route("#/assets/pose");
+      await wait(() => main().textContent.includes("瞳のテクスチャ集"));
+      await click(button("元に戻す"));
+      await refresh();
+      await route("#/assets/eye_texture");
+      await wait(() => main().textContent.includes("瞳のテクスチャ集"));
+
+      const again = [...main().querySelectorAll(".item")].find((node) => node.textContent.includes("瞳のテクスチャ集"));
+      await click(again.querySelector(".product-actions-trigger"));
+      await click(button("移動", again));
+      await click(button("ワールド", again.querySelector(".genre-move-panel")));
+      await click(button("家具・小物（ベッドなど）", again.querySelector(".genre-move-panel")));
+      await wait(() => button("元に戻す"));
+      const worlds = await api.productsByGenre("world", "furniture_props");
+      assert.ok(worlds.items.some((item) => item.boothId === "8800120" && item.category === "world" && item.classificationPinned));
+      await route("#/worlds/furniture_props");
+      await wait(() => main().textContent.includes("瞳のテクスチャ集"));
+      const worldCard = [...main().querySelectorAll(".item")].find((node) => node.textContent.includes("瞳のテクスチャ集"));
+      await click(worldCard.querySelector(".product-actions-trigger"));
+      await click(button("自動分類に戻す", worldCard));
+      await wait(() => text().includes("自動分類の対象に戻しました"));
+      await wait(() => {
+        const current = [...main().querySelectorAll(".item")].find((node) => node.textContent.includes("瞳のテクスチャ集"));
+        return current && !current.textContent.includes("手動");
+      });
+    });
+    await t.test("avatar detail attaches an item without pinning its classification", async () => {
+      const main = () => document.querySelector("main");
+      await route("#/avatar/lime");
+      await wait(() => main().querySelector("h1")?.textContent === "ライム");
+      assert.equal(document.querySelector(".avatar-add-panel"), null);
+      await click(button("アイテムを追加"));
+      await wait(() => button("汎用ペンライト", document.querySelector(".avatar-add-panel")));
+      const panel = document.querySelector(".avatar-add-panel");
+      assert.ok(!panel.textContent.includes("見本のワールド小物"));
+      assert.ok(!panel.textContent.includes("オリジナル3Dモデル"));
+      const input = panel.querySelector("input");
+      await typeInto(input, "見本のワールド");
+      await wait(() => panel.textContent.includes("追加できる商品がありません"));
+      await typeInto(input, "汎用ペンライト");
+      await wait(() => button("汎用ペンライト", panel));
+      await click(button("汎用ペンライト", panel));
+      await wait(() => text().includes("アイテムを追加しました"));
+      await wait(() => {
+        const section = [...main().querySelectorAll(".section")].find((node) => node.querySelector("h2")?.textContent === "ギミック");
+        return section?.textContent.includes("汎用ペンライト");
+      });
+      const card = [...main().querySelectorAll(".section .item")].find((node) => node.textContent.includes("汎用ペンライト"));
+      assert.ok(card);
+      assert.ok(!card.textContent.includes("手動"));
+      const detail = await api.avatar("lime");
+      const item = detail.sections.flatMap((section) => section.items).find((row) => row.boothId === "8800103");
+      assert.equal(item.category, "gimmick");
+      assert.equal(item.classificationPinned, false);
+      await assert.rejects(() => api.attachProductToAvatar("lime", "8901001"), /ワールド/);
+      await assert.rejects(() => api.attachProductToAvatar("lime", "4876459"), /アバター本体/);
+    });
     await t.test(
       "Apple model setup remains available with Ollama offline",
       async () => {

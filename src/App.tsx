@@ -37,10 +37,15 @@ function decodePart(value: string): string {
   }
 }
 
+interface Notice {
+  message: string;
+  undo?: () => void;
+}
+
 interface ShellValue {
   revision: number;
   refresh: () => void;
-  notify: (message: string) => void;
+  notify: (message: string, undo?: () => void) => void;
   fail: (message: string) => void;
   builtinBrowser: boolean;
   refreshAccount: () => void;
@@ -79,7 +84,7 @@ export default function App() {
   const [hash, setHash] = useState(window.location.hash);
   const [stats, setStats] = useState<LibraryStats | null>(null);
   const [progress, setProgress] = useState<JobProgress | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const [builtinBrowser, setBuiltinBrowser] = useState(false);
@@ -91,9 +96,9 @@ export default function App() {
   const contentRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(() => setRevision((value) => value + 1), []);
-  const notify = useCallback((message: string) => {
+  const notify = useCallback((message: string, undo?: () => void) => {
     setError(null);
-    setNotice(message);
+    setNotice({ message, undo });
   }, []);
   const fail = useCallback((message: string) => {
     setNotice(null);
@@ -258,7 +263,24 @@ export default function App() {
     <div className="main" ref={contentRef}>
       <div className="topbar">
         {error && <div className="banner error">{error}</div>}
-        {notice && <div className="banner notice">{notice}</div>}
+        {notice && (
+          <div className="banner notice" role="status">
+            <span>{notice.message}</span>
+            {notice.undo && (
+              <button
+                className="button"
+                type="button"
+                onClick={() => {
+                  const undo = notice.undo;
+                  setNotice(null);
+                  undo?.();
+                }}
+              >
+                元に戻す
+              </button>
+            )}
+          </div>
+        )}
         {progress && (
           <div className="progress">
             <p>{progress.message}</p>

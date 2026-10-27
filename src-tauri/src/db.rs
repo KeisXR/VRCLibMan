@@ -2,9 +2,10 @@ use crate::import_data::ParsedExport;
 use crate::matching::{LabelScore, choose_match, contains_booth_id, score_label};
 use crate::model::{
     Avatar, AvatarCandidate, AvatarInput, BaseBody, BaseBodyInput, CatalogInfo, CatalogRefresh,
-    Category, DownloadFact, DownloadFinished, Extraction, ImportReport, IncomingDownload,
-    IncomingProduct, IncomingVariation, Knowledge, Link, LocalFile, Product, ProductFlag,
-    ProductUpdate, ManagedProduct, Settings, SettingsInput, SettingsPatch, SetupStatus, VariationFact, now_iso,
+    Category, ClassificationSnapshot, DownloadFact, DownloadFinished, Extraction, ImportReport,
+    IncomingDownload, IncomingProduct, IncomingVariation, Knowledge, Link, LocalFile, Product,
+    ProductFlag, ProductUpdate, ManagedProduct, Settings, SettingsInput, SettingsPatch, SetupStatus,
+    VariationFact, now_iso,
 };
 use crate::resolve::{ResolveInput, resolve_product};
 use crate::scan::ScanOutcome;
@@ -776,6 +777,27 @@ fn upsert(connection: &Connection, incoming: &IncomingProduct) -> Result<Upsert,
         {
             return finish_upsert(connection, incoming, Upsert::Unchanged);
         }
+        // Both locks mean a person placed this product. Keep genre, kind, confirmation,
+        // and links so a later extension resend cannot queue it again.
+        if description_changed && classification_pinned(&existing) {
+            connection
+                .execute(
+                    "UPDATE products SET title = ?1, shop = ?2, description_snippet = ?3, url = ?4,
+                     thumbnail_url = ?5, thumbnail_path = ?6, updated_at = ?7 WHERE booth_id = ?8",
+                    params![
+                        title,
+                        shop,
+                        description,
+                        url,
+                        thumbnail,
+                        thumbnail_path,
+                        now,
+                        existing.booth_id
+                    ],
+                )
+                .sql()?;
+            return finish_upsert(connection, incoming, Upsert::Updated);
+        }
         if description_changed {
             let category = if existing.category_locked {
                 existing
@@ -1104,6 +1126,9 @@ fn apply_listed_compatibility(connection: &mut Connection, booth_id: &str) -> Re
         return Ok(());
     }
     let existing = require_product(connection, booth_id)?;
+    if classification_pinned(&existing) {
+        return Ok(());
+    }
     if existing.description_snippet == crate::model::UNAVAILABLE_DESCRIPTION {
         return note_unavailable(connection, booth_id);
     }
@@ -1148,6 +1173,9 @@ pub(crate) fn apply_extraction(
         return Ok(());
     }
     let existing = require_product(connection, booth_id)?;
+    if classification_pinned(&existing) {
+        return Ok(());
+    }
     let avatars = load_avatars(connection)?;
     let names = crate::compat::names_for_extraction(
         &existing.title,
@@ -1513,6 +1541,154 @@ pub(crate) fn reresolve_all(connection: &mut Connection) -> Result<u32, String> 
     Ok(processed)
 }
 
+fn classification_pinned(product: &Product) -> bool {
+    product.category_locked && product.genre_locked
+}
+
+fn classification_snapshot(product: &Product) -> ClassificationSnapshot {
+    ClassificationSnapshot {
+        booth_id: product.booth_id.clone(),
+        category: product.category.map(|category| category.as_str().to_string()),
+        genre: product.genre.clone(),
+        category_locked: product.category_locked,
+        genre_locked: product.genre_locked,
+        user_confirmed: product.user_confirmed,
+        needs_review: product.needs_review,
+    }
+}
+
+/// Move one product onto an asset or world genre and pin it by locking category and genre together.
+/// Returns the classification from before the move.
+pub(crate) fn move_product_genre(
+    connection: &mut Connection,
+    booth_id: &str,
+    kind: &str,
+    genre: &str,
+) -> Result<ClassificationSnapshot, String> {
+    if product_excluded(connection, booth_id)? {
+        return Err("この商品は除外されています".into());
+    }
+    let product = require_product(connection, booth_id)?;
+    let allowed = crate::genre::kind_genres(kind).ok_or("ジャンルの種類が不正です")?;
+    if !allowed.iter().any(|(key, _)| *key == genre) {
+        return Err("ジャンルが不正です".into());
+    }
+    let category = crate::genre::category_for_genre(genre).ok_or("ジャンルが不正です")?;
+    if (category == Category::World) != (kind == "world") {
+        return Err("ジャンルが不正です".into());
+    }
+    let validated = crate::genre::validate(category, Some(genre));
+    if validated != genre {
+        return Err("ジャンルが不正です".into());
+    }
+    let snapshot = classification_snapshot(&product);
+    let already = product.category == Some(category)
+        && product.genre.as_deref() == Some(genre)
+        && classification_pinned(&product);
+    if !already {
+        update_product(
+            connection,
+            &ProductUpdate {
+                booth_id: booth_id.to_string(),
+                category: Some(category.as_str().to_string()),
+                genre: Some(genre.to_string()),
+                is_generic: None,
+                avatar_ids: None,
+                confirm: None,
+            },
+        )?;
+    }
+    Ok(snapshot)
+}
+
+pub(crate) fn restore_product_classification(
+    connection: &Connection,
+    snapshot: &ClassificationSnapshot,
+) -> Result<(), String> {
+    let _product = require_product(connection, &snapshot.booth_id)?;
+    if let Some(category) = snapshot.category.as_deref() {
+        if Category::parse(category).is_none() {
+            return Err("カテゴリが不正です".into());
+        }
+    }
+    connection
+        .execute(
+            "UPDATE products SET category = ?1, category_locked = ?2, genre = ?3, genre_locked = ?4,
+             user_confirmed = ?5, needs_review = ?6, updated_at = ?7 WHERE booth_id = ?8",
+            params![
+                snapshot.category,
+                snapshot.category_locked,
+                snapshot.genre,
+                snapshot.genre_locked,
+                snapshot.user_confirmed,
+                snapshot.needs_review,
+                now_iso(),
+                snapshot.booth_id
+            ],
+        )
+        .sql()?;
+    Ok(())
+}
+
+/// Clear both locks so the next reclassification may replace this placement.
+/// Returns the pinned snapshot so the unpin itself can be undone.
+pub(crate) fn unpin_product_classification(
+    connection: &Connection,
+    booth_id: &str,
+) -> Result<ClassificationSnapshot, String> {
+    let product = require_product(connection, booth_id)?;
+    if !classification_pinned(&product) {
+        return Err("この商品は手動で固定されていません".into());
+    }
+    let snapshot = classification_snapshot(&product);
+    connection
+        .execute(
+            "UPDATE products SET category_locked = 0, genre_locked = 0, updated_at = ?1 WHERE booth_id = ?2",
+            params![now_iso(), booth_id],
+        )
+        .sql()?;
+    Ok(snapshot)
+}
+
+/// Add one manual avatar link and lock links so reresolve keeps it.
+/// Category and genre locks stay as they are, so this is not a classification pin.
+pub(crate) fn attach_product_to_avatar(
+    connection: &mut Connection,
+    avatar_id: &str,
+    booth_id: &str,
+) -> Result<(), String> {
+    if !avatar_exists(connection, avatar_id)? {
+        return Err(format!("アバター {avatar_id} が対応表にありません"));
+    }
+    if product_excluded(connection, booth_id)? {
+        return Err("この商品は除外されています".into());
+    }
+    let product = require_product(connection, booth_id)?;
+    match product.category {
+        Some(Category::Avatar) => {
+            return Err("アバター本体は衣装として追加できません".into());
+        }
+        Some(Category::World) => {
+            return Err("ワールドはアバターに追加できません".into());
+        }
+        _ => {}
+    }
+    let tx = connection.transaction().sql()?;
+    tx.execute(
+        "INSERT INTO product_avatars (product_id, avatar_id, source) VALUES (?1, ?2, 'manual')
+         ON CONFLICT(product_id, avatar_id) DO UPDATE SET source = 'manual'",
+        params![booth_id, avatar_id],
+    )
+    .sql()?;
+    tx.execute(
+        "UPDATE products SET links_locked = 1, updated_at = ?1 WHERE booth_id = ?2",
+        params![now_iso(), booth_id],
+    )
+    .sql()?;
+    tx.commit().sql()?;
+    Ok(())
+}
+
 pub(crate) fn update_product(
     connection: &mut Connection,
     update: &ProductUpdate,
@@ -1805,6 +1981,7 @@ pub(crate) fn products_for_extract(
                 .prepare(
                     "SELECT booth_id, title, description_snippet FROM products
                      WHERE booth_id NOT IN (SELECT booth_id FROM product_exclusions)
+                       AND NOT (category_locked = 1 AND genre_locked = 1)
                      ORDER BY updated_at DESC",
                 )
                 .sql()?;
@@ -1825,6 +2002,7 @@ pub(crate) fn products_for_extract(
                 .prepare(
                     "SELECT booth_id, title, description_snippet FROM products
                      WHERE (extracted_at IS NULL OR category IS NULL)
+                       AND NOT (category_locked = 1 AND genre_locked = 1)
                        AND booth_id NOT IN (SELECT booth_id FROM product_exclusions)
                      ORDER BY imported_at ASC",
                 )
@@ -1849,6 +2027,7 @@ pub(crate) fn products_for_extract(
                        AND category IS NOT NULL
                        AND classifier_version < ?1
                        AND description_snippet != ?2
+                       AND NOT (category_locked = 1 AND genre_locked = 1)
                        AND booth_id NOT IN (SELECT booth_id FROM product_exclusions)
                      ORDER BY updated_at DESC",
                 )
@@ -1883,6 +2062,7 @@ pub(crate) fn classification_status(connection: &Connection) -> Result<crate::mo
                AND category IS NOT NULL
                AND classifier_version < ?1
                AND description_snippet != ?2
+               AND NOT (category_locked = 1 AND genre_locked = 1)
                AND booth_id NOT IN (SELECT booth_id FROM product_exclusions)",
             params![
                 crate::classifier::CLASSIFIER_VERSION,
@@ -3336,7 +3516,7 @@ fn settle_one(connection: &mut Connection, booth_id: &str, redo: bool) -> Result
         return Ok(false);
     }
     let product = require_product(connection, booth_id)?;
-    if product.user_confirmed || product.links_locked {
+    if classification_pinned(&product) || product.user_confirmed || product.links_locked {
         return Ok(false);
     }
     if let Some((avatar_id, display)) = catalog_body(connection, booth_id)? {
@@ -7294,6 +7474,273 @@ mod tests {
         assert_eq!(booth_page_interval_ms(&connection).unwrap(), 250);
         set_setting(&connection, "booth_page_interval_ms", "invalid").unwrap();
         assert_eq!(booth_page_interval_ms(&connection).unwrap(), 1000);
+    }
+
+    #[test]
+    fn pinned_move_keeps_kind_and_confirmation_across_extension_reimport() {
+        let mut connection = open_memory().unwrap();
+        let id = add_free_product(&mut connection, "https://booth.pm/ja/items/424242").unwrap();
+        assert_eq!(id, "424242");
+        let stub = require_product(&connection, "424242").unwrap();
+        assert!(stub.category.is_none());
+        assert!(stub.description_snippet.is_empty());
+        assert!(!stub.category_locked && !stub.genre_locked);
+
+        apply_extraction(
+            &mut connection,
+            "424242",
+            &extraction(Category::Outfit, &[], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        let classified = require_product(&connection, "424242").unwrap();
+        let extracted_at = classified.extracted_at.clone().unwrap();
+        assert_eq!(classified.category, Some(Category::Outfit));
+        assert!(!classified.user_confirmed);
+
+        let previous = move_product_genre(&mut connection, "424242", "world", "furniture_props").unwrap();
+        assert_eq!(previous.category.as_deref(), Some("outfit"));
+        assert!(!previous.category_locked && !previous.genre_locked);
+        let moved = require_product(&connection, "424242").unwrap();
+        assert_eq!(moved.category, Some(Category::World));
+        assert_eq!(moved.genre.as_deref(), Some("furniture_props"));
+        assert!(moved.category_locked && moved.genre_locked);
+        assert_eq!(moved.extracted_at.as_deref(), Some(extracted_at.as_str()));
+        assert!(product_ids_by_genre(&connection, "world", Some("furniture_props"))
+            .unwrap()
+            .contains(&"424242".into()));
+        assert!(!product_ids_by_genre(&connection, "asset", None)
+            .unwrap()
+            .contains(&"424242".into()));
+
+        update_product(
+            &mut connection,
+            &ProductUpdate {
+                booth_id: "424242".into(),
+                category: None,
+                genre: None,
+                is_generic: None,
+                avatar_ids: None,
+                confirm: Some(true),
+            },
+        )
+        .unwrap();
+        connection
+            .execute(
+                "INSERT INTO product_avatars (product_id, avatar_id, source) VALUES ('424242', 'lime', 'extracted')",
+                [],
+            )
+            .unwrap();
+        let confirmed = require_product(&connection, "424242").unwrap();
+        assert!(confirmed.user_confirmed);
+        assert!(!confirmed.needs_review);
+        assert!(confirmed.category_locked && confirmed.genre_locked);
+        assert!(!confirmed.links_locked);
+
+        let resent = parse_export(
+            r#"[{"boothId":"424242","title":"見本の小物","shop":"見本","description":"対応アバター\nライム_ver1.00 https://booth.pm/ja/items/1001\n基本仕様\n布です。"}]"#,
+        )
+        .unwrap();
+        import_products(&mut connection, &resent).unwrap();
+        // The same payload again is an unchanged product, which still runs compatibility.
+        import_products(&mut connection, &resent).unwrap();
+
+        let kept = require_product(&connection, "424242").unwrap();
+        assert_eq!(kept.category, Some(Category::World));
+        assert_eq!(kept.genre.as_deref(), Some("furniture_props"));
+        assert!(kept.category_locked && kept.genre_locked);
+        assert!(kept.user_confirmed);
+        assert!(!kept.needs_review);
+        assert_eq!(kept.extracted_at.as_deref(), Some(extracted_at.as_str()));
+        assert!(kept.description_snippet.contains("ライム"));
+        assert_eq!(link_ids(&connection, "424242").unwrap(), vec!["lime".to_string()]);
+        let queued = queue_page(&load_snapshot(&connection).unwrap(), "review", 0, 50);
+        assert!(!queued.products.iter().any(|product| product.booth_id == "424242"));
+        let unextracted = queue_page(&load_snapshot(&connection).unwrap(), "unextracted", 0, 50);
+        assert!(!unextracted.products.iter().any(|product| product.booth_id == "424242"));
+
+        apply_extraction(
+            &mut connection,
+            "424242",
+            &extraction(Category::Hair, &["ライム"], false, 0.99),
+            0.6,
+        )
+        .unwrap();
+        let still = require_product(&connection, "424242").unwrap();
+        assert_eq!(still.category, Some(Category::World));
+        assert_eq!(still.genre.as_deref(), Some("furniture_props"));
+        assert!(still.user_confirmed);
+
+        for target in [ExtractTarget::Unclassified, ExtractTarget::Stale, ExtractTarget::All] {
+            assert!(
+                !products_for_extract(&connection, target)
+                    .unwrap()
+                    .iter()
+                    .any(|job| job.booth_id == "424242"),
+                "{target:?}"
+            );
+        }
+        connection
+            .execute(
+                "UPDATE products SET classifier_version = 1 WHERE booth_id = '424242'",
+                [],
+            )
+            .unwrap();
+        let pinned_stale = classification_status(&connection).unwrap().stale_count;
+        assert!(
+            !products_for_extract(&connection, ExtractTarget::Stale)
+                .unwrap()
+                .iter()
+                .any(|job| job.booth_id == "424242")
+        );
+
+        let pinned = unpin_product_classification(&connection, "424242").unwrap();
+        assert!(pinned.category_locked && pinned.genre_locked);
+        let open = require_product(&connection, "424242").unwrap();
+        assert_eq!(open.category, Some(Category::World));
+        assert_eq!(open.genre.as_deref(), Some("furniture_props"));
+        assert!(!open.category_locked && !open.genre_locked);
+        assert_eq!(
+            classification_status(&connection).unwrap().stale_count,
+            pinned_stale + 1
+        );
+        assert!(products_for_extract(&connection, ExtractTarget::Stale)
+            .unwrap()
+            .iter()
+            .any(|job| job.booth_id == "424242"));
+        assert!(products_for_extract(&connection, ExtractTarget::All)
+            .unwrap()
+            .iter()
+            .any(|job| job.booth_id == "424242"));
+
+        restore_product_classification(&connection, &previous).unwrap();
+        let restored = require_product(&connection, "424242").unwrap();
+        assert_eq!(restored.category, Some(Category::Outfit));
+        assert_eq!(restored.genre, previous.genre);
+        assert!(!restored.category_locked && !restored.genre_locked);
+        assert!(!restored.user_confirmed);
+
+        assert!(move_product_genre(&mut connection, "424242", "asset", "skybox").is_err());
+        assert!(move_product_genre(&mut connection, "424242", "world", "hair").is_err());
+        assert!(move_product_genre(&mut connection, "424242", "avatar", "hair").is_err());
+        move_product_genre(&mut connection, "424242", "asset", "shoes_socks").unwrap();
+        let shoes = require_product(&connection, "424242").unwrap();
+        assert_eq!(shoes.category, Some(Category::Outfit));
+        assert_eq!(shoes.genre.as_deref(), Some("shoes_socks"));
+        assert!(shoes.category_locked && shoes.genre_locked);
+        move_product_genre(&mut connection, "424242", "asset", "hair").unwrap();
+        let hair = require_product(&connection, "424242").unwrap();
+        assert_eq!(hair.category, Some(Category::Hair));
+        assert_eq!(hair.genre.as_deref(), Some("hair"));
+    }
+
+    #[test]
+    fn manual_avatar_attach_locks_the_link_without_pinning_classification() {
+        let mut connection = open_memory().unwrap();
+        let id = add_free_product(&mut connection, "https://booth.pm/ja/items/515151").unwrap();
+        apply_extraction(
+            &mut connection,
+            &id,
+            &extraction(Category::Gimmick, &[], true, 0.9),
+            0.6,
+        )
+        .unwrap();
+        connection
+            .execute(
+                "INSERT INTO product_avatars (product_id, avatar_id, source) VALUES ('515151', 'plum', 'extracted')",
+                [],
+            )
+            .unwrap();
+        let before = require_product(&connection, "515151").unwrap();
+        assert_eq!(before.category, Some(Category::Gimmick));
+        assert!(!before.category_locked && !before.genre_locked && !before.links_locked);
+        assert!(!before.user_confirmed);
+
+        attach_product_to_avatar(&mut connection, "lime", "515151").unwrap();
+        attach_product_to_avatar(&mut connection, "lime", "515151").unwrap();
+        let attached = require_product(&connection, "515151").unwrap();
+        assert_eq!(attached.category, Some(Category::Gimmick));
+        assert_eq!(attached.genre, before.genre);
+        assert!(!attached.category_locked && !attached.genre_locked);
+        assert!(attached.links_locked);
+        assert!(!attached.user_confirmed);
+        assert_eq!(
+            link_rows(&connection, "515151"),
+            vec![
+                ("lime".to_string(), "manual".to_string()),
+                ("plum".to_string(), "extracted".to_string()),
+            ]
+        );
+
+        reresolve_all(&mut connection).unwrap();
+        assert_eq!(
+            link_rows(&connection, "515151"),
+            vec![
+                ("lime".to_string(), "manual".to_string()),
+                ("plum".to_string(), "extracted".to_string()),
+            ]
+        );
+
+        let resent = parse_export(
+            r#"[{"boothId":"515151","title":"見本のギミック","shop":"見本","description":"対応アバター\nライム_ver1.00 https://booth.pm/ja/items/1001\n基本仕様\n布です。"}]"#,
+        )
+        .unwrap();
+        import_products(&mut connection, &resent).unwrap();
+        let reimported = require_product(&connection, "515151").unwrap();
+        assert!(reimported.category.is_none());
+        assert!(!reimported.category_locked && !reimported.genre_locked);
+        assert!(reimported.links_locked);
+        assert!(!reimported.user_confirmed);
+        assert!(reimported.needs_review);
+        assert_eq!(
+            link_rows(&connection, "515151"),
+            vec![
+                ("lime".to_string(), "manual".to_string()),
+                ("plum".to_string(), "extracted".to_string()),
+            ]
+        );
+        let detail = avatar_detail(&load_snapshot(&connection).unwrap(), "lime").unwrap();
+        assert!(section_items(&detail, "uncategorized").iter().any(|(booth_id, _)| booth_id == "515151"));
+
+        apply_extraction(
+            &mut connection,
+            "515151",
+            &extraction(Category::Hair, &["ライム"], false, 0.99),
+            0.6,
+        )
+        .unwrap();
+        let reclassified = require_product(&connection, "515151").unwrap();
+        assert_eq!(reclassified.category, Some(Category::Hair));
+        assert!(!reclassified.category_locked && !reclassified.genre_locked);
+        assert!(reclassified.links_locked);
+        assert!(link_rows(&connection, "515151").iter().any(|(avatar, source)| avatar == "lime" && source == "manual"));
+
+        let world = add_free_product(&mut connection, "https://booth.pm/ja/items/525252").unwrap();
+        apply_extraction(&mut connection, &world, &extraction(Category::World, &[], false, 0.9), 0.6).unwrap();
+        assert!(attach_product_to_avatar(&mut connection, "lime", "525252").unwrap_err().contains("ワールド"));
+        assert!(link_rows(&connection, "525252").is_empty());
+
+        let body = add_free_product(&mut connection, "https://booth.pm/ja/items/535353").unwrap();
+        apply_extraction(&mut connection, &body, &extraction(Category::Avatar, &["ライム"], false, 0.9), 0.6).unwrap();
+        assert!(attach_product_to_avatar(&mut connection, "plum", "535353").unwrap_err().contains("アバター本体"));
+        assert!(!link_rows(&connection, "535353").iter().any(|(avatar, _)| avatar == "plum"));
+
+        let hidden = add_free_product(&mut connection, "https://booth.pm/ja/items/545454").unwrap();
+        set_product_excluded(&mut connection, &hidden, true).unwrap();
+        assert!(attach_product_to_avatar(&mut connection, "lime", "545454").unwrap_err().contains("除外"));
+        assert!(attach_product_to_avatar(&mut connection, "missing", "515151").is_err());
+        assert!(attach_product_to_avatar(&mut connection, "lime", "999999").is_err());
+    }
+
+    fn link_rows(connection: &Connection, booth_id: &str) -> Vec<(String, String)> {
+        let mut statement = connection
+            .prepare("SELECT avatar_id, source FROM product_avatars WHERE product_id = ?1 ORDER BY avatar_id")
+            .unwrap();
+        statement
+            .query_map(params![booth_id], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
     }
 
     fn section_items(detail: &crate::view::AvatarDetail, category: &str) -> Vec<(String, bool)> {

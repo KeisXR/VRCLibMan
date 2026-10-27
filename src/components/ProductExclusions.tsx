@@ -1,16 +1,47 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { useShell } from "../App";
-import { CATEGORY_LABEL } from "../types";
-import type { ManagedProduct } from "../types";
+import { CATEGORY_LABEL, GENRE_LABEL, genresForKind } from "../types";
+import type { GenreKind, ManagedProduct } from "../types";
 import { errorText } from "../ui";
+import { useGenreMove, useUnpinProduct } from "../useGenreMove";
 
-export function ExcludeProductButton({ boothId, title }: { boothId: string; title: string }) {
+export function ExcludeProductButton({
+  boothId,
+  title,
+  category = null,
+  genre = null,
+  classificationPinned = false,
+}: {
+  boothId: string;
+  title: string;
+  category?: string | null;
+  genre?: string | null;
+  classificationPinned?: boolean;
+}) {
   const { refresh, notify, fail } = useShell();
+  const moveProduct = useGenreMove();
+  const unpinProduct = useUnpinProduct();
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
+  const [picking, setPicking] = useState(false);
+  const [kind, setKind] = useState<GenreKind>(category === "world" ? "world" : "asset");
   const container = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
+  const kindButton = useRef<HTMLButtonElement>(null);
+  const holdFocus = useRef(false);
+  const canMove = category !== "avatar";
+
+  useEffect(() => {
+    if (!open) setPicking(false);
+  }, [open]);
+
+  useLayoutEffect(() => {
+    if (open && picking) {
+      kindButton.current?.focus();
+      holdFocus.current = false;
+    }
+  }, [open, picking]);
 
   useEffect(() => {
     if (!open) return;
@@ -33,6 +64,7 @@ export function ExcludeProductButton({ boothId, title }: { boothId: string; titl
 
   return (
     <div className="product-actions" ref={container} onBlur={(event) => {
+      if (holdFocus.current) return;
       if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
     }}>
       <button
@@ -47,11 +79,41 @@ export function ExcludeProductButton({ boothId, title }: { boothId: string; titl
       >
         <span aria-hidden="true">⋯</span>
       </button>
-      {open && (
-        <div className="product-actions-panel">
+      {open && !picking && (
+        <div className="product-actions-panel" role="menu">
+          {canMove && (
+            <button
+              className="button"
+              type="button"
+              role="menuitem"
+              disabled={busy}
+              onClick={() => {
+                holdFocus.current = true;
+                setKind(category === "world" ? "world" : "asset");
+                setPicking(true);
+              }}
+            >
+              移動
+            </button>
+          )}
+          {classificationPinned && (
+            <button
+              className="button"
+              type="button"
+              role="menuitem"
+              disabled={busy}
+              onClick={() => {
+                setOpen(false);
+                void unpinProduct(boothId);
+              }}
+            >
+              自動分類に戻す
+            </button>
+          )}
           <button
             className="button danger"
             type="button"
+            role="menuitem"
             disabled={busy}
             onClick={() => {
               setOpen(false);
@@ -70,6 +132,32 @@ export function ExcludeProductButton({ boothId, title }: { boothId: string; titl
           >
             管理対象から除外
           </button>
+        </div>
+      )}
+      {open && picking && (
+        <div className="product-actions-panel genre-move-panel" role="dialog" aria-label="移動先のジャンル">
+          <div className="genre-move-kinds" role="group" aria-label="種類">
+            <button ref={kindButton} className="button" type="button" aria-pressed={kind === "asset"} onClick={() => setKind("asset")}>アセット</button>
+            <button className="button" type="button" aria-pressed={kind === "world"} onClick={() => setKind("world")}>ワールド</button>
+          </div>
+          <div className="genre-move-list">
+            {genresForKind(kind).map((value) => (
+              <button
+                key={value}
+                className="button"
+                type="button"
+                aria-current={kind === (category === "world" ? "world" : "asset") && genre === value ? "true" : undefined}
+                onClick={() => {
+                  setOpen(false);
+                  setPicking(false);
+                  void moveProduct(boothId, kind, value);
+                }}
+              >
+                {GENRE_LABEL[value] ?? value}
+              </button>
+            ))}
+          </div>
+          <button className="button" type="button" onClick={() => setPicking(false)}>戻る</button>
         </div>
       )}
     </div>

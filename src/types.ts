@@ -89,6 +89,8 @@ export interface ItemView {
   thumbnailPath: string | null;
   category: Category | null;
   genre: string | null;
+  /** Both category and genre were locked by a manual placement. */
+  classificationPinned: boolean;
   isGeneric: boolean;
   confidence: number | null;
   viaBaseBody: boolean;
@@ -151,6 +153,7 @@ export interface QueueProduct {
   thumbnailPath: string | null;
   category: Category | null;
   genre: string | null;
+  classificationPinned: boolean;
   isGeneric: boolean;
   confidence: number | null;
   compatibleAvatars: string[];
@@ -182,6 +185,7 @@ export interface ProductOption {
   boothId: string;
   title: string;
   shop: string;
+  category: Category | null;
 }
 
 export interface AvatarRecord {
@@ -405,6 +409,16 @@ export interface ManagedProduct {
   shop: string;
   category: Category | null;
   excluded: boolean;
+}
+
+export interface ClassificationSnapshot {
+  boothId: string;
+  category: string | null;
+  genre: string | null;
+  categoryLocked: boolean;
+  genreLocked: boolean;
+  userConfirmed: boolean;
+  needsReview: boolean;
 }
 
 export interface ProductUpdate {

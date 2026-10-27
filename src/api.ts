@@ -15,6 +15,7 @@ import type {
   ExtractReport,
   ExtractTarget,
   ClassificationStatus,
+  ClassificationSnapshot,
   ExtensionLink,
   BrowserDiagnostic,
   BoothAccount,
@@ -152,6 +153,14 @@ export const api = {
   boothBrowserLog: () => call<BrowserDiagnostic>("booth_browser_log"),
   importExport: (json: string) => call<ImportReport>("import_export", { json }),
   updateProduct: (update: ProductUpdate) => call<void>("update_product", { update }),
+  moveProductGenre: (boothId: string, kind: GenreKind, genre: string) =>
+    call<ClassificationSnapshot>("move_product_genre", { boothId, kind, genre }),
+  restoreProductClassification: (snapshot: ClassificationSnapshot) =>
+    call<void>("restore_product_classification", { snapshot }),
+  unpinProductClassification: (boothId: string) =>
+    call<ClassificationSnapshot>("unpin_product_classification", { boothId }),
+  attachProductToAvatar: (avatarId: string, boothId: string) =>
+    call<void>("attach_product_to_avatar", { avatarId, boothId }),
   linkFile: (path: string, productId: string | null) =>
     call<void>("link_file", { path, productId }),
   saveAvatar: (avatar: AvatarInput) => call<string>("save_avatar", { avatar }),

@@ -492,6 +492,20 @@ pub struct AvatarCandidate {
     pub product_count: u32,
 }
 
+/// Classification fields captured before a manual genre move, so the move can be undone.
+/// A product is pinned when both `category_locked` and `genre_locked` are set.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassificationSnapshot {
+    pub booth_id: String,
+    pub category: Option<String>,
+    pub genre: Option<String>,
+    pub category_locked: bool,
+    pub genre_locked: bool,
+    pub user_confirmed: bool,
+    pub needs_review: bool,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProductUpdate {

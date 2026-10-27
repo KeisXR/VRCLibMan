@@ -1,9 +1,9 @@
 use crate::AppState;
 use crate::db::{self, ExtractJob};
 use crate::model::{
-    AvatarCandidate, AvatarInput, BaseBodyInput, CatalogInfo, CatalogRefresh, ExtractReport,
-    ImportReport, JobProgress, Knowledge, LibraryStats, OllamaStatus, ProductUpdate, ScanReport,
-    Category, Settings, SettingsInput, SetupStatus, StagedLeftover,
+    AvatarCandidate, AvatarInput, BaseBodyInput, CatalogInfo, CatalogRefresh, ClassificationSnapshot,
+    ExtractReport, ImportReport, JobProgress, Knowledge, LibraryStats, OllamaStatus, ProductUpdate,
+    ScanReport, Category, Settings, SettingsInput, SetupStatus, StagedLeftover,
 };
 use crate::apple_fm::{self, AppleError};
 use crate::model::Extraction;
@@ -634,6 +634,48 @@ pub async fn download_booth_file(
 pub fn update_product(state: State<'_, AppState>, update: ProductUpdate) -> Result<(), String> {
     let mut connection = db(&state)?;
     db::update_product(&mut connection, &update)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn move_product_genre(
+    state: State<'_, AppState>,
+    boothId: String,
+    kind: String,
+    genre: String,
+) -> Result<ClassificationSnapshot, String> {
+    let mut connection = db(&state)?;
+    db::move_product_genre(&mut connection, &boothId, &kind, &genre)
+}
+
+#[tauri::command]
+pub fn restore_product_classification(
+    state: State<'_, AppState>,
+    snapshot: ClassificationSnapshot,
+) -> Result<(), String> {
+    let connection = db(&state)?;
+    db::restore_product_classification(&connection, &snapshot)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn unpin_product_classification(
+    state: State<'_, AppState>,
+    boothId: String,
+) -> Result<ClassificationSnapshot, String> {
+    let connection = db(&state)?;
+    db::unpin_product_classification(&connection, &boothId)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn attach_product_to_avatar(
+    state: State<'_, AppState>,
+    avatarId: String,
+    boothId: String,
+) -> Result<(), String> {
+    let mut connection = db(&state)?;
+    db::attach_product_to_avatar(&mut connection, &avatarId, &boothId)
 }
 
 #[tauri::command]

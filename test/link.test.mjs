@@ -57,6 +57,14 @@ async function popupHarness() {
   };
 }
 
+test("main window keeps HTML5 drag and drop for genre moves and JSON drops", () => {
+  const main = config.app.windows.find((window) => window.label === "main");
+  assert.equal(main.dragDropEnabled, false);
+  const css = readFileSync("src/styles.css", "utf8");
+  assert.match(css, /\.product-actions-panel \{[^}]*flex-direction:\s*column/);
+  assert.match(css, /\.item > \.row-actions \{[^}]*align-self:\s*start/);
+});
+
 test("extension and app share the fixed loopback port", () => {
   assert.match(rust, new RegExp(`LOCAL_IMPORT_PORT: u16 = ${port}`));
   assert.match(rust, /127\.0\.0\.1:\{LOCAL_IMPORT_PORT\}/);

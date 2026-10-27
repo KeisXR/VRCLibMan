@@ -61,6 +61,8 @@ pub struct ItemView {
     pub thumbnail_path: Option<String>,
     pub category: Option<Category>,
     pub genre: Option<String>,
+    /// True when both category and genre were locked by a manual placement.
+    pub classification_pinned: bool,
     pub is_generic: bool,
     pub confidence: Option<f64>,
     pub via_base_body: bool,
@@ -184,6 +186,7 @@ pub struct QueueProduct {
     pub thumbnail_path: Option<String>,
     pub category: Option<Category>,
     pub genre: Option<String>,
+    pub classification_pinned: bool,
     pub is_generic: bool,
     pub confidence: Option<f64>,
     pub compatible_avatars: Vec<String>,
@@ -222,6 +225,7 @@ pub struct ProductOption {
     pub booth_id: String,
     pub title: String,
     pub shop: String,
+    pub category: Option<Category>,
 }
 
 struct Classified {
@@ -438,6 +442,7 @@ pub fn queue_page(snapshot: &Snapshot, kind: &str, offset: u32, limit: u32) -> Q
                 thumbnail_path: product.thumbnail_path.clone(),
                 category: product.category,
                 genre: product.genre.clone(),
+                classification_pinned: product.category_locked && product.genre_locked,
                 is_generic: product.is_generic,
                 confidence: product.confidence,
                 compatible_avatars: product.compatible_avatars.clone(),
@@ -500,6 +505,7 @@ pub fn product_options(snapshot: &Snapshot) -> Vec<ProductOption> {
             booth_id: product.booth_id.clone(),
             title: product.title.clone(),
             shop: product.shop.clone(),
+            category: product.category,
         })
         .collect();
     options.sort_by(|left, right| left.title.cmp(&right.title));
@@ -655,6 +661,7 @@ fn item_view(snapshot: &Snapshot, product: &Product, via_base_body: bool) -> Ite
         thumbnail_path: product.thumbnail_path.clone(),
         category: product.category,
         genre: product.genre.clone(),
+        classification_pinned: product.category_locked && product.genre_locked,
         is_generic: product.is_generic,
         confidence: product.confidence,
         via_base_body,

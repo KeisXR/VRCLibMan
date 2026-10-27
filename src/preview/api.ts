@@ -2,6 +2,7 @@ import { previewBrowserState, previewBrowserAction, previewSaveBookmark, preview
 import extensionManifest from "../../extension/manifest.json";
 import { filePresence } from "../media";
 import { GENRE_UNSET, genresForKind } from "../types";
+import type { ClassificationSnapshot } from "../types";
 import type {
   AvatarCard,
   BrowserAction,
@@ -539,6 +540,7 @@ function itemView(item: Product, viaBaseBody: boolean): ItemView {
     thumbnailPath: item.thumbnailPath,
     category: item.category,
     genre: item.genre ?? null,
+    classificationPinned: Boolean(item.categoryLocked && item.genreLocked),
     isGeneric: item.isGeneric,
     confidence: item.confidence,
     viaBaseBody,
@@ -732,6 +734,7 @@ function queue(kind: string): QueuePage {
       thumbnailPath: item.thumbnailPath,
       category: item.category,
       genre: item.genre ?? null,
+      classificationPinned: Boolean(item.categoryLocked && item.genreLocked),
       isGeneric: item.isGeneric,
       confidence: item.confidence,
       compatibleAvatars: item.compatibleAvatars,
@@ -820,6 +823,81 @@ function updateProduct(update: ProductUpdate) {
   if (typeof update.confirm === "boolean") item.userConfirmed = update.confirm;
   item.needsReview = needsReview(item, linksOf(item.boothId).length);
   item.updatedAt = new Date().toISOString();
+}
+
+const GENRE_CATEGORY: Record<string, Category> = {
+  outfit: "outfit",
+  shoes_socks: "outfit",
+  hair: "hair",
+  accessory: "accessory",
+  head_ears_tail: "accessory",
+  makeup_skin: "texture",
+  eye_texture: "texture",
+  expression_animation: "gimmick",
+  pose: "gimmick",
+  gimmick: "gimmick",
+  particle_effect: "gimmick",
+  shader: "other",
+  tool_editor: "other",
+  other: "other",
+  world: "world",
+  furniture_props: "world",
+  world_gimmick: "world",
+  texture_material: "world",
+  skybox: "world",
+  lighting_postprocess: "world",
+  world_shader: "world",
+  building_terrain: "world",
+  audio_bgm: "world",
+  tool_other: "world",
+};
+
+function previewSnapshot(item: Product): ClassificationSnapshot {
+  return {
+    boothId: item.boothId,
+    category: item.category,
+    genre: item.genre ?? null,
+    categoryLocked: item.categoryLocked,
+    genreLocked: Boolean(item.genreLocked),
+    userConfirmed: item.userConfirmed,
+    needsReview: item.needsReview,
+  };
+}
+
+function movePreviewGenre(boothId: string, kind: string, genre: string): ClassificationSnapshot {
+  if (kind !== "asset" && kind !== "world") throw new Error("ジャンルの種類が不正です");
+  if (!genresForKind(kind).includes(genre)) throw new Error("ジャンルが不正です");
+  const category = GENRE_CATEGORY[genre];
+  if (!category || (category === "world") !== (kind === "world")) throw new Error("ジャンルが不正です");
+  const item = store.products.find((product) => product.boothId === boothId);
+  if (!item) throw new Error("商品が見つかりません");
+  if (excludedProducts.has(boothId)) throw new Error("この商品は除外されています");
+  const snapshot = previewSnapshot(item);
+  const already = item.category === category && item.genre === genre && item.categoryLocked && Boolean(item.genreLocked);
+  if (!already) updateProduct({ boothId, category, genre });
+  return snapshot;
+}
+
+function restorePreviewClassification(raw: unknown) {
+  const snapshot = raw as ClassificationSnapshot;
+  const item = store.products.find((product) => product.boothId === snapshot?.boothId);
+  if (!item) throw new Error("商品が見つかりません");
+  item.category = snapshot.category as Category | null;
+  item.genre = snapshot.genre;
+  item.categoryLocked = snapshot.categoryLocked;
+  item.genreLocked = snapshot.genreLocked;
+  item.userConfirmed = snapshot.userConfirmed;
+  item.needsReview = snapshot.needsReview;
+}
+
+function unpinPreviewClassification(boothId: string): ClassificationSnapshot {
+  const item = store.products.find((product) => product.boothId === boothId);
+  if (!item) throw new Error("商品が見つかりません");
+  if (!(item.categoryLocked && item.genreLocked)) throw new Error("この商品は手動で固定されていません");
+  const snapshot = previewSnapshot(item);
+  item.categoryLocked = false;
+  item.genreLocked = false;
+  return snapshot;
 }
 
 function textOf(value: unknown): string {
@@ -1211,7 +1289,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       return queue(String(args.kind ?? "review")) as T;
     case "list_product_options":
       return activeProducts()
-        .map((item) => ({ boothId: item.boothId, title: item.title, shop: item.shop }))
+        .map((item) => ({ boothId: item.boothId, title: item.title, shop: item.shop, category: item.category }))
         .sort((left, right) => left.title.localeCompare(right.title, "ja")) as T;
     case "list_knowledge":
       return { avatars: store.avatars, baseBodies: store.baseBodies } satisfies Knowledge as T;
@@ -1257,6 +1335,29 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     case "update_product":
       updateProduct(args.update as ProductUpdate);
       return undefined as T;
+    case "move_product_genre":
+      return movePreviewGenre(String(args.boothId ?? ""), String(args.kind ?? ""), String(args.genre ?? "")) as T;
+    case "restore_product_classification":
+      restorePreviewClassification(args.snapshot);
+      return undefined as T;
+    case "unpin_product_classification":
+      return unpinPreviewClassification(String(args.boothId ?? "")) as T;
+    case "attach_product_to_avatar": {
+      const avatarId = String(args.avatarId ?? "");
+      const boothId = String(args.boothId ?? "");
+      if (!store.avatars.some((avatar) => avatar.id === avatarId)) {
+        throw new Error(`アバター ${avatarId} が対応表にありません`);
+      }
+      if (excludedProducts.has(boothId)) throw new Error("この商品は除外されています");
+      const item = store.products.find((product) => product.boothId === boothId);
+      if (!item) throw new Error("商品が見つかりません");
+      if (item.category === "avatar") throw new Error("アバター本体は衣装として追加できません");
+      if (item.category === "world") throw new Error("ワールドはアバターに追加できません");
+      const existing = store.links.find((link) => link.productId === boothId && link.avatarId === avatarId);
+      if (!existing) store.links.push({ productId: boothId, avatarId });
+      item.linksLocked = true;
+      return undefined as T;
+    }
     case "link_file": {
       const file = store.files.find((item) => item.path === args.path);
       if (!file) throw new Error("ファイルがスキャン結果にありません");
@@ -1324,6 +1425,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       const classifierVersion = 2;
       const staleCount = store.products.filter(
         (item) =>
+          !(item.categoryLocked && item.genreLocked) &&
           item.category != null &&
           (item.classifierVersion ?? 1) < classifierVersion,
       ).length;

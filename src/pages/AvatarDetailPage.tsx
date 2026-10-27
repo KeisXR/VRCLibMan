@@ -1,9 +1,9 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, listenBoothFile, openExternal, openLocal, revealInFolder } from "../api";
 import { useShell } from "../App";
 import { filePresence, formatBytes } from "../media";
 import { CATEGORY_LABEL } from "../types";
-import type { AvatarDetail, BoothFileStatus, DownloadView, ItemView, Knowledge } from "../types";
+import type { AvatarDetail, BoothFileStatus, DownloadView, ItemView, Knowledge, ProductOption } from "../types";
 import { FileMark, Thumb, errorText } from "../ui";
 import { ExcludeProductButton } from "../components/ProductExclusions";
 import { type RemoteProbeStatus, placeLabelForFile, useRemoteProductProbe } from "../remoteProductProbe";
@@ -74,6 +74,16 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
     }
   }
 
+  const linkedIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const section of detail?.sections ?? []) {
+      for (const item of section.items) {
+        if (!item.viaBaseBody) ids.add(item.boothId);
+      }
+    }
+    return ids;
+  }, [detail]);
+
   if (!detail) return <p className="meta">読み込み中</p>;
   const targets = (knowledge?.avatars ?? []).filter((avatar) => avatar.id !== detail.id);
 
@@ -88,6 +98,7 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
             {detail.baseBodyName ? ` ・ ${detail.baseBodyName}` : ""}
           </p>
         </div>
+        <AddAvatarItem avatarId={detail.id} linkedIds={linkedIds} />
       </div>
       {(detail.aliases.length > 0 || detail.baseBodyNote) && (
         <details className="generic">
@@ -176,6 +187,101 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
   );
 }
 
+function AddAvatarItem({ avatarId, linkedIds }: { avatarId: string; linkedIds: ReadonlySet<string> }) {
+  const { refresh, notify, fail } = useShell();
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [options, setOptions] = useState<ProductOption[]>([]);
+  const [busy, setBusy] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    api.productOptions().then(
+      (rows) => {
+        if (!cancelled) setOptions(rows);
+      },
+      (err: unknown) => {
+        if (!cancelled) fail(errorText(err));
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [open, fail]);
+
+  useLayoutEffect(() => {
+    if (open) inputRef.current?.focus();
+  }, [open]);
+
+  const visible = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return options
+      .filter((option) => option.category !== "avatar" && option.category !== "world")
+      .filter((option) => !linkedIds.has(option.boothId))
+      .filter((option) => {
+        if (!needle) return true;
+        const haystack = `${option.title} ${option.shop} ${option.boothId}`.toLowerCase();
+        return haystack.includes(needle);
+      })
+      .slice(0, 40);
+  }, [options, linkedIds, query]);
+
+  async function add(boothId: string) {
+    setBusy(true);
+    try {
+      await api.attachProductToAvatar(avatarId, boothId);
+      setOpen(false);
+      setQuery("");
+      notify("アイテムを追加しました");
+      refresh();
+    } catch (err) {
+      fail(errorText(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="avatar-add">
+      <button
+        className="button"
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        アイテムを追加
+      </button>
+      {open && (
+        <div className="avatar-add-panel">
+          <input
+            ref={inputRef}
+            className="search"
+            value={query}
+            placeholder="商品を検索"
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <div className="picker">
+            {visible.length === 0 && <p className="meta">追加できる商品がありません。</p>}
+            {visible.map((option) => (
+              <button
+                key={option.boothId}
+                className="button"
+                type="button"
+                disabled={busy}
+                onClick={() => void add(option.boothId)}
+              >
+                {option.title}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function UnsupportedOutfits({
   items,
   itemCardProps,
@@ -250,10 +356,14 @@ function UnsupportedOutfits({
 
 export function ItemCard({
   item,
+  movable = false,
+  onDragChange,
   remoteProbeStatus = "ok",
   onRetryRemoteProbe,
 }: {
   item: ItemView;
+  movable?: boolean;
+  onDragChange?: (boothId: string | null) => void;
   remoteProbeStatus?: RemoteProbeStatus;
   onRetryRemoteProbe?: () => void;
 }) {
@@ -287,11 +397,31 @@ export function ItemCard({
   }
 
   return (
-    <article className="item">
+    <article
+      className="item"
+      draggable={movable}
+      onDragStart={(event) => {
+        if (!movable) return;
+        const target = event.target as HTMLElement | null;
+        if (target?.closest("button, a, input, summary, label")) {
+          event.preventDefault();
+          return;
+        }
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", item.boothId);
+        event.currentTarget.classList.add("dragging");
+        onDragChange?.(item.boothId);
+      }}
+      onDragEnd={(event) => {
+        event.currentTarget.classList.remove("dragging");
+        onDragChange?.(null);
+      }}
+    >
       <Thumb path={item.thumbnailPath} url={item.thumbnailUrl} name={item.title} small />
       <div>
         <h3>
           {item.title}
+          {item.classificationPinned && <span className="badge">手動</span>}
           {item.isFree && <span className="badge">無料</span>}
           {item.isAdult && <span className="badge adult">R-18</span>}
           <FileMark
@@ -359,7 +489,7 @@ export function ItemCard({
           )}
         </div>
       </div>
-      <div className="row-actions"><button className="button" type="button" onClick={() => void openExternal(item.url)}>BOOTH</button><ExcludeProductButton boothId={item.boothId} title={item.title} /></div>
+      <div className="row-actions"><button className="button" type="button" onClick={() => void openExternal(item.url)}>BOOTH</button><ExcludeProductButton boothId={item.boothId} title={item.title} category={item.category} genre={item.genre} classificationPinned={item.classificationPinned} /></div>
     </article>
   );
 }
