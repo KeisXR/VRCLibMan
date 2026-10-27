@@ -35,6 +35,25 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 
 Rust のコンパイル前に `npm run build` が必要です。Tauri がフロントエンドの成果物を参照します。CI の Mac ライブラリテストは `x86_64-apple-darwin` と Apple モデルを使わないスタブを使用しており、Apple Silicon 配布版の実行確認にはなりません。
 
+## Windows ビルドの高速化
+
+GitHub Actions の Windows x64 ジョブは、Rust ツールチェーンに同梱される LLD (`rust-lld.exe`) をリンクに使用します。
+Release の Windows ビルドだけはさらに `codegen-units = 16` と `lto = "thin"` を適用し、`Cargo.toml` の通常の Release プロファイルは変更しません。
+これにより macOS のビルド設定、NSIS と Tauri Updater の署名フローは従来どおりです。
+
+Windows のローカルビルドでも LLD を試す場合は PowerShell で次のように指定できます（同梱バイナリがあることを確認してください）。
+
+```powershell
+$lld = Join-Path (rustc --print sysroot).Trim() 'lib\rustlib\x86_64-pc-windows-msvc\bin\rust-lld.exe'
+if (-not (Test-Path -LiteralPath $lld)) { throw "rust-lld.exe not found: $lld" }
+$env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER = $lld
+npm run tauri build
+```
+
+この設定は現在の PowerShell セッションにだけ適用されます。元のリンカーに戻す場合は `Remove-Item Env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER` を実行してください。
+異なるリンカーやコンパイル設定は Cargo のキャッシュを一部再構築するため、初回ビルドでは速度差が見えにくい場合があります。
+変更前後の比較は同じ条件で複数回実行してください。Windows Release の高速化設定を試すには、Windows で `$env:CARGO_PROFILE_RELEASE_CODEGEN_UNITS = '16'`、`$env:CARGO_PROFILE_RELEASE_LTO = 'thin'` を追加します。
+
 ## 開発実行と画面見本
 
 - `npm run tauri dev` は SQLite やファイル操作を含む実アプリを起動します。インストール版とアプリ識別子が同じため、同じ端末の保存データを使います。
