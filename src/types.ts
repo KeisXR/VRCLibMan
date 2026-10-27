@@ -236,6 +236,9 @@ export interface Settings {
   llmBackend: "ollama" | "apple";
   backgroundMode: boolean;
   launchAtLogin: boolean;
+  uiRailWidth: number;
+  uiGenreWidth: number;
+  uiGenreCollapsed: boolean;
 }
 
 export interface RemoteSyncStatus {

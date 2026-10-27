@@ -327,6 +327,9 @@ pub fn save_settings(
                 llm_backend: settings.llm_backend,
                 background_mode: settings.background_mode,
                 launch_at_login: settings.launch_at_login,
+                ui_rail_width: settings.ui_rail_width,
+                ui_genre_width: settings.ui_genre_width,
+                ui_genre_collapsed: settings.ui_genre_collapsed,
             },
         )?;
         db::settings(&connection)?

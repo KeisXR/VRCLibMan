@@ -280,6 +280,9 @@ fn ensure_ready(connection: &Connection) -> Result<(), String> {
         ("llm_backend", "ollama"),
         ("background_mode", "0"),
         ("launch_at_login", "0"),
+        ("ui_rail_width", "232"),
+        ("ui_genre_width", "200"),
+        ("ui_genre_collapsed", "0"),
     ] {
         connection
             .execute(
@@ -332,6 +335,17 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
         ),
         background_mode: setting(connection, "background_mode")?.as_deref() == Some("1"),
         launch_at_login: setting(connection, "launch_at_login")?.as_deref() == Some("1"),
+        ui_rail_width: crate::model::clamp_ui_rail_width(
+            setting(connection, "ui_rail_width")?
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(232),
+        ),
+        ui_genre_width: crate::model::clamp_ui_genre_width(
+            setting(connection, "ui_genre_width")?
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(200),
+        ),
+        ui_genre_collapsed: setting(connection, "ui_genre_collapsed")?.as_deref() == Some("1"),
     })
 }
 
@@ -449,6 +463,21 @@ fn save_settings_values(
         connection,
         "launch_at_login",
         if launch_at_login { "1" } else { "0" },
+    )?;
+    set_setting(
+        connection,
+        "ui_rail_width",
+        &crate::model::clamp_ui_rail_width(input.ui_rail_width).to_string(),
+    )?;
+    set_setting(
+        connection,
+        "ui_genre_width",
+        &crate::model::clamp_ui_genre_width(input.ui_genre_width).to_string(),
+    )?;
+    set_setting(
+        connection,
+        "ui_genre_collapsed",
+        if input.ui_genre_collapsed { "1" } else { "0" },
     )?;
     tx.commit().sql()
 }
@@ -4836,6 +4865,9 @@ mod tests {
                 llm_backend: "ollama".into(),
                 background_mode: false,
                 launch_at_login: false,
+                ui_rail_width: 232,
+                ui_genre_width: 200,
+                ui_genre_collapsed: false,
             },
         )
         .unwrap();
@@ -4893,6 +4925,9 @@ mod tests {
                 llm_backend: "ollama".into(),
                 background_mode: false,
                 launch_at_login: false,
+                ui_rail_width: 232,
+                ui_genre_width: 200,
+                ui_genre_collapsed: false,
             },
         )
         .unwrap();
@@ -5950,6 +5985,9 @@ mod tests {
                 llm_backend: "ollama".into(),
                 background_mode: false,
                 launch_at_login: false,
+                ui_rail_width: 232,
+                ui_genre_width: 200,
+                ui_genre_collapsed: false,
             },
         );
         assert!(refused.unwrap_err().contains("ライブラリ"));
@@ -5967,6 +6005,9 @@ mod tests {
                 llm_backend: "ollama".into(),
                 background_mode: false,
                 launch_at_login: false,
+                ui_rail_width: 232,
+                ui_genre_width: 200,
+                ui_genre_collapsed: false,
             },
         )
         .unwrap();
@@ -6079,6 +6120,9 @@ mod tests {
                 llm_backend: "ollama".into(),
                 background_mode: false,
                 launch_at_login: false,
+                ui_rail_width: 232,
+                ui_genre_width: 200,
+                ui_genre_collapsed: false,
             },
         )
     }
@@ -6338,6 +6382,9 @@ mod tests {
             llm_backend: "ollama".into(),
             background_mode: false,
             launch_at_login: true,
+            ui_rail_width: 232,
+            ui_genre_width: 200,
+            ui_genre_collapsed: false,
         };
         save_settings(&connection, &base).unwrap();
         let saved = settings(&connection).unwrap();
@@ -6495,6 +6542,9 @@ mod tests {
                 llm_backend: "ollama".into(),
                 background_mode: false,
                 launch_at_login: false,
+                ui_rail_width: 232,
+                ui_genre_width: 200,
+                ui_genre_collapsed: false,
             },
         )
         .unwrap();
