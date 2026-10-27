@@ -289,7 +289,6 @@ pub struct Settings {
     pub launch_at_login: bool,
     pub ui_rail_width: u32,
     pub ui_genre_width: u32,
-    pub ui_genre_collapsed: bool,
     pub check_update_on_startup: bool,
     pub ui_update_dismissed_version: String,
 }
@@ -320,8 +319,6 @@ pub struct SettingsInput {
     #[serde(default = "default_ui_genre_width")]
     pub ui_genre_width: u32,
     #[serde(default)]
-    pub ui_genre_collapsed: bool,
-    #[serde(default)]
     pub check_update_on_startup: bool,
     #[serde(default)]
     pub ui_update_dismissed_version: String,
@@ -343,7 +340,6 @@ pub struct SettingsPatch {
     pub launch_at_login: Option<bool>,
     pub ui_rail_width: Option<u32>,
     pub ui_genre_width: Option<u32>,
-    pub ui_genre_collapsed: Option<bool>,
     pub check_update_on_startup: Option<bool>,
     pub ui_update_dismissed_version: Option<String>,
 }
@@ -375,9 +371,6 @@ impl SettingsPatch {
             launch_at_login: self.launch_at_login.unwrap_or(current.launch_at_login),
             ui_rail_width: self.ui_rail_width.unwrap_or(current.ui_rail_width),
             ui_genre_width: self.ui_genre_width.unwrap_or(current.ui_genre_width),
-            ui_genre_collapsed: self
-                .ui_genre_collapsed
-                .unwrap_or(current.ui_genre_collapsed),
             check_update_on_startup: self
                 .check_update_on_startup
                 .unwrap_or(current.check_update_on_startup),

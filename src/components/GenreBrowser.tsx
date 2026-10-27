@@ -21,7 +21,7 @@ export function GenreBrowser({ title, lede }: { title: string; lede?: string }) 
     <section className="genre-browser">
       {narrowLayout && (
         <details className="genre-mobile-picker">
-          <summary>ジャンル：{selectedLabel} ▾</summary>
+          <summary>ジャンル：{selectedLabel}</summary>
           <nav className="genre-mobile-nav" aria-label="ジャンル（狭い画面）">
             <a href={genreHref(basePath, null)} aria-current={selected === null ? "page" : undefined}>すべて</a>
             {genresForKind(kind).map((value) => (

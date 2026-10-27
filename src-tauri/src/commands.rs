@@ -331,7 +331,6 @@ pub fn save_settings(
                 launch_at_login: settings.launch_at_login,
                 ui_rail_width: settings.ui_rail_width,
                 ui_genre_width: settings.ui_genre_width,
-                ui_genre_collapsed: settings.ui_genre_collapsed,
                 check_update_on_startup: settings.check_update_on_startup,
                 ui_update_dismissed_version: settings.ui_update_dismissed_version,
             },
