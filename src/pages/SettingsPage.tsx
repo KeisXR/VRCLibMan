@@ -302,7 +302,7 @@ export function SettingsPage() {
             {settings.llmBackend === "ollama" && (
                 <SettingRow label="モデル">
                   <ModelPicker onBlur={flushSettings} value={settings.ollamaModel} models={models} checked={modelsChecked} disabled={pulling} onChange={(value) => changeSettings({ ollamaModel: value }, MODEL_CHOICES.some((choice) => choice.name === value) ? 0 : 300)} />
-                  <button className="button" type="button" disabled={pulling || !settings.ollamaModel.trim()} onClick={() => void pullOllamaModel()}>{pulling ? "取得中…" : "モデルを取得"}</button>
+                  <div className="inline-control model-pull-control"><button className="button" type="button" disabled={pulling || !settings.ollamaModel.trim()} onClick={() => void pullOllamaModel()}>{pulling ? "取得中…" : "モデルを取得"}</button></div>
                 </SettingRow>
             )}
             {settings.llmBackend === "ollama" && (
