@@ -304,7 +304,14 @@ export function SettingsPage() {
                   <button className="button" type="button" disabled={pulling || !settings.ollamaModel.trim()} onClick={() => void pullOllamaModel()}>{pulling ? "取得中…" : "モデルを取得"}</button>
                 </SettingRow>
             )}
-            {settings.llmBackend === "ollama" && <div className="section-actions"><button className="button" type="button" onClick={() => void testOllama()}>接続を確認</button><span className="meta">{installedSize ? `モデルサイズ ${formatBytes(installedSize)}` : models.length ? `導入済み: ${models.join("、")}` : "導入済みモデル：未確認"}</span></div>}
+            {settings.llmBackend === "ollama" && (
+              <SettingRow label="接続確認" help="Ollama への接続と、選択中モデルの導入状況を確認します。">
+                <div className="inline-control">
+                  <button className="button" type="button" onClick={() => void testOllama()}>接続を確認</button>
+                  <span className="meta">{installedSize ? `モデルサイズ ${formatBytes(installedSize)}` : models.length ? `導入済み: ${models.join("、")}` : "導入済みモデル：未確認"}</span>
+                </div>
+              </SettingRow>
+            )}
             <details className="settings-details">
               <summary>分類の詳細設定</summary>
               {settings.llmBackend === "ollama" && <SettingRow label="Ollama の接続先" help="通常は変更不要です。http と、この PC のアドレス（127.0.0.1、localhost、::1）だけを使えます。">
