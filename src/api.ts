@@ -16,6 +16,7 @@ import type {
   ExtractTarget,
   ClassificationStatus,
   ClassificationSnapshot,
+  RegisterOwnedBodyResult,
   ExtensionLink,
   BrowserDiagnostic,
   BoothAccount,
@@ -163,6 +164,8 @@ export const api = {
     call<void>("restore_product_classification", { snapshot }),
   unpinProductClassification: (boothId: string) =>
     call<ClassificationSnapshot>("unpin_product_classification", { boothId }),
+  registerOwnedBody: (boothId: string, name?: string | null) =>
+    call<RegisterOwnedBodyResult>("register_owned_body", { boothId, name: name ?? null }),
   attachProductToAvatar: (avatarId: string, boothId: string) =>
     call<void>("attach_product_to_avatar", { avatarId, boothId }),
   linkFile: (path: string, productId: string | null) =>

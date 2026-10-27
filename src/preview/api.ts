@@ -2,7 +2,7 @@ import { previewBrowserState, previewBrowserAction, previewSaveBookmark, preview
 import extensionManifest from "../../extension/manifest.json";
 import { filePresence } from "../media";
 import { GENRE_FREE, GENRE_UNSET, genresForKind } from "../types";
-import type { ClassificationSnapshot } from "../types";
+import type { ClassificationSnapshot, OwnedAvatarRestore, RegisterOwnedBodyResult, SnapshotLink } from "../types";
 import type {
   AvatarCard,
   BrowserAction,
@@ -87,7 +87,7 @@ interface Store {
   files: LocalFile[];
   avatars: AvatarRecord[];
   baseBodies: BaseBody[];
-  links: { productId: string; avatarId: string }[];
+  links: { productId: string; avatarId: string; source?: string }[];
   settings: Settings;
   setupComplete: boolean;
   variations: { boothId: string; name: string; owned: boolean }[];
@@ -498,6 +498,27 @@ store.products.push(
     isFree: true,
     unpublished: true,
     descriptionSnippet: "ファイルがまだ手元にない無料の見本です。",
+  }),
+  product({
+    boothId: "8903101",
+    title: "見本のその他小物",
+    shop: "見本",
+    category: "other",
+    genre: "other",
+    categoryLocked: false,
+    genreLocked: false,
+    descriptionSnippet: "自動分類でその他になった見本です。",
+  }),
+  product({
+    boothId: "8903102",
+    title: "北の見本の落ちた本体",
+    shop: "見本",
+    category: "other",
+    genre: "other",
+    categoryLocked: false,
+    genreLocked: false,
+    compatibleAvatars: ["北の見本"],
+    descriptionSnippet: "抽出では北の見本と出た見本です。",
   }),
 );
 for (let index = 1; index <= 12; index += 1) {
@@ -1093,12 +1114,68 @@ function restorePreviewClassification(raw: unknown) {
   item.needsReview = snapshot.needsReview;
   const to = feedbackPlacement(item);
   if (
-    from.category !== to.category ||
-    from.genre !== to.genre ||
-    categoryLockedBefore !== item.categoryLocked ||
-    genreLockedBefore !== Boolean(item.genreLocked)
+    snapshot.links == null &&
+    (from.category !== to.category ||
+      from.genre !== to.genre ||
+      categoryLockedBefore !== item.categoryLocked ||
+      genreLockedBefore !== Boolean(item.genreLocked))
   ) {
     pushClassificationMove("restore", item.boothId, from, to);
+  }
+  if (typeof snapshot.linksLocked === "boolean") item.linksLocked = snapshot.linksLocked;
+  if (Array.isArray(snapshot.links)) {
+    store.links = store.links.filter((link) => link.productId !== item.boothId);
+    for (const link of snapshot.links) {
+      store.links.push({ productId: item.boothId, avatarId: link.avatarId, source: link.source });
+    }
+  }
+  for (const avatar of snapshot.ownedAvatars ?? []) applyOwnedRestore(item.boothId, avatar);
+}
+
+function previewLinks(boothId: string): SnapshotLink[] {
+  return store.links
+    .filter((link) => link.productId === boothId)
+    .map((link) => ({ avatarId: link.avatarId, source: link.source ?? "extracted" }));
+}
+
+function categoryFromGenre(genre: string | null | undefined): Category | null {
+  if (!genre) return null;
+  return GENRE_CATEGORY[genre] ?? null;
+}
+
+function otherAvatarBodies(avatarId: string, exceptBoothId: string): boolean {
+  return store.products.some(
+    (product) =>
+      product.boothId !== exceptBoothId &&
+      product.category === "avatar" &&
+      store.links.some((link) => link.productId === product.boothId && link.avatarId === avatarId),
+  );
+}
+
+function applyOwnedRestore(boothId: string, avatar: OwnedAvatarRestore) {
+  let row = store.avatars.find((item) => item.id === avatar.id);
+  if (avatar.owned) {
+    if (!row) {
+      if (!avatar.id.startsWith("owned-")) throw new Error(`アバター ${avatar.id} が対応表にありません`);
+      row = {
+        id: avatar.id,
+        displayName: avatar.displayName,
+        aliases: [...avatar.aliases],
+        baseBody: null,
+        notes: "",
+        isBuiltin: false,
+        owned: true,
+      };
+      store.avatars.push(row);
+    }
+    row.owned = true;
+    return;
+  }
+  if (otherAvatarBodies(avatar.id, boothId)) return;
+  if (row) row.owned = false;
+  const linked = store.links.some((link) => link.avatarId === avatar.id);
+  if (avatar.removeIfUnused && avatar.id.startsWith("owned-") && !linked && row && !row.isBuiltin) {
+    store.avatars = store.avatars.filter((item) => item.id !== avatar.id);
   }
 }
 
@@ -1108,6 +1185,30 @@ function unpinPreviewClassification(boothId: string): ClassificationSnapshot {
   if (!(item.categoryLocked && item.genreLocked)) throw new Error("この商品は手動で固定されていません");
   const snapshot = previewSnapshot(item);
   const from = feedbackPlacement(item);
+  const body = store.links.find(
+    (link) => link.productId === boothId && (link.source === "owned" || link.source === "catalog"),
+  );
+  if (item.category === "avatar" && item.linksLocked && body) {
+    const avatar = store.avatars.find((row) => row.id === body.avatarId);
+    snapshot.linksLocked = true;
+    snapshot.links = previewLinks(boothId);
+    if (avatar) {
+      snapshot.ownedAvatars = [{
+        id: avatar.id,
+        displayName: avatar.displayName,
+        aliases: [...avatar.aliases],
+        owned: true,
+        removeIfUnused: false,
+      }];
+    }
+    item.category = categoryFromGenre(item.genre);
+    item.categoryLocked = false;
+    item.genreLocked = false;
+    item.linksLocked = false;
+    store.links = store.links.filter((link) => link.productId !== boothId);
+    if (avatar && !otherAvatarBodies(avatar.id, boothId)) avatar.owned = false;
+    return snapshot;
+  }
   item.categoryLocked = false;
   item.genreLocked = false;
   pushClassificationMove("unpin", boothId, from, null);
@@ -1165,6 +1266,114 @@ function applyPreviewBooth(target: Product, category: { id: number | null; name:
     changed = true;
   }
   return changed;
+}
+
+function avatarByLabel(label: string): AvatarRecord | "ambiguous" | null {
+  const key = label.trim().toLocaleLowerCase("ja");
+  if (!key) return null;
+  const hits = store.avatars.filter(
+    (avatar) =>
+      avatar.displayName.toLocaleLowerCase("ja") === key ||
+      avatar.aliases.some((alias) => alias.toLocaleLowerCase("ja") === key),
+  );
+  if (hits.length === 1) return hits[0];
+  if (hits.length > 1) return "ambiguous";
+  return null;
+}
+
+function registerPreviewOwnedBody(boothId: string, name: string | null): RegisterOwnedBodyResult {
+  const item = store.products.find((product) => product.boothId === boothId);
+  if (!item) throw new Error("商品が見つかりません");
+  if (excludedProducts.has(boothId)) throw new Error("この商品は除外されています");
+  if (item.category === "avatar") throw new Error("この商品はすでにアバター本体です");
+  const target = previewOwnedTarget(item, name);
+  if ("needsName" in target) {
+    return { kind: "needsName", suggestedName: target.suggestedName, candidates: target.candidates };
+  }
+  const previousOwned = store.avatars.find((avatar) => avatar.id === target.avatarId);
+  const snapshot: ClassificationSnapshot = {
+    ...previewSnapshot(item),
+    linksLocked: item.linksLocked,
+    links: previewLinks(boothId),
+    ownedAvatars:
+      previousOwned?.owned
+        ? []
+        : [{
+            id: target.avatarId,
+            displayName: target.displayName,
+            aliases: previousOwned ? [...previousOwned.aliases] : [],
+            owned: false,
+            removeIfUnused: !previousOwned,
+          }],
+  };
+  if (!previousOwned) {
+    store.avatars.push({
+      id: target.avatarId,
+      displayName: target.displayName,
+      aliases: [],
+      baseBody: null,
+      notes: "",
+      isBuiltin: false,
+      owned: true,
+    });
+  } else {
+    previousOwned.owned = true;
+    if (target.avatarId.startsWith("owned-") && !previousOwned.isBuiltin) {
+      previousOwned.displayName = target.displayName;
+    }
+  }
+  item.category = "avatar";
+  item.categoryLocked = true;
+  item.genreLocked = true;
+  item.linksLocked = true;
+  item.userConfirmed = true;
+  item.needsReview = false;
+  item.isGeneric = false;
+  item.compatibleAvatars = [target.displayName];
+  store.links = store.links.filter((link) => link.productId !== boothId);
+  store.links.push({ productId: boothId, avatarId: target.avatarId, source: "owned" });
+  return { kind: "registered", snapshot, avatarId: target.avatarId, displayName: target.displayName };
+}
+
+function previewOwnedTarget(
+  item: Product,
+  name: string | null,
+): { avatarId: string; displayName: string } | { needsName: true; suggestedName: string; candidates: string[] } {
+  const supplied = name?.trim() ?? "";
+  if (name != null && !supplied) throw new Error("アバター名を入力してください");
+  if (supplied) {
+    const hit = avatarByLabel(supplied);
+    if (hit === "ambiguous") throw new Error("同じ名前のアバターが複数あります");
+    if (hit) return { avatarId: hit.id, displayName: hit.displayName };
+    return { avatarId: `owned-${item.boothId}`, displayName: supplied };
+  }
+  const labels = item.compatibleAvatars.map((label) => label.trim()).filter(Boolean);
+  const extracted = labels.length > 0 ? labels : item.unresolvedNames.map((label) => label.trim()).filter(Boolean);
+  if (extracted.length === 0) return { needsName: true, suggestedName: "", candidates: [] };
+  const resolved: AvatarRecord[] = [];
+  const unresolved: string[] = [];
+  for (const label of extracted) {
+    const hit = avatarByLabel(label);
+    if (hit && hit !== "ambiguous") {
+      if (!resolved.some((avatar) => avatar.id === hit.id)) resolved.push(hit);
+    } else {
+      unresolved.push(label);
+    }
+  }
+  if (resolved.length === 1 && unresolved.length === 0) {
+    return { avatarId: resolved[0].id, displayName: resolved[0].displayName };
+  }
+  if (resolved.length === 0 && unresolved.length === 1) {
+    return { avatarId: `owned-${item.boothId}`, displayName: unresolved[0] };
+  }
+  const candidates: string[] = [];
+  for (const avatar of resolved) {
+    if (!candidates.includes(avatar.displayName)) candidates.push(avatar.displayName);
+  }
+  for (const label of unresolved) {
+    if (!candidates.includes(label)) candidates.push(label);
+  }
+  return { needsName: true, suggestedName: "", candidates };
 }
 
 function textOf(value: unknown): string {
@@ -1628,6 +1837,8 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       classificationFeedback(String(args.scope ?? ""));
       if (!String(args.path ?? "").toLowerCase().endsWith(".json")) throw new Error("保存先は JSON ファイルにしてください");
       return undefined as T;
+    case "register_owned_body":
+      return registerPreviewOwnedBody(String(args.boothId ?? ""), args.name == null ? null : String(args.name)) as T;
     case "attach_product_to_avatar": {
       const avatarId = String(args.avatarId ?? "");
       const boothId = String(args.boothId ?? "");

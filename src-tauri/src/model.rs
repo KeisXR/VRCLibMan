@@ -508,8 +508,30 @@ pub struct AvatarCandidate {
     pub product_count: u32,
 }
 
+/// One avatar link captured so a manual placement can be undone.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotLink {
+    pub avatar_id: String,
+    pub source: String,
+}
+
+/// Owned-flag change that belongs with a classification snapshot.
+/// `owned` is the value to restore. A placeholder created for this placement
+/// is removed when `remove_if_unused` is set and nothing else still links to it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct OwnedAvatarRestore {
+    pub id: String,
+    pub display_name: String,
+    pub aliases: Vec<String>,
+    pub owned: bool,
+    pub remove_if_unused: bool,
+}
+
 /// Classification fields captured before a manual genre move, so the move can be undone.
 /// A product is pinned when both `category_locked` and `genre_locked` are set.
+/// Link and ownership fields are set only when the placement changed them.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ClassificationSnapshot {
@@ -520,6 +542,27 @@ pub struct ClassificationSnapshot {
     pub genre_locked: bool,
     pub user_confirmed: bool,
     pub needs_review: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links_locked: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<Vec<SnapshotLink>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub owned_avatars: Vec<OwnedAvatarRestore>,
+}
+
+/// Result of registering a misclassified product as an owned avatar body.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum RegisterOwnedBodyResult {
+    Registered {
+        snapshot: ClassificationSnapshot,
+        avatar_id: String,
+        display_name: String,
+    },
+    NeedsName {
+        suggested_name: String,
+        candidates: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize)]

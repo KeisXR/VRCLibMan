@@ -855,6 +855,69 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         return current && !current.textContent.includes("手動");
       });
     });
+    await t.test("manual avatar body registration asks for a name and can be released", async () => {
+      const { requestRefresh } = await server.ssrLoadModule("/src/api.ts");
+      const main = () => document.querySelector("main");
+      const refresh = async () => {
+        await act(async () => {
+          requestRefresh();
+          await delay();
+        });
+      };
+      await route("#/assets/other");
+      await wait(() => main().textContent.includes("見本のその他小物"));
+      await wait(() => main().textContent.includes("北の見本の落ちた本体"));
+
+      const known = [...main().querySelectorAll(".item")].find((node) => node.textContent.includes("北の見本の落ちた本体"));
+      await click(known.querySelector(".product-actions-trigger"));
+      await wait(() => button("アバター本体として登録", known));
+      assert.ok(button("移動", known));
+      await click(button("アバター本体として登録", known));
+      await wait(() => text().includes("北の見本をアバター本体として登録しました"));
+      await wait(() => !main().textContent.includes("北の見本の落ちた本体"));
+      const knownAvatar = (await api.avatars()).find((card) => card.id === "sample-north");
+      assert.equal(knownAvatar.owned, true);
+
+      const card = [...main().querySelectorAll(".item")].find((node) => node.textContent.includes("見本のその他小物"));
+      await click(card.querySelector(".product-actions-trigger"));
+      await click(button("アバター本体として登録", card));
+      await wait(() => card.querySelector(".owned-body-panel"));
+      const panel = card.querySelector(".owned-body-panel");
+      assert.equal(panel.getAttribute("aria-label"), "アバター名");
+      await typeInto(panel.querySelector("input"), "見本丸");
+      await click(button("登録", panel));
+      await wait(() => text().includes("見本丸をアバター本体として登録しました"));
+      await wait(() => !main().textContent.includes("見本のその他小物"));
+
+      await click(button("元に戻す"));
+      await refresh();
+      await route("#/assets/other");
+      await wait(() => main().textContent.includes("見本のその他小物"));
+      assert.equal((await api.avatars()).some((avatar) => avatar.displayName === "見本丸"), false);
+
+      const again = [...main().querySelectorAll(".item")].find((node) => node.textContent.includes("見本のその他小物"));
+      await click(again.querySelector(".product-actions-trigger"));
+      await click(button("アバター本体として登録", again));
+      await wait(() => again.querySelector(".owned-body-panel"));
+      const panelAgain = again.querySelector(".owned-body-panel");
+      await typeInto(panelAgain.querySelector("input"), "見本丸");
+      await click(button("登録", panelAgain));
+      await wait(() => text().includes("見本丸をアバター本体として登録しました"));
+
+      await route("#/avatar/owned-8903101");
+      await wait(() => main().querySelector("h1")?.textContent === "見本丸");
+      const owned = [...main().querySelectorAll(".item")].find((node) => node.textContent.includes("見本のその他小物"));
+      assert.ok(owned.textContent.includes("手動"));
+      await click(owned.querySelector(".product-actions-trigger"));
+      assert.equal(button("アバター本体として登録", owned), undefined);
+      assert.equal(button("移動", owned), undefined);
+      await click(button("自動分類に戻す", owned));
+      await wait(() => text().includes("自動分類の対象に戻しました"));
+      await refresh();
+      await route("#/assets/other");
+      await wait(() => main().textContent.includes("見本のその他小物"));
+      assert.equal((await api.avatars()).some((avatar) => avatar.displayName === "見本丸" && avatar.owned), false);
+    });
     await t.test("avatar detail attaches an item without pinning its classification", async () => {
       const main = () => document.querySelector("main");
       await route("#/avatar/lime");

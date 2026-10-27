@@ -191,6 +191,7 @@ pub fn run() {
             commands::move_product_genre,
             commands::restore_product_classification,
             commands::unpin_product_classification,
+            commands::register_owned_body,
             commands::classification_feedback,
             commands::save_classification_feedback,
             commands::attach_product_to_avatar,
