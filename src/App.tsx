@@ -357,7 +357,7 @@ export default function App() {
             narrowLayout={layout.narrow}
           >
             {layout.genreVisible && (
-              <GenreColumn onCollapse={() => layout.persistGenreCollapsed(true)} />
+              <GenreColumn />
             )}
             {layout.genreVisible && (
               <ResizeSeparator

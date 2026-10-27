@@ -238,7 +238,6 @@ export interface Settings {
   launchAtLogin: boolean;
   uiRailWidth: number;
   uiGenreWidth: number;
-  uiGenreCollapsed: boolean;
 }
 
 export interface RemoteSyncStatus {

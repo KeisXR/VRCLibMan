@@ -289,7 +289,6 @@ pub struct Settings {
     pub launch_at_login: bool,
     pub ui_rail_width: u32,
     pub ui_genre_width: u32,
-    pub ui_genre_collapsed: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -317,8 +316,6 @@ pub struct SettingsInput {
     pub ui_rail_width: u32,
     #[serde(default = "default_ui_genre_width")]
     pub ui_genre_width: u32,
-    #[serde(default)]
-    pub ui_genre_collapsed: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -337,7 +334,6 @@ pub struct SettingsPatch {
     pub launch_at_login: Option<bool>,
     pub ui_rail_width: Option<u32>,
     pub ui_genre_width: Option<u32>,
-    pub ui_genre_collapsed: Option<bool>,
 }
 
 impl SettingsPatch {
@@ -367,9 +363,6 @@ impl SettingsPatch {
             launch_at_login: self.launch_at_login.unwrap_or(current.launch_at_login),
             ui_rail_width: self.ui_rail_width.unwrap_or(current.ui_rail_width),
             ui_genre_width: self.ui_genre_width.unwrap_or(current.ui_genre_width),
-            ui_genre_collapsed: self
-                .ui_genre_collapsed
-                .unwrap_or(current.ui_genre_collapsed),
         }
     }
 }

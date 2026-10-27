@@ -282,7 +282,6 @@ fn ensure_ready(connection: &Connection) -> Result<(), String> {
         ("launch_at_login", "0"),
         ("ui_rail_width", "232"),
         ("ui_genre_width", "200"),
-        ("ui_genre_collapsed", "0"),
     ] {
         connection
             .execute(
@@ -345,7 +344,6 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(200),
         ),
-        ui_genre_collapsed: setting(connection, "ui_genre_collapsed")?.as_deref() == Some("1"),
     })
 }
 
@@ -473,11 +471,6 @@ fn save_settings_values(
         connection,
         "ui_genre_width",
         &crate::model::clamp_ui_genre_width(input.ui_genre_width).to_string(),
-    )?;
-    set_setting(
-        connection,
-        "ui_genre_collapsed",
-        if input.ui_genre_collapsed { "1" } else { "0" },
     )?;
     tx.commit().sql()
 }
@@ -4867,7 +4860,6 @@ mod tests {
                 launch_at_login: false,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
-                ui_genre_collapsed: false,
             },
         )
         .unwrap();
@@ -4927,7 +4919,6 @@ mod tests {
                 launch_at_login: false,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
-                ui_genre_collapsed: false,
             },
         )
         .unwrap();
@@ -5987,7 +5978,6 @@ mod tests {
                 launch_at_login: false,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
-                ui_genre_collapsed: false,
             },
         );
         assert!(refused.unwrap_err().contains("ライブラリ"));
@@ -6007,7 +5997,6 @@ mod tests {
                 launch_at_login: false,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
-                ui_genre_collapsed: false,
             },
         )
         .unwrap();
@@ -6122,7 +6111,6 @@ mod tests {
                 launch_at_login: false,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
-                ui_genre_collapsed: false,
             },
         )
     }
@@ -6384,7 +6372,6 @@ mod tests {
             launch_at_login: true,
             ui_rail_width: 232,
             ui_genre_width: 200,
-            ui_genre_collapsed: false,
         };
         save_settings(&connection, &base).unwrap();
         let saved = settings(&connection).unwrap();
@@ -6544,7 +6531,6 @@ mod tests {
                 launch_at_login: false,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
-                ui_genre_collapsed: false,
             },
         )
         .unwrap();

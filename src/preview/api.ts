@@ -144,7 +144,6 @@ const store: Store = {
     launchAtLogin: false,
     uiRailWidth: 232,
     uiGenreWidth: 200,
-    uiGenreCollapsed: false,
   },
   setupComplete: false,
   baseBodies: [

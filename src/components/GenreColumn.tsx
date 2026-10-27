@@ -24,7 +24,7 @@ function GenreLink({
   );
 }
 
-export function GenreColumn({ onCollapse }: { onCollapse: () => void }) {
+export function GenreColumn() {
   const { kind, basePath, selected, data } = useGenreBrowse();
   const genres = genresForKind(kind);
   const unsetCount = data?.counts[GENRE_UNSET] ?? 0;
@@ -34,9 +34,6 @@ export function GenreColumn({ onCollapse }: { onCollapse: () => void }) {
     <aside className="genre-rail" aria-label="ジャンル">
       <header className="genre-rail-head">
         <h2>ジャンル</h2>
-        <button type="button" className="button" onClick={onCollapse} aria-label="ジャンル列を折りたたむ">
-          折りたたむ
-        </button>
       </header>
       <nav className="genre-rail-nav">
         <GenreLink href={genreHref(basePath, null)} label="すべて" count={data?.total} active={selected === null} />

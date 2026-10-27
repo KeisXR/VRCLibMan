@@ -12,7 +12,6 @@ import {
 export function useAppLayout(browseGenre: boolean) {
   const [railWidth, setRailWidth] = useState(UI_RAIL_WIDTH.default);
   const [genreWidth, setGenreWidth] = useState(UI_GENRE_WIDTH.default);
-  const [genreCollapsed, setGenreCollapsed] = useState(false);
   const [windowWidth, setWindowWidth] = useState(
     typeof window !== "undefined" ? window.innerWidth : 1280,
   );
@@ -21,7 +20,6 @@ export function useAppLayout(browseGenre: boolean) {
     void api.settings().then((settings) => {
       setRailWidth(clampRailWidth(settings.uiRailWidth));
       setGenreWidth(clampGenreWidth(settings.uiGenreWidth));
-      setGenreCollapsed(settings.uiGenreCollapsed);
     });
   }, []);
 
@@ -31,9 +29,9 @@ export function useAppLayout(browseGenre: boolean) {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
+  // Narrow windows show a genre picker above the list instead of the column.
   const narrow = windowWidth < UI_GENRE_AUTO_COLLAPSE_PX;
-  const effectiveCollapsed = genreCollapsed || narrow;
-  const genreVisible = browseGenre && !effectiveCollapsed;
+  const genreVisible = browseGenre && !narrow;
 
   const fitted = useMemo(
     () => fitBrowseWidths(windowWidth, railWidth, genreWidth, genreVisible),
@@ -50,11 +48,6 @@ export function useAppLayout(browseGenre: boolean) {
     void api.updateSettings({ uiGenreWidth: next });
   }, []);
 
-  const persistGenreCollapsed = useCallback((value: boolean) => {
-    setGenreCollapsed(value);
-    void api.updateSettings({ uiGenreCollapsed: value });
-  }, []);
-
   const gridStyle = useMemo(() => {
     const cols: string[] = [`${fitted.rail}px`, "6px"];
     if (genreVisible) cols.push(`${fitted.genre}px`, "6px");
@@ -69,8 +62,6 @@ export function useAppLayout(browseGenre: boolean) {
   return {
     railWidth: fitted.rail,
     genreWidth: fitted.genre,
-    genreCollapsed,
-    effectiveCollapsed,
     genreVisible,
     narrow,
     gridStyle,
@@ -78,6 +69,5 @@ export function useAppLayout(browseGenre: boolean) {
     setGenreWidth,
     persistRail,
     persistGenre,
-    persistGenreCollapsed,
   };
 }
