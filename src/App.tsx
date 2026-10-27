@@ -328,7 +328,7 @@ export default function App() {
           </nav>
           <div className="rail-foot">
             <StartupUpdateCheck enabled={checkUpdateOnStartup} />
-            <SidebarUpdaterBadge workInProgress={progress !== null} onOpenSettings={openAppUpdateSettings} />
+            <SidebarUpdaterBadge onOpenSettings={openAppUpdateSettings} />
             <span className="app-version">{version === "未確認" ? "バージョン未確認" : version ? `v${version}` : "バージョン確認中"}</span>
             {builtinBrowser && (
               <AccountPill

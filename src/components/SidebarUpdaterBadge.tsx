@@ -2,14 +2,8 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { formatBytes } from "../media";
 import { useAppUpdater } from "../useAppUpdater";
-export function SidebarUpdaterBadge({
-  workInProgress,
-  onOpenSettings,
-}: {
-  workInProgress: boolean;
-  onOpenSettings: () => void;
-}) {
-  const { status, pending, check } = useAppUpdater();
+export function SidebarUpdaterBadge({ onOpenSettings }: { onOpenSettings: () => void }) {
+  const { status, pending } = useAppUpdater();
   const [dismissedVersion, setDismissedVersion] = useState("");
   const phase = status?.phase;
   const version = status?.version;
@@ -35,7 +29,7 @@ export function SidebarUpdaterBadge({
   else if (phase === "available" && version) label = `v${version} に更新できます`;
   else if (phase === "downloading")
     label = `ダウンロード中 ${formatBytes(status.downloaded)}${total ? ` / ${formatBytes(total)}` : ""}`;
-  else if (phase === "ready" && version) label = "再起動して更新";
+  else if (phase === "ready" && version) label = `v${version} の準備ができました（設定で再起動）`;
   else return null;
 
   async function dismiss() {
@@ -46,30 +40,30 @@ export function SidebarUpdaterBadge({
 
   return (
     <div className={`sidebar-updater${faint ? " faint" : ""}`}>
-      <button type="button" className="sidebar-updater-main" onClick={onOpenSettings} disabled={pending}>
-        {label}
-      </button>
-      {phase === "downloading" && (
-        <progress className="sidebar-updater-progress" aria-label="更新のダウンロード" max={100} value={percent ?? undefined} />
-      )}
-      {phase === "ready" && (
+      <div className="sidebar-updater-row">
         <button
           type="button"
-          className="button"
-          disabled={pending || workInProgress}
+          className="sidebar-updater-main"
           onClick={onOpenSettings}
+          disabled={pending}
+          title="設定の「アプリの更新」を開きます"
         >
-          設定で確認
+          {label}
         </button>
-      )}
-      {phase === "available" && (
-        <details className="sidebar-updater-menu">
-          <summary aria-label="更新通知のメニュー">⋯</summary>
-          <button type="button" onClick={() => void dismiss()}>この版は通知しない</button>
-          <button type="button" onClick={() => void check(true)} disabled={pending || workInProgress}>
-            更新を確認
+        {phase === "available" && (
+          <button
+            type="button"
+            className="sidebar-updater-dismiss"
+            onClick={() => void dismiss()}
+            aria-label="この版は通知しない"
+            title="この版は通知しない"
+          >
+            ×
           </button>
-        </details>
+        )}
+      </div>
+      {phase === "downloading" && (
+        <progress className="sidebar-updater-progress" aria-label="更新のダウンロード" max={100} value={percent ?? undefined} />
       )}
     </div>
   );
