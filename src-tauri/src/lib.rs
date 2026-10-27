@@ -175,6 +175,7 @@ pub fn run() {
             commands::list_products_by_genre,
             commands::get_avatar,
             commands::probe_remote_files,
+            commands::probe_remote_products,
             commands::list_queue,
             commands::list_product_options,
             commands::list_knowledge,

@@ -72,6 +72,13 @@ export interface DownloadView {
   remotePath: string | null;
 }
 
+export interface RemoteProductProbe {
+  boothId: string;
+  remoteChecked: boolean;
+  remoteReachable: boolean;
+  downloads: DownloadView[];
+}
+
 export interface ItemView {
   boothId: string;
   title: string;

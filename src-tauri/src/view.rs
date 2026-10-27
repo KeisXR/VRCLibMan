@@ -85,6 +85,30 @@ pub struct GenreProducts {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RemoteProductProbe {
+    pub booth_id: String,
+    pub remote_checked: bool,
+    pub remote_reachable: bool,
+    pub downloads: Vec<DownloadView>,
+}
+
+pub fn remote_product_probes(
+    snapshot: &Snapshot,
+    probes: &[crate::library_files::ProductRemoteProbe],
+) -> Vec<RemoteProductProbe> {
+    probes
+        .iter()
+        .map(|probe| RemoteProductProbe {
+            booth_id: probe.booth_id.clone(),
+            remote_checked: probe.remote_checked,
+            remote_reachable: probe.remote_reachable,
+            downloads: download_views(snapshot, &probe.booth_id),
+        })
+        .collect()
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OwnedBody {
     pub booth_id: String,
     pub title: String,

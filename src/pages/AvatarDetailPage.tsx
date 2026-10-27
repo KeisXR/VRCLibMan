@@ -1,11 +1,12 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { api, listenBoothFile, openExternal, openLocal, revealInFolder } from "../api";
 import { useShell } from "../App";
-import { FILE_PRESENCE_LABEL, filePresence, formatBytes } from "../media";
+import { filePresence, formatBytes } from "../media";
 import { CATEGORY_LABEL } from "../types";
 import type { AvatarDetail, BoothFileStatus, DownloadView, ItemView, Knowledge } from "../types";
 import { FileMark, Thumb, errorText } from "../ui";
 import { ExcludeProductButton } from "../components/ProductExclusions";
+import { type RemoteProbeStatus, placeLabelForFile, useRemoteProductProbe } from "../remoteProductProbe";
 
 export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?: string }) {
   const { revision, refresh, notify, fail } = useShell();
@@ -17,16 +18,7 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
     let cancelled = false;
     api.avatar(id).then(
       (value) => {
-        if (cancelled) return;
-        setDetail(value);
-        if (avatarNeedsRemoteProbe(value)) {
-          api.probeRemoteFiles(id).then(
-            (next) => {
-              if (!cancelled) setDetail(next);
-            },
-            () => undefined,
-          );
-        }
+        if (!cancelled) setDetail(value);
       },
       (err: unknown) => {
         if (!cancelled) fail(errorText(err));
@@ -47,6 +39,28 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
     if (!detail || !fileBoothId) return;
     document.getElementById(`files-${fileBoothId}`)?.scrollIntoView({ block: "start" });
   }, [detail, fileBoothId]);
+
+  const catalogItems = useMemo(() => {
+    if (!detail) return [];
+    return [
+      ...detail.sections.flatMap((section) => section.items),
+      ...detail.genericItems,
+      ...detail.unsupportedOutfits,
+    ];
+  }, [detail]);
+  const { items: probedCatalog, statusFor, retryProbe } = useRemoteProductProbe(catalogItems);
+  const probedMap = useMemo(
+    () => new Map(probedCatalog.map((item) => [item.boothId, item])),
+    [probedCatalog],
+  );
+  const itemCardProps = useCallback(
+    (item: ItemView) => ({
+      item: probedMap.get(item.boothId) ?? item,
+      remoteProbeStatus: statusFor(item.boothId),
+      onRetryRemoteProbe: () => retryProbe([item.boothId]),
+    }),
+    [probedMap, statusFor, retryProbe],
+  );
 
   async function merge() {
     if (!detail || !intoId) return;
@@ -110,7 +124,7 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
               <h2>{CATEGORY_LABEL[section.category] ?? section.category}</h2>
               <div className="stack">
                 {section.items.map((item) => (
-                  <ItemCard key={item.boothId} item={item} />
+                  <ItemCard key={item.boothId} {...itemCardProps(item)} />
                 ))}
               </div>
             </div>
@@ -120,7 +134,7 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
               <summary>汎用 {detail.genericItems.length} 件</summary>
               <div className="stack">
                 {detail.genericItems.map((item) => (
-                  <ItemCard key={item.boothId} item={item} />
+                  <ItemCard key={item.boothId} {...itemCardProps(item)} />
                 ))}
               </div>
             </details>
@@ -128,7 +142,9 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
           {detail.sections.length === 0 && detail.genericItems.length === 0 && (
             <p className="empty">このアバターに結び付いた衣装・髪・ギミックはまだありません。</p>
           )}
-          {detail.unsupportedOutfits.length > 0 && <UnsupportedOutfits key={detail.id} items={detail.unsupportedOutfits} />}
+          {detail.unsupportedOutfits.length > 0 && (
+            <UnsupportedOutfits key={detail.id} items={detail.unsupportedOutfits} itemCardProps={itemCardProps} />
+          )}
         </div>
         {!detail.isBuiltin && (
           <details className="generic">
@@ -160,7 +176,17 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
   );
 }
 
-function UnsupportedOutfits({ items }: { items: ItemView[] }) {
+function UnsupportedOutfits({
+  items,
+  itemCardProps,
+}: {
+  items: ItemView[];
+  itemCardProps: (item: ItemView) => {
+    item: ItemView;
+    remoteProbeStatus: RemoteProbeStatus;
+    onRetryRemoteProbe: () => void;
+  };
+}) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [limit, setLimit] = useState(30);
@@ -204,7 +230,7 @@ function UnsupportedOutfits({ items }: { items: ItemView[] }) {
           )}
           <div className="stack">
             {matches.slice(0, limit).map((item) => (
-              <ItemCard key={item.boothId} item={item} />
+              <ItemCard key={item.boothId} {...itemCardProps(item)} />
             ))}
           </div>
           {matches.length > limit && (
@@ -222,7 +248,15 @@ function UnsupportedOutfits({ items }: { items: ItemView[] }) {
   );
 }
 
-export function ItemCard({ item }: { item: ItemView }) {
+export function ItemCard({
+  item,
+  remoteProbeStatus = "ok",
+  onRetryRemoteProbe,
+}: {
+  item: ItemView;
+  remoteProbeStatus?: RemoteProbeStatus;
+  onRetryRemoteProbe?: () => void;
+}) {
   const { refresh, notify, fail } = useShell();
   const [busy, setBusy] = useState("");
 
@@ -289,11 +323,24 @@ export function ItemCard({ item }: { item: ItemView }) {
           {item.downloads.length === 0 && item.localFileCount === 0 && (
             <p className="meta">ファイル情報はまだありません。再インポートするか、フォルダを調べてください</p>
           )}
-          {item.downloads.length > 0 && item.remoteConfigured && item.remoteChecked && !item.remoteReachable && (
-            <p className="meta">リモートのフォルダを確認できません。接続してからもう一度開いてください。</p>
+          {item.downloads.length > 0 &&
+            item.remoteConfigured &&
+            ((item.remoteChecked && !item.remoteReachable) || remoteProbeStatus === "failed") && (
+              <p className="meta">リモートのフォルダを確認できません。接続してからもう一度開いてください。</p>
+            )}
+          {remoteProbeStatus === "failed" && onRetryRemoteProbe && (
+            <button className="button" type="button" onClick={onRetryRemoteProbe}>
+              もう一度確認
+            </button>
           )}
           {item.downloads.length > 0 && (
-            <DownloadFiles item={item} busy={busy} pull={(file) => void pull(file)} push={(file) => void push(file)} />
+            <DownloadFiles
+              item={item}
+              remoteProbeStatus={remoteProbeStatus}
+              busy={busy}
+              pull={(file) => void pull(file)}
+              push={(file) => void push(file)}
+            />
           )}
           {item.localFileCount > 0 && (
             <ul className="file-list">
@@ -317,22 +364,19 @@ export function ItemCard({ item }: { item: ItemView }) {
   );
 }
 
-function avatarNeedsRemoteProbe(detail: AvatarDetail): boolean {
-  const items = [...detail.sections.flatMap((section) => section.items), ...detail.genericItems, ...detail.unsupportedOutfits];
-  return items.some((item) => item.remoteConfigured && !item.remoteChecked);
-}
-
 function hasRealFileName(filename: string): boolean {
   return !/^\d{4,12}$/.test(filename);
 }
 
 function DownloadFiles({
   item,
+  remoteProbeStatus,
   busy,
   pull,
   push,
 }: {
   item: ItemView;
+  remoteProbeStatus: RemoteProbeStatus;
   busy: string;
   pull: (file: DownloadView) => void;
   push: (file: DownloadView) => void;
@@ -404,6 +448,7 @@ function DownloadFiles({
       key={`${file.variation}:${file.filename}:${file.state}`}
       file={file}
       item={item}
+      remoteProbeStatus={remoteProbeStatus}
       busy={busy}
       receiving={receiving}
       live={live}
@@ -440,6 +485,7 @@ function DownloadFiles({
 function DownloadRow({
   file,
   item,
+  remoteProbeStatus,
   busy,
   receiving,
   live,
@@ -450,6 +496,7 @@ function DownloadRow({
 }: {
   file: DownloadView;
   item: ItemView;
+  remoteProbeStatus: RemoteProbeStatus;
   busy: string;
   receiving: string;
   live: BoothFileStatus | null;
@@ -479,7 +526,7 @@ function DownloadRow({
         {file.variation ? <span className="meta"> {file.variation}</span> : null}
         <span className={status?.phase === "error" ? "meta warn-text" : `meta state-${file.state}`}>
           {" "}
-          {status ? status.message : placeLabel(file, item)}
+          {status ? status.message : placeLabelForFile(file, item, remoteProbeStatus)}
         </span>
         {file.sizeBytes != null && file.sizeBytes > 0 ? <span className="meta"> {formatBytes(file.sizeBytes)}</span> : null}
       </div>
@@ -516,7 +563,3 @@ function DownloadRow({
   );
 }
 
-function placeLabel(file: DownloadView, item: ItemView): string {
-  if (file.state !== "local" && item.remoteConfigured && !item.remoteChecked) return "確認中";
-  return FILE_PRESENCE_LABEL[file.state];
-}
