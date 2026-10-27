@@ -23,7 +23,6 @@ import type {
   Knowledge,
   RemoteProductProbe,
   LibraryStats,
-  OwnedBody,
   ProductUpdate,
   QueueFile,
   QueuePage,
@@ -310,6 +309,24 @@ const store: Store = {
   ],
   downloads: [
     {
+      boothId: "4876459",
+      variation: "",
+      filename: "見本の本体.unitypackage",
+      sizeBytes: 120_000_000,
+      state: "local",
+      localPath: "C:\\Assets\\Lime\\見本の本体.unitypackage",
+      remotePath: null,
+    },
+    {
+      boothId: "4876459",
+      variation: "",
+      filename: "見本の未取得.unitypackage",
+      sizeBytes: 80_000_000,
+      state: "missing",
+      localPath: null,
+      remotePath: null,
+    },
+    {
       boothId: "8800101",
       variation: "通常",
       filename: "ワンピース.unitypackage",
@@ -560,7 +577,7 @@ function itemView(item: Product, viaBaseBody: boolean): ItemView {
 }
 
 function classify(avatar: AvatarRecord): {
-  owned: OwnedBody[];
+  owned: ItemView[];
   sections: Section[];
   generic: ItemView[];
   thumbnailPath: string | null;
@@ -569,22 +586,13 @@ function classify(avatar: AvatarRecord): {
   const family = familyOf(avatar);
   const specific: { key: string; item: ItemView }[] = [];
   const generic: ItemView[] = [];
-  const owned: OwnedBody[] = [];
+  const owned: ItemView[] = [];
   for (const item of activeProducts()) {
     if (item.category === "world") continue;
     const linked = new Set(linksOf(item.boothId));
     const inFamily = [...linked].some((id) => family.has(id));
     if (item.category === "avatar") {
-      if (linked.has(avatar.id)) {
-        owned.push({
-          boothId: item.boothId,
-          title: item.title,
-          shop: item.shop,
-          url: item.url,
-          thumbnailUrl: item.thumbnailUrl,
-          thumbnailPath: item.thumbnailPath,
-        });
-      }
+      if (linked.has(avatar.id)) owned.push(itemView(item, false));
       continue;
     }
     if (inFamily) {

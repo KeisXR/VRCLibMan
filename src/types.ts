@@ -107,15 +107,6 @@ export interface ItemView {
   remoteReachable: boolean;
 }
 
-export interface OwnedBody {
-  boothId: string;
-  title: string;
-  shop: string;
-  url: string;
-  thumbnailUrl: string | null;
-  thumbnailPath: string | null;
-}
-
 export interface Section {
   category: string;
   items: ItemView[];
@@ -137,7 +128,7 @@ export interface AvatarDetail {
   isPlaceholder: boolean;
   owned: boolean;
   siblings: Sibling[];
-  ownedProducts: OwnedBody[];
+  ownedProducts: ItemView[];
   sections: Section[];
   genericItems: ItemView[];
   unsupportedOutfits: ItemView[];

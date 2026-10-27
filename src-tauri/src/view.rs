@@ -113,17 +113,6 @@ pub fn remote_product_probes(
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OwnedBody {
-    pub booth_id: String,
-    pub title: String,
-    pub shop: String,
-    pub url: String,
-    pub thumbnail_url: Option<String>,
-    pub thumbnail_path: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct Section {
     pub category: String,
     pub items: Vec<ItemView>,
@@ -168,7 +157,7 @@ pub struct AvatarDetail {
     pub is_placeholder: bool,
     pub owned: bool,
     pub siblings: Vec<Sibling>,
-    pub owned_products: Vec<OwnedBody>,
+    pub owned_products: Vec<ItemView>,
     pub sections: Vec<Section>,
     pub generic_items: Vec<ItemView>,
     pub unsupported_outfits: Vec<ItemView>,
@@ -231,7 +220,7 @@ pub struct ProductOption {
 struct Classified {
     thumbnail_path: Option<String>,
     thumbnail_url: Option<String>,
-    owned: Vec<OwnedBody>,
+    owned: Vec<ItemView>,
     sections: Vec<Section>,
     generic: Vec<ItemView>,
 }
@@ -530,14 +519,7 @@ fn classify(snapshot: &Snapshot, avatar: &Avatar) -> Classified {
         let in_family = linked.iter().any(|id| family.contains(*id));
         if product.category == Some(Category::Avatar) {
             if linked.contains(avatar.id.as_str()) {
-                owned.push(OwnedBody {
-                    booth_id: product.booth_id.clone(),
-                    title: product.title.clone(),
-                    shop: product.shop.clone(),
-                    url: product.url.clone(),
-                    thumbnail_url: product.thumbnail_url.clone(),
-                    thumbnail_path: product.thumbnail_path.clone(),
-                });
+                owned.push(item_view(snapshot, product, false));
             }
             continue;
         }
@@ -913,6 +895,38 @@ mod tests {
                 .any(|item| item.booth_id == "4" || item.booth_id == "6")
         );
         assert!(manuka.generic_items.iter().any(|item| item.booth_id == "5"));
+    }
+
+    #[test]
+    fn owned_body_includes_download_rows() {
+        let mut snapshot = sample();
+        snapshot.remote_configured = true;
+        snapshot.placed_downloads.push(PlacedDownload {
+            booth_id: "1".into(),
+            variation: String::new(),
+            filename: "body.unitypackage".into(),
+            size_bytes: Some(12),
+            state: FilePlace::Missing,
+            local_path: None,
+            remote_path: None,
+        });
+        let lime = avatar_detail(&snapshot, "lime").unwrap();
+        let body = lime
+            .owned_products
+            .iter()
+            .find(|item| item.booth_id == "1")
+            .unwrap();
+        assert_eq!(body.category, Some(Category::Avatar));
+        assert!(!body.via_base_body);
+        assert!(body.remote_configured);
+        assert_eq!(body.downloads.len(), 1);
+        assert_eq!(body.downloads[0].filename, "body.unitypackage");
+        assert_eq!(body.downloads[0].state, FilePlace::Missing);
+        assert!(lime
+            .sections
+            .iter()
+            .flat_map(|section| &section.items)
+            .all(|item| item.booth_id != "1"));
     }
 
     #[test]

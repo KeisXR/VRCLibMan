@@ -576,7 +576,6 @@ span.account-avatar { background: var(--button); }
 .section h2 { margin: var(--space-5) 0 var(--space-2); font-size: 16px; }
 .item { display: grid; grid-template-columns: 44px 1fr auto; gap: var(--space-3); padding: var(--space-3); }
 .item h3 { margin: 0; font-size: 15px; }
-.owned { display: flex; gap: var(--space-3); align-items: center; }
 .tabs { display: flex; gap: 4px; margin-bottom: var(--space-4); flex-wrap: wrap; }
 .tab {
   border: 0;
@@ -664,6 +663,7 @@ a.tab { display: inline-flex; align-items: center; gap: 6px; text-decoration: no
   border-radius: var(--radius-pill);
   padding: 4px 8px;
   text-decoration: none;
+  white-space: nowrap;
 }
 .file-list button:hover { background: var(--hover); text-decoration: none; }
 .variations { margin-top: var(--space-2); }
@@ -680,7 +680,10 @@ a.tab { display: inline-flex; align-items: center; gap: 6px; text-decoration: no
 .download-row.missing,
 .download-row.missing .download-name { color: var(--faint); }
 .download-row.can-receive { cursor: pointer; }
+.download-row { flex-wrap: wrap; }
 .download-row > div { min-width: 0; }
+.download-row > div:first-child { flex: 1 1 auto; min-width: min(100%, 16rem); }
+.download-name { overflow-wrap: break-word; }
 .badge {
   display: inline-block;
   margin-left: var(--space-2);
@@ -717,7 +720,7 @@ a.presence:hover, button.presence:hover { background: var(--hover); text-decorat
 .presence-remote { color: var(--muted); }
 .presence-missing, .presence-unknown { color: var(--faint); }
 .adult-note { margin-top: var(--space-2); font-size: 13px; }
-.download-row .row-actions { margin: 0; }
+.download-row .row-actions { margin: 0 0 0 auto; flex: 0 0 auto; }
 details.generic { margin-top: var(--space-2); }
 details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .download-fold { display: block; }
