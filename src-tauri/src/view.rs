@@ -60,6 +60,7 @@ pub struct ItemView {
     pub thumbnail_url: Option<String>,
     pub thumbnail_path: Option<String>,
     pub category: Option<Category>,
+    pub genre: Option<String>,
     pub is_generic: bool,
     pub confidence: Option<f64>,
     pub via_base_body: bool,
@@ -72,6 +73,13 @@ pub struct ItemView {
     pub remote_configured: bool,
     pub remote_checked: bool,
     pub remote_reachable: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenreProducts {
+    pub items: Vec<ItemView>,
+    pub counts: HashMap<String, u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -148,6 +156,7 @@ pub struct QueueProduct {
     pub thumbnail_url: Option<String>,
     pub thumbnail_path: Option<String>,
     pub category: Option<Category>,
+    pub genre: Option<String>,
     pub is_generic: bool,
     pub confidence: Option<f64>,
     pub compatible_avatars: Vec<String>,
@@ -370,6 +379,7 @@ pub fn queue_page(snapshot: &Snapshot, kind: &str, offset: u32, limit: u32) -> Q
                 thumbnail_url: product.thumbnail_url.clone(),
                 thumbnail_path: product.thumbnail_path.clone(),
                 category: product.category,
+                genre: product.genre.clone(),
                 is_generic: product.is_generic,
                 confidence: product.confidence,
                 compatible_avatars: product.compatible_avatars.clone(),
@@ -586,6 +596,7 @@ fn item_view(snapshot: &Snapshot, product: &Product, via_base_body: bool) -> Ite
         thumbnail_url: product.thumbnail_url.clone(),
         thumbnail_path: product.thumbnail_path.clone(),
         category: product.category,
+        genre: product.genre.clone(),
         is_generic: product.is_generic,
         confidence: product.confidence,
         via_base_body,
@@ -715,6 +726,8 @@ mod tests {
             thumbnail_path: None,
             category,
             category_locked: false,
+            genre: Some("other".into()),
+            genre_locked: false,
             compatible_avatars: Vec::new(),
             unresolved_names: Vec::new(),
             is_generic: generic,

@@ -49,6 +49,8 @@ interface Product {
   thumbnailPath: string | null;
   category: Category | null;
   categoryLocked: boolean;
+  genre?: string | null;
+  genreLocked?: boolean;
   compatibleAvatars: string[];
   unresolvedNames: string[];
   isGeneric: boolean;
@@ -483,6 +485,7 @@ function itemView(item: Product, viaBaseBody: boolean): ItemView {
     thumbnailUrl: item.thumbnailUrl,
     thumbnailPath: item.thumbnailPath,
     category: item.category,
+    genre: item.genre ?? null,
     isGeneric: item.isGeneric,
     confidence: item.confidence,
     viaBaseBody,
@@ -674,6 +677,7 @@ function queue(kind: string): QueuePage {
       thumbnailUrl: item.thumbnailUrl,
       thumbnailPath: item.thumbnailPath,
       category: item.category,
+      genre: item.genre ?? null,
       isGeneric: item.isGeneric,
       confidence: item.confidence,
       compatibleAvatars: item.compatibleAvatars,
@@ -746,6 +750,7 @@ function updateProduct(update: ProductUpdate) {
     item.category = update.category as Category;
     item.categoryLocked = true;
   }
+  if (update.genre) { item.genre = update.genre; item.genreLocked = true; }
   if (typeof update.isGeneric === "boolean") item.isGeneric = update.isGeneric;
   if (update.avatarIds) {
     for (const id of update.avatarIds) {
@@ -1060,6 +1065,12 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       return activeProducts()
         .filter((item) => item.category === args.category)
         .map((item) => itemView(item, false)) as T;
+    case "list_products_by_genre": {
+      const kind = String(args.kind); const wanted = args.genre == null ? null : String(args.genre);
+      const rows = activeProducts().filter((item) => kind === "world" ? item.category === "world" : item.category !== "world" && item.category !== "avatar");
+      const counts: Record<string, number> = {}; for (const item of rows) if (item.genre) counts[item.genre] = (counts[item.genre] ?? 0) + 1;
+      return { items: rows.filter((item) => !wanted || item.genre === wanted).sort((a,b) => a.title.localeCompare(b.title, "ja")).map((item) => itemView(item, false)), counts } as T;
+    }
     case "probe_remote_files":
       store.remoteChecked = true;
       return detail(String(args.id ?? "")) as T;

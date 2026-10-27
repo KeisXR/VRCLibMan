@@ -9,7 +9,7 @@ use crate::apple_fm::{self, AppleError};
 use crate::model::Extraction;
 use crate::ollama::{self, model_ready};
 use crate::scan;
-use crate::view::{self, AvatarCard, AvatarDetail, ItemView, ProductOption, QueuePage};
+use crate::view::{self, AvatarCard, AvatarDetail, GenreProducts, ItemView, ProductOption, QueuePage};
 use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, MutexGuard};
@@ -194,6 +194,21 @@ pub fn list_products_by_category(
     let remote = db::settings(&mut connection)?.remote_library_folder;
     crate::library_files::fill_local_places(&mut snapshot, &remote);
     Ok(view::products_by_ids(&snapshot, &ids))
+}
+
+#[tauri::command]
+pub fn list_products_by_genre(state: State<'_, AppState>, kind: String, genre: Option<String>) -> Result<GenreProducts, String> {
+    let mut connection = db(&state)?;
+    let all_ids = db::product_ids_by_genre(&connection, &kind, None)?;
+    let ids = db::product_ids_by_genre(&connection, &kind, genre.as_deref())?;
+    let mut snapshot = db::load_snapshot(&mut connection)?;
+    let remote = db::settings(&mut connection)?.remote_library_folder;
+    crate::library_files::fill_local_places(&mut snapshot, &remote);
+    let mut counts = std::collections::HashMap::new();
+    for product in snapshot.products.iter().filter(|product| all_ids.contains(&product.booth_id)) {
+        if let Some(value) = &product.genre { *counts.entry(value.clone()).or_insert(0) += 1; }
+    }
+    Ok(GenreProducts { items: view::products_by_ids(&snapshot, &ids), counts })
 }
 
 fn load_avatar(app: &AppHandle, id: &str, probe_remote: bool) -> Result<AvatarDetail, String> {

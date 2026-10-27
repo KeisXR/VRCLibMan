@@ -24,6 +24,8 @@ CREATE TABLE products (
     thumbnail_path TEXT,
     category TEXT,
     category_locked INTEGER NOT NULL DEFAULT 0,
+    genre TEXT,
+    genre_locked INTEGER NOT NULL DEFAULT 0,
     compatible_avatars_json TEXT NOT NULL DEFAULT '[]',
     unresolved_names_json TEXT NOT NULL DEFAULT '[]',
     is_generic INTEGER NOT NULL DEFAULT 0,
@@ -192,6 +194,20 @@ fn migrate(connection: &Connection) -> Result<(), String> {
                 excluded_at TEXT NOT NULL
             ); PRAGMA user_version = 2;",
         ).sql()?;
+        tx.commit().sql()?;
+    }
+    if version < 3 {
+        let tx = connection.unchecked_transaction().sql()?;
+        ensure_column(&tx, "products", "genre", "ALTER TABLE products ADD COLUMN genre TEXT")?;
+        ensure_column(&tx, "products", "genre_locked", "ALTER TABLE products ADD COLUMN genre_locked INTEGER NOT NULL DEFAULT 0")?;
+        let products = load_products(&tx)?;
+        for product in products {
+            let category = product.category.unwrap_or(Category::Other);
+            let genre = crate::genre::classify_text(category, &product.title, &product.description_snippet)
+                .unwrap_or_else(|| crate::genre::validate(category, None));
+            tx.execute("UPDATE products SET genre = ?1 WHERE booth_id = ?2", params![genre, product.booth_id]).sql()?;
+        }
+        tx.execute_batch("PRAGMA user_version = 3;").sql()?;
         tx.commit().sql()?;
     }
     Ok(())
@@ -1029,6 +1045,7 @@ fn apply_listed_compatibility(connection: &mut Connection, booth_id: &str) -> Re
         booth_id,
         &Extraction {
             category,
+            genre: None,
             compatible_avatars: listed,
             is_generic: false,
             confidence: 0.9,
@@ -1055,6 +1072,15 @@ pub(crate) fn apply_extraction(
         &avatars,
     );
     let category = decide_category(&existing, extraction.category, extraction.confidence);
+    let genre = if existing.genre_locked {
+        existing.genre.clone()
+    } else {
+        category.map(|category| {
+            let selected = crate::genre::classify_text(category, &existing.title, &existing.description_snippet)
+                .or_else(|| extraction.genre.clone());
+            crate::genre::validate(category, selected.as_deref())
+        })
+    };
     let model_generic = if category == Some(Category::World) {
         false
     } else {
@@ -1121,11 +1147,12 @@ pub(crate) fn apply_extraction(
         remember_readings(&tx, &output.readings)?;
     }
     tx.execute(
-        "UPDATE products SET category = ?1, compatible_avatars_json = ?2, unresolved_names_json = ?3,
-         is_generic = ?4, confidence = ?5, needs_review = ?6, user_confirmed = 0,
-         extracted_at = ?7, updated_at = ?8 WHERE booth_id = ?9",
+        "UPDATE products SET category = ?1, genre = ?2, compatible_avatars_json = ?3, unresolved_names_json = ?4,
+         is_generic = ?5, confidence = ?6, needs_review = ?7, user_confirmed = 0,
+         extracted_at = ?8, updated_at = ?9 WHERE booth_id = ?10",
         params![
             category_text,
+            genre,
             to_json(&names)?,
             to_json(&unresolved)?,
             is_generic,
@@ -1402,6 +1429,13 @@ pub(crate) fn update_product(
         product.category = Some(Category::parse(category).ok_or("カテゴリが不正です")?);
         product.category_locked = true;
     }
+    if let Some(genre) = update.genre.as_deref().filter(|value| !value.is_empty()) {
+        let category = product.category.ok_or("ジャンルを選ぶ前にカテゴリを選んでください")?;
+        product.genre = Some(crate::genre::validate(category, Some(genre)));
+        product.genre_locked = true;
+    } else if update.category.is_some() {
+        product.genre = product.category.map(|category| crate::genre::validate(category, product.genre.as_deref()));
+    }
     if let Some(generic) = update.is_generic {
         product.is_generic = generic;
     }
@@ -1437,12 +1471,14 @@ pub(crate) fn update_product(
         .map(|category| category.as_str().to_string());
     let tx = connection.transaction().sql()?;
     tx.execute(
-        "UPDATE products SET category = ?1, category_locked = ?2, is_generic = ?3,
-         unresolved_names_json = ?4, links_locked = ?5, user_confirmed = ?6, needs_review = ?7,
-         updated_at = ?8 WHERE booth_id = ?9",
+        "UPDATE products SET category = ?1, category_locked = ?2, genre = ?3, genre_locked = ?4, is_generic = ?5,
+         unresolved_names_json = ?6, links_locked = ?7, user_confirmed = ?8, needs_review = ?9,
+         updated_at = ?10 WHERE booth_id = ?11",
         params![
             category,
             product.category_locked,
+            product.genre,
+            product.genre_locked,
             product.is_generic,
             to_json(&product.unresolved_names)?,
             product.links_locked,
@@ -1722,6 +1758,14 @@ pub(crate) fn product_ids_by_category(
     let rows = statement
         .query_map([category.as_str()], |row| row.get(0))
         .sql()?;
+    rows.collect::<Result<Vec<_>, _>>().sql()
+}
+
+pub(crate) fn product_ids_by_genre(connection: &Connection, kind: &str, genre: Option<&str>) -> Result<Vec<String>, String> {
+    let condition = match kind { "world" => "category = 'world'", "asset" => "category <> 'world' AND category <> 'avatar'", _ => return Err("ジャンルの種類が不正です".into()) };
+    let sql = format!("SELECT booth_id FROM products WHERE {condition} AND (?1 IS NULL OR genre = ?1) AND booth_id NOT IN (SELECT booth_id FROM product_exclusions) ORDER BY title COLLATE NOCASE, booth_id");
+    let mut statement = connection.prepare(&sql).sql()?;
+    let rows = statement.query_map([genre], |row| row.get(0)).sql()?;
     rows.collect::<Result<Vec<_>, _>>().sql()
 }
 
@@ -3035,6 +3079,7 @@ fn settle_one(connection: &mut Connection, booth_id: &str, redo: bool) -> Result
         booth_id,
         &Extraction {
             category,
+            genre: None,
             compatible_avatars: pieces,
             is_generic: false,
             confidence: 0.95,
@@ -3734,7 +3779,7 @@ fn load_files(connection: &Connection) -> Result<Vec<LocalFile>, String> {
 
 const PRODUCT_SELECT: &str = "
 SELECT booth_id, title, shop, description_snippet, url, thumbnail_url, thumbnail_path,
-       category, category_locked, compatible_avatars_json, unresolved_names_json,
+       category, category_locked, genre, genre_locked, compatible_avatars_json, unresolved_names_json,
        is_generic, confidence, links_locked, user_confirmed, needs_review,
        imported_at, updated_at, extracted_at
 FROM products
@@ -3742,8 +3787,8 @@ FROM products
 
 fn map_product(row: &rusqlite::Row<'_>) -> rusqlite::Result<Product> {
     let category: Option<String> = row.get(7)?;
-    let compatible: String = row.get(9)?;
-    let unresolved: String = row.get(10)?;
+    let compatible: String = row.get(11)?;
+    let unresolved: String = row.get(12)?;
     Ok(Product {
         booth_id: row.get(0)?,
         title: row.get(1)?,
@@ -3754,16 +3799,18 @@ fn map_product(row: &rusqlite::Row<'_>) -> rusqlite::Result<Product> {
         thumbnail_path: row.get(6)?,
         category: category.as_deref().and_then(Category::parse),
         category_locked: row.get::<_, i64>(8)? != 0,
+        genre: row.get(9)?,
+        genre_locked: row.get::<_, i64>(10)? != 0,
         compatible_avatars: parse_list(&compatible),
         unresolved_names: parse_list(&unresolved),
-        is_generic: row.get::<_, i64>(11)? != 0,
-        confidence: row.get(12)?,
-        links_locked: row.get::<_, i64>(13)? != 0,
-        user_confirmed: row.get::<_, i64>(14)? != 0,
-        needs_review: row.get::<_, i64>(15)? != 0,
-        imported_at: row.get(16)?,
-        updated_at: row.get(17)?,
-        extracted_at: row.get(18)?,
+        is_generic: row.get::<_, i64>(13)? != 0,
+        confidence: row.get(14)?,
+        links_locked: row.get::<_, i64>(15)? != 0,
+        user_confirmed: row.get::<_, i64>(16)? != 0,
+        needs_review: row.get::<_, i64>(17)? != 0,
+        imported_at: row.get(18)?,
+        updated_at: row.get(19)?,
+        extracted_at: row.get(20)?,
     })
 }
 
@@ -3969,8 +4016,9 @@ mod tests {
             connection
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
-            2
+            3
         );
+        assert_eq!(require_product(&connection, "9001").unwrap().genre.as_deref(), Some("other"));
         assert_eq!(settings(&connection).unwrap().ollama_model, "gemma4:12b");
         assert_eq!(managed_products(&connection).unwrap().len(), 1);
         assert!(!product_excluded(&connection, "9001").unwrap());
@@ -4340,6 +4388,7 @@ mod tests {
     ) -> Extraction {
         Extraction {
             category,
+            genre: None,
             compatible_avatars: names.iter().map(|name| (*name).to_string()).collect(),
             is_generic: generic,
             confidence,
@@ -4451,6 +4500,7 @@ mod tests {
             &ProductUpdate {
                 booth_id: "1004".into(),
                 category: Some("outfit".into()),
+                genre: None,
                 is_generic: Some(false),
                 avatar_ids: Some(vec!["manuka".into()]),
                 confirm: Some(true),
@@ -4484,6 +4534,26 @@ mod tests {
     }
 
     #[test]
+    fn manual_genre_lock_survives_extraction_and_genre_query_excludes_products() {
+        let mut connection = open_memory().unwrap();
+        import_products(&mut connection, &parse_export(SAMPLE).unwrap()).unwrap();
+        update_product(&mut connection, &ProductUpdate {
+            booth_id: "1004".into(), category: Some("outfit".into()), genre: Some("shader".into()),
+            is_generic: None, avatar_ids: None, confirm: None,
+        }).unwrap();
+        apply_extraction(&mut connection, "1004", &Extraction {
+            category: Category::Outfit, genre: Some("outfit".into()), compatible_avatars: vec![],
+            is_generic: false, confidence: 0.9,
+        }, 0.6).unwrap();
+        let product = require_product(&connection, "1004").unwrap();
+        assert_eq!(product.genre.as_deref(), Some("shader"));
+        assert!(product.genre_locked);
+        assert!(product_ids_by_genre(&connection, "asset", Some("shader")).unwrap().contains(&"1004".into()));
+        set_product_excluded(&mut connection, "1004", true).unwrap();
+        assert!(!product_ids_by_genre(&connection, "asset", Some("shader")).unwrap().contains(&"1004".into()));
+    }
+
+    #[test]
     fn sample_export_on_file_database_reaches_list_and_detail() {
         struct Temp(std::path::PathBuf);
         impl Drop for Temp {
@@ -4514,7 +4584,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 2);
+        assert_eq!(version, 3);
         let report = import_products(&mut connection, &parsed).unwrap();
         assert_eq!(report.inserted, 7);
         assert_eq!(report.skipped, 0);
