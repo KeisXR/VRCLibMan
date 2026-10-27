@@ -345,9 +345,9 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       assert.equal(unclassified.category, null);
       assert.deepEqual(
         both.manualClassifications.map((item) => item.boothId),
-        ["8800202"],
+        ["8800131", "8800202"],
       );
-      assert.equal(both.manualClassifications[0].classificationStatus, "manual");
+      assert.ok(both.manualClassifications.every((item) => item.classificationStatus === "manual"));
       assert.equal(both.corrections[0].boothId, "8800202");
       assert.equal(both.corrections[0].action, "move");
       assert.equal(both.corrections[0].from.category, "other");
@@ -363,7 +363,7 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       const otherOnly = await read();
       assert.ok(otherOnly.products.some((item) => item.boothId === "8800201"));
       assert.ok(otherOnly.products.every((item) => item.category === "other"));
-      assert.equal(otherOnly.manualClassifications.length, 1);
+      assert.equal(otherOnly.manualClassifications.length, 2);
       await click(scope.querySelector('input[value="unclassified"]'));
       const unclassifiedOnly = await read();
       assert.ok(unclassifiedOnly.products.some((item) => item.boothId === "8800105"));
