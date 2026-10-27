@@ -196,6 +196,8 @@ pub fn run() {
             commands::extract_products,
             commands::cancel_extract,
             commands::test_ollama,
+            commands::ollama_loaded_models,
+            commands::unload_ollama_model,
             commands::apple_fm_status,
             commands::catalog_info,
             commands::refresh_avatar_catalog,

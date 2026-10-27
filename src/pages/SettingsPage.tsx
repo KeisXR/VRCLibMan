@@ -11,6 +11,7 @@ import { MODEL_CHOICES, modelDownloadPrompt } from "../models";
 import { useSettingsAutosave } from "../useSettingsAutosave";
 import { extensionVersionMessage } from "../versions";
 import { AppUpdater } from "../components/AppUpdater";
+import { OllamaMemoryControls } from "../components/OllamaMemoryControls";
 
 const emptyAvatar = {
   id: "",
@@ -304,7 +305,29 @@ export function SettingsPage() {
                   <button className="button" type="button" disabled={pulling || !settings.ollamaModel.trim()} onClick={() => void pullOllamaModel()}>{pulling ? "取得中…" : "モデルを取得"}</button>
                 </SettingRow>
             )}
-            {settings.llmBackend === "ollama" && <div className="section-actions"><button className="button" type="button" onClick={() => void testOllama()}>接続を確認</button><span className="meta">{installedSize ? `モデルサイズ ${formatBytes(installedSize)}` : models.length ? `導入済み: ${models.join("、")}` : "導入済みモデル：未確認"}</span></div>}
+            {settings.llmBackend === "ollama" && (
+              <>
+                <SettingRow label="分類後にモデルをアンロード" help="分類の終了・中断・失敗のあと、選択中のモデルをメモリから外します。Ollama 自体は止めません。">
+                  <label className="switch-label">
+                    <input
+                      type="checkbox"
+                      checked={settings.unloadOllamaAfterClassification}
+                      onChange={(e) => changeSettings({ unloadOllamaAfterClassification: e.target.checked })}
+                    />
+                    有効にする
+                  </label>
+                </SettingRow>
+                <OllamaMemoryControls
+                  model={settings.ollamaModel}
+                  enabled={settings.llmBackend === "ollama"}
+                  onStatus={setOllamaStatus}
+                />
+                <div className="section-actions">
+                  <button className="button" type="button" onClick={() => void testOllama()}>接続を確認</button>
+                  <span className="meta">{installedSize ? `モデルサイズ ${formatBytes(installedSize)}` : models.length ? `導入済み: ${models.join("、")}` : "導入済みモデル：未確認"}</span>
+                </div>
+              </>
+            )}
             <details className="settings-details">
               <summary>分類の詳細設定</summary>
               {settings.llmBackend === "ollama" && <SettingRow label="Ollama の接続先" help="通常は変更不要です。http と、この PC のアドレス（127.0.0.1、localhost、::1）だけを使えます。">

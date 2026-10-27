@@ -257,6 +257,14 @@ pub struct ScanReport {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct OllamaLoadedModel {
+    pub name: String,
+    pub size_bytes: u64,
+    pub expires_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ExtractReport {
     pub processed: u32,
     pub failed: u32,
@@ -287,6 +295,7 @@ pub struct Settings {
     pub llm_backend: String,
     pub background_mode: bool,
     pub launch_at_login: bool,
+    pub unload_ollama_after_classification: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -310,6 +319,12 @@ pub struct SettingsInput {
     pub background_mode: bool,
     #[serde(default)]
     pub launch_at_login: bool,
+    #[serde(default = "default_unload_ollama_after_classification")]
+    pub unload_ollama_after_classification: bool,
+}
+
+fn default_unload_ollama_after_classification() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -326,6 +341,7 @@ pub struct SettingsPatch {
     pub llm_backend: Option<String>,
     pub background_mode: Option<bool>,
     pub launch_at_login: Option<bool>,
+    pub unload_ollama_after_classification: Option<bool>,
 }
 
 impl SettingsPatch {
@@ -353,6 +369,9 @@ impl SettingsPatch {
             llm_backend: self.llm_backend.clone().unwrap_or(current.llm_backend),
             background_mode: self.background_mode.unwrap_or(current.background_mode),
             launch_at_login: self.launch_at_login.unwrap_or(current.launch_at_login),
+            unload_ollama_after_classification: self
+                .unload_ollama_after_classification
+                .unwrap_or(current.unload_ollama_after_classification),
         }
     }
 }

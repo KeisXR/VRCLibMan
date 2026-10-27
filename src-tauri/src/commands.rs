@@ -327,6 +327,7 @@ pub fn save_settings(
                 llm_backend: settings.llm_backend,
                 background_mode: settings.background_mode,
                 launch_at_login: settings.launch_at_login,
+                unload_ollama_after_classification: settings.unload_ollama_after_classification,
             },
         )?;
         db::settings(&connection)?
@@ -798,6 +799,14 @@ pub async fn extract_products(
             format!("{processed} 件分類、{failed} 件失敗")
         },
     );
+    if settings.llm_backend == "ollama" && settings.unload_ollama_after_classification {
+        let _ = ollama::unload_model(
+            &client,
+            &settings.ollama_base_url,
+            &settings.ollama_model,
+        )
+        .await;
+    }
     Ok(ExtractReport {
         processed,
         failed,
@@ -932,6 +941,41 @@ pub async fn test_ollama(state: State<'_, AppState>) -> Result<OllamaStatus, Str
         model_ready: ready,
         model_size_bytes,
     })
+}
+
+#[tauri::command]
+pub async fn ollama_loaded_models(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::model::OllamaLoadedModel>, String> {
+    let settings = {
+        let connection = db(&state)?;
+        db::settings(&connection)?
+    };
+    if settings.llm_backend != "ollama" {
+        return Ok(Vec::new());
+    }
+    let client = ollama::probe_client()?;
+    ollama::loaded_models(&client, &settings.ollama_base_url).await
+}
+
+#[tauri::command]
+pub async fn unload_ollama_model(
+    state: State<'_, AppState>,
+    model: Option<String>,
+) -> Result<(), String> {
+    let settings = {
+        let connection = db(&state)?;
+        db::settings(&connection)?
+    };
+    if settings.llm_backend != "ollama" {
+        return Err("Ollama が選択されていません".into());
+    }
+    let wanted = model
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or(settings.ollama_model);
+    let client = ollama::probe_client()?;
+    ollama::unload_model(&client, &settings.ollama_base_url, &wanted).await
 }
 
 #[tauri::command]

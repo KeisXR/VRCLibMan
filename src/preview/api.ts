@@ -142,6 +142,7 @@ const store: Store = {
     llmBackend: "ollama",
     backgroundMode: false,
     launchAtLogin: false,
+    unloadOllamaAfterClassification: true,
   },
   setupComplete: false,
   baseBodies: [
@@ -1224,6 +1225,18 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     case "scan_library":
     case "extract_products":
       desktopOnly();
+    case "ollama_loaded_models":
+      return store.settings.llmBackend === "ollama"
+        ? ([
+            {
+              name: store.settings.ollamaModel,
+              sizeBytes: 2_500_000_000,
+              expiresAt: "2026-10-27T12:00:00Z",
+            },
+          ] as T)
+        : ([] as T);
+    case "unload_ollama_model":
+      return undefined as T;
     case "test_ollama": {
       const installed = [...installedModels];
       const selected = store.settings.ollamaModel;

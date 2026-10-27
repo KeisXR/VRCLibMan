@@ -1,4 +1,4 @@
-use crate::model::{Category, Extraction};
+use crate::model::{Category, Extraction, OllamaLoadedModel};
 use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
@@ -125,6 +125,67 @@ pub fn parse_installed_models(text: &str) -> Result<Vec<InstalledModel>, String>
     }
     models.sort_by(|left, right| left.name.cmp(&right.name));
     Ok(models)
+}
+
+pub fn parse_loaded_models(text: &str) -> Result<Vec<OllamaLoadedModel>, String> {
+    let parsed: PsResponse =
+        serde_json::from_str(text).map_err(|_| "Ollamaの応答を解釈できません".to_string())?;
+    let mut models = Vec::new();
+    for model in parsed.models.unwrap_or_default() {
+        let name = model.name.trim();
+        if name.is_empty() {
+            continue;
+        }
+        models.push(OllamaLoadedModel {
+            name: name.to_string(),
+            size_bytes: model.size.unwrap_or(0),
+            expires_at: model.expires_at.filter(|value| !value.is_empty()),
+        });
+    }
+    models.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(models)
+}
+
+pub async fn loaded_models(
+    client: &reqwest::Client,
+    base: &str,
+) -> Result<Vec<OllamaLoadedModel>, String> {
+    let base = validate_base_url(base)?;
+    let response = client
+        .get(format!("{base}/api/ps"))
+        .send()
+        .await
+        .map_err(connection_error)?;
+    let status = response.status();
+    let text = response.text().await.map_err(connection_error)?;
+    if !status.is_success() {
+        return Err(format!("Ollamaの読み込み状態を取得できません: {status}"));
+    }
+    parse_loaded_models(&text)
+}
+
+pub async fn unload_model(
+    client: &reqwest::Client,
+    base: &str,
+    model: &str,
+) -> Result<(), String> {
+    let base = validate_base_url(base)?;
+    let model = validate_model_name(model)?;
+    let response = client
+        .post(format!("{base}/api/generate"))
+        .json(&serde_json::json!({
+            "model": model,
+            "keep_alive": 0
+        }))
+        .send()
+        .await
+        .map_err(connection_error)?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("Ollamaのモデルをアンロードできません: {status} {body}"));
+    }
+    Ok(())
 }
 
 pub async fn list_models(
@@ -435,6 +496,18 @@ struct TagModel {
     size: Option<u64>,
 }
 
+#[derive(Deserialize)]
+struct PsResponse {
+    models: Option<Vec<PsModel>>,
+}
+
+#[derive(Deserialize)]
+struct PsModel {
+    name: String,
+    size: Option<u64>,
+    expires_at: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -532,6 +605,21 @@ mod tests {
         let raw =
             r#"{"category":"shoes","compatible_avatars":[],"is_generic":false,"confidence":0.4}"#;
         assert!(parse_extraction(raw).is_err());
+    }
+
+    #[test]
+    fn parses_loaded_models_from_ps() {
+        let parsed = parse_loaded_models(
+            r#"{"models":[{"name":"qwen3.5:9b","size":7000000000,"expires_at":"2026-10-27T12:00:00Z"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].name, "qwen3.5:9b");
+        assert_eq!(parsed[0].size_bytes, 7_000_000_000);
+        assert_eq!(
+            parsed[0].expires_at.as_deref(),
+            Some("2026-10-27T12:00:00Z")
+        );
     }
 
     #[test]

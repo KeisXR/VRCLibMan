@@ -280,6 +280,7 @@ fn ensure_ready(connection: &Connection) -> Result<(), String> {
         ("llm_backend", "ollama"),
         ("background_mode", "0"),
         ("launch_at_login", "0"),
+        ("unload_ollama_after_classification", "1"),
     ] {
         connection
             .execute(
@@ -332,6 +333,9 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
         ),
         background_mode: setting(connection, "background_mode")?.as_deref() == Some("1"),
         launch_at_login: setting(connection, "launch_at_login")?.as_deref() == Some("1"),
+        unload_ollama_after_classification: setting(connection, "unload_ollama_after_classification")?
+            .as_deref()
+            != Some("0"),
     })
 }
 
@@ -449,6 +453,11 @@ fn save_settings_values(
         connection,
         "launch_at_login",
         if launch_at_login { "1" } else { "0" },
+    )?;
+    set_setting(
+        connection,
+        "unload_ollama_after_classification",
+        if input.unload_ollama_after_classification { "1" } else { "0" },
     )?;
     tx.commit().sql()
 }
@@ -4836,6 +4845,7 @@ mod tests {
                 llm_backend: "ollama".into(),
                 background_mode: false,
                 launch_at_login: false,
+                unload_ollama_after_classification: true,
             },
         )
         .unwrap();
@@ -4893,6 +4903,7 @@ mod tests {
                 llm_backend: "ollama".into(),
                 background_mode: false,
                 launch_at_login: false,
+                unload_ollama_after_classification: true,
             },
         )
         .unwrap();
@@ -5950,6 +5961,7 @@ mod tests {
                 llm_backend: "ollama".into(),
                 background_mode: false,
                 launch_at_login: false,
+                unload_ollama_after_classification: true,
             },
         );
         assert!(refused.unwrap_err().contains("ライブラリ"));
@@ -5967,6 +5979,7 @@ mod tests {
                 llm_backend: "ollama".into(),
                 background_mode: false,
                 launch_at_login: false,
+                unload_ollama_after_classification: true,
             },
         )
         .unwrap();
@@ -6079,6 +6092,7 @@ mod tests {
                 llm_backend: "ollama".into(),
                 background_mode: false,
                 launch_at_login: false,
+                unload_ollama_after_classification: true,
             },
         )
     }
@@ -6338,6 +6352,7 @@ mod tests {
             llm_backend: "ollama".into(),
             background_mode: false,
             launch_at_login: true,
+                unload_ollama_after_classification: true,
         };
         save_settings(&connection, &base).unwrap();
         let saved = settings(&connection).unwrap();
@@ -6352,6 +6367,7 @@ mod tests {
             &SettingsInput {
                 background_mode: true,
                 launch_at_login: true,
+                unload_ollama_after_classification: true,
                 ..base
             },
         )
@@ -6495,6 +6511,7 @@ mod tests {
                 llm_backend: "ollama".into(),
                 background_mode: false,
                 launch_at_login: false,
+                unload_ollama_after_classification: true,
             },
         )
         .unwrap();
