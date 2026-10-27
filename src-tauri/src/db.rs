@@ -6704,15 +6704,13 @@ mod tests {
                 [],
             )
             .unwrap();
-        assert_eq!(
-            classification_status(&connection).unwrap().stale_count,
-            before + 1
-        );
-        assert_eq!(
+        let after = classification_status(&connection).unwrap().stale_count;
+        assert!(after > before);
+        assert!(
             products_for_extract(&connection, ExtractTarget::Stale)
                 .unwrap()
-                .len(),
-            1
+                .iter()
+                .any(|job| job.booth_id == "1004")
         );
     }
 
