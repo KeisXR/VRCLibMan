@@ -289,21 +289,30 @@ pub fn avatar_detail(snapshot: &Snapshot, id: &str) -> Option<AvatarDetail> {
 
 pub fn products_by_ids(snapshot: &Snapshot, ids: &[String]) -> Vec<ItemView> {
     ids.iter()
-        .filter_map(|id| snapshot.products.iter().find(|product| product.booth_id == *id))
+        .filter_map(|id| {
+            snapshot
+                .products
+                .iter()
+                .find(|product| product.booth_id == *id)
+        })
         .map(|product| item_view(snapshot, product, false))
         .collect()
 }
 
-/// `all_ids` is every product of the kind (for the genre counts), `ids` the selected genre.
-/// A genre missing or outside `genres` (the kind's genres) is counted under `genre::UNSET`.
+/// `all_ids` is every product of the kind, in list order.
+/// `selected` is the browse key (`None` lists every product of the kind).
+/// A genre missing or outside `genres` is counted under `genre::UNSET`.
+/// Undownloaded free products that are not classification-pinned leave that
+/// genre and are counted only under `genre::FREE`.
 pub fn genre_products(
     snapshot: &Snapshot,
     genres: &[(&str, &str)],
     all_ids: &[String],
-    ids: &[String],
+    selected: Option<&str>,
 ) -> GenreProducts {
     let wanted: HashSet<&str> = all_ids.iter().map(String::as_str).collect();
-    let mut counts = HashMap::new();
+    let mut counts: HashMap<String, u32> = HashMap::new();
+    let mut buckets: HashMap<&str, String> = HashMap::new();
     let mut total = 0;
     for product in snapshot
         .products
@@ -311,18 +320,78 @@ pub fn genre_products(
         .filter(|product| wanted.contains(product.booth_id.as_str()))
     {
         total += 1;
-        let key = product
-            .genre
-            .as_deref()
-            .filter(|genre| genres.iter().any(|(known, _)| known == genre))
-            .unwrap_or(crate::genre::UNSET);
-        *counts.entry(key.to_string()).or_insert(0) += 1;
+        let key = browse_bucket(snapshot, product, genres);
+        *counts.entry(key.clone()).or_insert(0) += 1;
+        buckets.insert(product.booth_id.as_str(), key);
     }
+    let ids: Vec<String> = all_ids
+        .iter()
+        .filter(|id| match selected {
+            None => buckets.contains_key(id.as_str()),
+            Some(genre) => buckets.get(id.as_str()).map(String::as_str) == Some(genre),
+        })
+        .cloned()
+        .collect();
     GenreProducts {
-        items: products_by_ids(snapshot, ids),
+        items: products_by_ids(snapshot, &ids),
         counts,
         total,
     }
+}
+
+fn browse_bucket(snapshot: &Snapshot, product: &Product, genres: &[(&str, &str)]) -> String {
+    if free_shelf(snapshot, product) {
+        return crate::genre::FREE.to_string();
+    }
+    product
+        .genre
+        .as_deref()
+        .filter(|genre| genres.iter().any(|(known, _)| known == genre))
+        .unwrap_or(crate::genre::UNSET)
+        .to_string()
+}
+
+/// Free products stay out of the ordinary genres until a local copy exists.
+/// A manual placement (both locks) keeps the genre the user chose.
+fn free_shelf(snapshot: &Snapshot, product: &Product) -> bool {
+    if product.category_locked && product.genre_locked {
+        return false;
+    }
+    let free = snapshot
+        .product_flags
+        .iter()
+        .find(|flag| flag.booth_id == product.booth_id)
+        .and_then(|flag| flag.is_free)
+        .unwrap_or(false);
+    free && !product_has_local_copy(snapshot, &product.booth_id)
+}
+
+/// Same local signal the item card uses: a download placed locally, a linked
+/// file that is not one of those downloads, or the stored downloaded flag
+/// when placement has not been filled in yet.
+fn product_has_local_copy(snapshot: &Snapshot, booth_id: &str) -> bool {
+    let downloads = download_views(snapshot, booth_id);
+    if downloads.iter().any(|row| row.state == FilePlace::Local) {
+        return true;
+    }
+    let names: HashSet<&str> = downloads.iter().map(|row| row.filename.as_str()).collect();
+    if snapshot.files.iter().any(|file| {
+        file.linked_product_id.as_deref() == Some(booth_id)
+            && !names.contains(file.filename.as_str())
+    }) {
+        return true;
+    }
+    let placed = snapshot
+        .placed_downloads
+        .iter()
+        .any(|row| row.booth_id == booth_id);
+    if placed {
+        return false;
+    }
+    snapshot
+        .download_rows
+        .iter()
+        .any(|row| row.booth_id == booth_id && (row.downloaded || row.local_path.is_some()))
 }
 
 fn file_presence(snapshot: &Snapshot, booth_id: &str) -> String {
@@ -1100,8 +1169,7 @@ mod tests {
             .iter()
             .map(|id| id.to_string())
             .collect();
-        let selected = vec!["6".to_string()];
-        let result = genre_products(&snapshot, crate::genre::ASSET_GENRES, &all, &selected);
+        let result = genre_products(&snapshot, crate::genre::ASSET_GENRES, &all, Some("hair"));
         assert_eq!(result.total, 4);
         assert_eq!(result.counts.get("outfit"), Some(&1));
         assert_eq!(result.counts.get("gimmick"), Some(&1));
@@ -1110,7 +1178,12 @@ mod tests {
         assert_eq!(result.counts.values().sum::<u32>(), 4);
 
         snapshot.products[3].genre = Some("skybox".into());
-        let world = genre_products(&snapshot, crate::genre::WORLD_GENRES, &all, &[]);
+        let world = genre_products(
+            &snapshot,
+            crate::genre::WORLD_GENRES,
+            &all,
+            Some("lighting_postprocess"),
+        );
         assert_eq!(world.counts.get("skybox"), Some(&1));
         assert_eq!(world.counts.get(crate::genre::UNSET), Some(&3));
         assert!(world.items.is_empty());
@@ -1122,5 +1195,194 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["6"]
         );
+    }
+
+    fn flag(id: &str, free: bool) -> ProductFlag {
+        ProductFlag {
+            booth_id: id.into(),
+            is_free: Some(free),
+            is_adult: None,
+            unpublished: None,
+        }
+    }
+
+    fn local_file(id: &str, filename: &str, is_dir: bool) -> LocalFile {
+        LocalFile {
+            path: format!("C:\\Assets\\{filename}"),
+            filename: filename.into(),
+            is_dir,
+            size: 8,
+            linked_product_id: Some(id.into()),
+            candidate_product_id: Some(id.into()),
+            match_score: 1.0,
+            link_source: Some("auto".into()),
+        }
+    }
+
+    fn placed(id: &str, filename: &str, state: FilePlace) -> PlacedDownload {
+        PlacedDownload {
+            booth_id: id.into(),
+            variation: String::new(),
+            filename: filename.into(),
+            size_bytes: Some(8),
+            state,
+            local_path: if state == FilePlace::Local {
+                Some(format!("C:\\Assets\\{filename}"))
+            } else {
+                None
+            },
+            remote_path: if state == FilePlace::Remote {
+                Some(format!("\\\\nas\\{id}\\{filename}"))
+            } else {
+                None
+            },
+        }
+    }
+
+    #[test]
+    fn undownloaded_free_products_leave_their_genre_until_a_local_copy_or_a_manual_move() {
+        let mut snapshot = sample();
+        for (id, title, category, genre) in [
+            (
+                "30",
+                "未入手の無料小物",
+                Category::Accessory,
+                Some("accessory"),
+            ),
+            (
+                "31",
+                "手元の無料小物",
+                Category::Accessory,
+                Some("accessory"),
+            ),
+            ("32", "手動の無料小物", Category::Outfit, Some("outfit")),
+            (
+                "33",
+                "未入手の無料ワールド",
+                Category::World,
+                Some("furniture_props"),
+            ),
+            ("34", "ジャンルなしの無料", Category::Gimmick, None),
+            ("35", "リモートだけの無料", Category::Hair, Some("hair")),
+            ("36", "記録だけの無料", Category::Gimmick, Some("gimmick")),
+            (
+                "37",
+                "フォルダだけの無料",
+                Category::Accessory,
+                Some("accessory"),
+            ),
+        ] {
+            let mut row = product(id, title, Some(category), false);
+            row.genre = genre.map(str::to_string);
+            snapshot.products.push(row);
+        }
+        snapshot
+            .products
+            .iter_mut()
+            .find(|row| row.booth_id == "32")
+            .unwrap()
+            .category_locked = true;
+        snapshot
+            .products
+            .iter_mut()
+            .find(|row| row.booth_id == "32")
+            .unwrap()
+            .genre_locked = true;
+        snapshot.product_flags = ["30", "31", "32", "33", "34", "35", "36", "37"]
+            .into_iter()
+            .map(|id| flag(id, true))
+            .collect();
+        snapshot.placed_downloads = vec![
+            placed("31", "local.zip", FilePlace::Local),
+            placed("35", "remote.zip", FilePlace::Remote),
+        ];
+        snapshot.download_rows.push(DownloadFact {
+            booth_id: "36".into(),
+            variation: String::new(),
+            filename: "saved.unitypackage".into(),
+            size_bytes: Some(4),
+            downloaded: true,
+            local_path: Some("C:\\Assets\\saved.unitypackage".into()),
+        });
+        snapshot.files.push(local_file("37", "folder", true));
+
+        let asset_ids: Vec<String> = ["30", "31", "32", "34", "35", "36", "37"]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        let free = genre_products(
+            &snapshot,
+            crate::genre::ASSET_GENRES,
+            &asset_ids,
+            Some(crate::genre::FREE),
+        );
+        assert_eq!(free.counts.get(crate::genre::FREE), Some(&3));
+        assert_eq!(free.counts.get("accessory"), Some(&2));
+        assert_eq!(free.counts.get("outfit"), Some(&1));
+        assert_eq!(free.counts.get("hair"), None);
+        assert_eq!(free.counts.get("gimmick"), Some(&1));
+        assert_eq!(free.counts.get(crate::genre::UNSET), None);
+        assert_eq!(free.counts.values().sum::<u32>(), free.total);
+        assert_eq!(
+            free.items
+                .iter()
+                .map(|item| item.booth_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["30", "34", "35"]
+        );
+        assert!(free.items.iter().all(|item| item.is_free));
+
+        let accessory = genre_products(
+            &snapshot,
+            crate::genre::ASSET_GENRES,
+            &asset_ids,
+            Some("accessory"),
+        );
+        assert_eq!(
+            accessory
+                .items
+                .iter()
+                .map(|item| item.booth_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["31", "37"]
+        );
+        let outfit = genre_products(
+            &snapshot,
+            crate::genre::ASSET_GENRES,
+            &asset_ids,
+            Some("outfit"),
+        );
+        assert_eq!(outfit.items[0].booth_id, "32");
+        assert!(outfit.items[0].classification_pinned);
+        let gimmick = genre_products(
+            &snapshot,
+            crate::genre::ASSET_GENRES,
+            &asset_ids,
+            Some("gimmick"),
+        );
+        assert_eq!(gimmick.items[0].booth_id, "36");
+        let hair = genre_products(
+            &snapshot,
+            crate::genre::ASSET_GENRES,
+            &asset_ids,
+            Some("hair"),
+        );
+        assert!(hair.items.is_empty());
+
+        let everyone = genre_products(&snapshot, crate::genre::ASSET_GENRES, &asset_ids, None);
+        assert_eq!(everyone.total, 7);
+        assert_eq!(everyone.items.len(), 7);
+        assert!(everyone.items.iter().any(|item| item.booth_id == "30"));
+
+        let worlds = genre_products(
+            &snapshot,
+            crate::genre::WORLD_GENRES,
+            &["33".to_string()],
+            Some(crate::genre::FREE),
+        );
+        assert_eq!(worlds.counts.get(crate::genre::FREE), Some(&1));
+        assert_eq!(worlds.counts.get("furniture_props"), None);
+        assert_eq!(worlds.items[0].booth_id, "33");
+        assert_eq!(worlds.items[0].category, Some(Category::World));
     }
 }

@@ -621,6 +621,10 @@ a.tab { display: inline-flex; align-items: center; gap: 6px; text-decoration: no
 .genre-move-kinds .button[aria-pressed="true"] { background: var(--surface-secondary); font-weight: 650; }
 .genre-move-list { display: flex; flex-direction: column; gap: 2px; max-height: 240px; overflow: auto; margin-top: 4px; }
 .item.dragging { opacity: 0.72; }
+.item.item-unpublished > .thumb,
+.item.item-unpublished > div:not(.row-actions) {
+  opacity: 0.55;
+}
 
 .drop {
   border: 0;

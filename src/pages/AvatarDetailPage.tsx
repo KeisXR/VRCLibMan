@@ -394,7 +394,7 @@ export function ItemCard({
 
   return (
     <article
-      className="item"
+      className={item.unpublished ? "item item-unpublished" : "item"}
       draggable={movable}
       onDragStart={(event) => {
         if (!movable) return;
@@ -418,6 +418,7 @@ export function ItemCard({
         <h3>
           {item.title}
           {item.classificationPinned && <span className="badge">手動</span>}
+          {item.unpublished && <span className="badge">非公開</span>}
           {item.isFree && <span className="badge">無料</span>}
           {item.isAdult && <span className="badge adult">R-18</span>}
           <FileMark

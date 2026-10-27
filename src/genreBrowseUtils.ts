@@ -1,4 +1,4 @@
-import { GENRE_UNSET, genresForKind } from "./types";
+import { GENRE_FREE, GENRE_UNSET, genresForKind } from "./types";
 import type { GenreKind, ItemView } from "./types";
 
 export function genreHref(basePath: string, genre: string | null): string {
@@ -13,6 +13,6 @@ export function filterItems(items: ItemView[], filter: string): ItemView[] {
 
 export function selectedGenre(kind: GenreKind, genre: string | null): string | null {
   if (!genre) return null;
-  if (genre === GENRE_UNSET) return GENRE_UNSET;
+  if (genre === GENRE_UNSET || genre === GENRE_FREE) return genre;
   return genresForKind(kind).includes(genre) ? genre : null;
 }
