@@ -276,7 +276,13 @@ pub fn products_by_ids(snapshot: &Snapshot, ids: &[String]) -> Vec<ItemView> {
 }
 
 /// `all_ids` is every product of the kind (for the genre counts), `ids` the selected genre.
-pub fn genre_products(snapshot: &Snapshot, all_ids: &[String], ids: &[String]) -> GenreProducts {
+/// A genre missing or outside `genres` (the kind's genres) is counted under `genre::UNSET`.
+pub fn genre_products(
+    snapshot: &Snapshot,
+    genres: &[(&str, &str)],
+    all_ids: &[String],
+    ids: &[String],
+) -> GenreProducts {
     let wanted: HashSet<&str> = all_ids.iter().map(String::as_str).collect();
     let mut counts = HashMap::new();
     let mut total = 0;
@@ -286,9 +292,12 @@ pub fn genre_products(snapshot: &Snapshot, all_ids: &[String], ids: &[String]) -
         .filter(|product| wanted.contains(product.booth_id.as_str()))
     {
         total += 1;
-        if let Some(genre) = &product.genre {
-            *counts.entry(genre.clone()).or_insert(0) += 1;
-        }
+        let key = product
+            .genre
+            .as_deref()
+            .filter(|genre| genres.iter().any(|(known, _)| known == genre))
+            .unwrap_or(crate::genre::UNSET);
+        *counts.entry(key.to_string()).or_insert(0) += 1;
     }
     GenreProducts {
         items: products_by_ids(snapshot, ids),
@@ -1044,12 +1053,19 @@ mod tests {
             .map(|id| id.to_string())
             .collect();
         let selected = vec!["6".to_string()];
-        let result = genre_products(&snapshot, &all, &selected);
+        let result = genre_products(&snapshot, crate::genre::ASSET_GENRES, &all, &selected);
         assert_eq!(result.total, 4);
         assert_eq!(result.counts.get("outfit"), Some(&1));
         assert_eq!(result.counts.get("gimmick"), Some(&1));
         assert_eq!(result.counts.get("hair"), Some(&1));
-        assert_eq!(result.counts.values().sum::<u32>(), 3);
+        assert_eq!(result.counts.get(crate::genre::UNSET), Some(&1));
+        assert_eq!(result.counts.values().sum::<u32>(), 4);
+
+        snapshot.products[3].genre = Some("skybox".into());
+        let world = genre_products(&snapshot, crate::genre::WORLD_GENRES, &all, &[]);
+        assert_eq!(world.counts.get("skybox"), Some(&1));
+        assert_eq!(world.counts.get(crate::genre::UNSET), Some(&3));
+        assert!(world.items.is_empty());
         assert_eq!(
             result
                 .items

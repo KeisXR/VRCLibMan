@@ -56,10 +56,10 @@ function parseRoute(hash: string): Route {
       fileBoothId: parts[2] === "files" && parts[3] ? decodeURIComponent(parts[3]) : undefined,
     };
   }
-  if (parts[0] === "assets") {
-    return { page: "assets", genre: parts[1] ? decodePart(parts[1]) : undefined };
+  if (parts[0] === "assets" || parts[0] === "worlds") {
+    return { page: parts[0], genre: parts[1] ? decodePart(parts[1]) : undefined };
   }
-  if (parts[0] === "worlds" || parts[0] === "queue" || parts[0] === "import" || parts[0] === "settings" || parts[0] === "browser") {
+  if (parts[0] === "queue" || parts[0] === "import" || parts[0] === "settings" || parts[0] === "browser") {
     return { page: parts[0] };
   }
   return { page: "avatars" };
@@ -319,7 +319,7 @@ export default function App() {
               <AvatarDetailPage id={route.id} fileBoothId={route.fileBoothId} />
             )}
             {route.page === "assets" && <AssetsPage genre={route.genre} />}
-            {route.page === "worlds" && <WorldsPage />}
+            {route.page === "worlds" && <WorldsPage genre={route.genre} />}
             {route.page === "queue" && <QueuePage />}
             {route.page === "import" && <ImportPage />}
             {route.page === "settings" && <SettingsPage />}

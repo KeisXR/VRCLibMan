@@ -29,6 +29,18 @@ pub const WORLD_GENRES: &[(&str, &str)] = &[
     ("tool_other", "ツール・その他"),
 ];
 
+/// Route / query key for products whose genre is missing or not one of their kind's genres.
+pub const UNSET: &str = "unset";
+
+/// Genres of a browse kind (`asset` / `world`).
+pub fn kind_genres(kind: &str) -> Option<&'static [(&'static str, &'static str)]> {
+    match kind {
+        "world" => Some(WORLD_GENRES),
+        "asset" => Some(ASSET_GENRES),
+        _ => None,
+    }
+}
+
 pub fn genres(category: Category) -> &'static [(&'static str, &'static str)] {
     if category == Category::World {
         WORLD_GENRES

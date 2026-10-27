@@ -470,6 +470,75 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       },
     );
     await t.test(
+      "world page browses world products by genre and keeps the old route",
+      async () => {
+        const main = () => document.querySelector("main");
+        const tabs = () => [...document.querySelectorAll(".genre-tabs a")];
+        const activeTab = () => document.querySelector('.genre-tabs a[aria-current="page"]');
+        const items = () => main().querySelectorAll(".item");
+        const legacy = await api.productsByCategory("world");
+        const all = await api.productsByGenre("world");
+        assert.equal(all.total, legacy.length);
+        assert.deepEqual(
+          all.items.map((item) => item.boothId).sort(),
+          legacy.map((item) => item.boothId).sort(),
+        );
+        assert.ok(all.items.every((item) => item.category === "world"));
+        assert.ok(all.counts.unset > 0);
+
+        await route("#/worlds");
+        await wait(() => main().querySelector("h1")?.textContent === "ワールド");
+        await wait(() => items().length === all.items.length);
+        assert.ok(document.querySelector('.rail a[href="#/worlds"]').classList.contains("active"));
+        assert.equal(activeTab().textContent, `すべて${all.total}`);
+        // すべて + 10 world genres + ジャンル未設定 (shown only while it has products)
+        assert.equal(tabs().length, 12);
+        assert.ok(tabs().some((node) => node.getAttribute("href") === "#/worlds/furniture_props"));
+        assert.ok(tabs().some((node) => node.getAttribute("href") === "#/worlds/unset"));
+        assert.ok(main().querySelector(".product-actions-trigger"));
+
+        const sky = await api.productsByGenre("world", "skybox");
+        assert.ok(sky.items.length > 0);
+        assert.ok(sky.items.every((item) => item.genre === "skybox"));
+        await route("#/worlds/skybox");
+        await wait(() => activeTab()?.textContent.startsWith("Skybox"));
+        await wait(() => items().length === sky.items.length);
+        assert.ok(main().textContent.includes(sky.items[0].title));
+        assert.ok(document.querySelector('.rail a[href="#/worlds"]').classList.contains("active"));
+
+        const unset = await api.productsByGenre("world", "unset");
+        assert.equal(unset.items.length, all.counts.unset);
+        assert.ok(unset.items.every((item) => item.genre == null));
+        await route("#/worlds/unset");
+        await wait(() => activeTab()?.textContent.startsWith("ジャンル未設定"));
+        await wait(() => items().length === unset.items.length);
+        assert.ok(main().textContent.includes("ジャンルが決まっていないワールドの商品です。"));
+        assert.ok(!main().textContent.includes(sky.items[0].title));
+
+        await route("#/worlds/lighting_postprocess");
+        await wait(() => main().textContent.includes("「ライティング・ポストプロセス」の商品はまだありません。"));
+        assert.ok(activeTab().classList.contains("tab-zero"));
+
+        await route("#/worlds/hair");
+        await wait(() => main().textContent.includes("指定されたジャンルが見つからないため"));
+        await wait(() => activeTab()?.textContent.startsWith("すべて"));
+
+        const assets = await api.productsByGenre("asset");
+        assert.ok(!assets.counts.unset);
+        await route("#/assets");
+        await wait(() => main().querySelector("h1")?.textContent === "アセット");
+        await wait(() => tabs().length === 15);
+        assert.ok(!tabs().some((node) => node.getAttribute("href") === "#/assets/unset"));
+
+        const { selectedGenre } = await server.ssrLoadModule("/src/components/GenreBrowser.tsx");
+        assert.equal(selectedGenre("world", "skybox"), "skybox");
+        assert.equal(selectedGenre("world", "unset"), "unset");
+        assert.equal(selectedGenre("world", "hair"), null);
+        assert.equal(selectedGenre("asset", "skybox"), null);
+        assert.equal(selectedGenre("asset", null), null);
+      },
+    );
+    await t.test(
       "import guidance follows the selected method and logout explains its deletion scope",
       async () => {
         const { requestRefresh } = await server.ssrLoadModule("/src/api.ts");
