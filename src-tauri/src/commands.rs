@@ -39,18 +39,20 @@ pub async fn check_app_update(
     view: tauri::Webview,
     app: AppHandle,
     state: State<'_, crate::updater::UpdateState>,
+    manual: Option<bool>,
 ) -> Result<crate::updater::Status, String> {
     trusted_updater(&view)?;
-    crate::updater::check(&app, &state).await
+    crate::updater::check(&app, &state, manual.unwrap_or(true)).await
 }
 
 #[tauri::command]
 pub async fn download_app_update(
     view: tauri::Webview,
+    app: AppHandle,
     state: State<'_, crate::updater::UpdateState>,
 ) -> Result<crate::updater::Status, String> {
     trusted_updater(&view)?;
-    crate::updater::download(&state).await
+    crate::updater::download(&app, &state).await
 }
 
 #[tauri::command]
@@ -366,6 +368,8 @@ pub fn save_settings(
                 launch_at_login: settings.launch_at_login,
                 ui_rail_width: settings.ui_rail_width,
                 ui_genre_width: settings.ui_genre_width,
+                check_update_on_startup: settings.check_update_on_startup,
+                ui_update_dismissed_version: settings.ui_update_dismissed_version,
             },
         )?;
         db::settings(&connection)?

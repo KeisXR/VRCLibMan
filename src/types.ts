@@ -245,6 +245,8 @@ export interface Settings {
   launchAtLogin: boolean;
   uiRailWidth: number;
   uiGenreWidth: number;
+  checkUpdateOnStartup: boolean;
+  uiUpdateDismissedVersion: string;
 }
 
 export interface RemoteSyncStatus {

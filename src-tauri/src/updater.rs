@@ -2,7 +2,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -119,7 +119,11 @@ pub fn initialize(app: &AppHandle) {
     app.manage(UpdateState::new(configured, supported));
 }
 
-pub async fn check(app: &AppHandle, state: &UpdateState) -> Result<Status, String> {
+fn emit_status<R: Runtime>(app: &AppHandle<R>, status: &Status) {
+    let _ = app.emit("updater-changed", status.clone());
+}
+
+pub async fn check<R: Runtime>(app: &AppHandle<R>, state: &UpdateState, manual: bool) -> Result<Status, String> {
     {
         let mut inner = state.lock()?;
         inner.ensure_idle()?;
@@ -134,6 +138,7 @@ pub async fn check(app: &AppHandle, state: &UpdateState) -> Result<Status, Strin
         inner.status.downloaded = 0;
         inner.status.total = None;
         inner.phase(Phase::Checking);
+        emit_status(app, &inner.status);
     }
     let result = async {
         app.updater_builder()
@@ -148,10 +153,12 @@ pub async fn check(app: &AppHandle, state: &UpdateState) -> Result<Status, Strin
         Ok(Some(update)) => {
             // The plugin checks the signature, but does not enforce HTTPS for the artifact.
             if update.download_url.scheme() != "https" {
-                return Ok(inner.failed(
+                let status = inner.failed(
                     Phase::Idle,
                     "更新ファイルの URL が HTTPS ではありません".into(),
-                ));
+                );
+                emit_status(app, &status);
+                return Ok(status);
             }
             inner.status.version = Some(update.version.clone());
             inner.status.notes = update.body.clone();
@@ -160,16 +167,26 @@ pub async fn check(app: &AppHandle, state: &UpdateState) -> Result<Status, Strin
         }
         Ok(None) => inner.phase(Phase::Current),
         Err(error) => {
-            return Ok(inner.failed(
-                Phase::Idle,
-                update_error("更新を確認できませんでした", &error),
-            ));
+            if manual {
+                let status = inner.failed(
+                    Phase::Idle,
+                    update_error("更新を確認できませんでした", &error),
+                );
+                emit_status(app, &status);
+                return Ok(status);
+            }
+            inner.phase(Phase::Idle);
+            let status = inner.status.clone();
+            emit_status(app, &status);
+            return Ok(status);
         }
     }
-    Ok(inner.status.clone())
+    let status = inner.status.clone();
+    emit_status(app, &status);
+    Ok(status)
 }
 
-pub async fn download(state: &UpdateState) -> Result<Status, String> {
+pub async fn download<R: Runtime>(app: &AppHandle<R>, state: &UpdateState) -> Result<Status, String> {
     let mut update = {
         let mut inner = state.lock()?;
         inner.ensure_idle()?;
@@ -180,8 +197,10 @@ pub async fn download(state: &UpdateState) -> Result<Status, String> {
         inner.status.downloaded = 0;
         inner.status.total = None;
         inner.phase(Phase::Downloading);
+        emit_status(app, &inner.status);
         update
     };
+    let app = app.clone();
     // A slow download should have longer than the short metadata request timeout.
     update.timeout = Some(Duration::from_secs(15 * 60));
     let result = update
@@ -191,6 +210,7 @@ pub async fn download(state: &UpdateState) -> Result<Status, String> {
                     inner.status.downloaded = inner.status.downloaded.saturating_add(length as u64);
                     inner.status.total = total;
                     inner.status.revision += 1;
+                    emit_status(&app, &inner.status);
                 }
             },
             || {},
@@ -205,16 +225,20 @@ pub async fn download(state: &UpdateState) -> Result<Status, String> {
         }
         Err(error) => {
             inner.bytes = None;
-            return Ok(inner.failed(
+            let status = inner.failed(
                 Phase::Available,
                 update_error("更新ファイルを取得できませんでした", &error),
-            ));
+            );
+            emit_status(&app, &status);
+            return Ok(status);
         }
     }
-    Ok(inner.status.clone())
+    let status = inner.status.clone();
+    emit_status(&app, &status);
+    Ok(status)
 }
 
-pub async fn install(app: &AppHandle, state: &UpdateState) -> Result<Status, String> {
+pub async fn install<R: Runtime>(app: &AppHandle<R>, state: &UpdateState) -> Result<Status, String> {
     let (update, bytes) = {
         let mut inner = state.lock()?;
         inner.ensure_idle()?;
@@ -249,17 +273,21 @@ pub async fn install(app: &AppHandle, state: &UpdateState) -> Result<Status, Str
         Ok((Err(error), bytes)) => {
             let mut inner = state.lock()?;
             inner.bytes = Some(bytes);
-            Ok(inner.failed(
+            let status = inner.failed(
                 Phase::Ready,
                 update_error("更新を適用できませんでした", &error),
-            ))
+            );
+            emit_status(app, &status);
+            Ok(status)
         }
         Err(_) => {
             let mut inner = state.lock()?;
-            Ok(inner.failed(
+            let status = inner.failed(
                 Phase::Available,
                 "更新処理が中断されました。もう一度ダウンロードしてください".into(),
-            ))
+            );
+            emit_status(app, &status);
+            Ok(status)
         }
     }
 }
@@ -404,11 +432,11 @@ mod tests {
             inner.phase(Phase::Available);
         }
         tauri::async_runtime::block_on(async {
-            let failed = download(&state).await.unwrap();
+            let failed = download(&app.handle(), &state).await.unwrap();
             assert_eq!(failed.phase, Phase::Available);
             assert!(failed.error.unwrap().contains("署名"));
             assert!(state.lock().unwrap().bytes.is_none());
-            let ready = download(&state).await.unwrap();
+            let ready = download(&app.handle(), &state).await.unwrap();
             assert_eq!(ready.phase, Phase::Ready);
             assert!(ready.error.is_none());
             assert_eq!(
@@ -416,7 +444,7 @@ mod tests {
                 include_bytes!("../test-fixtures/updater/payload.txt")
             );
             // Repeated download does not re-fetch or discard the verified package.
-            assert_eq!(download(&state).await.unwrap().phase, Phase::Ready);
+            assert_eq!(download(&app.handle(), &state).await.unwrap().phase, Phase::Ready);
         });
         sender.join().unwrap();
     }

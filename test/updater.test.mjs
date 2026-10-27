@@ -52,6 +52,7 @@ test("updater requires explicit download and restart, survives stale status, and
     const { AppUpdater } = await server.ssrLoadModule(
       "/src/components/AppUpdater.tsx",
     );
+    const { AppUpdaterProvider } = await server.ssrLoadModule("/src/useAppUpdater.ts");
     const idle = {
       revision: 0,
       phase: "idle",
@@ -102,7 +103,9 @@ test("updater requires explicit download and restart, survives stale status, and
       if (rejectFlush) throw new Error("設定を保存できません");
     };
     const render = (workInProgress = false) =>
-      root.render(createElement(AppUpdater, { beforeInstall, workInProgress }));
+      root.render(
+        createElement(AppUpdaterProvider, null, createElement(AppUpdater, { beforeInstall, workInProgress })),
+      );
     await act(async () => {
       render();
       await tick();
@@ -123,11 +126,7 @@ test("updater requires explicit download and restart, survives stale status, and
     );
     assert.equal(installs, 0);
     await click("更新をダウンロード");
-    await act(() => new Promise((resolve) => setTimeout(resolve, 1100)));
-    assert.ok(
-      document.body.textContent.includes("準備ができました"),
-      "stale poll is ignored",
-    );
+    assert.ok(document.body.textContent.includes("準備ができました"));
     await act(async () => {
       render(true);
       await tick();

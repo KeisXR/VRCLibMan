@@ -14,6 +14,8 @@ import { ResizeSeparator } from "./components/ResizeSeparator";
 import { GenreBrowseProvider } from "./genreBrowseContext";
 import { useAppLayout } from "./useAppLayout";
 import { UI_GENRE_WIDTH, UI_RAIL_WIDTH } from "./uiLayout";
+import { AppUpdaterProvider, useStartupUpdateCheck } from "./useAppUpdater";
+import { SidebarUpdaterBadge } from "./components/SidebarUpdaterBadge";
 import type { BoothAccount, JobProgress, LibraryStats } from "./types";
 import { errorText } from "./ui";
 
@@ -83,6 +85,7 @@ export default function App() {
   const [account, setAccount] = useState<BoothAccount | null>(null);
   const accountReload = useRef<() => void>(() => {});
   const [setupComplete, setSetupComplete] = useState<boolean | null>(null);
+  const [checkUpdateOnStartup, setCheckUpdateOnStartup] = useState(false);
   const route = useMemo(() => parseRoute(hash), [hash]);
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -133,7 +136,10 @@ export default function App() {
     let cancelled = false;
     api.settings().then(
       (value) => {
-        if (!cancelled) setBuiltinBrowser(value.builtinBrowser);
+        if (!cancelled) {
+          setBuiltinBrowser(value.builtinBrowser);
+          setCheckUpdateOnStartup(value.checkUpdateOnStartup);
+        }
       },
       () => {
         if (!cancelled) setBuiltinBrowser(false);
@@ -276,7 +282,15 @@ export default function App() {
     </div>
   );
 
+  const openAppUpdateSettings = useCallback(() => {
+    window.location.hash = "#/settings";
+    window.setTimeout(() => {
+      document.getElementById("settings-app-update")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 0);
+  }, []);
+
   return (
+    <AppUpdaterProvider>
     <ShellContext.Provider value={shell}>
       {setupComplete === false && <SetupWizard onDone={() => { setSetupComplete(true); refresh(); }} />}
       <div className="app app-shell" style={layout.gridStyle}>
@@ -313,6 +327,8 @@ export default function App() {
             )}
           </nav>
           <div className="rail-foot">
+            <StartupUpdateCheck enabled={checkUpdateOnStartup} />
+            <SidebarUpdaterBadge onOpenSettings={openAppUpdateSettings} />
             <span className="app-version">{version === "未確認" ? "バージョン未確認" : version ? `v${version}` : "バージョン確認中"}</span>
             {builtinBrowser && (
               <AccountPill
@@ -380,7 +396,13 @@ export default function App() {
         )}
       </div>
     </ShellContext.Provider>
+    </AppUpdaterProvider>
   );
+}
+
+function StartupUpdateCheck({ enabled }: { enabled: boolean }) {
+  useStartupUpdateCheck(enabled);
+  return null;
 }
 
 function accountLabel(account: BoothAccount | null): string {

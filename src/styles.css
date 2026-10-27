@@ -819,6 +819,64 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .custom-model { margin: var(--space-3) 0; }
 .import-guidance { margin-top: var(--space-4); border-top: 1px solid var(--line); padding-top: var(--space-3); }
 .version-info p { margin: 4px 0; overflow-wrap: anywhere; }
+.sidebar-updater {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.sidebar-updater-row {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  gap: 0;
+}
+.sidebar-updater.faint .sidebar-updater-main { color: var(--text-secondary); }
+.sidebar-updater-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.sidebar-updater-main:hover { color: var(--text); }
+.sidebar-updater-main:disabled { opacity: 0.6; cursor: default; }
+.sidebar-updater-dismiss {
+  flex: 0 0 auto;
+  align-self: center;
+  width: 28px;
+  height: 28px;
+  margin-left: 8px;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.sidebar-updater-dismiss:hover { background: var(--hover); color: var(--text); }
+.sidebar-updater-progress { width: 100%; height: 4px; margin: 0; accent-color: var(--accent); }
+.setting-control .settings-details { padding: var(--space-2) 0 0; }
+
 .app-version { font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
 .import-page .setting-copy p { overflow-wrap: anywhere; }
 @media (max-width: 860px) {

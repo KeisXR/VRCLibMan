@@ -51,10 +51,19 @@ export function isTauri(): boolean {
 
 export const appUpdater = {
   status: () => call<AppUpdateStatus>("updater_status"),
-  check: () => call<AppUpdateStatus>("check_app_update"),
+  check: (manual = true) => call<AppUpdateStatus>("check_app_update", { manual }),
   download: () => call<AppUpdateStatus>("download_app_update"),
   install: () => call<AppUpdateStatus>("install_app_update"),
 };
+
+export function listenUpdaterChanged(onStatus: (status: AppUpdateStatus) => void): Promise<() => void> {
+  if (!isTauri()) {
+    return import("./preview/api").then((preview) => preview.listenPreviewUpdaterChanged(onStatus));
+  }
+  return import("@tauri-apps/api/event").then(({ listen }) =>
+    listen<AppUpdateStatus>("updater-changed", (event) => onStatus(event.payload)),
+  );
+}
 
 const refreshBus = new EventTarget();
 
