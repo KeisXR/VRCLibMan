@@ -60,6 +60,8 @@ pub struct Product {
     pub thumbnail_path: Option<String>,
     pub category: Option<Category>,
     pub category_locked: bool,
+    pub genre: Option<String>,
+    pub genre_locked: bool,
     pub compatible_avatars: Vec<String>,
     pub unresolved_names: Vec<String>,
     pub is_generic: bool,
@@ -225,6 +227,7 @@ pub struct DownloadFinished {
 #[serde(rename_all = "camelCase")]
 pub struct Extraction {
     pub category: Category,
+    pub genre: Option<String>,
     pub compatible_avatars: Vec<String>,
     pub is_generic: bool,
     pub confidence: f64,
@@ -416,6 +419,7 @@ pub struct AvatarCandidate {
 pub struct ProductUpdate {
     pub booth_id: String,
     pub category: Option<String>,
+    pub genre: Option<String>,
     pub is_generic: Option<bool>,
     pub avatar_ids: Option<Vec<String>>,
     pub confirm: Option<bool>,

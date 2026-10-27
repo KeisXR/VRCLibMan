@@ -13,6 +13,8 @@ import FoundationModels
 struct BoothExtraction {
     @Guide(description: "One of avatar, outfit, hair, accessory, texture, gimmick, world, other")
     var category: String
+    @Guide(description: "One of outfit, shoes_socks, hair, accessory, head_ears_tail, makeup_skin, eye_texture, expression_animation, pose, gimmick, particle_effect, shader, tool_editor, other, world, furniture_props, world_gimmick, texture_material, skybox, lighting_postprocess, world_shader, building_terrain, audio_bgm, tool_other")
+    var genre: String
     @Guide(description: "Avatar names written in the text. Keep a version suffix such as ver1.2 with the name. Do not include shader or tool names.")
     var compatibleAvatars: [String]
     var isGeneric: Bool
@@ -93,6 +95,7 @@ private func generate(
         let extracted = response.content
         let json: [String: Any] = [
             "category": extracted.category,
+            "genre": extracted.genre,
             "compatible_avatars": extracted.compatibleAvatars,
             "is_generic": extracted.isGeneric,
             "confidence": extracted.confidence,

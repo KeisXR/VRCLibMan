@@ -9,6 +9,7 @@ mod mask;
 mod catalog;
 mod commands;
 mod compat;
+mod genre;
 mod db;
 mod import_data;
 mod integration;
@@ -171,6 +172,7 @@ pub fn run() {
             commands::set_product_excluded,
             commands::list_avatars,
             commands::list_products_by_category,
+            commands::list_products_by_genre,
             commands::get_avatar,
             commands::probe_remote_files,
             commands::list_queue,

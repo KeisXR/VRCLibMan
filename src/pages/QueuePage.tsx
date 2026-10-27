@@ -2,7 +2,7 @@ import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useSta
 import { api, openExternal, openLocal } from "../api";
 import { useShell } from "../App";
 import { formatBytes } from "../media";
-import { CATEGORIES, CATEGORY_LABEL } from "../types";
+import { CATEGORIES, CATEGORY_LABEL, GENRE_LABEL, genresForCategory } from "../types";
 import type { AvatarCandidate, ProductOption, QueueFile, QueueProduct } from "../types";
 import { FileMark, Thumb, errorText } from "../ui";
 import { ExcludeProductButton } from "../components/ProductExclusions";
@@ -430,6 +430,7 @@ const ProductEditor = memo(function ProductEditor({
   onError: (message: string) => void;
 }) {
   const [category, setCategory] = useState(product.category ?? "");
+  const [genre, setGenre] = useState(product.genre ?? "");
   const [generic, setGeneric] = useState(product.isGeneric);
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set(product.linkedAvatarIds));
   const [filter, setFilter] = useState("");
@@ -455,6 +456,7 @@ const ProductEditor = memo(function ProductEditor({
         await api.updateProduct({
           boothId: product.boothId,
           category,
+          genre: genre || null,
           isGeneric: generic,
           avatarIds: [...selected],
           confirm,
@@ -464,7 +466,7 @@ const ProductEditor = memo(function ProductEditor({
         onError(errorText(err));
       }
     },
-    [category, generic, onDone, onError, product.boothId, selected],
+    [category, genre, generic, onDone, onError, product.boothId, selected],
   );
 
   const addAlias = useCallback(
@@ -540,13 +542,20 @@ const ProductEditor = memo(function ProductEditor({
       <div className="form-grid">
         <label className="field">
           <span>カテゴリ</span>
-          <select value={category} onChange={(event) => setCategory(event.target.value)}>
+          <select value={category} onChange={(event) => { const next = event.target.value; setCategory(next); setGenre((current) => (genresForCategory(next).includes(current) ? current : "")); }}>
             <option value="">未分類</option>
             {CATEGORIES.map((item) => (
               <option key={item} value={item}>
                 {CATEGORY_LABEL[item]}
               </option>
             ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>ジャンル</span>
+          <select aria-label="ジャンル" value={genre} onChange={(event) => setGenre(event.target.value)}>
+            <option value="">自動</option>
+            {category && genresForCategory(category).map((item) => <option key={item} value={item}>{GENRE_LABEL[item]}</option>)}
           </select>
         </label>
         <label className="field">

@@ -10,6 +10,8 @@ pub(crate) const SYSTEM_PROMPT: &str = "\
 あなたはVRChat向けBooth商品の抽出器です。タイトルと説明文に書かれている事実だけをJSONで返します。\
 書かれていないアバター名を推測で足してはいけません。
 
+genre は商品カテゴリの下位ジャンルです。指定された enum から最も近いものを返します。
+
 category は次のどれか一つです。
 - avatar: アバター本体。タイトルか説明に「オリジナル3Dモデル」とある商品。単なる「3Dモデル」や小物は含めない
 - outfit: 衣装、服、靴、部屋着、パーカー
@@ -227,8 +229,10 @@ pub fn parse_extraction(raw: &str) -> Result<Extraction, String> {
             break;
         }
     }
+    let genre = value.get("genre").and_then(Value::as_str).map(str::to_string);
     Ok(Extraction {
         category,
+        genre,
         compatible_avatars: names,
         is_generic,
         confidence: confidence.clamp(0.0, 1.0),
@@ -369,6 +373,7 @@ fn extraction_schema() -> Value {
                 "type": "string",
                 "enum": ["avatar", "outfit", "hair", "accessory", "texture", "gimmick", "world", "other"]
             },
+            "genre": {"type": "string", "enum": ["outfit", "shoes_socks", "hair", "accessory", "head_ears_tail", "makeup_skin", "eye_texture", "expression_animation", "pose", "gimmick", "particle_effect", "shader", "tool_editor", "other", "world", "furniture_props", "world_gimmick", "texture_material", "skybox", "lighting_postprocess", "world_shader", "building_terrain", "audio_bgm", "tool_other"]},
             "compatible_avatars": {
                 "type": "array",
                 "items": {"type": "string"}
@@ -376,7 +381,7 @@ fn extraction_schema() -> Value {
             "is_generic": {"type": "boolean"},
             "confidence": {"type": "number"}
         },
-        "required": ["category", "compatible_avatars", "is_generic", "confidence"]
+        "required": ["category", "genre", "compatible_avatars", "is_generic", "confidence"]
     })
 }
 

@@ -14,6 +14,13 @@ export const CATEGORY_LABEL: Record<string, string> = {
 
 export const CATEGORIES: Category[] = ["avatar", "outfit", "hair", "accessory", "texture", "gimmick", "world", "other"];
 
+export const ASSET_GENRES = ["outfit", "shoes_socks", "hair", "accessory", "head_ears_tail", "makeup_skin", "eye_texture", "expression_animation", "pose", "gimmick", "particle_effect", "shader", "tool_editor", "other"] as const;
+export const WORLD_GENRES = ["world", "furniture_props", "world_gimmick", "texture_material", "skybox", "lighting_postprocess", "world_shader", "building_terrain", "audio_bgm", "tool_other"] as const;
+export const GENRE_LABEL: Record<string, string> = {
+  outfit: "衣装", shoes_socks: "靴・靴下", hair: "髪型", accessory: "アクセサリ", head_ears_tail: "頭・耳・しっぽ", makeup_skin: "メイク・肌テクスチャ", eye_texture: "アイテクスチャ", expression_animation: "表情・アニメーション", pose: "ポーズ", gimmick: "ギミック", particle_effect: "パーティクル・エフェクト", shader: "シェーダー", tool_editor: "ツール・エディタ拡張", other: "その他", world: "ワールド本体", furniture_props: "家具・小物（ベッドなど）", world_gimmick: "ワールドギミック（Udon）", texture_material: "テクスチャ置換・マテリアル", skybox: "Skybox", lighting_postprocess: "ライティング・ポストプロセス", world_shader: "ワールド用シェーダー", building_terrain: "建物・地形パーツ", audio_bgm: "音・BGM", tool_other: "ツール・その他",
+};
+export function genresForCategory(category: Category | string): readonly string[] { return category === "world" ? WORLD_GENRES : ASSET_GENRES; }
+
 export interface AvatarCard {
   id: string;
   displayName: string;
@@ -64,6 +71,7 @@ export interface ItemView {
   thumbnailUrl: string | null;
   thumbnailPath: string | null;
   category: Category | null;
+  genre: string | null;
   isGeneric: boolean;
   confidence: number | null;
   viaBaseBody: boolean;
@@ -123,6 +131,7 @@ export interface QueueProduct {
   thumbnailUrl: string | null;
   thumbnailPath: string | null;
   category: Category | null;
+  genre: string | null;
   isGeneric: boolean;
   confidence: number | null;
   compatibleAvatars: string[];
@@ -363,6 +372,7 @@ export interface ManagedProduct {
 export interface ProductUpdate {
   boothId: string;
   category?: string | null;
+  genre?: string | null;
   isGeneric?: boolean | null;
   avatarIds?: string[] | null;
   confirm?: boolean | null;
