@@ -257,6 +257,14 @@ pub struct ScanReport {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct OllamaLoadedModel {
+    pub name: String,
+    pub size_bytes: u64,
+    pub expires_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ExtractReport {
     pub processed: u32,
     pub failed: u32,
@@ -299,6 +307,7 @@ pub struct Settings {
     pub ui_genre_width: u32,
     pub check_update_on_startup: bool,
     pub ui_update_dismissed_version: String,
+    pub unload_ollama_after_classification: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -332,6 +341,12 @@ pub struct SettingsInput {
     pub check_update_on_startup: bool,
     #[serde(default)]
     pub ui_update_dismissed_version: String,
+    #[serde(default = "default_unload_ollama_after_classification")]
+    pub unload_ollama_after_classification: bool,
+}
+
+fn default_unload_ollama_after_classification() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -353,6 +368,7 @@ pub struct SettingsPatch {
     pub ui_genre_width: Option<u32>,
     pub check_update_on_startup: Option<bool>,
     pub ui_update_dismissed_version: Option<String>,
+    pub unload_ollama_after_classification: Option<bool>,
 }
 
 impl SettingsPatch {
@@ -392,6 +408,9 @@ impl SettingsPatch {
                 .ui_update_dismissed_version
                 .clone()
                 .unwrap_or(current.ui_update_dismissed_version),
+            unload_ollama_after_classification: self
+                .unload_ollama_after_classification
+                .unwrap_or(current.unload_ollama_after_classification),
         }
     }
 }

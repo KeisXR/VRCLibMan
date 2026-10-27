@@ -291,6 +291,7 @@ fn ensure_ready(connection: &Connection) -> Result<(), String> {
         ("llm_backend", "ollama"),
         ("background_mode", "0"),
         ("launch_at_login", "0"),
+        ("unload_ollama_after_classification", "1"),
         ("classification_dismissed_version", "0"),
         ("ui_rail_width", "232"),
         ("ui_genre_width", "200"),
@@ -348,6 +349,9 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
         ),
         background_mode: setting(connection, "background_mode")?.as_deref() == Some("1"),
         launch_at_login: setting(connection, "launch_at_login")?.as_deref() == Some("1"),
+        unload_ollama_after_classification: setting(connection, "unload_ollama_after_classification")?
+            .as_deref()
+            != Some("0"),
         classification_dismissed_version: setting(connection, "classification_dismissed_version")?
             .and_then(|value| value.parse::<i32>().ok())
             .unwrap_or(0),
@@ -481,6 +485,11 @@ fn save_settings_values(
         connection,
         "launch_at_login",
         if launch_at_login { "1" } else { "0" },
+    )?;
+    set_setting(
+        connection,
+        "unload_ollama_after_classification",
+        if input.unload_ollama_after_classification { "1" } else { "0" },
     )?;
     set_setting(
         connection,
@@ -4983,6 +4992,7 @@ mod tests {
                 llm_backend: "ollama".into(),
                 background_mode: false,
                 launch_at_login: false,
+                unload_ollama_after_classification: true,
                 classification_dismissed_version: 0,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
@@ -5045,6 +5055,7 @@ mod tests {
                 llm_backend: "ollama".into(),
                 background_mode: false,
                 launch_at_login: false,
+                unload_ollama_after_classification: true,
                 classification_dismissed_version: 0,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
@@ -6107,6 +6118,7 @@ mod tests {
                 llm_backend: "ollama".into(),
                 background_mode: false,
                 launch_at_login: false,
+                unload_ollama_after_classification: true,
                 classification_dismissed_version: 0,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
@@ -6129,6 +6141,7 @@ mod tests {
                 llm_backend: "ollama".into(),
                 background_mode: false,
                 launch_at_login: false,
+                unload_ollama_after_classification: true,
                 classification_dismissed_version: 0,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
@@ -6246,6 +6259,7 @@ mod tests {
                 llm_backend: "ollama".into(),
                 background_mode: false,
                 launch_at_login: false,
+                unload_ollama_after_classification: true,
                 classification_dismissed_version: 0,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
@@ -6510,6 +6524,7 @@ mod tests {
             llm_backend: "ollama".into(),
             background_mode: false,
             launch_at_login: true,
+                unload_ollama_after_classification: true,
                 classification_dismissed_version: 0,
             ui_rail_width: 232,
             ui_genre_width: 200,
@@ -6529,6 +6544,7 @@ mod tests {
             &SettingsInput {
                 background_mode: true,
                 launch_at_login: true,
+                unload_ollama_after_classification: true,
                 classification_dismissed_version: 0,
                 ..base
             },
@@ -6673,6 +6689,7 @@ mod tests {
                 llm_backend: "ollama".into(),
                 background_mode: false,
                 launch_at_login: false,
+                unload_ollama_after_classification: true,
                 classification_dismissed_version: 0,
                 ui_rail_width: 232,
                 ui_genre_width: 200,

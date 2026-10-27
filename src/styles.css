@@ -798,6 +798,8 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .setting-control .short-input { width: 110px; }
 .inline-control { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); min-width: 0; }
 .inline-control .button { flex: 0 0 auto; }
+/* インポート画面は操作を左寄せにしているので、それに合わせる */
+.import-page .ollama-memory-control { justify-content: flex-start; }
 .switch-label { display: flex; justify-content: flex-end; align-items: center; gap: var(--space-2); font-size: 13px; }
 .switch-label input { width: 18px; height: 18px; accent-color: var(--button); }
 .switch-label input:disabled + * { opacity: .5; }
@@ -894,6 +896,10 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .sidebar-classify-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .sidebar-classify-actions .button { font-size: 12px; padding: 6px 10px; }
 
+/* 設定カードでは、ほかの行の操作と同じく右の操作列の右端に揃える */
+.setting-control .version-info { text-align: right; }
+.setting-control .version-info .settings-details { padding: 0; }
+.model-pull-control { margin-top: var(--space-2); }
 .app-version { font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
 .import-page .setting-copy p { overflow-wrap: anywhere; }
 @media (max-width: 860px) {
@@ -906,6 +912,7 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
   .setting-row { grid-template-columns: 1fr; gap: var(--space-2); }
   .setting-control, .switch-label { justify-content: flex-start; }
   .inline-control { justify-content: flex-start; flex-wrap: wrap; }
+  .setting-control .version-info { text-align: left; }
   .inline-control > input, .inline-control > select { flex: 1 1 240px; }
   .knowledge-section .knowledge { grid-template-columns: 1fr; }
 }

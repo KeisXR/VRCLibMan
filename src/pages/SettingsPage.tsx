@@ -11,6 +11,7 @@ import { MODEL_CHOICES, modelDownloadPrompt } from "../models";
 import { useSettingsAutosave } from "../useSettingsAutosave";
 import { extensionVersionMessage } from "../versions";
 import { AppUpdater } from "../components/AppUpdater";
+import { OllamaMemoryControls } from "../components/OllamaMemoryControls";
 
 const emptyAvatar = {
   id: "",
@@ -301,16 +302,35 @@ export function SettingsPage() {
             {settings.llmBackend === "ollama" && (
                 <SettingRow label="モデル">
                   <ModelPicker onBlur={flushSettings} value={settings.ollamaModel} models={models} checked={modelsChecked} disabled={pulling} onChange={(value) => changeSettings({ ollamaModel: value }, MODEL_CHOICES.some((choice) => choice.name === value) ? 0 : 300)} />
-                  <button className="button" type="button" disabled={pulling || !settings.ollamaModel.trim()} onClick={() => void pullOllamaModel()}>{pulling ? "取得中…" : "モデルを取得"}</button>
+                  <div className="inline-control model-pull-control"><button className="button" type="button" disabled={pulling || !settings.ollamaModel.trim()} onClick={() => void pullOllamaModel()}>{pulling ? "取得中…" : "モデルを取得"}</button></div>
                 </SettingRow>
             )}
             {settings.llmBackend === "ollama" && (
-              <SettingRow label="接続確認" help="Ollama への接続と、選択中モデルの導入状況を確認します。">
-                <div className="inline-control">
-                  <button className="button" type="button" onClick={() => void testOllama()}>接続を確認</button>
-                  <span className="meta">{installedSize ? `モデルサイズ ${formatBytes(installedSize)}` : models.length ? `導入済み: ${models.join("、")}` : "導入済みモデル：未確認"}</span>
-                </div>
-              </SettingRow>
+              <>
+                <SettingRow label="分類後にモデルをアンロード" help="分類の終了・中断・失敗のあと、選択中のモデルをメモリから外します。Ollama 自体は止めません。">
+                  <label className="switch-label">
+                    <input
+                      type="checkbox"
+                      checked={settings.unloadOllamaAfterClassification}
+                      onChange={(e) => changeSettings({ unloadOllamaAfterClassification: e.target.checked })}
+                    />
+                    有効にする
+                  </label>
+                </SettingRow>
+                <SettingRow label="読み込み状態" help="同じ PC のほかのアプリが同じモデルを使っている場合も影響します。">
+                  <OllamaMemoryControls
+                    model={settings.ollamaModel}
+                    enabled={settings.llmBackend === "ollama"}
+                    onStatus={setOllamaStatus}
+                  />
+                </SettingRow>
+                <SettingRow label="接続確認" help="Ollama への接続と、選択中モデルの導入状況を確認します。">
+                  <div className="inline-control">
+                    <button className="button" type="button" onClick={() => void testOllama()}>接続を確認</button>
+                    <span className="meta">{installedSize ? `モデルサイズ ${formatBytes(installedSize)}` : models.length ? `導入済み: ${models.join("、")}` : "導入済みモデル：未確認"}</span>
+                  </div>
+                </SettingRow>
+              </>
             )}
             <details className="settings-details">
               <summary>分類の詳細設定</summary>

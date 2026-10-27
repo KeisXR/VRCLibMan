@@ -17,6 +17,7 @@ import { errorText } from "../ui";
 import { SettingRow } from "../components/SettingRow";
 import { ProductExclusions } from "../components/ProductExclusions";
 import { ExtensionInstructions } from "../components/BoothImportSettings";
+import { OllamaMemoryControls } from "../components/OllamaMemoryControls";
 
 function StaleReclassifyRow({ busy, onExtract }: { busy: boolean; onExtract: () => void }) {
   const { revision } = useShell();
@@ -54,6 +55,8 @@ export function ImportPage() {
   const [classificationErrors, setClassificationErrors] = useState<string[]>([]);
   const [receiverStatus, setReceiverStatus] = useState("確認中");
   const [staged, setStaged] = useState<StagedDownload[]>([]);
+  const [llmBackend, setLlmBackend] = useState<"ollama" | "apple">("ollama");
+  const [ollamaModel, setOllamaModel] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -80,7 +83,11 @@ export function ImportPage() {
     );
     api.settings().then(
       (value) => {
-        if (!cancelled) setLibraryFolder(value.libraryFolder);
+        if (!cancelled) {
+          setLibraryFolder(value.libraryFolder);
+          setLlmBackend(value.llmBackend);
+          setOllamaModel(value.ollamaModel);
+        }
       },
       () => undefined,
     );
@@ -394,6 +401,15 @@ export function ImportPage() {
               <summary>分類結果の詳細</summary>
               <ul>{classificationErrors.map((message, index) => <li key={index}>{message}</li>)}</ul>
             </details>
+          )}
+          {llmBackend === "ollama" && (
+            <SettingRow label="読み込み状態" help="同じ PC のほかのアプリが同じモデルを使っている場合も影響します。">
+              <OllamaMemoryControls
+                key={`${revision}-${extracting ? "run" : "idle"}`}
+                model={ollamaModel}
+                enabled
+              />
+            </SettingRow>
           )}
         </section>
         <section className="settings-section">

@@ -250,6 +250,7 @@ export interface Settings {
   llmBackend: "ollama" | "apple";
   backgroundMode: boolean;
   launchAtLogin: boolean;
+  unloadOllamaAfterClassification: boolean;
   classificationDismissedVersion: number;
   uiRailWidth: number;
   uiGenreWidth: number;
@@ -338,6 +339,12 @@ export interface OllamaStatus {
   models: string[];
   modelReady: boolean;
   modelSizeBytes: number | null;
+}
+
+export interface OllamaLoadedModel {
+  name: string;
+  sizeBytes: number;
+  expiresAt: string | null;
 }
 
 export interface CatalogInfo {
