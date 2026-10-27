@@ -43,6 +43,7 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
   const catalogItems = useMemo(() => {
     if (!detail) return [];
     return [
+      ...detail.ownedProducts,
       ...detail.sections.flatMap((section) => section.items),
       ...detail.genericItems,
       ...detail.unsupportedOutfits,
@@ -118,18 +119,13 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
       )}
       <div className="split">
         <div>
-          {detail.ownedProducts.map((owned) => (
-            <article className="item owned" key={owned.boothId}>
-              <Thumb path={owned.thumbnailPath} url={owned.thumbnailUrl} name={detail.displayName} small />
-              <div>
-                <h3>{owned.title}</h3>
-                <div className="meta">{owned.shop}</div>
-              </div>
-              <button className="button" type="button" onClick={() => void openExternal(owned.url)}>
-                BOOTH
-              </button>
-            </article>
-          ))}
+          {detail.ownedProducts.length > 0 && (
+            <div className="stack">
+              {detail.ownedProducts.map((item) => (
+                <ItemCard key={item.boothId} {...itemCardProps(item)} />
+              ))}
+            </div>
+          )}
           {detail.sections.map((section) => (
             <div className="section" key={section.category}>
               <h2>{CATEGORY_LABEL[section.category] ?? section.category}</h2>

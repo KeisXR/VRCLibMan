@@ -576,7 +576,6 @@ span.account-avatar { background: var(--button); }
 .section h2 { margin: var(--space-5) 0 var(--space-2); font-size: 16px; }
 .item { display: grid; grid-template-columns: 44px 1fr auto; gap: var(--space-3); padding: var(--space-3); }
 .item h3 { margin: 0; font-size: 15px; }
-.owned { display: flex; gap: var(--space-3); align-items: center; }
 .tabs { display: flex; gap: 4px; margin-bottom: var(--space-4); flex-wrap: wrap; }
 .tab {
   border: 0;

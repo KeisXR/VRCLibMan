@@ -5194,11 +5194,13 @@ mod tests {
         );
 
         let lime = avatar_detail(&snapshot, "lime").unwrap();
-        assert!(
-            lime.owned_products
-                .iter()
-                .any(|item| item.booth_id == "4876459")
-        );
+        let body = lime
+            .owned_products
+            .iter()
+            .find(|item| item.booth_id == "4876459")
+            .unwrap();
+        assert_eq!(body.category, Some(Category::Avatar));
+        assert!(!body.via_base_body);
         assert!(lime.siblings.iter().any(|sibling| sibling.id == "plum"));
         assert!(lime.siblings.iter().all(|sibling| sibling.id != "manuka"));
         let lime_outfits = section_items(&lime, "outfit");

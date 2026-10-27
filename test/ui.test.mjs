@@ -696,6 +696,22 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       const main = () => document.querySelector("main");
       await route("#/avatar/lime");
       await wait(() => main().querySelector("h1")?.textContent === "ライム");
+      await wait(() => main().textContent.includes("見本の本体.unitypackage"));
+      const bodyCard = [...main().querySelectorAll(".item")].find((node) =>
+        node.textContent.includes("見本の本体.unitypackage"),
+      );
+      assert.ok(bodyCard?.querySelector(".download-row"));
+      assert.equal(bodyCard.getAttribute("draggable"), "false");
+      assert.ok(!bodyCard.textContent.includes("手動"));
+      await click(bodyCard.querySelector(".product-actions-trigger"));
+      await wait(() => button("管理対象から除外", bodyCard));
+      assert.equal(button("移動", bodyCard), undefined);
+      await act(async () => {
+        document.body.dispatchEvent(new window.Event("pointerdown", { bubbles: true }));
+        await delay();
+      });
+      const owned = (await api.avatar("lime")).ownedProducts.find((row) => row.boothId === "4876459");
+      assert.ok(owned.downloads.some((file) => file.filename === "見本の本体.unitypackage"));
       assert.equal(document.querySelector(".avatar-add-panel"), null);
       await click(button("アイテムを追加"));
       await wait(() => button("汎用ペンライト", document.querySelector(".avatar-add-panel")));
