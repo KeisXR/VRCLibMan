@@ -24,6 +24,7 @@ export function Thumb({
       className={small ? "thumb small" : "thumb"}
       src={src}
       alt=""
+      draggable={false}
       referrerPolicy="no-referrer"
       onError={() => setFailed(true)}
     />

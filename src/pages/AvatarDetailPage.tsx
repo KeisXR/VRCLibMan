@@ -407,8 +407,8 @@ export function ItemCard({
           event.preventDefault();
           return;
         }
-        event.dataTransfer.setData("text/plain", item.boothId);
         event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", item.boothId);
         event.currentTarget.classList.add("dragging");
         onDragChange?.(item.boothId);
       }}

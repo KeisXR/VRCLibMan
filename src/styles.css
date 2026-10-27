@@ -610,13 +610,15 @@ a.tab { display: inline-flex; align-items: center; gap: 6px; text-decoration: no
 }
 .checks label { display: flex; gap: 6px; align-items: center; font-size: 13px; }
 .row-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
+.item > .row-actions { align-self: start; }
 .product-actions { position: relative; display: inline-flex; vertical-align: middle; }
 .product-actions-trigger { width: 32px; height: 32px; background: transparent; box-shadow: none; color: var(--text-secondary); font-size: 22px; }
-.product-actions-panel { position: absolute; z-index: 10; top: calc(100% + 4px); right: 0; padding: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-control); box-shadow: var(--shadow); white-space: nowrap; }
-.product-actions-panel .button { width: 100%; text-align: left; }
-.product-actions-panel.genre-move-panel { white-space: normal; width: 232px; }
+.product-actions-panel { position: absolute; z-index: 10; top: calc(100% + 4px); right: 0; display: flex; flex-direction: column; align-items: stretch; padding: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-control); box-shadow: var(--shadow); }
+.product-actions-panel .button { padding: 6px 14px; text-align: left; white-space: nowrap; }
+.product-actions-panel.genre-move-panel { width: 232px; }
+.product-actions-panel.genre-move-panel .button { white-space: normal; }
 .genre-move-kinds { display: flex; gap: 4px; }
-.genre-move-kinds .button { text-align: center; }
+.genre-move-kinds .button { flex: 1 1 0; text-align: center; white-space: nowrap; }
 .genre-move-kinds .button[aria-pressed="true"] { background: var(--surface-secondary); font-weight: 650; }
 .genre-move-list { display: flex; flex-direction: column; gap: 2px; max-height: 240px; overflow: auto; margin-top: 4px; }
 .item.dragging { opacity: 0.72; }

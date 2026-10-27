@@ -621,12 +621,19 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       assert.ok(!main().textContent.includes("手動"));
 
       const dragged = [...main().querySelectorAll(".item")].find((node) => node.textContent.includes("瞳のテクスチャ集"));
+      assert.equal(dragged.getAttribute("draggable"), "true");
+      for (const image of dragged.querySelectorAll("img")) {
+        assert.equal(image.getAttribute("draggable"), "false");
+      }
       const store = new Map();
       const dataTransfer = {
-        effectAllowed: "move",
+        effectAllowed: "none",
         dropEffect: "none",
-        types: ["text/plain"],
-        setData: (type, value) => store.set(type, value),
+        types: [],
+        setData(type, value) {
+          store.set(type, value);
+          this.types = [...store.keys()];
+        },
         getData: (type) => store.get(type) ?? "",
       };
       const drag = (node, type) => {
@@ -635,9 +642,17 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         node.dispatchEvent(event);
       };
       await act(async () => {
+        drag(dragged.querySelector(".product-actions-trigger"), "dragstart");
+        await delay();
+      });
+      assert.equal(store.size, 0);
+      assert.equal(dataTransfer.effectAllowed, "none");
+      await act(async () => {
         drag(dragged, "dragstart");
         await delay();
       });
+      assert.equal(dataTransfer.effectAllowed, "move");
+      assert.equal(dataTransfer.getData("text/plain"), "8800120");
       await wait(() => document.querySelector(".genre-rail-other"));
       const poseAgain = document.querySelector('.genre-rail-nav a[href="#/assets/pose"]');
       await act(async () => {
