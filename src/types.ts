@@ -330,6 +330,9 @@ export interface ExtractReport {
   failed: number;
   cancelled: boolean;
   errors: string[];
+  /** Present after a classification run. Omitted by older callers. */
+  boothSettled?: number;
+  modelUsed?: number;
 }
 
 export const DEFAULT_OLLAMA_MODEL = "qwen3.5:9b";

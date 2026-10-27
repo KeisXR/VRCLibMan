@@ -11,6 +11,17 @@ use url::Url;
 /// Default pacing for new installs and unknown or invalid stored values.
 pub const PAGE_DELAY_MS: u64 = 1000;
 pub const PAGE_DELAY: Duration = Duration::from_millis(PAGE_DELAY_MS);
+/// Public item JSON is slower than a library page. Never faster than a few seconds.
+pub const DETAIL_DELAY_MS: u64 = 3000;
+pub const DETAIL_DELAY: Duration = Duration::from_millis(DETAIL_DELAY_MS);
+
+pub fn detail_pause(page_delay: Duration) -> Duration {
+    page_delay.max(DETAIL_DELAY)
+}
+
+pub fn detail_progress_line(current: u32, total: u32) -> String {
+    format!("商品情報 {current}/{total}")
+}
 
 pub fn allowed_page_delay_ms(value: u64) -> bool {
     matches!(value, 1000 | 500 | 250)
@@ -510,6 +521,10 @@ mod tests {
         assert_eq!(normalize_page_delay_ms(1000), 1000);
         assert_eq!(normalize_page_delay_ms(1), 1000);
         assert_eq!(PAGE_DELAY_MS, 1000);
+        assert_eq!(detail_pause(PAGE_DELAY), DETAIL_DELAY);
+        assert_eq!(detail_pause(Duration::from_millis(250)), DETAIL_DELAY);
+        assert_eq!(detail_progress_line(1, 4), "商品情報 1/4");
+        assert!(!detail_progress_line(1, 4).contains('?'));
         assert_eq!(PAGE_DELAY, Duration::from_millis(1000));
         assert_eq!(
             library_page_url("https://accounts.booth.pm/library?page=4", 1).unwrap(),

@@ -66,6 +66,10 @@ interface Product {
   isAdult: boolean;
   unpublished: boolean;
   classifierVersion?: number;
+  boothCategoryId?: number | null;
+  boothCategoryName?: string;
+  boothCategoryParent?: string;
+  boothTags?: string[];
 }
 
 interface LocalFile {
@@ -123,6 +127,7 @@ function product(partial: Partial<Product> & Pick<Product, "boothId" | "title" |
     isFree: false,
     isAdult: false,
     unpublished: false,
+    classifierVersion: partial.category ? 3 : 1,
     ...partial,
   };
 }
@@ -1109,6 +1114,59 @@ function unpinPreviewClassification(boothId: string): ClassificationSnapshot {
   return snapshot;
 }
 
+function previewBoothCategory(row: Record<string, unknown>): { id: number | null; name: string; parent: string } | null {
+  const category = row.category ?? row.boothCategory;
+  if (!category || typeof category !== "object" || Array.isArray(category)) return null;
+  const object = category as Record<string, unknown>;
+  const rawId = object.id;
+  const id = typeof rawId === "number" && Number.isInteger(rawId) && rawId > 0 ? rawId : null;
+  const name = textOf(object.name).slice(0, 80);
+  const parentValue = object.parent;
+  const parent = typeof parentValue === "string"
+    ? parentValue.trim().slice(0, 80)
+    : parentValue && typeof parentValue === "object"
+      ? textOf((parentValue as Record<string, unknown>).name).slice(0, 80)
+      : "";
+  if (id == null && !name && !parent) return null;
+  return { id, name, parent };
+}
+
+function previewBoothTags(row: Record<string, unknown>): string[] | null {
+  const value = row.tags ?? row.boothTags;
+  if (!Array.isArray(value)) return null;
+  const tags: string[] = [];
+  for (const item of value) {
+    const name = (typeof item === "string"
+      ? item
+      : item && typeof item === "object"
+        ? textOf((item as Record<string, unknown>).name)
+        : "").trim().slice(0, 40);
+    if (!name || tags.includes(name)) continue;
+    tags.push(name);
+    if (tags.length === 40) break;
+  }
+  return tags;
+}
+
+function applyPreviewBooth(target: Product, category: { id: number | null; name: string; parent: string } | null, tags: string[] | null): boolean {
+  let changed = false;
+  if (category && (
+    target.boothCategoryId !== category.id
+    || target.boothCategoryName !== category.name
+    || target.boothCategoryParent !== category.parent
+  )) {
+    target.boothCategoryId = category.id;
+    target.boothCategoryName = category.name;
+    target.boothCategoryParent = category.parent;
+    changed = true;
+  }
+  if (tags && (target.boothTags ?? []).join("\0") !== tags.join("\0")) {
+    target.boothTags = tags;
+    changed = true;
+  }
+  return changed;
+}
+
 function textOf(value: unknown): string {
   if (typeof value === "string") return value.trim();
   if (typeof value === "number") return String(value);
@@ -1172,17 +1230,19 @@ function importExport(json: string): ImportReport {
       warnings.push("商品IDかタイトルがないデータをスキップしました");
       continue;
     }
+    const adult = row.isAdult === true || row.is_adult === true;
+    const category = adult ? null : previewBoothCategory(row);
+    const tags = adult ? null : previewBoothTags(row);
     const incoming = {
       title,
       shop: textOf(row.shop || row.shopName).slice(0, 120),
-      descriptionSnippet: textOf(row.descriptionSnippet || row.description).slice(0, 8000),
+      descriptionSnippet: adult ? "" : textOf(row.descriptionSnippet || row.description).slice(0, 8000),
       url: textOf(row.url) || `https://booth.pm/ja/items/${boothId}`,
       thumbnailUrl: textOf(row.thumbnailUrl || row.imageUrl) || null,
     };
     const existing = store.products.find((item) => item.boothId === boothId);
     if (!existing) {
-      store.products.push(
-        product({
+      const created = product({
           boothId,
           title: incoming.title,
           shop: incoming.shop,
@@ -1193,17 +1253,20 @@ function importExport(json: string): ImportReport {
           categoryLocked: false,
           confidence: null,
           needsReview: true,
-        }),
-      );
+        });
+      applyPreviewBooth(created, category, tags);
+      store.products.push(created);
       inserted += 1;
       continue;
     }
+    const metaChanged = applyPreviewBooth(existing, category, tags);
     const same =
       existing.title === incoming.title &&
       existing.shop === incoming.shop &&
       existing.descriptionSnippet === incoming.descriptionSnippet &&
       existing.url === incoming.url &&
-      existing.thumbnailUrl === incoming.thumbnailUrl;
+      existing.thumbnailUrl === incoming.thumbnailUrl &&
+      !metaChanged;
     if (same) {
       unchanged += 1;
       continue;
@@ -1370,6 +1433,14 @@ async function previewLibraryWalk(): Promise<LibraryWalkReport> {
     });
     await new Promise((resolve) => setTimeout(resolve, 800));
     if (previewLibraryCancel) break;
+  }
+  if (!previewLibraryCancel) {
+    emitPreviewProgress({
+      job: "browser-library",
+      current: 1,
+      total: 2,
+      message: "商品情報 1/2",
+    });
   }
   const cancelled = previewLibraryCancel;
   const report: LibraryWalkReport = {
@@ -1637,7 +1708,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       return undefined as T;
     case "scan_library":
     case "classification_status": {
-      const classifierVersion = 2;
+      const classifierVersion = 3;
       const staleCount = store.products.filter(
         (item) =>
           !(item.categoryLocked && item.genreLocked) &&

@@ -143,9 +143,48 @@ pub fn classify_text(category: Category, title: &str, description: &str) -> Opti
     Some(key.to_string())
 }
 
+/// Tags that do not say what kind of item this is.
+pub fn generic_tag(tag: &str) -> bool {
+    const STOP: &[&str] = &[
+        "vrchat", "vrc", "unity", "3dモデル", "3d model", "3dmodel", "booth", "vr",
+    ];
+    let key = crate::normalize::nfkc(tag).trim().to_lowercase();
+    STOP.contains(&key.as_str())
+}
+
+/// Keyword rules applied to tag names before the title and description.
+pub fn genre_from_tags(category: Category, tags: &[String]) -> Option<String> {
+    let kept: Vec<&str> = tags
+        .iter()
+        .map(String::as_str)
+        .filter(|tag| !tag.trim().is_empty() && !generic_tag(tag))
+        .collect();
+    if kept.is_empty() {
+        return None;
+    }
+    let text = kept.join("\n");
+    classify_text(category, &text, "")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tags_use_the_same_keywords_and_skip_generic_names() {
+        assert!(generic_tag("VRChat"));
+        assert!(generic_tag("３Ｄモデル"));
+        assert!(!generic_tag("家具"));
+        assert_eq!(
+            genre_from_tags(Category::World, &["VRChat".into(), "Skybox".into()]),
+            Some("skybox".into())
+        );
+        assert_eq!(
+            genre_from_tags(Category::Texture, &["Unity".into(), "3Dモデル".into()]),
+            None
+        );
+    }
+
     #[test]
     fn keyword_rules() {
         assert_eq!(

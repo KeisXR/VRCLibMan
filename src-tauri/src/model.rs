@@ -158,6 +158,18 @@ pub struct IncomingProduct {
     /// Library card badge「非公開」. Missing must not clear a stored flag.
     /// This is not「公開終了」 and must not force category other.
     pub unpublished: Option<bool>,
+    /// Missing means this payload does not know. It must not clear a stored category.
+    pub booth_category: Option<BoothCategoryInput>,
+    /// Missing means this payload does not know. An empty list is a known empty tag list.
+    pub booth_tags: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BoothCategoryInput {
+    pub id: Option<i64>,
+    pub name: String,
+    pub parent: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -274,6 +286,10 @@ pub struct ExtractReport {
     pub failed: u32,
     pub cancelled: bool,
     pub errors: Vec<String>,
+    /// Decided from the BOOTH category id or name, and tags when those were enough.
+    pub booth_settled: u32,
+    /// Sent to Ollama or Apple because the category and tags did not decide it.
+    pub model_used: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]

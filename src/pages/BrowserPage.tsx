@@ -104,6 +104,7 @@ export function BrowserPage({ enabled }: { enabled: boolean }) {
           <p className="meta">
             ログインと年齢確認は、開いたブラウザで行ってください。
             「ライブラリ全取得」はライブラリ、ギフト、無料ダウンロードの商品情報を読み込みます。ファイルはダウンロードしません。
+            公開の商品情報は1件ずつ、3秒以上あけて確認します。年齢制限の商品は確認しません。
           </p>
           <details className="settings-details">
             <summary>アクセス間隔</summary>

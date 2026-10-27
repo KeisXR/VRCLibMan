@@ -1360,8 +1360,80 @@ pub async fn import_library(app: AppHandle) -> Result<LibraryWalkReport, String>
     } else if !report.notice.is_empty() {
         browser_log(&app, "ライブラリ全取得を止めました");
     }
+    let skip_detail = report.cancelled || report.notice == db::BROWSER_AGE_MESSAGE;
+    if !skip_detail {
+        fill_public_details(&app).await?;
+    }
     emit_walk_progress(&app, 1, 1, &summary);
     Ok(report)
+}
+
+async fn fill_public_details(app: &AppHandle) -> Result<(), String> {
+    if walk_cancel_requested() {
+        return Ok(());
+    }
+    let ids = {
+        let state = app.state::<crate::AppState>();
+        let connection = state
+            .db
+            .lock()
+            .map_err(|_| "データベースをロックできません".to_string())?;
+        db::products_needing_booth_detail(&connection)?
+    };
+    let total = ids.len() as u32;
+    if total == 0 {
+        return Ok(());
+    }
+    let pause = {
+        let state = app.state::<crate::AppState>();
+        let connection = state
+            .db
+            .lock()
+            .map_err(|_| "データベースをロックできません".to_string())?;
+        library_walk::detail_pause(Duration::from_millis(db::booth_page_interval_ms(
+            &connection,
+        )?))
+    };
+    for (index, booth_id) in ids.iter().enumerate() {
+        if walk_cancel_requested() {
+            return Ok(());
+        }
+        pause_for(pause).await;
+        if walk_cancel_requested() {
+            return Ok(());
+        }
+        let current = (index as u32) + 1;
+        emit_walk_progress(
+            app,
+            current,
+            total,
+            &library_walk::detail_progress_line(current, total),
+        );
+        let outcome = match crate::booth_detail::fetch_public_item(booth_id).await {
+            Ok(outcome) => outcome,
+            Err(_) => {
+                browser_log(app, "商品情報の確認を中断しました");
+                return Ok(());
+            }
+        };
+        let app_for_db = app.clone();
+        let booth_id = booth_id.clone();
+        let stop = tauri::async_runtime::spawn_blocking(move || {
+            let state = app_for_db.state::<crate::AppState>();
+            let mut connection = state
+                .db
+                .lock()
+                .map_err(|_| "データベースをロックできません".to_string())?;
+            db::store_booth_detail(&mut connection, &booth_id, &outcome)
+        })
+        .await
+        .map_err(|_| "商品情報を保存できません".to_string())??;
+        if stop {
+            browser_log(app, "商品情報の確認を中断しました");
+            return Ok(());
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1596,6 +1668,8 @@ mod tests {
         assert!(body.contains("eval_with_callback"));
         assert!(body.contains("page_delay"));
         assert!(body.contains("import_export_json"));
+        assert!(body.contains("fill_public_details"));
+        assert!(body.contains("detail_pause"));
         assert!(!body.contains("cookies_for_url"));
         assert!(!body.contains(".cookies("));
         assert!(!body.contains("reqwest"));

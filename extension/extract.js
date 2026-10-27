@@ -616,7 +616,73 @@
     if (fields.isFree === true || fields.isFree === false) product.isFree = fields.isFree;
     if (fields.isAdult === true || fields.isAdult === false) product.isAdult = fields.isAdult;
     if (fields.unpublished === true) product.unpublished = true;
+    if (fields.category && typeof fields.category === "object") product.category = fields.category;
+    if (Array.isArray(fields.tags)) product.tags = fields.tags;
     return product;
+  }
+
+  function categoryField(id, name, parentName) {
+    const category = { name: name || "" };
+    if (id != null) category.id = id;
+    if (parentName) category.parent = { name: parentName };
+    return category;
+  }
+
+  function categoryFromPage(document) {
+    const root = document.querySelector("#js-item-category-breadcrumbs");
+    if (!root || !root.querySelectorAll) return null;
+    const named = [];
+    for (const link of root.querySelectorAll("a")) {
+      if (link.closest && link.closest(".item-card")) continue;
+      const name = clean(link.textContent);
+      if (!name) continue;
+      const raw = clean(link.getAttribute("data-category-id"));
+      const id = /^\d{1,6}$/.test(raw) ? Number(raw) : null;
+      named.push({ id, name });
+    }
+    if (named.length === 0) return null;
+    const current = named[named.length - 1];
+    const parent = named.length > 1 ? named[named.length - 2].name : "";
+    return categoryField(current.id, current.name, parent);
+  }
+
+  function tagsFromPage(document) {
+    const root = document.querySelector("#js-item-tag-list");
+    if (!root || !root.querySelectorAll) return null;
+    const tags = [];
+    for (const node of root.querySelectorAll("a")) {
+      if (node.closest && node.closest(".item-card")) continue;
+      const name = limitedName(clean(node.textContent), 40);
+      if (!name || tags.includes(name)) continue;
+      tags.push(name);
+      if (tags.length === 40) break;
+    }
+    return tags.length > 0 ? tags : null;
+  }
+
+  function categoryFromJson(data) {
+    const category = data && data.category;
+    if (!category || typeof category !== "object") return null;
+    const rawId = category.id;
+    const id = Number.isInteger(rawId) && rawId > 0 && rawId < 1000000 ? rawId : null;
+    const name = clean(category.name);
+    const parent = category.parent && typeof category.parent === "object"
+      ? clean(category.parent.name)
+      : clean(category.parent);
+    if (id == null && !name && !parent) return null;
+    return categoryField(id, name, parent);
+  }
+
+  function tagsFromJson(data) {
+    if (!Array.isArray(data.tags)) return null;
+    const tags = [];
+    for (const item of data.tags) {
+      const name = limitedName(clean(typeof item === "string" ? item : item && item.name), 40);
+      if (!name || tags.includes(name)) continue;
+      tags.push(name);
+      if (tags.length === 40) break;
+    }
+    return tags;
   }
 
   function extractItem(document, href) {
@@ -642,6 +708,8 @@
       downloads: facts.downloads,
       isFree: readFree(document, true),
       isAdult: readAdult(document, true) === true ? true : null,
+      category: categoryFromPage(document),
+      tags: tagsFromPage(document),
     });
   }
 
@@ -713,17 +781,20 @@
     let isAdult = null;
     if (data.is_adult === true || data.isAdult === true) isAdult = true;
     else if (data.is_adult === false || data.isAdult === false) isAdult = false;
+    const adult = isAdult === true;
     return makeProduct({
       boothId: id,
       title: clean(data.name) || `item ${id}`,
       shop: clean(shop),
-      description: typeof data.description === "string" ? data.description : "",
+      description: adult || typeof data.description !== "string" ? "" : data.description,
       url: clean(data.url) || `https://booth.pm/ja/items/${id}`,
       image: "",
       variations,
       downloads,
       isFree,
       isAdult,
+      category: adult ? null : categoryFromJson(data),
+      tags: adult ? null : tagsFromJson(data),
     });
   }
 
@@ -758,6 +829,15 @@
     if (!product.thumbnailUrl && detail.thumbnailUrl) product.thumbnailUrl = detail.thumbnailUrl;
     if (product.isFree == null && (detail.isFree === true || detail.isFree === false)) product.isFree = detail.isFree;
     if (product.isAdult == null && (detail.isAdult === true || detail.isAdult === false)) product.isAdult = detail.isAdult;
+    if (detail.isAdult === true) {
+      product.isAdult = true;
+      product.descriptionSnippet = "";
+      delete product.category;
+      delete product.tags;
+    } else {
+      if (!product.category && detail.category) product.category = detail.category;
+      if (!Array.isArray(product.tags) && Array.isArray(detail.tags)) product.tags = detail.tags.slice();
+    }
     product.variations = product.variations || [];
     for (const variation of detail.variations || []) {
       if (variation && variation.owned) pushVariation(product.variations, variation.name, true);
