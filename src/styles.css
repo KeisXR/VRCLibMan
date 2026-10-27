@@ -111,7 +111,7 @@ a:hover { text-decoration: underline; }
 .brand { display: flex; flex-direction: column; gap: 2px; padding: 0 var(--space-3); flex-shrink: 0; }
 .brand strong { font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
 .brand span { color: var(--faint); font-size: 12px; }
-nav {
+.rail nav {
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -665,7 +665,7 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
     grid-template-rows: auto minmax(0, 1fr);
   }
   .rail { gap: var(--space-3); max-height: 42vh; overflow: visible; }
-  nav { flex-direction: row; flex-wrap: wrap; }
+  .rail nav { flex-direction: row; flex-wrap: wrap; }
   .rail-meta { display: none; }
   .rail-foot { margin-top: 0; }
   .rail-foot:not(:has(.account-pill)) { display: none; }

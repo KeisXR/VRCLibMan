@@ -4,6 +4,7 @@ import { useShell } from "../App";
 import { ItemCard } from "../pages/AvatarDetailPage";
 import { GENRE_LABEL, GENRE_UNSET, genresForKind } from "../types";
 import type { GenreKind, GenreProducts, ItemView } from "../types";
+import { useRemoteProductProbe } from "../remoteProductProbe";
 import { errorText } from "../ui";
 
 const NOUN: Record<GenreKind, string> = { asset: "アセット", world: "ワールド" };
@@ -74,6 +75,11 @@ export function GenreBrowser({
   const data = loaded?.data ?? null;
   const current = loaded?.key === key ? loaded.data : null;
   const shown = useMemo(() => filterItems(current?.items ?? [], filter), [current, filter]);
+  const { items: probedItems, statusFor, retryProbe } = useRemoteProductProbe(shown);
+  const probedMap = useMemo(
+    () => new Map(probedItems.map((item) => [item.boothId, item])),
+    [probedItems],
+  );
   const noun = NOUN[kind];
   const selectedLabel = selected ? GENRE_LABEL[selected] ?? selected : "すべて";
   const unsetCount = data?.counts[GENRE_UNSET] ?? 0;
@@ -146,9 +152,17 @@ export function GenreBrowser({
             {selectedLabel} {shown.length} 件
           </p>
           <div className="stack">
-            {shown.map((item) => (
-              <ItemCard key={item.boothId} item={item} />
-            ))}
+            {shown.map((item) => {
+              const resolved = probedMap.get(item.boothId) ?? item;
+              return (
+                <ItemCard
+                  key={item.boothId}
+                  item={resolved}
+                  remoteProbeStatus={statusFor(item.boothId)}
+                  onRetryRemoteProbe={() => retryProbe([item.boothId])}
+                />
+              );
+            })}
           </div>
         </>
       )}
