@@ -91,7 +91,7 @@ export function BrowserPage({ enabled }: { enabled: boolean }) {
       <div className="page-head">
         <div>
           <h1>ブラウザ</h1>
-          <p>BOOTHのライブラリとギフトの商品情報を読み込みます。</p>
+          <p>BOOTHのライブラリ、ギフト、無料ダウンロードの商品情報を読み込みます。</p>
         </div>
       </div>
       {!enabled && (
@@ -103,7 +103,7 @@ export function BrowserPage({ enabled }: { enabled: boolean }) {
         <div className="panel">
           <p className="meta">
             ログインと年齢確認は、開いたブラウザで行ってください。
-            「ライブラリ全取得」はライブラリとギフトの商品情報を読み込みます。ファイルはダウンロードしません。
+            「ライブラリ全取得」はライブラリ、ギフト、無料ダウンロードの商品情報を読み込みます。ファイルはダウンロードしません。
           </p>
           <details className="settings-details">
             <summary>アクセス間隔</summary>

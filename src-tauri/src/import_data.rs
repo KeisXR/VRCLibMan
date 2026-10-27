@@ -110,6 +110,7 @@ fn parse_one(value: &Value) -> Result<IncomingProduct, String> {
         downloads: parse_downloads(map.get("downloads").or_else(|| map.get("files"))),
         is_free: optional_bool(map, &["isFree", "is_free"]),
         is_adult: optional_bool(map, &["isAdult", "is_adult"]),
+        unpublished: optional_bool(map, &["unpublished"]),
     })
 }
 
@@ -326,6 +327,24 @@ mod tests {
         assert_eq!(parsed.products.len(), 1);
         assert_eq!(parsed.products[0].description_snippet, "公開終了（取得できず）");
         assert_eq!(parsed.products[0].shop, "mokemoke-dy");
+        assert_eq!(parsed.products[0].unpublished, None);
+    }
+
+    #[test]
+    fn unpublished_flag_is_optional_and_separate_from_not_found() {
+        let hidden = parse_export(
+            r#"{"boothId":"424242","title":"ダミー衣装","unpublished":true,"isFree":true}"#,
+        )
+        .unwrap();
+        assert_eq!(hidden.products[0].unpublished, Some(true));
+        assert_eq!(hidden.products[0].is_free, Some(true));
+        let cleared = parse_export(
+            r#"{"boothId":"424242","title":"ダミー衣装","unpublished":false}"#,
+        )
+        .unwrap();
+        assert_eq!(cleared.products[0].unpublished, Some(false));
+        let omitted = parse_export(r#"{"boothId":"424242","title":"ダミー衣装"}"#).unwrap();
+        assert_eq!(omitted.products[0].unpublished, None);
     }
 
     #[test]

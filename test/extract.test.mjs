@@ -166,6 +166,90 @@ test("a product missing from both the page and json is marked unpublished", () =
   noteIfUnpublished(kept, 404, 404);
   assert.equal(kept.descriptionSnippet, "説明があります");
   assert.equal(kept.unavailable, undefined);
+  const hidden = { boothId: "1003", title: "ダミー非公開", shop: "ダミー工房", descriptionSnippet: "", unpublished: true };
+  noteIfUnpublished(hidden, 404, 404);
+  assert.equal(hidden.descriptionSnippet, "");
+  assert.equal(hidden.unavailable, undefined);
+  assert.equal(hidden.unpublished, true);
+});
+
+test("free downloads tab marks null isFree and keeps unpublished cards", () => {
+  const page1 = `<!doctype html><body>
+    <div class="bg-white">
+      <img class="l-library-item-thumbnail" alt="ダミー衣装" src="https://booth.pximg.net/c/72x72/dummy/items/424242/i/dummy.jpg" />
+      <span class="badge">非公開</span>
+      <span class="text-text-default">ダミー衣装</span>
+      <span class="text-text-gray600">ダミー工房</span>
+    </div>
+    <div class="bg-white">
+      <a href="https://booth.pm/ja/items/515151">
+        <img class="l-library-item-thumbnail" alt="" src="https://booth.pximg.net/c/72x72/dummy/items/515151/i/dummy.jpg" />
+      </a>
+      <a class="text-text-default" href="https://booth.pm/items/515151">ダミー通常</a>
+    </div>
+    <div class="bg-white">
+      <img class="l-library-item-thumbnail" alt="ダミー不明" src="https://booth.pximg.net/c/72x72/dummy/plain.jpg" />
+      <span>非公開</span>
+      <span class="text-text-default">ダミー不明</span>
+    </div>
+    <div class="bg-white">
+      <a href="https://booth.pm/ja/items/616161">
+        <img class="l-library-item-thumbnail" alt="" src="https://booth.pximg.net/c/72x72/dummy/items/616161/i/dummy.jpg" />
+      </a>
+      <a class="text-text-default" href="https://booth.pm/items/616161">ダミー有料表示</a>
+      <span class="price">¥100</span>
+    </div>
+    <a href="?page=2">2</a>
+  </body>`;
+  const first = parseHTML(page1);
+  assert.equal(libraryLastPage(first.document, "https://accounts.booth.pm/library/free_downloads?page=1"), 2);
+  const products = extractPage(first.document, "https://accounts.booth.pm/library/free_downloads?page=1");
+  assert.deepEqual(products.map((product) => product.boothId), ["424242", "515151", "616161"]);
+  assert.equal(products[0].title, "ダミー衣装");
+  assert.equal(products[0].shop, "ダミー工房");
+  assert.equal(products[0].isFree, true);
+  assert.equal(products[0].unpublished, true);
+  assert.match(products[0].thumbnailUrl, /\/items\/424242\//);
+  assert.match(products[0].url, /\/items\/424242$/);
+  assert.equal(products[1].title, "ダミー通常");
+  assert.equal(products[1].isFree, true);
+  assert.equal(products[1].unpublished, undefined);
+  assert.equal(products[2].isFree, false);
+  assert.equal(products[2].unpublished, undefined);
+
+  const page2 = `<!doctype html><body>
+    <div class="bg-white">
+      <a href="https://booth.pm/ja/items/737373">
+        <img class="l-library-item-thumbnail" alt="" src="https://booth.pximg.net/c/72x72/dummy/items/737373/i/dummy.jpg" />
+      </a>
+      <span class="text-text-default">ダミー二ページ</span>
+    </div>
+  </body>`;
+  const second = extractPage(parseHTML(page2).document, "https://accounts.booth.pm/library/free_downloads?page=2");
+  assert.equal(second.length, 1);
+  assert.equal(second[0].boothId, "737373");
+  assert.equal(second[0].isFree, true);
+  assert.equal(second[0].unpublished, undefined);
+
+  const attributed = `<!doctype html><body>
+    <div class="bg-white" data-product-id="808080">
+      <span class="badge">非公開</span>
+      <span class="text-text-default">ダミー属性</span>
+    </div>
+  </body>`;
+  const fromAttr = extractPage(parseHTML(attributed).document, "https://accounts.booth.pm/library/free_downloads");
+  assert.equal(fromAttr.length, 1);
+  assert.equal(fromAttr[0].boothId, "808080");
+  assert.equal(fromAttr[0].unpublished, true);
+  assert.equal(fromAttr[0].isFree, true);
+
+  const library = extractPage(first.document, "https://accounts.booth.pm/library?page=1");
+  assert.equal(library[0].unpublished, true);
+  assert.equal(library[0].isFree, undefined);
+  assert.equal(library[1].isFree, undefined);
+  const gifts = extractPage(first.document, "https://accounts.booth.pm/library/gifts");
+  assert.equal(gifts[0].isFree, undefined);
+  assert.equal(gifts[0].unpublished, true);
 });
 
 test("other booth pages export nothing", () => {

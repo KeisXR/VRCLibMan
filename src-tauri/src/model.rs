@@ -155,6 +155,9 @@ pub struct IncomingProduct {
     /// Missing means this payload does not know. It must not clear a stored flag.
     pub is_free: Option<bool>,
     pub is_adult: Option<bool>,
+    /// Library card badge「非公開」. Missing must not clear a stored flag.
+    /// This is not「公開終了」 and must not force category other.
+    pub unpublished: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -182,6 +185,7 @@ pub struct ProductFlag {
     pub booth_id: String,
     pub is_free: Option<bool>,
     pub is_adult: Option<bool>,
+    pub unpublished: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

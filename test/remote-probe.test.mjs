@@ -48,6 +48,7 @@ test("remote product probe helpers and preview command", async (t) => {
       ],
       isFree: false,
       isAdult: false,
+      unpublished: false,
       remoteConfigured: true,
       remoteChecked: false,
       remoteReachable: false,

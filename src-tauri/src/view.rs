@@ -70,6 +70,8 @@ pub struct ItemView {
     pub downloads: Vec<DownloadView>,
     pub is_free: bool,
     pub is_adult: bool,
+    /// Library badge「非公開」. False when the flag was never set. Not「公開終了」.
+    pub unpublished: bool,
     pub remote_configured: bool,
     pub remote_checked: bool,
     pub remote_reachable: bool,
@@ -662,6 +664,7 @@ fn item_view(snapshot: &Snapshot, product: &Product, via_base_body: bool) -> Ite
         downloads,
         is_free: flag.and_then(|flag| flag.is_free).unwrap_or(false),
         is_adult: flag.and_then(|flag| flag.is_adult).unwrap_or(false),
+        unpublished: flag.and_then(|flag| flag.unpublished).unwrap_or(false),
         remote_configured: snapshot.remote_configured,
         remote_checked: snapshot.remote_checked,
         remote_reachable: snapshot.remote_reachable,

@@ -64,6 +64,7 @@ interface Product {
   updatedAt: string;
   isFree: boolean;
   isAdult: boolean;
+  unpublished: boolean;
   classifierVersion?: number;
 }
 
@@ -121,6 +122,7 @@ function product(partial: Partial<Product> & Pick<Product, "boothId" | "title" |
     updatedAt: "2026-10-22T00:00:00Z",
     isFree: false,
     isAdult: false,
+    unpublished: false,
     ...partial,
   };
 }
@@ -548,6 +550,7 @@ function itemView(item: Product, viaBaseBody: boolean): ItemView {
     downloads,
     isFree: item.isFree,
     isAdult: item.isAdult,
+    unpublished: item.unpublished,
     remoteConfigured,
     remoteChecked,
     remoteReachable: remoteConfigured && store.remoteChecked && store.remoteReachable,

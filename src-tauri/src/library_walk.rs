@@ -1,5 +1,5 @@
 //! 拡張の「ライブラリをすべて送る」と同じページの進み方。
-//! ライブラリを `?page=` で 1 ページずつ読み、そのあとギフトを同じ間隔で読む。
+//! ライブラリ、ギフト、無料ダウンロードを `?page=` で 1 ページずつ読む。
 //! 既定は 1 秒、250ms は明示的な高速設定のみ。ファイルは取りに行かない。
 
 use serde_json::Value;
@@ -23,14 +23,19 @@ const MAX_PAGE: u32 = 200;
 
 pub const LIBRARY_PAGE: &str = "https://accounts.booth.pm/library";
 pub const GIFT_PAGE: &str = "https://accounts.booth.pm/library/gifts";
+pub const FREE_PAGE: &str = "https://accounts.booth.pm/library/free_downloads";
+
+const OUTSIDE_LIBRARY_MESSAGE: &str =
+    "ライブラリ、ギフト、無料ダウンロード以外のページへは移動しません";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WalkSection {
     Library,
     Gifts,
+    Free,
 }
 
-pub const WALK_SECTIONS: [WalkSection; 2] = [WalkSection::Library, WalkSection::Gifts];
+pub const WALK_SECTIONS: [WalkSection; 3] = [WalkSection::Library, WalkSection::Gifts, WalkSection::Free];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WalkStop {
@@ -78,6 +83,7 @@ pub fn section_label(section: WalkSection) -> &'static str {
     match section {
         WalkSection::Library => "ライブラリ",
         WalkSection::Gifts => "ギフト",
+        WalkSection::Free => "無料ダウンロード",
     }
 }
 
@@ -106,7 +112,7 @@ pub fn final_counts_line(
 }
 
 /// 拡張の `libraryPageUrl` と同じく `page` だけを付ける。
-/// 年齢確認やログイン、ライブラリとギフト以外は拒否する。結果に商品名は入らない。
+/// 年齢確認やログイン、ライブラリ・ギフト・無料ダウンロード以外は拒否する。結果に商品名は入らない。
 pub fn library_page_url(href: &str, page: u32) -> Result<String, String> {
     if !(1..=MAX_PAGE).contains(&page) {
         return Err("ページ番号が範囲外です".into());
@@ -116,12 +122,10 @@ pub fn library_page_url(href: &str, page: u32) -> Result<String, String> {
     }
     let url = Url::parse(href).map_err(|_| "ページのURLを読めません".to_string())?;
     if url.scheme() != "https" || url.host_str() != Some("accounts.booth.pm") {
-        return Err("ライブラリとギフト以外のページへは移動しません".into());
+        return Err(OUTSIDE_LIBRARY_MESSAGE.into());
     }
-    let section = match url.path().trim_end_matches('/') {
-        "/library" => WalkSection::Library,
-        "/library/gifts" => WalkSection::Gifts,
-        _ => return Err("ライブラリとギフト以外のページへは移動しません".into()),
+    let Some(section) = section_from_library_path(url.path()) else {
+        return Err(OUTSIDE_LIBRARY_MESSAGE.into());
     };
     Ok(library_walk_url(section, page)?.to_string())
 }
@@ -133,6 +137,7 @@ pub fn library_walk_url(section: WalkSection, page: u32) -> Result<Url, String> 
     let base = match section {
         WalkSection::Library => LIBRARY_PAGE,
         WalkSection::Gifts => GIFT_PAGE,
+        WalkSection::Free => FREE_PAGE,
     };
     let url = Url::parse(&format!("{base}?page={page}")).map_err(|err| err.to_string())?;
     if walk_block_reason(url.as_str()).is_some() {
@@ -141,7 +146,7 @@ pub fn library_walk_url(section: WalkSection, page: u32) -> Result<Url, String> 
     Ok(url)
 }
 
-/// 取り込みを止めるページ。年齢確認を先に見る。ライブラリとギフト以外はログイン切れとして止める。
+/// 取り込みを止めるページ。年齢確認を先に見る。ライブラリ、ギフト、無料ダウンロード以外はログイン切れとして止める。
 pub fn walk_block_reason(href: &str) -> Option<WalkStop> {
     let url = Url::parse(href).ok()?;
     let path = url.path().to_ascii_lowercase();
@@ -153,7 +158,7 @@ pub fn walk_block_reason(href: &str) -> Option<WalkStop> {
         return Some(WalkStop::Login);
     }
     let host = url.host_str().unwrap_or("");
-    if !is_booth_host(host) || is_login_path(&path) || !is_library_or_gift_path(&path) {
+    if !is_booth_host(host) || is_login_path(&path) || !is_library_section_path(&path) {
         return Some(WalkStop::Login);
     }
     None
@@ -197,9 +202,17 @@ fn is_login_path(path: &str) -> bool {
     path.contains("sign_in") || path.contains("signin") || path.contains("/login")
 }
 
-fn is_library_or_gift_path(path: &str) -> bool {
-    let path = path.trim_end_matches('/');
-    path == "/library" || path == "/library/gifts"
+fn section_from_library_path(path: &str) -> Option<WalkSection> {
+    match path.trim_end_matches('/') {
+        "/library" => Some(WalkSection::Library),
+        "/library/gifts" => Some(WalkSection::Gifts),
+        "/library/free_downloads" => Some(WalkSection::Free),
+        _ => None,
+    }
+}
+
+fn is_library_section_path(path: &str) -> bool {
+    section_from_library_path(path).is_some()
 }
 
 fn is_age_gate(path: &str, query: &str) -> bool {
@@ -510,6 +523,19 @@ mod tests {
             library_page_url("https://accounts.booth.pm/library/gifts", 3).unwrap(),
             "https://accounts.booth.pm/library/gifts?page=3"
         );
+        assert_eq!(
+            library_page_url("https://accounts.booth.pm/library/free_downloads?page=4", 2).unwrap(),
+            "https://accounts.booth.pm/library/free_downloads?page=2"
+        );
+        assert_eq!(
+            WALK_SECTIONS,
+            [WalkSection::Library, WalkSection::Gifts, WalkSection::Free]
+        );
+        assert_eq!(section_label(WalkSection::Free), "無料ダウンロード");
+        assert_eq!(
+            library_walk_url(WalkSection::Free, 1).unwrap().as_str(),
+            "https://accounts.booth.pm/library/free_downloads?page=1"
+        );
         for page in [1_u32, 2, 12] {
             for section in WALK_SECTIONS {
                 let url = library_walk_url(section, page).unwrap();
@@ -531,8 +557,23 @@ mod tests {
         assert!(library_page_url("https://accounts.pixiv.net/login", 1).is_err());
         assert!(library_page_url("https://accounts.booth.pm/users/sign_in", 1).is_err());
         assert!(library_page_url("https://booth.pm/ja/items/424242", 1).is_err());
+        assert!(library_page_url("https://accounts.booth.pm/library/orders", 1).is_err());
+        let outside = library_page_url("https://booth.pm/library", 1).unwrap_err();
+        assert!(outside.contains("無料ダウンロード"));
+        assert!(!outside.contains("ライブラリとギフト以外"));
+        assert!(
+            library_page_url("https://accounts.booth.pm/library/free_downloads?r18=1", 1).is_err()
+        );
         assert!(library_walk_url(WalkSection::Library, 0).is_err());
         assert!(library_walk_url(WalkSection::Gifts, 201).is_err());
+        assert!(library_walk_url(WalkSection::Free, 0).is_err());
+        assert!(
+            walk_block_reason("https://accounts.booth.pm/library/free_downloads?page=3").is_none()
+        );
+        assert_eq!(
+            walk_block_reason("https://accounts.booth.pm/library/orders"),
+            Some(WalkStop::Login)
+        );
         assert_eq!(
             walk_block_reason("https://accounts.booth.pm/age_verification?next=/library"),
             Some(WalkStop::AgeGate)
@@ -569,6 +610,65 @@ mod tests {
             "https://accounts.booth.pm/library?page=1",
             &gift
         ));
+        let free = library_walk_url(WalkSection::Free, 1).unwrap();
+        assert!(same_library_page(
+            "https://accounts.booth.pm/library/free_downloads",
+            &free
+        ));
+        assert!(!same_library_page(
+            "https://accounts.booth.pm/library/gifts?page=1",
+            &free
+        ));
+    }
+
+    #[test]
+    fn walk_reads_library_then_gifts_then_free_downloads() {
+        let cancel = AtomicBool::new(false);
+        let mut opened = Vec::new();
+        let mut lines = Vec::new();
+        let collected = drive_library_walk(
+            |url| {
+                opened.push(url.to_string());
+                let href = url.as_str().split('?').next().unwrap_or("");
+                let id = match opened.len() {
+                    1 => "424242",
+                    2 => "515151",
+                    _ => "616161",
+                };
+                Ok(snapshot(
+                    href,
+                    serde_json::json!([{
+                        "boothId": id,
+                        "title": "ダミー商品",
+                        "downloads": []
+                    }]),
+                    1,
+                ))
+            },
+            |_| {},
+            |line| lines.push(line.to_string()),
+            &cancel,
+        );
+        assert_eq!(
+            opened,
+            vec![
+                "https://accounts.booth.pm/library?page=1".to_string(),
+                "https://accounts.booth.pm/library/gifts?page=1".to_string(),
+                "https://accounts.booth.pm/library/free_downloads?page=1".to_string(),
+            ]
+        );
+        assert_eq!(collected.stop, WalkStop::Finished);
+        assert_eq!(collected.pages, 3);
+        assert_eq!(collected.product_count(), 3);
+        assert!(lines.iter().any(|line| line.starts_with("ライブラリ ")));
+        assert!(lines.iter().any(|line| line.starts_with("ギフト ")));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.starts_with("無料ダウンロード "))
+        );
+        assert!(lines.iter().all(|line| !line.contains('?')));
+        assert!(lines.iter().all(|line| !line.contains("ダミー商品")));
     }
 
     #[test]
@@ -579,18 +679,22 @@ mod tests {
         let collected = drive_library_walk(
             |_| {
                 let n = reads.fetch_add(1, Ordering::SeqCst);
-                let href = if n == 0 { LIBRARY_PAGE } else { GIFT_PAGE };
+                let href = match n {
+                    0 => LIBRARY_PAGE,
+                    1 => GIFT_PAGE,
+                    _ => FREE_PAGE,
+                };
                 Ok(snapshot(href, serde_json::json!([]), 1))
             },
             |delay| delays.push(delay),
             |_| {},
             &cancel,
         );
-        assert_eq!(reads.load(Ordering::SeqCst), 2);
-        assert_eq!(delays, vec![PAGE_DELAY]);
+        assert_eq!(reads.load(Ordering::SeqCst), 3);
+        assert_eq!(delays, vec![PAGE_DELAY, PAGE_DELAY]);
         assert_eq!(delays[0].as_millis(), 1000);
         assert_eq!(collected.stop, WalkStop::Finished);
-        assert_eq!(collected.pages, 2);
+        assert_eq!(collected.pages, 3);
     }
 
     #[test]
@@ -617,6 +721,7 @@ mod tests {
         assert_eq!(collected.stop, WalkStop::Cancelled);
         assert_eq!(collected.product_count(), 1);
         assert!(opened.iter().all(|url| !url.contains("/gifts")));
+        assert!(opened.iter().all(|url| !url.contains("free_downloads")));
         assert!(opened.iter().all(|url| walk_block_reason(url).is_none()));
     }
 

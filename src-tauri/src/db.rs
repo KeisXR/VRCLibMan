@@ -221,6 +221,19 @@ fn migrate(connection: &Connection) -> Result<(), String> {
             .execute_batch("PRAGMA user_version = 4;")
             .sql()?;
     }
+    // v5 is only `products.unpublished` (library badge「非公開」).
+    // Keep this block self-contained so a parallel migration can take the next number.
+    if version < 5 {
+        ensure_column(
+            connection,
+            "products",
+            "unpublished",
+            "ALTER TABLE products ADD COLUMN unpublished INTEGER",
+        )?;
+        connection
+            .execute_batch("PRAGMA user_version = 5;")
+            .sql()?;
+    }
     Ok(())
 }
 
@@ -861,6 +874,12 @@ fn merge_library_facts(
         "is_adult",
         incoming.is_adult,
     )?;
+    changed |= merge_flag(
+        connection,
+        &incoming.booth_id,
+        "unpublished",
+        incoming.unpublished,
+    )?;
     for variation in &incoming.variations {
         changed |= merge_variation(connection, &incoming.booth_id, variation)?;
     }
@@ -893,6 +912,9 @@ fn merge_flag(
         "is_free" => "UPDATE products SET is_free = ?1 WHERE booth_id = ?2 AND (is_free IS NOT ?1)",
         "is_adult" => {
             "UPDATE products SET is_adult = ?1 WHERE booth_id = ?2 AND (is_adult IS NOT ?1)"
+        }
+        "unpublished" => {
+            "UPDATE products SET unpublished = ?1 WHERE booth_id = ?2 AND (unpublished IS NOT ?1)"
         }
         _ => return Err("不明な項目です".into()),
     };
@@ -2100,16 +2122,18 @@ fn load_download_rows(connection: &Connection) -> Result<Vec<DownloadFact>, Stri
 
 fn load_product_flags(connection: &Connection) -> Result<Vec<ProductFlag>, String> {
     let mut statement = connection
-        .prepare("SELECT booth_id, is_free, is_adult FROM products")
+        .prepare("SELECT booth_id, is_free, is_adult, unpublished FROM products")
         .sql()?;
     let rows = statement
         .query_map([], |row| {
             let free: Option<i64> = row.get(1)?;
             let adult: Option<i64> = row.get(2)?;
+            let unpublished: Option<i64> = row.get(3)?;
             Ok(ProductFlag {
                 booth_id: row.get(0)?,
                 is_free: free.map(|value| value != 0),
                 is_adult: adult.map(|value| value != 0),
+                unpublished: unpublished.map(|value| value != 0),
             })
         })
         .sql()?;
@@ -2221,6 +2245,7 @@ pub(crate) fn add_free_product(connection: &mut Connection, url: &str) -> Result
         downloads: Vec::new(),
         is_free: Some(true),
         is_adult: None,
+        unpublished: None,
     };
     upsert(connection, &incoming)?;
     Ok(booth_id)
@@ -2300,6 +2325,7 @@ pub(crate) fn prepare_download(
             } else {
                 None
             },
+            unpublished: None,
         };
         upsert(connection, &incoming)?;
     } else {
@@ -4150,7 +4176,7 @@ struct SeedAvatar {
 mod tests {
     use super::*;
     use crate::import_data::parse_export;
-    use crate::view::{avatar_cards, avatar_detail, queue_page};
+    use crate::view::{avatar_cards, avatar_detail, products_by_ids, queue_page};
 
     #[test]
     fn bookmarks_persist_edits_and_intentionally_empty_lists() {
@@ -4184,8 +4210,16 @@ mod tests {
             connection
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
-            4
+            5
         );
+        let unpublished: Option<i64> = connection
+            .query_row(
+                "SELECT unpublished FROM products WHERE booth_id = '9001'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(unpublished, None);
         assert_eq!(require_product(&connection, "9001").unwrap().genre.as_deref(), Some("other"));
         assert_eq!(settings(&connection).unwrap().ollama_model, "gemma4:12b");
         assert_eq!(managed_products(&connection).unwrap().len(), 1);
@@ -4772,7 +4806,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
         let report = import_products(&mut connection, &parsed).unwrap();
         assert_eq!(report.inserted, 7);
         assert_eq!(report.skipped, 0);
@@ -5101,6 +5135,67 @@ mod tests {
         let page = queue_page(&snapshot, "unextracted", 0, 20);
         assert_eq!(page.unextracted, 0);
         assert_eq!(page.needs_review, 0);
+    }
+
+    #[test]
+    fn unpublished_library_flag_survives_merge_and_is_not_unavailable() {
+        let mut connection = open_memory().unwrap();
+        let hidden = r#"{"boothId":"424242","title":"ダミー衣装","shop":"ダミー工房","description":"説明だけ","isFree":true,"unpublished":true}"#;
+        import_products(&mut connection, &parse_export(hidden).unwrap()).unwrap();
+        let (free, unpublished, category, confirmed): (Option<i64>, Option<i64>, Option<String>, i64) = connection
+            .query_row(
+                "SELECT is_free, unpublished, category, user_confirmed FROM products WHERE booth_id = '424242'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(free, Some(1));
+        assert_eq!(unpublished, Some(1));
+        assert_eq!(category, None);
+        assert_eq!(confirmed, 0);
+        let again = r#"{"boothId":"424242","title":"ダミー衣装","shop":"ダミー工房","description":"説明だけ"}"#;
+        import_products(&mut connection, &parse_export(again).unwrap()).unwrap();
+        let kept: Option<i64> = connection
+            .query_row(
+                "SELECT unpublished FROM products WHERE booth_id = '424242'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(kept, Some(1));
+        let gone = r#"{"boothId":"515151","title":"消えたダミー","description":"公開終了（取得できず）"}"#;
+        import_products(&mut connection, &parse_export(gone).unwrap()).unwrap();
+        let closed: (Option<String>, Option<i64>) = connection
+            .query_row(
+                "SELECT category, unpublished FROM products WHERE booth_id = '515151'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(closed.0.as_deref(), Some("other"));
+        assert_eq!(closed.1, None);
+        let snapshot = load_snapshot(&connection).unwrap();
+        let shown = products_by_ids(&snapshot, &["424242".into(), "515151".into()]);
+        assert_eq!(shown[0].booth_id, "424242");
+        assert!(shown[0].unpublished);
+        assert!(shown[0].is_free);
+        assert_eq!(shown[0].category, None);
+        assert!(!shown[1].unpublished);
+        assert_eq!(shown[1].category, Some(Category::Other));
+        let clear = r#"{"boothId":"424242","title":"ダミー衣装","unpublished":false}"#;
+        import_products(&mut connection, &parse_export(clear).unwrap()).unwrap();
+        let cleared: Option<i64> = connection
+            .query_row(
+                "SELECT unpublished FROM products WHERE booth_id = '424242'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(cleared, Some(0));
+        let after = load_snapshot(&connection).unwrap();
+        let hidden_view = products_by_ids(&after, &["424242".into()]);
+        assert!(!hidden_view[0].unpublished);
+        assert!(hidden_view[0].is_free);
     }
 
     #[test]

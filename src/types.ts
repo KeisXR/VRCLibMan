@@ -98,6 +98,8 @@ export interface ItemView {
   downloads: DownloadView[];
   isFree: boolean;
   isAdult: boolean;
+  /** Library badge「非公開」. Distinct from 公開終了. */
+  unpublished: boolean;
   remoteConfigured: boolean;
   remoteChecked: boolean;
   remoteReachable: boolean;
