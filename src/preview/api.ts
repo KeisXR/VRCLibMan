@@ -20,6 +20,7 @@ import type {
   DownloadView,
   ItemView,
   Knowledge,
+  RemoteProductProbe,
   LibraryStats,
   OwnedBody,
   ProductUpdate,
@@ -352,6 +353,17 @@ const stressPreview =
 
 if (typeof location !== "undefined" && new URLSearchParams(location.search).get("remote") === "down") {
   store.remoteReachable = false;
+}
+
+type PreviewRemoteProbeOutcome = "ok" | "fail" | "timeout";
+let previewRemoteProbeOutcome: PreviewRemoteProbeOutcome = "ok";
+if (typeof location !== "undefined") {
+  const mode = new URLSearchParams(location.search).get("remoteProbe");
+  if (mode === "fail" || mode === "timeout") previewRemoteProbeOutcome = mode;
+}
+
+export function previewRemoteProbeDownloads(boothId: string): DownloadView[] {
+  return placedDownloads(boothId);
 }
 
 store.products.push(
@@ -1109,6 +1121,22 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     case "probe_remote_files":
       store.remoteChecked = true;
       return detail(String(args.id ?? "")) as T;
+    case "probe_remote_products": {
+      const ids = Array.isArray(args.ids) ? args.ids.map((id) => String(id)) : [];
+      if (previewRemoteProbeOutcome === "timeout") {
+        await new Promise((resolve) => setTimeout(resolve, 15_000));
+      }
+      store.remoteChecked = true;
+      const reachable = previewRemoteProbeOutcome !== "fail" && store.remoteReachable;
+      return ids.map(
+        (boothId): RemoteProductProbe => ({
+          boothId,
+          remoteChecked: true,
+          remoteReachable: reachable,
+          downloads: placedDownloads(boothId),
+        }),
+      ) as T;
+    }
     case "list_queue":
       return queue(String(args.kind ?? "review")) as T;
     case "list_product_options":
