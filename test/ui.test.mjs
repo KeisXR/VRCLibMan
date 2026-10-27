@@ -447,7 +447,7 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         await route("#/assets");
         await wait(() => main().querySelector("h1")?.textContent === "アセット");
         await wait(() => main().querySelector(".item"));
-        assert.equal(tabs().length, 15);
+        assert.equal(tabs().length, 16);
         assert.equal(activeTab().textContent, `すべて${all.total}`);
         assert.equal(main().querySelectorAll(".item").length, all.items.length);
         assert.ok(!main().textContent.includes("見本のワールド小物"));
@@ -502,10 +502,11 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         await wait(() => items().length === all.items.length);
         assert.ok(document.querySelector('.rail a[href="#/worlds"]').classList.contains("active"));
         assert.equal(activeTab().textContent, `すべて${all.total}`);
-        // すべて + 10 world genres + ジャンル未設定 (shown only while it has products)
-        assert.equal(tabs().length, 12);
+        // すべて + 10 world genres + 無料 + ジャンル未設定 (未設定は件数があるときだけ)
+        assert.equal(tabs().length, 13);
         assert.ok(tabs().some((node) => node.getAttribute("href") === "#/worlds/furniture_props"));
         assert.ok(tabs().some((node) => node.getAttribute("href") === "#/worlds/unset"));
+        assert.ok(tabs().some((node) => node.getAttribute("href") === "#/worlds/free"));
         assert.ok(main().querySelector(".product-actions-trigger"));
 
         const sky = await api.productsByGenre("world", "skybox");
@@ -538,15 +539,75 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         assert.ok(!assets.counts.unset);
         await route("#/assets");
         await wait(() => main().querySelector("h1")?.textContent === "アセット");
-        await wait(() => tabs().length === 15);
+        await wait(() => tabs().length === 16);
         assert.ok(!tabs().some((node) => node.getAttribute("href") === "#/assets/unset"));
+        assert.ok(tabs().some((node) => node.getAttribute("href") === "#/assets/free"));
 
-        const { selectedGenre } = await server.ssrLoadModule("/src/components/GenreBrowser.tsx");
+        const freeAssets = await api.productsByGenre("asset", "free");
+        assert.ok(freeAssets.items.some((item) => item.boothId === "8800111" && item.isFree));
+        assert.ok(freeAssets.items.every((item) => item.isFree && !item.classificationPinned));
+        assert.ok(!freeAssets.items.some((item) => item.boothId === "8800130" || item.boothId === "8800131"));
+        const keptAccessory = await api.productsByGenre("asset", "accessory");
+        assert.ok(keptAccessory.items.some((item) => item.boothId === "8800130" && item.isFree));
+        assert.ok(keptAccessory.items.some((item) => item.boothId === "8800132" && item.unpublished));
+        assert.ok(!keptAccessory.items.some((item) => item.boothId === "8800111"));
+        const pinnedFree = await api.productsByGenre("asset", "outfit");
+        assert.ok(pinnedFree.items.some((item) => item.boothId === "8800131" && item.classificationPinned && item.isFree));
+        const freeWorlds = await api.productsByGenre("world", "free");
+        assert.ok(freeWorlds.items.some((item) => item.boothId === "8901004" && item.unpublished));
+        assert.ok(!freeWorlds.items.some((item) => item.boothId === "8901001"));
+        const furniture = await api.productsByGenre("world", "furniture_props");
+        assert.ok(!furniture.items.some((item) => item.boothId === "8901004"));
+
+        await route("#/assets/free");
+        await wait(() => activeTab()?.textContent.startsWith("無料"));
+        await wait(() => main().textContent.includes("無料のリボン"));
+        await wait(() => main().textContent.includes("ダウンロードされていない無料のアセット"));
+        assert.ok(!main().textContent.includes("手元にある無料の小物"));
+        assert.ok(!main().textContent.includes("手動で移した無料の小物"));
+        assert.equal(activeTab().getAttribute("data-drop-genre"), null);
+        const freeSearch = main().querySelector(".genre-list-search");
+        await typeInto(freeSearch, "一致しない見本文字列");
+        await wait(() => main().textContent.includes("条件に合う商品はありません"));
+        await typeInto(freeSearch, "リボン");
+        await wait(() => main().textContent.includes("無料のリボン"));
+        assert.equal(main().querySelectorAll(".item").length, 1);
+        await typeInto(freeSearch, "");
+
+        await route("#/assets/accessory");
+        await wait(() => main().textContent.includes("非公開の見本アクセサリ"));
+        const hidden = [...main().querySelectorAll(".item")].find((node) => node.textContent.includes("非公開の見本アクセサリ"));
+        assert.ok(hidden.classList.contains("item-unpublished"));
+        assert.ok([...hidden.querySelectorAll(".badge")].some((node) => node.textContent === "非公開"));
+        const booth = [...hidden.querySelectorAll("button")].find((node) => node.textContent === "BOOTH");
+        assert.ok(booth && !booth.disabled);
+        assert.ok(main().textContent.includes("手元にある無料の小物"));
+        assert.ok([...main().querySelectorAll(".badge")].some((node) => node.textContent === "無料"));
+
+        await route("#/worlds/free");
+        await wait(() => main().textContent.includes("未入手の無料ワールド小物"));
+        const hiddenWorld = [...main().querySelectorAll(".item")].find((node) => node.textContent.includes("未入手の無料ワールド小物"));
+        assert.ok(hiddenWorld.classList.contains("item-unpublished"));
+        assert.ok([...hiddenWorld.querySelectorAll(".badge")].some((node) => node.textContent === "非公開"));
+        assert.ok([...hiddenWorld.querySelectorAll(".badge")].some((node) => node.textContent === "無料"));
+        assert.equal(document.querySelector('.genre-rail-nav a[aria-current="page"]')?.getAttribute("href"), "#/worlds/free");
+
+        await route("#/avatar/lime");
+        await wait(() => main().textContent.includes("非公開の見本アクセサリ"));
+        const detailCard = [...main().querySelectorAll(".item")].find((node) => node.textContent.includes("非公開の見本アクセサリ"));
+        assert.ok(detailCard.classList.contains("item-unpublished"));
+        assert.ok([...detailCard.querySelectorAll("button")].some((node) => node.textContent === "BOOTH" && !node.disabled));
+
+        const { selectedGenre, filterItems } = await server.ssrLoadModule("/src/components/GenreBrowser.tsx");
         assert.equal(selectedGenre("world", "skybox"), "skybox");
         assert.equal(selectedGenre("world", "unset"), "unset");
+        assert.equal(selectedGenre("world", "free"), "free");
+        assert.equal(selectedGenre("asset", "free"), "free");
         assert.equal(selectedGenre("world", "hair"), null);
         assert.equal(selectedGenre("asset", "skybox"), null);
         assert.equal(selectedGenre("asset", null), null);
+        assert.equal(filterItems(freeAssets.items, "リボン").length, 1);
+        assert.equal(filterItems(freeAssets.items, "一致しない見本文字列").length, 0);
       },
     );
     await t.test(

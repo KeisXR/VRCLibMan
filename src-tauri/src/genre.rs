@@ -32,6 +32,9 @@ pub const WORLD_GENRES: &[(&str, &str)] = &[
 /// Route / query key for products whose genre is missing or not one of their kind's genres.
 pub const UNSET: &str = "unset";
 
+/// Browse key for free products that are not on disk. Not a stored genre.
+pub const FREE: &str = "free";
+
 /// Genres of a browse kind (`asset` / `world`).
 pub fn kind_genres(kind: &str) -> Option<&'static [(&'static str, &'static str)]> {
     match kind {
@@ -162,6 +165,8 @@ mod tests {
     fn mismatched_genre_falls_back() {
         assert_eq!(validate(Category::World, Some("hair")), "tool_other");
         assert_eq!(validate(Category::Hair, Some("skybox")), "other");
+        assert_eq!(validate(Category::Accessory, Some(FREE)), "other");
+        assert_eq!(validate(Category::World, Some(FREE)), "tool_other");
     }
 
     #[test]

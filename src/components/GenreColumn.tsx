@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { DragEvent } from "react";
-import { GENRE_LABEL, GENRE_UNSET, genresForKind } from "../types";
+import { GENRE_FREE, GENRE_LABEL, GENRE_UNSET, genresForKind } from "../types";
 import type { GenreKind } from "../types";
 import { useGenreBrowse } from "../genreBrowseContext";
 import { genreHref } from "../genreBrowseUtils";
@@ -115,6 +115,14 @@ export function GenreColumn() {
             onDropId={drop(kind, value)}
           />
         ))}
+        <GenreTarget
+          href={genreHref(basePath, GENRE_FREE)}
+          label={GENRE_LABEL[GENRE_FREE]}
+          count={data ? data.counts[GENRE_FREE] ?? 0 : undefined}
+          active={selected === GENRE_FREE}
+          className="genre-link"
+          onDropId={() => undefined}
+        />
         {showUnset && (
           <GenreTarget
             href={genreHref(basePath, GENRE_UNSET)}

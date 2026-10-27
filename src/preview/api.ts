@@ -1,7 +1,7 @@
 import { previewBrowserState, previewBrowserAction, previewSaveBookmark, previewDeleteBookmark, previewOpenBrowser, previewCloseBrowser } from "./browser";
 import extensionManifest from "../../extension/manifest.json";
 import { filePresence } from "../media";
-import { GENRE_UNSET, genresForKind } from "../types";
+import { GENRE_FREE, GENRE_UNSET, genresForKind } from "../types";
 import type { ClassificationSnapshot } from "../types";
 import type {
   AvatarCard,
@@ -211,6 +211,30 @@ const store: Store = {
       isFree: true,
     }),
     product({
+      boothId: "8800130",
+      title: "手元にある無料の小物",
+      shop: "見本工房",
+      category: "accessory",
+      isFree: true,
+    }),
+    product({
+      boothId: "8800131",
+      title: "手動で移した無料の小物",
+      shop: "見本工房",
+      category: "outfit",
+      genre: "outfit",
+      categoryLocked: true,
+      genreLocked: true,
+      isFree: true,
+    }),
+    product({
+      boothId: "8800132",
+      title: "非公開の見本アクセサリ",
+      shop: "見本工房",
+      category: "accessory",
+      unpublished: true,
+    }),
+    product({
       boothId: "8800112",
       title: "年齢制限のアクセサリ",
       shop: "サンプル工房",
@@ -279,6 +303,7 @@ const store: Store = {
     { productId: "8800101", avatarId: "shinano" },
     { productId: "8800101", avatarId: "manuka" },
     { productId: "8800111", avatarId: "lime" },
+    { productId: "8800132", avatarId: "lime" },
     { productId: "8800112", avatarId: "lime" },
     { productId: "8800102", avatarId: "manuka" },
     { productId: "8800120", avatarId: "lime" },
@@ -302,6 +327,15 @@ const store: Store = {
       linkedProductId: null,
       candidateProductId: "8800102",
       matchScore: 0.62,
+    },
+    {
+      path: "C:\\Assets\\Free\\small_free.unitypackage",
+      filename: "small_free.unitypackage",
+      isDir: false,
+      size: 2048,
+      linkedProductId: "8800130",
+      candidateProductId: "8800130",
+      matchScore: 1,
     },
   ],
   variations: [
@@ -343,6 +377,15 @@ const store: Store = {
       sizeBytes: 4096,
       state: "local",
       localPath: "C:\\Assets\\Lime\\eye_base.zip",
+      remotePath: null,
+    },
+    {
+      boothId: "8800130",
+      variation: "",
+      filename: "small_free.unitypackage",
+      sizeBytes: 2048,
+      state: "local",
+      localPath: "C:\\Assets\\Free\\small_free.unitypackage",
       remotePath: null,
     },
     ...["8187247", "8187248", "8187253", "8187254", "8187260"].map((id) => ({
@@ -401,6 +444,16 @@ store.products.push(
     category: "world",
     genre: null,
     descriptionSnippet: "ジャンルがまだ決まっていない見本です。",
+  }),
+  product({
+    boothId: "8901004",
+    title: "未入手の無料ワールド小物",
+    shop: "見本",
+    category: "world",
+    genre: "furniture_props",
+    isFree: true,
+    unpublished: true,
+    descriptionSnippet: "ファイルがまだ手元にない無料の見本です。",
   }),
 );
 for (let index = 1; index <= 12; index += 1) {
@@ -522,6 +575,20 @@ function placedDownloads(boothId: string): DownloadView[] {
       localPath: row.localPath,
       remotePath: row.remotePath,
     }));
+}
+
+function hasLocalCopy(boothId: string): boolean {
+  const downloads = placedDownloads(boothId);
+  const names = new Set(downloads.map((file) => file.filename));
+  const extra = filesFor(boothId).filter((file) => !names.has(file.filename)).length;
+  const presence = filePresence(downloads, extra);
+  return presence === "local" || presence === "partial";
+}
+
+function browseGenre(item: Product, known: readonly string[]): string {
+  const pinned = Boolean(item.categoryLocked && item.genreLocked);
+  if (item.isFree && !pinned && !hasLocalCopy(item.boothId)) return GENRE_FREE;
+  return item.genre && known.includes(item.genre) ? item.genre : GENRE_UNSET;
 }
 
 function itemView(item: Product, viaBaseBody: boolean): ItemView {
@@ -1262,9 +1329,9 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       // Same as Rust: unclassified products (no category) are not listed by genre.
       const rows = activeProducts().filter((item) => item.category != null && (kind === "world" ? item.category === "world" : item.category !== "world" && item.category !== "avatar"));
       const known: readonly string[] = genresForKind(kind);
-      const bucket = (item: Product) => (item.genre && known.includes(item.genre) ? item.genre : GENRE_UNSET);
+      const bucket = (item: Product) => browseGenre(item, known);
       const counts: Record<string, number> = {}; for (const item of rows) counts[bucket(item)] = (counts[bucket(item)] ?? 0) + 1;
-      return { items: rows.filter((item) => !wanted || (wanted === GENRE_UNSET ? bucket(item) === GENRE_UNSET : item.genre === wanted)).sort((a,b) => a.title.localeCompare(b.title, "ja")).map((item) => itemView(item, false)), counts, total: rows.length } as T;
+      return { items: rows.filter((item) => !wanted || bucket(item) === wanted).sort((a,b) => a.title.localeCompare(b.title, "ja")).map((item) => itemView(item, false)), counts, total: rows.length } as T;
     }
     case "probe_remote_files":
       store.remoteChecked = true;

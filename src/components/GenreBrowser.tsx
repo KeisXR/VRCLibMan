@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { ItemCard } from "../pages/AvatarDetailPage";
-import { GENRE_LABEL, GENRE_UNSET, genresForKind } from "../types";
+import { GENRE_FREE, GENRE_LABEL, GENRE_UNSET, genresForKind } from "../types";
 import type { GenreKind } from "../types";
 import { useGenreBrowse } from "../genreBrowseContext";
 import { filterItems, genreHref, selectedGenre } from "../genreBrowseUtils";
@@ -47,6 +47,14 @@ export function GenreBrowser({ title, lede }: { title: string; lede?: string }) 
                 }}
               />
             ))}
+            <GenreTarget
+              href={genreHref(basePath, GENRE_FREE)}
+              label={GENRE_LABEL[GENRE_FREE]}
+              count={data?.counts[GENRE_FREE] ?? 0}
+              showCount={false}
+              active={selected === GENRE_FREE}
+              onDropId={() => undefined}
+            />
             {(data?.counts[GENRE_UNSET] ?? 0) > 0 || selected === GENRE_UNSET ? (
               <GenreTarget
                 href={genreHref(basePath, GENRE_UNSET)}
@@ -95,6 +103,11 @@ export function GenreBrowser({ title, lede }: { title: string; lede?: string }) 
       {selected === GENRE_UNSET && (
         <p className="note genre-notice">
           ジャンルが決まっていない{noun}の商品です。確認画面や再分類でジャンルが付くと、各ジャンルに移ります。
+        </p>
+      )}
+      {selected === GENRE_FREE && (
+        <p className="note genre-notice">
+          ダウンロードされていない無料の{noun}です。ファイルが手元に来ると、各ジャンルに移ります。手動で移動した商品は、移動先のジャンルに残ります。
         </p>
       )}
       {error ? (

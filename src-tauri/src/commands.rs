@@ -203,11 +203,10 @@ pub fn list_products_by_genre(state: State<'_, AppState>, kind: String, genre: O
     let mut connection = db(&state)?;
     let genres = crate::genre::kind_genres(&kind).ok_or_else(|| "ジャンルの種類が不正です".to_string())?;
     let all_ids = db::product_ids_by_genre(&connection, &kind, None)?;
-    let ids = db::product_ids_by_genre(&connection, &kind, genre.as_deref())?;
     let mut snapshot = db::load_snapshot(&mut connection)?;
     let remote = db::settings(&mut connection)?.remote_library_folder;
     crate::library_files::fill_local_places(&mut snapshot, &remote);
-    Ok(view::genre_products(&snapshot, genres, &all_ids, &ids))
+    Ok(view::genre_products(&snapshot, genres, &all_ids, genre.as_deref()))
 }
 
 fn load_avatar(app: &AppHandle, id: &str, probe_remote: bool) -> Result<AvatarDetail, String> {
