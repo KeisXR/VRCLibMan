@@ -37,6 +37,114 @@ pub fn strong_category_override(title: &str) -> Option<Category> {
     }
 }
 
+/// Title phrases used only after BOOTH category and tags decline to settle.
+/// A settled BOOTH category stays as it is. Locks are handled by the caller.
+pub fn title_fill_category(title: &str, model: Category) -> Option<Category> {
+    let folded = nfkc(title).to_lowercase();
+    if avatar_package(&folded) {
+        return Some(Category::Avatar);
+    }
+    if has_world_prop(&folded) {
+        return Some(Category::World);
+    }
+    let keyword = category_for_listed_product(title, "");
+    if model == Category::Other && keyword != Category::Other {
+        return Some(keyword);
+    }
+    if model == Category::Gimmick && keyword == Category::Accessory {
+        return Some(keyword);
+    }
+    None
+}
+
+/// A title that lists avatar distributable formats, not a wearable that happens to ship a package.
+fn avatar_package(lower: &str) -> bool {
+    if blocks_avatar_package(lower) {
+        return false;
+    }
+    if lower.contains("editable model data") {
+        return true;
+    }
+    static SLASH: OnceLock<Regex> = OnceLock::new();
+    let slash = SLASH.get_or_init(|| Regex::new(r"vrchat\s*/\s*3d\s*model").unwrap());
+    if slash.is_match(lower) {
+        return true;
+    }
+    let markers = [".xavater", ".vroid", ".unitypackage"];
+    markers
+        .iter()
+        .filter(|marker| lower.contains(*marker))
+        .count()
+        >= 2
+}
+
+fn blocks_avatar_package(lower: &str) -> bool {
+    const WORDS: &[&str] = &[
+        "テクスチャ",
+        "texture",
+        "瞳",
+        "メイク",
+        "ニップル",
+        "nipple",
+        "ヘア",
+        "髪",
+        "ウィッグ",
+        "hair",
+        "メガネ",
+        "眼鏡",
+        "glasses",
+        "アクセサリ",
+        "ピアス",
+        "イヤリング",
+        "earring",
+        "ネックレス",
+        "チョーカー",
+        "ヘイロー",
+        "halo",
+        "ディスク",
+        "カード",
+        "衣装",
+        "服",
+        "部屋着",
+        "ルームウェア",
+        "パーカー",
+        "スカート",
+        "シャツ",
+        "ドレス",
+        "ワンピース",
+        "techwear",
+        "ずぼん",
+        "ズボン",
+        "fullpack",
+        "ギミック",
+        "gimmick",
+        "表情",
+        "こたつ",
+        "毛布",
+        "布団",
+    ];
+    WORDS.iter().any(|word| lower.contains(word))
+        || crate::normalize::contains_ascii_word(lower, "ring")
+        || crate::normalize::contains_ascii_word(lower, "bag")
+}
+
+fn has_world_prop(lower: &str) -> bool {
+    const WORDS: &[&str] = &[
+        "こたつ",
+        "毛布",
+        "布団",
+        "huton",
+        "家具",
+        "qvpen",
+        "差し替えモデル",
+        "pencil",
+        "スイッチ",
+        "asmr",
+        "affinity",
+    ];
+    WORDS.iter().any(|word| lower.contains(word))
+}
+
 /// World assets beat a weak model guess. `ギミック` alone stays an avatar gimmick.
 /// A world gimmick needs a world signal: ワールド, world, Udon, UdonSharp,
 /// ワールド用, ワールドギミック, a shader for a world, or a world prefab.
@@ -296,7 +404,10 @@ pub fn explicit_dedication_pieces(title: &str, avatars: &[Avatar]) -> Vec<String
     for inner in bracket_inners(title) {
         if let Some(stem) = dedication_stem(&inner) {
             if let Some(avatar) = crate::resolve::resolve_name(stem, avatars) {
-                if !names.iter().any(|existing| existing == &avatar.display_name) {
+                if !names
+                    .iter()
+                    .any(|existing| existing == &avatar.display_name)
+                {
                     names.push(avatar.display_name.clone());
                 }
                 continue;
@@ -316,7 +427,19 @@ fn is_name_separator(ch: char) -> bool {
     ch.is_whitespace()
         || matches!(
             ch,
-            '/' | '／' | '、' | '【' | '】' | '「' | '」' | '(' | ')' | '（' | '）' | '_' | '・' | '･'
+            '/' | '／'
+                | '、'
+                | '【'
+                | '】'
+                | '「'
+                | '」'
+                | '('
+                | ')'
+                | '（'
+                | '）'
+                | '_'
+                | '・'
+                | '･'
         )
 }
 
@@ -339,7 +462,9 @@ pub fn versioned_known_names(title: &str, avatars: &[Avatar]) -> Vec<String> {
         if name_end == 0 || cursor >= name_end {
             continue;
         }
-        let base = title[chars[cursor].0..chars[name_end].0].trim().trim_matches('_');
+        let base = title[chars[cursor].0..chars[name_end].0]
+            .trim()
+            .trim_matches('_');
         if base.chars().count() < 2 || known_names_in(base, avatars).is_empty() {
             continue;
         }
@@ -708,7 +833,16 @@ fn bracket_inners(title: &str) -> Vec<String> {
 fn classify_text(text: &str, allow_broad: bool) -> Category {
     let lower = nfkc(text).to_lowercase();
     let has = |words: &[&str]| words.iter().any(|word| lower.contains(word));
-    if has(&["テクスチャ", "texture", "eyetexture", "eye texture", "瞳"]) {
+    let word = |token: &str| crate::normalize::contains_ascii_word(&lower, token);
+    if has(&[
+        "テクスチャ",
+        "texture",
+        "eyetexture",
+        "eye texture",
+        "瞳",
+        "ニップル",
+        "nipple",
+    ]) {
         return Category::Texture;
     }
     if has(&[
@@ -730,6 +864,7 @@ fn classify_text(text: &str, allow_broad: bool) -> Category {
         "アクセサリ",
         "ピアス",
         "イヤリング",
+        "earring",
         "ネックレス",
         "チョーカー",
         "ヘイロー",
@@ -740,23 +875,33 @@ fn classify_text(text: &str, allow_broad: bool) -> Category {
     if !allow_broad {
         return Category::Other;
     }
-    if has(&["オリジナル3dモデル"]) {
+    if has(&["ディスク", "カード"]) || word("ring") || word("bag") {
+        return Category::Accessory;
+    }
+    if has(&["オリジナル3dモデル"]) || avatar_package(&lower) {
         return Category::Avatar;
     }
-    if world_strength(text) >= 2 {
+    if world_strength(text) >= 2 || has_world_prop(&lower) {
         return Category::World;
     }
     if has(&[
-        "こたつ",
-        "毛布",
-        "布団",
-        "huton",
-        "磁気ディスク",
         "表情",
         "アニメーション",
         "animation",
         "ボディ",
+        "なでなで",
+        "kisssystem",
+        "キス",
+        "スマートフォン",
+        "シェイプキー",
+        "shapekey",
+        "shape key",
+        "face tracking",
+        "facetracking",
+        "フェイストラッキング",
     ]) || has_body_word(&lower)
+        || word("sps")
+        || word("phone")
     {
         return Category::Gimmick;
     }
@@ -767,6 +912,7 @@ fn classify_text(text: &str, allow_broad: bool) -> Category {
         "衣装",
         "服",
         "部屋着",
+        "ルームウェア",
         "パーカー",
         "スカート",
         "シャツ",
@@ -774,8 +920,15 @@ fn classify_text(text: &str, allow_broad: bool) -> Category {
         "ワンピース",
         "techwear",
         "tech wear",
+        "ずぼん",
+        "ズボン",
+        "fullpack",
+        "full pack",
     ]) {
         return Category::Outfit;
+    }
+    if has(&["キット"]) {
+        return Category::Gimmick;
     }
     if world_strength(text) == 1 {
         return Category::World;
@@ -961,11 +1114,11 @@ Avatar
             category_for_listed_product("Noctilume EyeTexture", ""),
             Category::Texture
         );
-        assert_eq!(category_for_listed_product("こたつ", ""), Category::Gimmick);
-        assert_eq!(category_for_listed_product("毛布", ""), Category::Gimmick);
+        assert_eq!(category_for_listed_product("こたつ", ""), Category::World);
+        assert_eq!(category_for_listed_product("毛布", ""), Category::World);
         assert_eq!(
             category_for_listed_product("磁気ディスク", ""),
-            Category::Gimmick
+            Category::Accessory
         );
         assert_eq!(
             category_for_listed_product("ネオンヘイロー", ""),
@@ -975,7 +1128,7 @@ Avatar
             category_for_listed_product("まめひなた表情アニメーション", ""),
             Category::Gimmick
         );
-        assert_eq!(category_for_listed_product("huton", ""), Category::Gimmick);
+        assert_eq!(category_for_listed_product("huton", ""), Category::World);
         assert_eq!(
             category_for_listed_product("まめひなた body", ""),
             Category::Gimmick
@@ -1060,6 +1213,35 @@ Avatar
             Category::Gimmick,
             0.9
         ));
+        assert!(!world_hint_overrides(
+            "サンプルこたつ",
+            "",
+            Category::Gimmick,
+            0.95
+        ));
+        assert_eq!(
+            title_fill_category("サンプルこたつ", Category::Gimmick),
+            Some(Category::World)
+        );
+        assert!(!world_hint_overrides(
+            "サンプルペンライト",
+            "",
+            Category::Gimmick,
+            0.95
+        ));
+        assert_eq!(
+            strong_category_override("【VRChat / 3D model】サンプル子"),
+            None
+        );
+        assert_eq!(
+            title_fill_category("【VRChat / 3D model】サンプル子", Category::Other),
+            Some(Category::Avatar)
+        );
+        assert_eq!(
+            strong_category_override("サンプル衣装 (.xavater / .vroid)"),
+            None
+        );
+        assert_eq!(strong_category_override("VRChat向け3Dモデル"), None);
     }
 
     #[test]
@@ -1117,12 +1299,8 @@ Avatar
         assert!(names.iter().any(|name| name == "クルミ ver1.2"));
         assert!(names.iter().any(|name| name == "クルミ"));
         assert!(versioned_known_names("見知らぬ子 ver1.2", &avatars).is_empty());
-        let from_description = names_for_extraction(
-            "部屋着",
-            "対応アバター\nクルミ ver1.2\n",
-            &[],
-            &avatars,
-        );
+        let from_description =
+            names_for_extraction("部屋着", "対応アバター\nクルミ ver1.2\n", &[], &avatars);
         assert!(from_description.iter().any(|name| name == "クルミ ver1.2"));
     }
 
@@ -1142,7 +1320,10 @@ Avatar
         let split = title_avatar_hints("【ソラネ・クルミ対応】ワンピース", &sample_avatars());
         assert!(split.iter().any(|name| name == "ソラネ"), "{split:?}");
         assert!(split.iter().any(|name| name == "クルミ"), "{split:?}");
-        assert!(split.iter().all(|name| name != "ソラネ・クルミ"), "{split:?}");
+        assert!(
+            split.iter().all(|name| name != "ソラネ・クルミ"),
+            "{split:?}"
+        );
         let mut avatars = sample_avatars();
         avatars.push(avatar("pair", "ソラネ・クルミ"));
         let whole = title_avatar_hints("【ソラネ・クルミ対応】ワンピース", &avatars);
@@ -1153,7 +1334,10 @@ Avatar
         let half = title_avatar_hints("【ソラネ･クルミ対応】ワンピース", &avatars);
         assert_eq!(half, vec!["ソラネ・クルミ".to_string()]);
         let listed = title_avatar_hints("クルミ、【ソラネ・クルミ対応】", &avatars);
-        assert!(listed.iter().any(|name| name == "ソラネ・クルミ"), "{listed:?}");
+        assert!(
+            listed.iter().any(|name| name == "ソラネ・クルミ"),
+            "{listed:?}"
+        );
         assert!(listed.iter().any(|name| name == "クルミ"), "{listed:?}");
         assert!(listed.iter().all(|name| name != "ソラネ"), "{listed:?}");
     }

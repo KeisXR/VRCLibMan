@@ -85,7 +85,121 @@ pub fn validate(category: Category, genre: Option<&str>) -> String {
         .to_string()
 }
 
-/// Deterministic first-pass classification. Keep specific rules before broad ones.
+/// Title phrases for products whose BOOTH category and tags did not choose a genre.
+/// Tag settlement keeps using `classify_text`, so these words do not change that path.
+pub fn classify_title_gap(category: Category, title: &str, description: &str) -> Option<String> {
+    let title_l = crate::normalize::nfkc(title).to_lowercase();
+    let text = format!(
+        "{title_l}\n{}",
+        crate::normalize::nfkc(description).to_lowercase()
+    );
+    let has = |words: &[&str]| words.iter().any(|word| text.contains(word));
+    let title_has = |words: &[&str]| words.iter().any(|word| title_l.contains(word));
+    let title_word = |token: &str| crate::normalize::contains_ascii_word(&title_l, token);
+    let key = if category == Category::World {
+        if has(&["skybox", "スカイボックス"]) {
+            "skybox"
+        } else if has(&["ベッド", "椅子", "いす", "家具", "ソファ"])
+            || title_has(&["こたつ", "毛布", "布団", "huton"])
+        {
+            "furniture_props"
+        } else if title_has(&["qvpen", "差し替えモデル", "pencil"]) {
+            "texture_material"
+        } else if has(&["udon", "ワールドギミック", "ギミック"]) || title_has(&["asmr"])
+        {
+            "world_gimmick"
+        } else if has(&["ライティング", "post process", "ポストプロセス"]) {
+            "lighting_postprocess"
+        } else if has(&["シェーダー", "shader"]) {
+            "world_shader"
+        } else if has(&["bgm", "効果音", "音源"]) {
+            "audio_bgm"
+        } else if has(&["建物", "地形", "building", "terrain"]) {
+            "building_terrain"
+        } else if has(&["テクスチャ", "マテリアル", "material"]) || title_has(&["スイッチ"])
+        {
+            "texture_material"
+        } else if has(&["ワールド", "world"]) {
+            "world"
+        } else {
+            return None;
+        }
+    } else if has(&["アイテクスチャ", "瞳", "eye texture", "eyetexture"]) {
+        "eye_texture"
+    } else if has(&["靴", "シューズ", "shoe", "靴下", "ソックス"]) {
+        "shoes_socks"
+    } else if has(&["髪型", "髪", "ヘア", "hair"]) {
+        "hair"
+    } else if has(&["メイク", "肌テクスチャ", "skin texture"]) || title_has(&["ニップル", "nipple"])
+    {
+        "makeup_skin"
+    } else if has(&["表情", "アニメーション", "animation"])
+        || title_has(&[
+            "face tracking",
+            "facetracking",
+            "フェイストラッキング",
+            "シェイプキー",
+            "shapekey",
+            "shape key",
+        ])
+    {
+        "expression_animation"
+    } else if has(&["ポーズ", "pose"]) {
+        "pose"
+    } else if has(&["パーティクル", "particle", "エフェクト", "effect"]) {
+        "particle_effect"
+    } else if has(&["シェーダー", "shader"]) {
+        "shader"
+    } else if has(&["ツール", "エディタ拡張", "editor extension"])
+        || (category == Category::Other && title_has(&["もちふぃった", "mochifitter"]))
+    {
+        "tool_editor"
+    } else if has(&["耳", "しっぽ", "尻尾"]) {
+        "head_ears_tail"
+    } else if has(&[
+        "アクセサリ",
+        "accessory",
+        "ピアス",
+        "メガネ",
+        "イヤリング",
+        "earring",
+        "リング",
+        "glasses",
+    ]) || title_has(&["ディスク", "カード"])
+        || title_word("ring")
+        || title_word("bag")
+    {
+        "accessory"
+    } else if has(&["ギミック", "gimmick"])
+        || title_has(&["なでなで", "kisssystem", "キス", "スマートフォン"])
+        || title_word("sps")
+        || title_word("phone")
+    {
+        "gimmick"
+    } else if has(&[
+        "衣装",
+        "服",
+        "outfit",
+        "dress",
+        "techwear",
+        "tech wear",
+        "部屋着",
+        "ルームウェア",
+        "ずぼん",
+        "ズボン",
+        "fullpack",
+        "full pack",
+    ]) {
+        "outfit"
+    } else if title_has(&["キット"]) {
+        "gimmick"
+    } else {
+        return None;
+    };
+    Some(key.to_string())
+}
+
+/// Deterministic keywords shared with tag names. Title-only phrases live in `classify_title_gap`.
 pub fn classify_text(category: Category, title: &str, description: &str) -> Option<String> {
     let text = format!("{title}\n{description}").to_lowercase();
     let has = |words: &[&str]| words.iter().any(|word| text.contains(word));
@@ -182,6 +296,15 @@ mod tests {
         assert_eq!(
             genre_from_tags(Category::Texture, &["Unity".into(), "3Dモデル".into()]),
             None
+        );
+        assert_eq!(
+            genre_from_tags(Category::World, &["こたつ".into()]),
+            None,
+            "title phrases are not tag rules"
+        );
+        assert_eq!(
+            classify_title_gap(Category::World, "サンプルこたつ", ""),
+            Some("furniture_props".into())
         );
     }
 

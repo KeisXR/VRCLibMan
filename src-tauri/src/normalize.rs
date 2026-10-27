@@ -6,6 +6,31 @@ pub fn nfkc(input: &str) -> String {
     input.nfkc().collect()
 }
 
+/// ASCII word, so `ring` does not match inside `earring` or `string`.
+pub fn contains_ascii_word(haystack: &str, word: &str) -> bool {
+    let word = word.to_ascii_lowercase();
+    if word.is_empty() {
+        return false;
+    }
+    let lower = haystack.to_lowercase();
+    let mut rest = lower.as_str();
+    while let Some(index) = rest.find(&word) {
+        let before = rest[..index].chars().next_back();
+        let after = rest[index + word.len()..].chars().next();
+        let boundary = |ch: Option<char>| ch.is_none_or(|ch| !ch.is_ascii_alphanumeric());
+        if boundary(before) && boundary(after) {
+            return true;
+        }
+        let step = rest[index..]
+            .chars()
+            .next()
+            .map(char::len_utf8)
+            .unwrap_or(1);
+        rest = &rest[index + step..];
+    }
+    false
+}
+
 pub fn is_punct(ch: char) -> bool {
     ch.is_ascii_punctuation()
         || matches!(
@@ -803,7 +828,16 @@ mod tests {
 
     #[test]
     fn attribute_labels_are_not_avatar_names() {
-        for label in ["NSFW", "R18", "R-18", "18禁", "脱衣", "成人向け", "素体", "汎用"] {
+        for label in [
+            "NSFW",
+            "R18",
+            "R-18",
+            "18禁",
+            "脱衣",
+            "成人向け",
+            "素体",
+            "汎用",
+        ] {
             assert!(is_blocked_avatar_label(label), "{label}");
         }
         assert!(!is_blocked_avatar_label("クルミ"));

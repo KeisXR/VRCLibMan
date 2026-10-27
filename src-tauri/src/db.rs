@@ -1304,6 +1304,16 @@ pub(crate) fn apply_extraction(
     extraction: &Extraction,
     threshold: f64,
 ) -> Result<(), String> {
+    apply_extraction_inner(connection, booth_id, extraction, threshold, true)
+}
+
+fn apply_extraction_inner(
+    connection: &mut Connection,
+    booth_id: &str,
+    extraction: &Extraction,
+    threshold: f64,
+    title_fill: bool,
+) -> Result<(), String> {
     if product_excluded(connection, booth_id)? {
         return Ok(());
     }
@@ -1318,13 +1328,24 @@ pub(crate) fn apply_extraction(
         &extraction.compatible_avatars,
         &avatars,
     );
-    let category = decide_category(&existing, extraction.category, extraction.confidence);
+    let category = decide_category(
+        &existing,
+        extraction.category,
+        extraction.confidence,
+        title_fill,
+    );
     let tags = booth_tags_of(connection, booth_id)?;
     let genre = if existing.genre_locked {
         existing.genre.clone()
     } else {
         category.map(|category| {
-            let selected = crate::genre::genre_from_tags(category, &tags)
+            let from_tags = crate::genre::genre_from_tags(category, &tags);
+            let from_title = if title_fill {
+                crate::genre::classify_title_gap(
+                    category,
+                    &existing.title,
+                    &existing.description_snippet,
+                )
                 .or_else(|| {
                     crate::genre::classify_text(
                         category,
@@ -1332,7 +1353,21 @@ pub(crate) fn apply_extraction(
                         &existing.description_snippet,
                     )
                 })
-                .or_else(|| extraction.genre.clone());
+            } else {
+                crate::genre::classify_text(
+                    category,
+                    &existing.title,
+                    &existing.description_snippet,
+                )
+            };
+            // Tags win. A BOOTH settlement then keeps its genre. Title phrases fill the rest.
+            let selected = if title_fill {
+                from_tags.or(from_title).or_else(|| extraction.genre.clone())
+            } else {
+                from_tags
+                    .or_else(|| extraction.genre.clone())
+                    .or(from_title)
+            };
             crate::genre::validate(category, selected.as_deref())
         })
     };
@@ -2636,7 +2671,7 @@ pub(crate) fn apply_booth_settlement(
         return Ok(false);
     }
     let threshold = settings(connection)?.confidence_threshold;
-    apply_extraction(
+    apply_extraction_inner(
         connection,
         booth_id,
         &Extraction {
@@ -2647,6 +2682,7 @@ pub(crate) fn apply_booth_settlement(
             confidence: 0.95,
         },
         threshold,
+        false,
     )?;
     Ok(true)
 }
@@ -4973,7 +5009,12 @@ fn tokyo_date() -> String {
         .to_string()
 }
 
-fn decide_category(existing: &Product, llm: Category, confidence: f64) -> Option<Category> {
+fn decide_category(
+    existing: &Product,
+    llm: Category,
+    confidence: f64,
+    title_fill: bool,
+) -> Option<Category> {
     if existing.category_locked {
         return existing.category;
     }
@@ -4990,6 +5031,13 @@ fn decide_category(existing: &Product, llm: Category, confidence: f64) -> Option
         confidence,
     ) {
         return Some(Category::World);
+    }
+    // Title phrases fill a product the BOOTH category and tags left unset.
+    // A settled BOOTH label calls this with title_fill = false and stays put.
+    if title_fill {
+        if let Some(category) = crate::compat::title_fill_category(&existing.title, llm) {
+            return Some(category);
+        }
     }
     Some(llm)
 }
@@ -6244,6 +6292,35 @@ mod tests {
         )
         .unwrap();
         assert!(again);
+    }
+
+    #[test]
+    fn booth_settlement_keeps_its_label_when_the_title_has_other_phrases() {
+        let mut connection = open_memory().unwrap();
+        import_export_json(
+            &mut connection,
+            r#"{
+                "products": [{
+                    "boothId": "7702101",
+                    "title": "サンプルこたつセット",
+                    "description": "家具の説明",
+                    "category": {"id": 209, "name": "3D衣装", "parent": {"name": "3Dモデル"}},
+                    "tags": ["VRChat"]
+                }]
+            }"#,
+        )
+        .unwrap();
+        assert!(apply_booth_settlement(&mut connection, "7702101").unwrap());
+        let settled = require_product(&connection, "7702101").unwrap();
+        assert_eq!(settled.category, Some(Category::Outfit));
+        assert_eq!(settled.genre.as_deref(), Some("outfit"));
+        assert!(!settled.category_locked && !settled.genre_locked);
+
+        move_product_genre(&mut connection, "7702101", "asset", "gimmick").unwrap();
+        assert!(!apply_booth_settlement(&mut connection, "7702101").unwrap());
+        let pinned = require_product(&connection, "7702101").unwrap();
+        assert_eq!(pinned.category, Some(Category::Gimmick));
+        assert_eq!(pinned.genre.as_deref(), Some("gimmick"));
     }
 
     #[test]
@@ -9432,6 +9509,79 @@ mod tests {
             )
             .unwrap();
         assert!(still >= 1);
+    }
+
+    #[test]
+    fn title_keywords_override_a_vague_model_and_leave_pins() {
+        let mut connection = open_memory().unwrap();
+        insert_dummy_product(&connection, "7702001", "サンプルこたつセット", "");
+        apply_extraction(
+            &mut connection,
+            "7702001",
+            &extraction(Category::Gimmick, &[], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        let kotatsu = require_product(&connection, "7702001").unwrap();
+        assert_eq!(kotatsu.category, Some(Category::World));
+        assert_eq!(kotatsu.genre.as_deref(), Some("furniture_props"));
+        assert!(!kotatsu.category_locked && !kotatsu.genre_locked);
+
+        insert_dummy_product(&connection, "7702002", "サンプル Fullpack", "");
+        apply_extraction(
+            &mut connection,
+            "7702002",
+            &extraction(Category::Other, &[], true, 0.4),
+            0.6,
+        )
+        .unwrap();
+        let pack = require_product(&connection, "7702002").unwrap();
+        assert_eq!(pack.category, Some(Category::Outfit));
+        assert_eq!(pack.genre.as_deref(), Some("outfit"));
+
+        insert_dummy_product(&connection, "7702003", "サンプル磁気ディスク", "");
+        apply_extraction(
+            &mut connection,
+            "7702003",
+            &extraction(Category::Gimmick, &[], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        let disk = require_product(&connection, "7702003").unwrap();
+        assert_eq!(disk.category, Some(Category::Accessory));
+        assert_eq!(disk.genre.as_deref(), Some("accessory"));
+
+        move_product_genre(&mut connection, "7702001", "asset", "gimmick").unwrap();
+        apply_extraction(
+            &mut connection,
+            "7702001",
+            &extraction(Category::Outfit, &[], false, 0.99),
+            0.6,
+        )
+        .unwrap();
+        let pinned = require_product(&connection, "7702001").unwrap();
+        assert_eq!(pinned.category, Some(Category::Gimmick));
+        assert_eq!(pinned.genre.as_deref(), Some("gimmick"));
+        assert!(pinned.category_locked && pinned.genre_locked);
+        assert!(
+            !products_for_extract(&connection, ExtractTarget::Stale)
+                .unwrap()
+                .iter()
+                .any(|job| job.booth_id == "7702001")
+        );
+
+        connection
+            .execute(
+                "UPDATE products SET classifier_version = 2 WHERE booth_id = '7702002'",
+                [],
+            )
+            .unwrap();
+        assert!(
+            products_for_extract(&connection, ExtractTarget::Stale)
+                .unwrap()
+                .iter()
+                .any(|job| job.booth_id == "7702002")
+        );
     }
 
     fn link_rows(connection: &Connection, booth_id: &str) -> Vec<(String, String)> {

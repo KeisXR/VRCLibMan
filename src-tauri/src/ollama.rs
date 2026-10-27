@@ -13,14 +13,14 @@ pub(crate) const SYSTEM_PROMPT: &str = "\
 genre は商品カテゴリの下位ジャンルです。指定された enum から最も近いものを返します。
 
 category は次のどれか一つです。
-- avatar: アバター本体。タイトルか説明に「オリジナル3Dモデル」とある商品。単なる「3Dモデル」や小物は含めない
-- outfit: 衣装、服、靴、部屋着、パーカー
+- avatar: アバター本体。タイトルか説明に「オリジナル3Dモデル」とある商品。配布形式を並べたもの（.xavater / .vroid / .unitypackage のうち2つ以上、Editable model data、【VRChat / 3D model】）も本体。単なる「3Dモデル」や「VRChat向け3Dモデル」、衣装・アクセサリは含めない
+- outfit: 衣装、服、靴、部屋着、ルームウェア、パーカー、ずぼん、ズボン、techwear、fullpack
 - hair: 髪、ヘア、ウィッグ、ポニーテール
-- accessory: メガネ、ピアス、イヤリング、ネックレス、帽子、バッグ、ヘイロー
-- texture: 瞳・目・メイクのテクスチャ。衣装やギミックにしない
-- gimmick: アバター用のギミック、表情アニメ、アバター用シェーダー、ツール、こたつ、毛布、布団、磁気ディスクなどの小物
-- world: ワールド本体、ワールド用の小物、ワールドギミック、Udon、UdonSharp、ワールド用シェーダー、ワールドプレハブ。アバター用のギミックは gimmick
-- other: どれにも当てはまらない
+- accessory: メガネ、ピアス、イヤリング、ネックレス、指輪、リング、帽子、バッグ、ヘイロー、ディスク、カード
+- texture: 瞳・目・メイク・肌のテクスチャ。衣装やギミックにしない
+- gimmick: アバター用のギミック、表情、シェイプキー、フェイストラッキング、なでなで、キス、電話、キット、SPS、アバター用シェーダー、ツール。家具や布団は含めない
+- world: ワールド本体、家具や小物（こたつ、毛布、布団、家具）、QvPenなどの差し替えモデル、見た目のスイッチ、ASMRなどのワールドギミック、Udon、UdonSharp、ワールド用シェーダー、ワールドプレハブ、VRChatのCPUや起動を扱う補助ツール。アバター用のギミックは gimmick
+- other: どれにも当てはまらない。もちふぃった～のようなアバター編集ツールは other で、genre は tool_editor
 
 compatible_avatars:
 - 対応先は「対応アバター」「対応モデル」の欄から取る。タイトルの「25アバター対応」は人数であり、名前ではない
@@ -38,9 +38,13 @@ is_generic は、汎用、どのアバターでも、素体を問わない、と
 - 「ライム -Lime- / オリジナル3Dモデル」「ライムのオリジナル3Dモデルです」→ avatar, [\"ライム\"], false
 - 「【プラム専用】Hairグラデーション」→ hair, [\"プラム\"], false
 - 「Noctilume EyeTexture」→ texture, [], false
-- 「ネオンヘイロー」→ accessory, [], false
-- 「こたつ」「表情アニメーション」「表情ギミック」→ gimmick, [], false
+- 「ネオンヘイロー」「Sample Earring」「磁気ディスク」→ accessory, [], false
+- 「表情アニメーション」「表情ギミック」「なでなで」「Sample Phone」→ gimmick, [], false
+- 「Face Tracking」「シェイプキー」→ gimmick, genre は expression_animation, [], false
 - 「どのアバターでも使えるペンライト」→ gimmick, [], true
+- 「サンプルこたつ」「毛布」→ world, genre は furniture_props, [], false
+- 「QvPen差し替えモデル」→ world, genre は texture_material, [], false
+- 「もちふぃった～」→ other, genre は tool_editor, [], false
 - 「ワールド用の小物」「Udonのスイッチ」「ワールド用シェーダー」「World Prefab」→ world, [], false
 - 「【半額セール中】真冬 Mafuyu / オリジナル3Dモデル」→ avatar, [\"真冬\"], false
 - 「クルミ ver1.2 対応のワンピース」→ outfit, [\"クルミ ver1.2\"], false
@@ -166,11 +170,7 @@ pub async fn loaded_models(
     parse_loaded_models(&text)
 }
 
-pub async fn unload_model(
-    client: &reqwest::Client,
-    base: &str,
-    model: &str,
-) -> Result<(), String> {
+pub async fn unload_model(client: &reqwest::Client, base: &str, model: &str) -> Result<(), String> {
     let base = validate_base_url(base)?;
     let model = validate_model_name(model)?;
     let response = client
@@ -185,7 +185,9 @@ pub async fn unload_model(
     let status = response.status();
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("Ollamaのモデルをアンロードできません: {status} {body}"));
+        return Err(format!(
+            "Ollamaのモデルをアンロードできません: {status} {body}"
+        ));
     }
     Ok(())
 }
@@ -259,8 +261,8 @@ pub fn parse_extraction(raw: &str) -> Result<Extraction, String> {
     let without_think = strip_think(raw);
     let json = json_object(&without_think)
         .ok_or("分類結果を読み取れませんでした。もう一度分類してください")?;
-    let value: Value =
-        serde_json::from_str(json).map_err(|err| format!("分類結果を読み取れませんでした: {err}"))?;
+    let value: Value = serde_json::from_str(json)
+        .map_err(|err| format!("分類結果を読み取れませんでした: {err}"))?;
     let category = value
         .get("category")
         .and_then(Value::as_str)
@@ -276,7 +278,9 @@ pub fn parse_extraction(raw: &str) -> Result<Extraction, String> {
         .ok_or("分類結果の確信度を読み取れませんでした。もう一度分類してください")?;
     let mut names = Vec::new();
     let Some(list) = value.get("compatible_avatars").and_then(Value::as_array) else {
-        return Err("分類結果の対応アバターを読み取れませんでした。もう一度分類してください".into());
+        return Err(
+            "分類結果の対応アバターを読み取れませんでした。もう一度分類してください".into(),
+        );
     };
     for item in list {
         let Some(name) = item.as_str() else {
@@ -296,7 +300,10 @@ pub fn parse_extraction(raw: &str) -> Result<Extraction, String> {
             break;
         }
     }
-    let genre = value.get("genre").and_then(Value::as_str).map(str::to_string);
+    let genre = value
+        .get("genre")
+        .and_then(Value::as_str)
+        .map(str::to_string);
     Ok(Extraction {
         category,
         genre,
@@ -609,7 +616,9 @@ mod tests {
         assert!(categories.iter().any(|value| value == "world"));
         assert!(SYSTEM_PROMPT.contains("ワールド"));
         assert!(SYSTEM_PROMPT.contains("UdonSharp"));
+        assert!(SYSTEM_PROMPT.contains("furniture_props"));
         assert!(!SYSTEM_PROMPT.contains("ワールド用の小物は gimmick"));
+        assert!(!SYSTEM_PROMPT.contains("こたつ」「表情"));
         assert_eq!(crate::model::DEFAULT_OLLAMA_MODEL, "qwen3.5:9b");
     }
 
