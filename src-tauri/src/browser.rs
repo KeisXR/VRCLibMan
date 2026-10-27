@@ -1246,7 +1246,7 @@ async fn read_library_page(
     Ok(snapshot)
 }
 
-/// ライブラリとギフトを 1 ページずつ読む。移動と eval は IPC の外で行う。ファイルは受け取らない。
+/// ライブラリ、ギフト、無料ダウンロードを 1 ページずつ読む。移動と eval は IPC の外で行う。ファイルは受け取らない。
 pub async fn import_library(app: AppHandle) -> Result<LibraryWalkReport, String> {
     browser_enabled(&app)?;
     if download_job_armed() {
@@ -1374,6 +1374,8 @@ mod tests {
         assert!(library_page_for_import("https://accounts.booth.pm/library?page=2").is_ok());
         assert!(library_page_for_import("https://accounts.booth.pm/library/gifts").is_ok());
         assert!(library_page_for_import("https://accounts.booth.pm/library/gifts?page=2").is_ok());
+        assert!(library_page_for_import("https://accounts.booth.pm/library/free_downloads").is_ok());
+        assert!(library_page_for_import("https://accounts.booth.pm/library/free_downloads?page=2").is_ok());
         assert!(library_page_for_import("https://booth.pm/ja/items/4876459").is_err());
         assert!(library_page_for_import("https://accounts.pixiv.net/login").is_err());
         assert!(library_page_for_import("http://accounts.booth.pm/library").is_err());
@@ -1617,6 +1619,10 @@ mod tests {
         assert!(line.contains("https://accounts.booth.pm/library/gifts"));
         assert!(!line.contains('?'));
         assert!(!line.contains("サンプル"));
+        let free = library_walk::library_walk_url(library_walk::WalkSection::Free, 1).unwrap();
+        let free_line = format!("無料ダウンロードを開きます {}", public_url(&free));
+        assert!(free_line.contains("https://accounts.booth.pm/library/free_downloads"));
+        assert!(!free_line.contains('?'));
         let summary = library_walk::final_counts_line(2, 4, 3, 1);
         assert_eq!(summary, "商品 2 件、ファイル 4 件");
         assert!(!summary.contains('?'));

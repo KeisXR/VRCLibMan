@@ -615,6 +615,7 @@
     };
     if (fields.isFree === true || fields.isFree === false) product.isFree = fields.isFree;
     if (fields.isAdult === true || fields.isAdult === false) product.isAdult = fields.isAdult;
+    if (fields.unpublished === true) product.unpublished = true;
     return product;
   }
 
@@ -790,20 +791,110 @@
     return clean(titled && titled.textContent);
   }
 
-  function cardFrom(anchor, root, baseHref) {
-    const href = absoluteUrl(anchor.getAttribute("href") || anchor.href || "", baseHref);
-    const boothId = idFromUrl(href);
-    if (!validId(boothId)) return null;
-    const scope = root || anchor;
+  const ITEM_ID_ATTRS = ["data-product-id", "data-item-id", "data-booth-id", "data-productid", "data-itemid"];
+
+  function unpublishedBadge(scope) {
+    if (!scope || !scope.querySelectorAll) return false;
+    const nodes = scope.querySelectorAll("span, div, p, small, em, strong, b, i, label");
+    for (const node of nodes) {
+      if (node.children && node.children.length > 0) continue;
+      if (clean(node.textContent) === "非公開") return true;
+    }
+    return false;
+  }
+
+  function attrItemId(node) {
+    if (!node || !node.getAttribute) return "";
+    for (const name of ITEM_ID_ATTRS) {
+      const value = clean(node.getAttribute(name));
+      if (validId(value)) return value;
+    }
+    return "";
+  }
+
+  function imageItemId(value) {
+    const fromItems = idFromUrl(value);
+    if (validId(fromItems)) return fromItems;
+    let url;
+    try {
+      url = new URL(String(value || ""), "https://booth.pm");
+    } catch {
+      return "";
+    }
+    const host = url.hostname;
+    if (!host.endsWith("pximg.net") && !/(^|\.)booth\.pm$/.test(host)) return "";
+    const parts = url.pathname.split("/").filter(Boolean);
+    const candidates = [];
+    for (let index = 0; index < parts.length; index += 1) {
+      const part = parts[index];
+      if (!validId(part)) continue;
+      const prev = parts[index - 1] || "";
+      if (prev === "users" || prev === "c" || prev === "shops" || /^\d+x\d+$/.test(prev)) continue;
+      candidates.push(part);
+    }
+    return candidates.length === 1 ? candidates[0] : "";
+  }
+
+  function soleCardId(scope, baseHref) {
+    const ids = [];
+    function add(id) {
+      if (validId(id) && !ids.includes(id)) ids.push(id);
+    }
+    const nodes = scope && scope.querySelectorAll ? [scope, ...scope.querySelectorAll("*")] : [];
+    for (const node of nodes) add(attrItemId(node));
+    const anchors = scope && scope.querySelectorAll ? scope.querySelectorAll("a[href]") : [];
+    for (const anchor of anchors) {
+      add(idFromUrl(absoluteUrl(anchor.getAttribute("href") || anchor.href || "", baseHref)));
+    }
+    const images = scope && scope.querySelectorAll ? scope.querySelectorAll("img") : [];
+    for (const image of images) {
+      const src = image.getAttribute("src") || image.src || "";
+      const srcset = image.getAttribute("srcset") || "";
+      add(imageItemId(src));
+      add(imageItemId(srcset));
+    }
+    return ids.length === 1 ? ids[0] : "";
+  }
+
+  function isFreeDownloadsPath(href) {
+    try {
+      const path = new URL(href, "https://accounts.booth.pm").pathname.replace(/\/+$/, "");
+      return path === "/library/free_downloads";
+    } catch {
+      return false;
+    }
+  }
+
+  function titledAnchor(scope, boothId, baseHref) {
+    if (!scope || !scope.querySelectorAll) return "";
+    for (const link of scope.querySelectorAll("a[href*='/items/']")) {
+      const linkHref = absoluteUrl(link.getAttribute("href") || link.href || "", baseHref);
+      if (idFromUrl(linkHref) !== boothId) continue;
+      const titled = clean(link.getAttribute("title")) || clean(link.textContent);
+      if (titled) return titled;
+    }
+    return "";
+  }
+
+  function productFromLibraryCard(scope, baseHref, preferredHref, imageNode) {
+    if (!scope) return null;
+    const unpublished = unpublishedBadge(scope);
+    let href = preferredHref || "";
+    let boothId = idFromUrl(href);
+    if (!validId(boothId)) {
+      if (!unpublished) return null;
+      boothId = soleCardId(scope, baseHref);
+      if (!validId(boothId)) return null;
+      href = `https://booth.pm/ja/items/${boothId}`;
+    }
+    const image = imageNode || (scope.querySelector && scope.querySelector("img"));
     const title = libraryTitle(scope, boothId, baseHref)
-      || clean(anchor.getAttribute("title"))
-      || clean(anchor.textContent);
+      || clean(image && image.getAttribute("alt"))
+      || titledAnchor(scope, boothId, baseHref);
     if (!title) return null;
     const shopNode = scope.querySelector && scope.querySelector(
       ".text-text-gray600, .item-card__shop-name-anchor, .item-card__shop-name",
     );
-    const imageNode = scope.querySelector && scope.querySelector("img");
-    const image = imageNode ? imageNode.getAttribute("src") || imageNode.src || "" : "";
     const facts = readVariations(scope, true);
     return makeProduct({
       boothId,
@@ -811,40 +902,45 @@
       shop: clean(shopNode && shopNode.textContent).slice(0, 120),
       description: "",
       url: href,
-      image,
+      image: image ? image.getAttribute("src") || image.src || "" : "",
       variations: facts.variations,
       downloads: facts.downloads,
       isFree: readFree(scope, false),
       isAdult: readAdult(scope, false) === true ? true : null,
+      unpublished: unpublished ? true : null,
     });
+  }
+
+  function cardFrom(anchor, root, baseHref) {
+    const scope = root || anchor;
+    const href = absoluteUrl(anchor.getAttribute("href") || anchor.href || "", baseHref);
+    return productFromLibraryCard(scope, baseHref, href, null);
   }
 
   function libraryProduct(image, baseHref) {
     const card = cardRoot(image) || image.parentElement;
     const imageAnchor = image.closest && image.closest("a[href*='/items/']");
     const anchor = imageAnchor || (card && card.querySelector("a[href*='/items/']"));
-    if (!anchor) return null;
-    const href = absoluteUrl(anchor.getAttribute("href") || anchor.href || "", baseHref);
-    const boothId = idFromUrl(href);
-    if (!validId(boothId)) return null;
-    const title = libraryTitle(card, boothId, baseHref) || clean(image.getAttribute("alt"));
-    if (!title) return null;
-    const shopNode = card.querySelector(
-      ".text-text-gray600, .item-card__shop-name-anchor, .item-card__shop-name",
-    );
-    const facts = readVariations(card, true);
-    return makeProduct({
-      boothId,
-      title: title.slice(0, 300),
-      shop: clean(shopNode && shopNode.textContent).slice(0, 120),
-      description: "",
-      url: href,
-      image: image.getAttribute("src") || image.src || "",
-      variations: facts.variations,
-      downloads: facts.downloads,
-      isFree: readFree(card, false),
-      isAdult: readAdult(card, false) === true ? true : null,
-    });
+    const href = anchor ? absoluteUrl(anchor.getAttribute("href") || anchor.href || "", baseHref) : "";
+    return productFromLibraryCard(card, baseHref, href, image);
+  }
+
+  function pushUnpublishedCards(document, href, push) {
+    const badges = document.querySelectorAll("span, div, p, small, em, strong, b, i, label");
+    for (const node of badges) {
+      if (node.children && node.children.length > 0) continue;
+      if (clean(node.textContent) !== "非公開") continue;
+      const card = (node.closest && node.closest(".bg-white, .item-card, li, article")) || node.parentElement;
+      if (!card) continue;
+      const image = card.querySelector && card.querySelector("img");
+      if (image) {
+        push(libraryProduct(image, href));
+        continue;
+      }
+      const anchor = card.querySelector && card.querySelector("a[href*='/items/']");
+      if (anchor) push(cardFrom(anchor, card, href));
+      else push(productFromLibraryCard(card, href, "", null));
+    }
   }
 
   function extractLibrary(document, href) {
@@ -873,6 +969,12 @@
         }
         const anchor = card.querySelector("a[href*='/items/']");
         if (anchor) push(cardFrom(anchor, card, href));
+      }
+    }
+    if (libraryPath) pushUnpublishedCards(document, href, push);
+    if (isFreeDownloadsPath(href)) {
+      for (const product of products) {
+        if (product.isFree == null) product.isFree = true;
       }
     }
     return products;
@@ -944,6 +1046,8 @@
 
   function noteIfUnpublished(product, htmlStatus, jsonStatus) {
     if (!product) return product;
+    // ライブラリの「非公開」は公開終了ではない。404 でもカテゴリ用の説明へ置き換えない。
+    if (product.unpublished === true) return product;
     const hasDescription = (product.descriptionSnippet || "").trim().length > 0;
     if (!hasDescription && htmlStatus === 404 && jsonStatus === 404) {
       product.descriptionSnippet = UNAVAILABLE_TEXT;

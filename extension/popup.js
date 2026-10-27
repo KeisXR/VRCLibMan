@@ -18,6 +18,11 @@ const api = () => globalThis.VrcLibManExtract;
 const LOCAL_PORT = 17321;
 const LOCAL_BASE = `http://127.0.0.1:${LOCAL_PORT}`;
 const LIBRARY_URL = "https://accounts.booth.pm/library";
+const LIBRARY_SECTIONS = [
+  { url: "https://accounts.booth.pm/library", label: "ライブラリ" },
+  { url: "https://accounts.booth.pm/library/gifts", label: "ギフト" },
+  { url: "https://accounts.booth.pm/library/free_downloads", label: "無料ダウンロード" },
+];
 const WAKE_URL = "vrclibman://import";
 const WAKE_WAIT_MS = 8000;
 
@@ -86,12 +91,13 @@ function parseHtml(html, href) {
   return { doc, products: api().extractPage(doc, href) };
 }
 
-async function readLibraryPages(startUrl, knownIds) {
+async function readLibraryPages(startUrl, knownIds, label) {
+  const sectionLabel = label || "ライブラリ";
   const firstUrl = api().libraryPageUrl(startUrl, 1);
-  setStatus("ライブラリ 1 ページ目を読んでいます");
+  setStatus(`${sectionLabel} 1 ページ目を読んでいます`);
   const firstResponse = await fetchWithBackoff(firstUrl, { credentials: "include" });
   if (!firstResponse.ok) {
-    throw new Error(`ライブラリを読めませんでした (${firstResponse.status})`);
+    throw new Error(`${sectionLabel}を読めませんでした (${firstResponse.status})`);
   }
   const first = parseHtml(await firstResponse.text(), firstUrl);
   let taken = api().takeUntilKnown(first.products, knownIds);
@@ -101,11 +107,11 @@ async function readLibraryPages(startUrl, knownIds) {
   const lastPage = api().libraryLastPage(first.doc, firstUrl);
   try {
     for (let page = 2; page <= lastPage && !stopped; page += 1) {
-      setStatus(`ライブラリ ${page}/${lastPage} ページを読んでいます（${products.length} 件）`);
+      setStatus(`${sectionLabel} ${page}/${lastPage} ページを読んでいます（${products.length} 件）`);
       const pageUrl = api().libraryPageUrl(startUrl, page);
       const response = await fetchWithBackoff(pageUrl, { credentials: "include" });
       if (!response.ok) {
-        throw new Error(`ライブラリ ${page} ページ目を読めませんでした (${response.status})`);
+        throw new Error(`${sectionLabel} ${page} ページ目を読めませんでした (${response.status})`);
       }
       const parsed = parseHtml(await response.text(), pageUrl);
       pagesRead = page;
@@ -118,6 +124,26 @@ async function readLibraryPages(startUrl, knownIds) {
     error.partialProducts = products;
     error.libraryPages = lastPage;
     throw error;
+  }
+  return { products, pagesRead, stopped };
+}
+
+async function readAllLibrarySections(knownIds) {
+  let products = [];
+  let pagesRead = 0;
+  let stopped = false;
+  for (const section of LIBRARY_SECTIONS) {
+    try {
+      const collected = await readLibraryPages(section.url, knownIds, section.label);
+      products = api().dedupeProducts(products.concat(collected.products));
+      pagesRead += collected.pagesRead;
+      stopped = stopped || collected.stopped;
+    } catch (error) {
+      const partial = error instanceof Error && Array.isArray(error.partialProducts) ? error.partialProducts : [];
+      products = api().dedupeProducts(products.concat(partial));
+      if (error instanceof Error) error.partialProducts = products;
+      throw error;
+    }
   }
   return { products, pagesRead, stopped };
 }
@@ -427,7 +453,7 @@ async function sendLibrary(updateMode) {
       }
       knownIds = await knownIdsWithWake(token);
     }
-    const collected = await readLibraryPages(tab.url, knownIds);
+    const collected = await readAllLibrarySections(knownIds);
     products = collected.products;
     if (products.length === 0) {
       setStatus(updateMode && collected.stopped ? "新しい購入はありません" : "ライブラリから商品を見つけられませんでした");

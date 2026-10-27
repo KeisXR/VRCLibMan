@@ -131,10 +131,14 @@ test("new-purchase imports report only pages actually read and keep file metadat
     throw new Error(`unexpected request: ${url}`);
   });
   await harness.api.sendLibrary(true);
-  assert.equal(libraryRequests.length, 1);
+  assert.deepEqual(libraryRequests, [
+    "https://accounts.booth.pm/library?page=1",
+    "https://accounts.booth.pm/library/gifts?page=1",
+    "https://accounts.booth.pm/library/free_downloads?page=1",
+  ]);
   assert.deepEqual(imported.products.map((item) => item.boothId), ["9003"]);
   const status = harness.document.querySelector("#status").textContent;
-  assert.match(status, /1 ページを確認/);
+  assert.match(status, /3 ページを確認/);
   assert.doesNotMatch(status, /10 ページ|ダウンロード|バリエーション/);
   assert.match(status, /追加 1 件、更新 0 件/);
   assert.match(status, /一部の情報を確認してください/);
