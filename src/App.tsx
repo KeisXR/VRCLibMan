@@ -10,6 +10,7 @@ import { WorldsPage } from "./pages/WorldsPage";
 import { AssetsPage } from "./pages/AssetsPage";
 import { SetupWizard } from "./pages/SetupWizard";
 import type { BoothAccount, JobProgress, LibraryStats } from "./types";
+import { SidebarClassificationHint } from "./components/SidebarClassificationHint";
 import { errorText } from "./ui";
 
 type Page = "avatars" | "avatar" | "assets" | "worlds" | "queue" | "import" | "settings" | "browser";
@@ -276,6 +277,7 @@ export default function App() {
             )}
           </nav>
           <div className="rail-foot">
+            <SidebarClassificationHint revision={revision} />
             <span className="app-version">{version === "未確認" ? "バージョン未確認" : version ? `v${version}` : "バージョン確認中"}</span>
             {builtinBrowser && (
               <AccountPill

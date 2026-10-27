@@ -327,6 +327,7 @@ pub fn save_settings(
                 llm_backend: settings.llm_backend,
                 background_mode: settings.background_mode,
                 launch_at_login: settings.launch_at_login,
+                classification_dismissed_version: settings.classification_dismissed_version,
             },
         )?;
         db::settings(&connection)?
@@ -676,10 +677,18 @@ pub async fn scan_library(
 }
 
 #[tauri::command]
+pub fn classification_status(
+    state: State<'_, crate::AppState>,
+) -> Result<crate::model::ClassificationStatus, String> {
+    let connection = db(&state)?;
+    db::classification_status(&connection)
+}
+
+#[tauri::command]
 pub async fn extract_products(
     app: AppHandle,
     state: State<'_, AppState>,
-    force: bool,
+    target: String,
 ) -> Result<ExtractReport, String> {
     let running = Arc::clone(&state.extract_running);
     if running.swap(true, Ordering::SeqCst) {
@@ -689,7 +698,7 @@ pub async fn extract_products(
     let _clear = ClearRunning(running);
     let jobs: Vec<ExtractJob> = {
         let mut connection = db(&state)?;
-        db::products_for_extract(&mut connection, force)?
+        db::products_for_extract(&mut connection, db::parse_extract_target(&target)?)?
     };
     let settings = {
         let mut connection = db(&state)?;

@@ -181,8 +181,8 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         assert.ok(!drop.closest("details").hasAttribute("open"));
         let forcedCalls = 0;
         let finish;
-        api.extractProducts = (force) => {
-          assert.equal(force, true);
+        api.extractProducts = (target) => {
+          assert.equal(target, "all");
           forcedCalls++;
           return new Promise((resolve) => {
             finish = resolve;

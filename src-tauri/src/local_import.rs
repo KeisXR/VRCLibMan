@@ -289,6 +289,7 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
                         llm_backend: settings.llm_backend,
                         background_mode: settings.background_mode,
                         launch_at_login: settings.launch_at_login,
+                        classification_dismissed_version: settings.classification_dismissed_version,
                     },
                 )
             }) {
