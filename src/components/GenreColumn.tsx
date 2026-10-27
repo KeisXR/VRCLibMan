@@ -18,7 +18,7 @@ function GenreLink({
   if (count === 0) classes.push("genre-link-zero");
   return (
     <a className={classes.join(" ")} href={href} aria-current={active ? "page" : undefined}>
-      <span>{label}</span>
+      <span className="genre-link-label" title={label}>{label}</span>
       {count !== undefined && <span className="genre-link-count">{count}</span>}
     </a>
   );
