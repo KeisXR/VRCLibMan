@@ -61,6 +61,16 @@ jobs:
         with:
           targets: ${{ runner.os == 'macOS' && 'x86_64-apple-darwin' || '' }}
 
+      # Use the LLD binary shipped with rustc for faster Windows test links.
+      # Keep this CI-only: local Windows builds retain their default linker.
+      - name: use bundled LLD linker on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $lld = Join-Path (rustc --print sysroot).Trim() 'lib\rustlib\x86_64-pc-windows-msvc\bin\rust-lld.exe'
+          if (-not (Test-Path -LiteralPath $lld)) { throw "Rust LLD linker not found: $lld" }
+          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$lld" >> $env:GITHUB_ENV
+
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: "./src-tauri -> target"
