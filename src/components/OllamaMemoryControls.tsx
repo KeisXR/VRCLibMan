@@ -59,7 +59,7 @@ export function OllamaMemoryControls({
   }
 
   return (
-    <div className="inline-control">
+    <div className="inline-control ollama-memory-control">
       <span className="meta" role="status">
         {stateLabel}
         {active && active.sizeBytes > 0 ? `（${formatBytes(active.sizeBytes)}）` : ""}
