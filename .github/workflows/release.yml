@@ -241,6 +241,18 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      # Only Windows uses LLD and a faster release profile. Keep the existing
+      # Cargo.toml profile for macOS and for local builds, and preserve signing.
+      - name: speed up Windows release compilation
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $lld = Join-Path (rustc --print sysroot).Trim() 'lib\rustlib\x86_64-pc-windows-msvc\bin\rust-lld.exe'
+          if (-not (Test-Path -LiteralPath $lld)) { throw "Rust LLD linker not found: $lld" }
+          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$lld" >> $env:GITHUB_ENV
+          "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16" >> $env:GITHUB_ENV
+          "CARGO_PROFILE_RELEASE_LTO=thin" >> $env:GITHUB_ENV
+
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: "./src-tauri -> target"
