@@ -9248,11 +9248,11 @@ mod tests {
         let before = move_product_genre(&mut connection, "8800204", "asset", "hair").unwrap();
         assert_eq!(before.category, None);
         move_product_genre(&mut connection, "8800204", "asset", "hair").unwrap();
-        let pinned = unpin_product_classification(&connection, "8800204").unwrap();
+        let pinned = unpin_product_classification(&mut connection, "8800204").unwrap();
         assert_eq!(pinned.category.as_deref(), Some("hair"));
-        restore_product_classification(&connection, &before).unwrap();
+        restore_product_classification(&mut connection, &before).unwrap();
         let same = classification_snapshot(&require_product(&connection, "8800204").unwrap());
-        restore_product_classification(&connection, &same).unwrap();
+        restore_product_classification(&mut connection, &same).unwrap();
 
         let moves: i64 = connection
             .query_row(
