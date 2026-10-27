@@ -12,10 +12,16 @@ export function createReleaseNotes({ appVersion, extensionVersion, template, cha
   if (!changes?.trim()) {
     throw new Error(`アプリ ${appVersion} の変更内容を記載してください`);
   }
+  const reclassifyMatch = changes.match(/^## 再分類のおすすめ\s*\n+([\s\S]*?)(?=\n## |\s*$)/m);
+  const changesBody = reclassifyMatch
+    ? changes.replace(/^## 再分類のおすすめ\s*\n+[\s\S]*?(?=\n## |\s*$)/m, "").trim()
+    : changes.trim();
+  const reclassifyNote = reclassifyMatch?.[1]?.trim() || "（この版では分類ルールの変更はありません）";
   const replacements = {
     APP_VERSION: appVersion,
     EXTENSION_VERSION: extensionVersion,
-    CHANGES: changes.trim(),
+    CHANGES: changesBody,
+    RECLASSIFY_NOTE: reclassifyNote,
   };
   for (const key of Object.keys(replacements)) {
     if (!template.includes(`{{${key}}}`)) {

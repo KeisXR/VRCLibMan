@@ -17,6 +17,7 @@ import { UI_GENRE_WIDTH, UI_RAIL_WIDTH } from "./uiLayout";
 import { AppUpdaterProvider, useStartupUpdateCheck } from "./useAppUpdater";
 import { SidebarUpdaterBadge } from "./components/SidebarUpdaterBadge";
 import type { BoothAccount, JobProgress, LibraryStats } from "./types";
+import { SidebarClassificationHint } from "./components/SidebarClassificationHint";
 import { errorText } from "./ui";
 
 type Page = "avatars" | "avatar" | "assets" | "worlds" | "queue" | "import" | "settings" | "browser";
@@ -327,6 +328,7 @@ export default function App() {
             )}
           </nav>
           <div className="rail-foot">
+            <SidebarClassificationHint revision={revision} />
             <StartupUpdateCheck enabled={checkUpdateOnStartup} />
             <SidebarUpdaterBadge onOpenSettings={openAppUpdateSettings} />
             <span className="app-version">{version === "未確認" ? "バージョン未確認" : version ? `v${version}` : "バージョン確認中"}</span>

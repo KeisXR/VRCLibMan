@@ -231,6 +231,13 @@ export interface IntegrationStatus {
   browserImport: ImportReceipt | null;
 }
 
+export type ExtractTarget = "unclassified" | "stale" | "all";
+
+export interface ClassificationStatus {
+  classifierVersion: number;
+  staleCount: number;
+}
+
 export interface Settings {
   ollamaBaseUrl: string;
   ollamaModel: string;
@@ -243,6 +250,7 @@ export interface Settings {
   llmBackend: "ollama" | "apple";
   backgroundMode: boolean;
   launchAtLogin: boolean;
+  classificationDismissedVersion: number;
   uiRailWidth: number;
   uiGenreWidth: number;
   checkUpdateOnStartup: boolean;

@@ -58,6 +58,8 @@ test("release notes use only the selected version's changes", () => {
   assert.match(notes, /## v99\.0\.0 の変更/);
   assert.match(notes, /vrclibman-booth-export-2\.0\.1\.zip/);
   assert.match(notes, /この版だけの変更/);
+  assert.match(notes, /再分類のおすすめ/);
+  assert.match(notes, /分類ルールの変更はありません/);
   assert.ok(!notes.includes("{{"));
   assert.ok(!notes.includes("v0.1.8 の変更"));
   assert.throws(() => createReleaseNotes({ appVersion: "99.0.0", extensionVersion: "1", template, changes: "  " }), /変更内容/);

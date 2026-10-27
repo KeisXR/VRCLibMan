@@ -64,6 +64,7 @@ interface Product {
   updatedAt: string;
   isFree: boolean;
   isAdult: boolean;
+  classifierVersion?: number;
 }
 
 interface LocalFile {
@@ -144,6 +145,7 @@ const store: Store = {
     llmBackend: "ollama",
     backgroundMode: false,
     launchAtLogin: false,
+    classificationDismissedVersion: 0,
     uiRailWidth: 232,
     uiGenreWidth: 200,
     checkUpdateOnStartup: false,
@@ -1314,6 +1316,15 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     case "cancel_extract":
       return undefined as T;
     case "scan_library":
+    case "classification_status": {
+      const classifierVersion = 2;
+      const staleCount = store.products.filter(
+        (item) =>
+          item.category != null &&
+          (item.classifierVersion ?? 1) < classifierVersion,
+      ).length;
+      return { classifierVersion, staleCount } as T;
+    }
     case "extract_products":
       desktopOnly();
     case "test_ollama": {

@@ -7,6 +7,7 @@ mod browser_tabs;
 mod browser_surface;
 mod mask;
 mod catalog;
+mod classifier;
 mod commands;
 mod compat;
 mod genre;
@@ -194,6 +195,7 @@ pub fn run() {
             commands::restore_seed,
             commands::reresolve,
             commands::scan_library,
+            commands::classification_status,
             commands::extract_products,
             commands::cancel_extract,
             commands::test_ollama,

@@ -210,6 +210,17 @@ fn migrate(connection: &Connection) -> Result<(), String> {
         tx.execute_batch("PRAGMA user_version = 3;").sql()?;
         tx.commit().sql()?;
     }
+    if version < 4 {
+        ensure_column(
+            connection,
+            "products",
+            "classifier_version",
+            "ALTER TABLE products ADD COLUMN classifier_version INTEGER NOT NULL DEFAULT 1",
+        )?;
+        connection
+            .execute_batch("PRAGMA user_version = 4;")
+            .sql()?;
+    }
     Ok(())
 }
 
@@ -280,6 +291,7 @@ fn ensure_ready(connection: &Connection) -> Result<(), String> {
         ("llm_backend", "ollama"),
         ("background_mode", "0"),
         ("launch_at_login", "0"),
+        ("classification_dismissed_version", "0"),
         ("ui_rail_width", "232"),
         ("ui_genre_width", "200"),
         ("check_update_on_startup", "0"),
@@ -336,6 +348,9 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
         ),
         background_mode: setting(connection, "background_mode")?.as_deref() == Some("1"),
         launch_at_login: setting(connection, "launch_at_login")?.as_deref() == Some("1"),
+        classification_dismissed_version: setting(connection, "classification_dismissed_version")?
+            .and_then(|value| value.parse::<i32>().ok())
+            .unwrap_or(0),
         ui_rail_width: crate::model::clamp_ui_rail_width(
             setting(connection, "ui_rail_width")?
                 .and_then(|value| value.parse().ok())
@@ -466,6 +481,11 @@ fn save_settings_values(
         connection,
         "launch_at_login",
         if launch_at_login { "1" } else { "0" },
+    )?;
+    set_setting(
+        connection,
+        "classification_dismissed_version",
+        &input.classification_dismissed_version.to_string(),
     )?;
     set_setting(
         connection,
@@ -1182,7 +1202,7 @@ pub(crate) fn apply_extraction(
     tx.execute(
         "UPDATE products SET category = ?1, genre = ?2, compatible_avatars_json = ?3, unresolved_names_json = ?4,
          is_generic = ?5, confidence = ?6, needs_review = ?7, user_confirmed = 0,
-         extracted_at = ?8, updated_at = ?9 WHERE booth_id = ?10",
+         extracted_at = ?8, updated_at = ?9, classifier_version = ?10 WHERE booth_id = ?11",
         params![
             category_text,
             genre,
@@ -1193,6 +1213,7 @@ pub(crate) fn apply_extraction(
             needs_review,
             now,
             now,
+            crate::classifier::CLASSIFIER_VERSION,
             booth_id
         ],
     )
@@ -1718,29 +1739,122 @@ pub(crate) fn mark_description_seen(connection: &Connection, booth_id: &str) -> 
     note_unavailable(connection, booth_id)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExtractTarget {
+    Unclassified,
+    Stale,
+    All,
+}
+
+pub(crate) fn parse_extract_target(value: &str) -> Result<ExtractTarget, String> {
+    match value {
+        "unclassified" => Ok(ExtractTarget::Unclassified),
+        "stale" => Ok(ExtractTarget::Stale),
+        "all" => Ok(ExtractTarget::All),
+        _ => Err("分類対象が不正です".into()),
+    }
+}
+
 pub(crate) fn products_for_extract(
     connection: &Connection,
-    force: bool,
+    target: ExtractTarget,
 ) -> Result<Vec<ExtractJob>, String> {
-    let sql = if force {
-        "SELECT booth_id, title, description_snippet FROM products WHERE booth_id NOT IN (SELECT booth_id FROM product_exclusions) ORDER BY updated_at DESC"
-    } else {
-        "SELECT booth_id, title, description_snippet FROM products
-         WHERE (extracted_at IS NULL OR category IS NULL)
-           AND booth_id NOT IN (SELECT booth_id FROM product_exclusions)
-         ORDER BY imported_at ASC"
+    let rows = match target {
+        ExtractTarget::All => {
+            let mut statement = connection
+                .prepare(
+                    "SELECT booth_id, title, description_snippet FROM products
+                     WHERE booth_id NOT IN (SELECT booth_id FROM product_exclusions)
+                     ORDER BY updated_at DESC",
+                )
+                .sql()?;
+            statement
+                .query_map([], |row| {
+                    Ok(ExtractJob {
+                        booth_id: row.get(0)?,
+                        title: row.get(1)?,
+                        description: row.get(2)?,
+                    })
+                })
+                .sql()?
+                .collect::<Result<Vec<_>, _>>()
+                .sql()?
+        }
+        ExtractTarget::Unclassified => {
+            let mut statement = connection
+                .prepare(
+                    "SELECT booth_id, title, description_snippet FROM products
+                     WHERE (extracted_at IS NULL OR category IS NULL)
+                       AND booth_id NOT IN (SELECT booth_id FROM product_exclusions)
+                     ORDER BY imported_at ASC",
+                )
+                .sql()?;
+            statement
+                .query_map([], |row| {
+                    Ok(ExtractJob {
+                        booth_id: row.get(0)?,
+                        title: row.get(1)?,
+                        description: row.get(2)?,
+                    })
+                })
+                .sql()?
+                .collect::<Result<Vec<_>, _>>()
+                .sql()?
+        }
+        ExtractTarget::Stale => {
+            let mut statement = connection
+                .prepare(
+                    "SELECT booth_id, title, description_snippet FROM products
+                     WHERE extracted_at IS NOT NULL
+                       AND category IS NOT NULL
+                       AND classifier_version < ?1
+                       AND description_snippet != ?2
+                       AND booth_id NOT IN (SELECT booth_id FROM product_exclusions)
+                     ORDER BY updated_at DESC",
+                )
+                .sql()?;
+            statement
+                .query_map(
+                    params![
+                        crate::classifier::CLASSIFIER_VERSION,
+                        crate::model::UNAVAILABLE_DESCRIPTION
+                    ],
+                    |row| {
+                        Ok(ExtractJob {
+                            booth_id: row.get(0)?,
+                            title: row.get(1)?,
+                            description: row.get(2)?,
+                        })
+                    },
+                )
+                .sql()?
+                .collect::<Result<Vec<_>, _>>()
+                .sql()?
+        }
     };
-    let mut statement = connection.prepare(sql).sql()?;
-    let rows = statement
-        .query_map([], |row| {
-            Ok(ExtractJob {
-                booth_id: row.get(0)?,
-                title: row.get(1)?,
-                description: row.get(2)?,
-            })
-        })
+    Ok(rows)
+}
+
+pub(crate) fn classification_status(connection: &Connection) -> Result<crate::model::ClassificationStatus, String> {
+    let stale_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM products
+             WHERE extracted_at IS NOT NULL
+               AND category IS NOT NULL
+               AND classifier_version < ?1
+               AND description_snippet != ?2
+               AND booth_id NOT IN (SELECT booth_id FROM product_exclusions)",
+            params![
+                crate::classifier::CLASSIFIER_VERSION,
+                crate::model::UNAVAILABLE_DESCRIPTION
+            ],
+            |row| row.get(0),
+        )
         .sql()?;
-    rows.collect::<Result<Vec<_>, _>>().sql()
+    Ok(crate::model::ClassificationStatus {
+        classifier_version: crate::classifier::CLASSIFIER_VERSION,
+        stale_count: stale_count as u32,
+    })
 }
 
 pub(crate) fn thumbnail_jobs(connection: &Connection) -> Result<Vec<ThumbJob>, String> {
@@ -4061,7 +4175,7 @@ mod tests {
             connection
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
-            3
+            4
         );
         assert_eq!(require_product(&connection, "9001").unwrap().genre.as_deref(), Some("other"));
         assert_eq!(settings(&connection).unwrap().ollama_model, "gemma4:12b");
@@ -4109,13 +4223,13 @@ mod tests {
                 .all(|p| p.booth_id != "1004")
         );
         assert!(
-            products_for_extract(&connection, true)
+            products_for_extract(&connection, ExtractTarget::All)
                 .unwrap()
                 .iter()
                 .all(|p| p.booth_id != "1004")
         );
         assert!(
-            products_for_extract(&connection, false)
+            products_for_extract(&connection, ExtractTarget::Unclassified)
                 .unwrap()
                 .iter()
                 .all(|p| p.booth_id != "1004")
@@ -4649,7 +4763,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 3);
+        assert_eq!(version, 4);
         let report = import_products(&mut connection, &parsed).unwrap();
         assert_eq!(report.inserted, 7);
         assert_eq!(report.skipped, 0);
@@ -4869,6 +4983,7 @@ mod tests {
                 llm_backend: "ollama".into(),
                 background_mode: false,
                 launch_at_login: false,
+                classification_dismissed_version: 0,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
                 check_update_on_startup: false,
@@ -4930,6 +5045,7 @@ mod tests {
                 llm_backend: "ollama".into(),
                 background_mode: false,
                 launch_at_login: false,
+                classification_dismissed_version: 0,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
                 check_update_on_startup: false,
@@ -5991,6 +6107,7 @@ mod tests {
                 llm_backend: "ollama".into(),
                 background_mode: false,
                 launch_at_login: false,
+                classification_dismissed_version: 0,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
                 check_update_on_startup: false,
@@ -6012,6 +6129,7 @@ mod tests {
                 llm_backend: "ollama".into(),
                 background_mode: false,
                 launch_at_login: false,
+                classification_dismissed_version: 0,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
                 check_update_on_startup: false,
@@ -6128,6 +6246,7 @@ mod tests {
                 llm_backend: "ollama".into(),
                 background_mode: false,
                 launch_at_login: false,
+                classification_dismissed_version: 0,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
                 check_update_on_startup: false,
@@ -6391,6 +6510,7 @@ mod tests {
             llm_backend: "ollama".into(),
             background_mode: false,
             launch_at_login: true,
+                classification_dismissed_version: 0,
             ui_rail_width: 232,
             ui_genre_width: 200,
             check_update_on_startup: false,
@@ -6409,6 +6529,7 @@ mod tests {
             &SettingsInput {
                 background_mode: true,
                 launch_at_login: true,
+                classification_dismissed_version: 0,
                 ..base
             },
         )
@@ -6552,6 +6673,7 @@ mod tests {
                 llm_backend: "ollama".into(),
                 background_mode: false,
                 launch_at_login: false,
+                classification_dismissed_version: 0,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
                 check_update_on_startup: false,
@@ -6623,6 +6745,34 @@ mod tests {
             .unwrap();
         assert_eq!(foreign_count, 0);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn stale_classification_counts_only_old_versions() {
+        let mut connection = open_memory().unwrap();
+        import_products(&mut connection, &parse_export(SAMPLE).unwrap()).unwrap();
+        apply_extraction(
+            &mut connection,
+            "1004",
+            &extraction(Category::Outfit, &["ライム"], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        let before = classification_status(&connection).unwrap().stale_count;
+        connection
+            .execute(
+                "UPDATE products SET classifier_version = 1 WHERE booth_id = '1004'",
+                [],
+            )
+            .unwrap();
+        let after = classification_status(&connection).unwrap().stale_count;
+        assert!(after > before);
+        assert!(
+            products_for_extract(&connection, ExtractTarget::Stale)
+                .unwrap()
+                .iter()
+                .any(|job| job.booth_id == "1004")
+        );
     }
 
     #[test]

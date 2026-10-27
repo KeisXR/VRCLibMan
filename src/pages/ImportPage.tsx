@@ -18,6 +18,25 @@ import { SettingRow } from "../components/SettingRow";
 import { ProductExclusions } from "../components/ProductExclusions";
 import { ExtensionInstructions } from "../components/BoothImportSettings";
 
+function StaleReclassifyRow({ busy, onExtract }: { busy: boolean; onExtract: () => void }) {
+  const { revision } = useShell();
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    void api.classificationStatus().then((status) => setCount(status.staleCount)).catch(() => setCount(0));
+  }, [revision]);
+  if (count === 0) return null;
+  return (
+    <SettingRow
+      label={`古い分類 ${count} 件`}
+      help="分類ルールの更新後、過去の分類結果を見直すときに使います。"
+    >
+      <button className="button primary" type="button" disabled={busy} onClick={onExtract}>
+        古い分類を再分類（{count}件）
+      </button>
+    </SettingRow>
+  );
+}
+
 export function ImportPage() {
   const { revision, refresh, notify, fail, builtinBrowser } = useShell();
   const [libraryFolder, setLibraryFolder] = useState("");
@@ -103,7 +122,7 @@ export function ImportPage() {
       if (extractAfter && result.inserted + result.updated > 0) {
         setClassificationErrors([]);
         setExtracting(true);
-        const extracted = await api.extractProducts(false);
+        const extracted = await api.extractProducts("unclassified");
         notify(
           extracted.cancelled
             ? "分類を中断しました"
@@ -149,20 +168,29 @@ export function ImportPage() {
     }
   }
 
-  async function extract(force: boolean) {
+  async function extract(target: "unclassified" | "stale" | "all") {
     if (
-      force &&
+      target === "all" &&
       !window.confirm(
         "すべて再分類すると、既存の分類結果を上書きすることがあります。手動で固定した情報は維持します。続けますか？",
       )
     )
       return;
+    if (target === "stale") {
+      const status = await api.classificationStatus();
+      if (
+        !window.confirm(
+          `古い分類ルールで分類された ${status.staleCount} 件を再分類します。時間がかかり、GPU メモリを使います。手動で固定したカテゴリや対応アバターは維持します。続けますか？`,
+        )
+      )
+        return;
+    }
     setBusy(true);
     setExtracting(true);
     setClassificationErrors([]);
     setProgress(null);
     try {
-      const result = await api.extractProducts(force);
+      const result = await api.extractProducts(target);
       notify(
         result.cancelled
           ? "分類を中断しました"
@@ -323,7 +351,7 @@ export function ImportPage() {
                 className="button primary"
                 type="button"
                 disabled={busy || unextracted === 0}
-                onClick={() => void extract(false)}
+                onClick={() => void extract("unclassified")}
               >
                 未分類を分類
               </button>
@@ -346,6 +374,7 @@ export function ImportPage() {
               {progress.message}（{progress.current} / {progress.total}）
             </div>
           )}
+          <StaleReclassifyRow busy={busy} onExtract={() => void extract("stale")} />
           <details className="settings-details">
             <summary>すべて再分類</summary>
             <p>
@@ -355,7 +384,7 @@ export function ImportPage() {
               className="button"
               type="button"
               disabled={busy}
-              onClick={() => void extract(true)}
+              onClick={() => void extract("all")}
             >
               すべて再分類
             </button>
