@@ -1,6 +1,7 @@
 import { previewBrowserState, previewBrowserAction, previewSaveBookmark, previewDeleteBookmark, previewOpenBrowser, previewCloseBrowser } from "./browser";
 import extensionManifest from "../../extension/manifest.json";
 import { filePresence } from "../media";
+import { GENRE_UNSET, genresForKind } from "../types";
 import type {
   AvatarCard,
   BrowserAction,
@@ -361,6 +362,22 @@ store.products.push(
     category: "world",
     genre: "furniture_props",
     descriptionSnippet: "ワールドに置く小物です。",
+  }),
+  product({
+    boothId: "8901002",
+    title: "見本の夜空スカイボックス",
+    shop: "見本",
+    category: "world",
+    genre: "skybox",
+    descriptionSnippet: "ワールドの空に使う見本です。",
+  }),
+  product({
+    boothId: "8901003",
+    title: "見本のジャンル未設定ワールド素材",
+    shop: "見本",
+    category: "world",
+    genre: null,
+    descriptionSnippet: "ジャンルがまだ決まっていない見本です。",
   }),
 );
 for (let index = 1; index <= 12; index += 1) {
@@ -1084,8 +1101,10 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       if (kind !== "asset" && kind !== "world") throw new Error("ジャンルの種類が不正です");
       // Same as Rust: unclassified products (no category) are not listed by genre.
       const rows = activeProducts().filter((item) => item.category != null && (kind === "world" ? item.category === "world" : item.category !== "world" && item.category !== "avatar"));
-      const counts: Record<string, number> = {}; for (const item of rows) if (item.genre) counts[item.genre] = (counts[item.genre] ?? 0) + 1;
-      return { items: rows.filter((item) => !wanted || item.genre === wanted).sort((a,b) => a.title.localeCompare(b.title, "ja")).map((item) => itemView(item, false)), counts, total: rows.length } as T;
+      const known: readonly string[] = genresForKind(kind);
+      const bucket = (item: Product) => (item.genre && known.includes(item.genre) ? item.genre : GENRE_UNSET);
+      const counts: Record<string, number> = {}; for (const item of rows) counts[bucket(item)] = (counts[bucket(item)] ?? 0) + 1;
+      return { items: rows.filter((item) => !wanted || (wanted === GENRE_UNSET ? bucket(item) === GENRE_UNSET : item.genre === wanted)).sort((a,b) => a.title.localeCompare(b.title, "ja")).map((item) => itemView(item, false)), counts, total: rows.length } as T;
     }
     case "probe_remote_files":
       store.remoteChecked = true;

@@ -1763,7 +1763,19 @@ pub(crate) fn product_ids_by_category(
 
 pub(crate) fn product_ids_by_genre(connection: &Connection, kind: &str, genre: Option<&str>) -> Result<Vec<String>, String> {
     let condition = match kind { "world" => "category = 'world'", "asset" => "category <> 'world' AND category <> 'avatar'", _ => return Err("ジャンルの種類が不正です".into()) };
-    let sql = format!("SELECT booth_id FROM products WHERE {condition} AND (?1 IS NULL OR genre = ?1) AND booth_id NOT IN (SELECT booth_id FROM product_exclusions) ORDER BY title COLLATE NOCASE, booth_id");
+    let genre_filter = if genre == Some(crate::genre::UNSET) {
+        // Keys are compile-time constants, so inlining them is safe.
+        let known = crate::genre::kind_genres(kind)
+            .unwrap_or_default()
+            .iter()
+            .map(|(key, _)| format!("'{key}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("(?1 IS NOT NULL AND (genre IS NULL OR genre NOT IN ({known})))")
+    } else {
+        "(?1 IS NULL OR genre = ?1)".to_string()
+    };
+    let sql = format!("SELECT booth_id FROM products WHERE {condition} AND {genre_filter} AND booth_id NOT IN (SELECT booth_id FROM product_exclusions) ORDER BY title COLLATE NOCASE, booth_id");
     let mut statement = connection.prepare(&sql).sql()?;
     let rows = statement.query_map([genre], |row| row.get(0)).sql()?;
     rows.collect::<Result<Vec<_>, _>>().sql()
@@ -4551,6 +4563,26 @@ mod tests {
         assert!(product_ids_by_genre(&connection, "asset", Some("shader")).unwrap().contains(&"1004".into()));
         set_product_excluded(&mut connection, "1004", true).unwrap();
         assert!(!product_ids_by_genre(&connection, "asset", Some("shader")).unwrap().contains(&"1004".into()));
+    }
+
+    #[test]
+    fn world_genre_query_lists_missing_or_foreign_genres_as_unset() {
+        let mut connection = open_memory().unwrap();
+        import_products(&mut connection, &parse_export(SAMPLE).unwrap()).unwrap();
+        update_product(&mut connection, &ProductUpdate {
+            booth_id: "1004".into(), category: Some("world".into()), genre: Some("skybox".into()),
+            is_generic: None, avatar_ids: None, confirm: None,
+        }).unwrap();
+        let has = |ids: Vec<String>| ids.contains(&"1004".to_string());
+        assert!(has(product_ids_by_genre(&connection, "world", Some("skybox")).unwrap()));
+        assert!(!has(product_ids_by_genre(&connection, "world", Some(crate::genre::UNSET)).unwrap()));
+        connection.execute("UPDATE products SET genre = 'hair' WHERE booth_id = '1004'", []).unwrap();
+        assert!(has(product_ids_by_genre(&connection, "world", Some(crate::genre::UNSET)).unwrap()));
+        assert!(has(product_ids_by_genre(&connection, "world", None).unwrap()));
+        assert!(!has(product_ids_by_genre(&connection, "asset", Some(crate::genre::UNSET)).unwrap()));
+        connection.execute("UPDATE products SET genre = NULL WHERE booth_id = '1004'", []).unwrap();
+        assert!(has(product_ids_by_genre(&connection, "world", Some(crate::genre::UNSET)).unwrap()));
+        assert!(!has(product_ids_by_genre(&connection, "world", Some("skybox")).unwrap()));
     }
 
     #[test]

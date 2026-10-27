@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { useShell } from "../App";
 import { ItemCard } from "../pages/AvatarDetailPage";
-import { GENRE_LABEL, genresForKind } from "../types";
+import { GENRE_LABEL, GENRE_UNSET, genresForKind } from "../types";
 import type { GenreKind, GenreProducts, ItemView } from "../types";
 import { errorText } from "../ui";
 
@@ -17,6 +17,13 @@ export function filterItems(items: ItemView[], filter: string): ItemView[] {
   const query = filter.trim().toLocaleLowerCase("ja");
   if (!query) return items;
   return items.filter((item) => `${item.title}\n${item.shop}`.toLocaleLowerCase("ja").includes(query));
+}
+
+/** The genre the route selects: a genre of the kind, the unset bucket, or null for すべて. */
+export function selectedGenre(kind: GenreKind, genre: string | null): string | null {
+  if (!genre) return null;
+  if (genre === GENRE_UNSET) return GENRE_UNSET;
+  return genresForKind(kind).includes(genre) ? genre : null;
 }
 
 interface Loaded {
@@ -40,7 +47,7 @@ export function GenreBrowser({
 }) {
   const { revision } = useShell();
   const genres = genresForKind(kind);
-  const selected = genre && genres.includes(genre) ? genre : null;
+  const selected = selectedGenre(kind, genre);
   const unknownGenre = genre != null && genre !== "" && selected === null;
   const key = `${kind}:${selected ?? ""}`;
   const [loaded, setLoaded] = useState<Loaded | null>(null);
@@ -69,6 +76,9 @@ export function GenreBrowser({
   const shown = useMemo(() => filterItems(current?.items ?? [], filter), [current, filter]);
   const noun = NOUN[kind];
   const selectedLabel = selected ? GENRE_LABEL[selected] ?? selected : "すべて";
+  const unsetCount = data?.counts[GENRE_UNSET] ?? 0;
+  // Only products whose genre is missing or belongs to the other kind land here, so the tab stays hidden when empty.
+  const showUnset = unsetCount > 0 || selected === GENRE_UNSET;
 
   return (
     <section className="genre-browser">
@@ -97,8 +107,21 @@ export function GenreBrowser({
             active={selected === value}
           />
         ))}
+        {showUnset && (
+          <GenreTab
+            href={genreHref(basePath, GENRE_UNSET)}
+            label={GENRE_LABEL[GENRE_UNSET]}
+            count={data ? unsetCount : undefined}
+            active={selected === GENRE_UNSET}
+          />
+        )}
       </nav>
       {unknownGenre && <p className="note genre-notice">指定されたジャンルが見つからないため、すべてを表示しています。</p>}
+      {selected === GENRE_UNSET && (
+        <p className="note genre-notice">
+          ジャンルが決まっていない{noun}の商品です。確認画面や再分類でジャンルが付くと、各ジャンルに移ります。
+        </p>
+      )}
       {error ? (
         <div className="empty" role="alert">
           <p>{noun}の一覧を読み込めませんでした。{error}</p>
