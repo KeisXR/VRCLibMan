@@ -4,7 +4,7 @@ import { useShell } from "../App";
 import { CATEGORY_LABEL, GENRE_LABEL, genresForKind } from "../types";
 import type { GenreKind, ManagedProduct } from "../types";
 import { errorText } from "../ui";
-import { useGenreMove, useUnpinProduct } from "../useGenreMove";
+import { useGenreMove, useRegisterOwnedBody, useUnpinProduct } from "../useGenreMove";
 
 export function ExcludeProductButton({
   boothId,
@@ -21,19 +21,28 @@ export function ExcludeProductButton({
 }) {
   const { refresh, notify, fail } = useShell();
   const moveProduct = useGenreMove();
+  const registerBody = useRegisterOwnedBody();
   const unpinProduct = useUnpinProduct();
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
   const [picking, setPicking] = useState(false);
+  const [naming, setNaming] = useState(false);
+  const [candidates, setCandidates] = useState<string[]>([]);
+  const [draft, setDraft] = useState("");
   const [kind, setKind] = useState<GenreKind>(category === "world" ? "world" : "asset");
   const container = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const kindButton = useRef<HTMLButtonElement>(null);
+  const nameInput = useRef<HTMLInputElement>(null);
   const holdFocus = useRef(false);
   const canMove = category !== "avatar";
+  const canRegisterBody = category !== "avatar";
 
   useEffect(() => {
-    if (!open) setPicking(false);
+    if (!open) {
+      setPicking(false);
+      setNaming(false);
+    }
   }, [open]);
 
   useLayoutEffect(() => {
@@ -42,6 +51,32 @@ export function ExcludeProductButton({
       holdFocus.current = false;
     }
   }, [open, picking]);
+
+  useLayoutEffect(() => {
+    if (open && naming) {
+      nameInput.current?.focus();
+      holdFocus.current = false;
+    }
+  }, [open, naming]);
+
+  async function register(name?: string) {
+    setBusy(true);
+    try {
+      const result = await registerBody(boothId, name);
+      if (!result) return;
+      if (result.kind === "needsName") {
+        setCandidates(result.candidates);
+        setDraft(result.suggestedName);
+        setNaming(true);
+        setOpen(true);
+        return;
+      }
+      setOpen(false);
+      setNaming(false);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -79,7 +114,7 @@ export function ExcludeProductButton({
       >
         <span aria-hidden="true">⋯</span>
       </button>
-      {open && !picking && (
+      {open && !picking && !naming && (
         <div className="product-actions-panel" role="menu">
           {canMove && (
             <button
@@ -94,6 +129,20 @@ export function ExcludeProductButton({
               }}
             >
               移動
+            </button>
+          )}
+          {canRegisterBody && (
+            <button
+              className="button"
+              type="button"
+              role="menuitem"
+              disabled={busy}
+              onClick={() => {
+                holdFocus.current = true;
+                void register();
+              }}
+            >
+              アバター本体として登録
             </button>
           )}
           {classificationPinned && (
@@ -158,6 +207,42 @@ export function ExcludeProductButton({
             ))}
           </div>
           <button className="button" type="button" onClick={() => setPicking(false)}>戻る</button>
+        </div>
+      )}
+      {open && naming && (
+        <div className="product-actions-panel owned-body-panel" role="dialog" aria-label="アバター名">
+          <p className="meta">アバター名を確認してください。</p>
+          {candidates.length > 0 && (
+            <div className="genre-move-list">
+              {candidates.map((name) => (
+                <button
+                  key={name}
+                  className="button"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void register(name)}
+                >
+                  {name}
+                </button>
+              ))}
+            </div>
+          )}
+          <label className="field">
+            <span>アバター名</span>
+            <input
+              ref={nameInput}
+              value={draft}
+              maxLength={80}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && draft.trim()) void register(draft);
+              }}
+            />
+          </label>
+          <button className="button" type="button" disabled={busy || !draft.trim()} onClick={() => void register(draft)}>
+            登録
+          </button>
+          <button className="button" type="button" onClick={() => setNaming(false)}>戻る</button>
         </div>
       )}
     </div>

@@ -614,8 +614,13 @@ a.tab { display: inline-flex; align-items: center; gap: 6px; text-decoration: no
 .product-actions-trigger { width: 32px; height: 32px; background: transparent; box-shadow: none; color: var(--text-secondary); font-size: 22px; }
 .product-actions-panel { position: absolute; z-index: 10; top: calc(100% + 4px); right: 0; display: flex; flex-direction: column; align-items: stretch; padding: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-control); box-shadow: var(--shadow); }
 .product-actions-panel .button { padding: 6px 14px; text-align: left; white-space: nowrap; }
-.product-actions-panel.genre-move-panel { width: 232px; }
-.product-actions-panel.genre-move-panel .button { white-space: normal; }
+.product-actions-panel.genre-move-panel,
+.product-actions-panel.owned-body-panel { width: 232px; }
+.product-actions-panel.genre-move-panel .button,
+.product-actions-panel.owned-body-panel .button { white-space: normal; }
+.owned-body-panel { padding: 8px; }
+.owned-body-panel .meta { margin: 2px 4px 8px; }
+.owned-body-panel .field { margin-bottom: 8px; }
 .genre-move-kinds { display: flex; gap: 4px; }
 .genre-move-kinds .button { flex: 1 1 0; text-align: center; white-space: nowrap; }
 .genre-move-kinds .button[aria-pressed="true"] { background: var(--surface-secondary); font-weight: 650; }

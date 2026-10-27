@@ -4,6 +4,7 @@ use crate::matching::{LabelScore, choose_match, contains_booth_id, score_label};
 use crate::model::{
     Avatar, AvatarCandidate, AvatarInput, BaseBody, BaseBodyInput, CatalogInfo, CatalogRefresh,
     Category, ClassificationSnapshot, DownloadFact, DownloadFinished, Extraction, ImportReport,
+    OwnedAvatarRestore, RegisterOwnedBodyResult, SnapshotLink,
     IncomingDownload, IncomingProduct, IncomingVariation, Knowledge, Link, LocalFile, Product,
     ProductFlag, ProductUpdate, ManagedProduct, Settings, SettingsInput, SettingsPatch, SetupStatus,
     VariationFact, now_iso,
@@ -1696,7 +1697,19 @@ fn classification_snapshot(product: &Product) -> ClassificationSnapshot {
         genre_locked: product.genre_locked,
         user_confirmed: product.user_confirmed,
         needs_review: product.needs_review,
+        links_locked: None,
+        links: None,
+        owned_avatars: Vec::new(),
+        compatible_avatars: None,
+        unresolved_names: None,
+        is_generic: None,
     }
+}
+
+fn remember_extracted_names(snapshot: &mut ClassificationSnapshot, product: &Product) {
+    snapshot.compatible_avatars = Some(product.compatible_avatars.clone());
+    snapshot.unresolved_names = Some(product.unresolved_names.clone());
+    snapshot.is_generic = Some(product.is_generic);
 }
 
 const DESCRIPTION_HEAD_CHARS: usize = 400;
@@ -1794,7 +1807,7 @@ pub(crate) fn move_product_genre(
 }
 
 pub(crate) fn restore_product_classification(
-    connection: &Connection,
+    connection: &mut Connection,
     snapshot: &ClassificationSnapshot,
 ) -> Result<(), String> {
     let product = require_product(connection, &snapshot.booth_id)?;
@@ -1811,37 +1824,86 @@ pub(crate) fn restore_product_classification(
     let changed = from != to
         || product.category_locked != snapshot.category_locked
         || product.genre_locked != snapshot.genre_locked;
-    connection
-        .execute(
-            "UPDATE products SET category = ?1, category_locked = ?2, genre = ?3, genre_locked = ?4,
-             user_confirmed = ?5, needs_review = ?6, updated_at = ?7 WHERE booth_id = ?8",
-            params![
-                snapshot.category,
-                snapshot.category_locked,
-                snapshot.genre,
-                snapshot.genre_locked,
-                snapshot.user_confirmed,
-                snapshot.needs_review,
-                now_iso(),
-                snapshot.booth_id
-            ],
+    let tx = connection.transaction().sql()?;
+    tx.execute(
+        "UPDATE products SET category = ?1, category_locked = ?2, genre = ?3, genre_locked = ?4,
+         user_confirmed = ?5, needs_review = ?6, updated_at = ?7 WHERE booth_id = ?8",
+        params![
+            snapshot.category,
+            snapshot.category_locked,
+            snapshot.genre,
+            snapshot.genre_locked,
+            snapshot.user_confirmed,
+            snapshot.needs_review,
+            now_iso(),
+            snapshot.booth_id
+        ],
+    )
+    .sql()?;
+    if let Some(locked) = snapshot.links_locked {
+        tx.execute(
+            "UPDATE products SET links_locked = ?1 WHERE booth_id = ?2",
+            params![locked, snapshot.booth_id],
         )
         .sql()?;
-    if changed {
-        record_classification_move(connection, &snapshot.booth_id, "restore", &from, Some(&to))?;
     }
+    if let Some(links) = &snapshot.links {
+        delete_links(&tx, &snapshot.booth_id)?;
+        for link in links {
+            tx.execute(
+                "INSERT OR IGNORE INTO product_avatars (product_id, avatar_id, source) VALUES (?1, ?2, ?3)",
+                params![snapshot.booth_id, link.avatar_id, link.source],
+            )
+            .sql()?;
+        }
+    }
+    for avatar in &snapshot.owned_avatars {
+        apply_owned_restore(&tx, avatar)?;
+    }
+    if let Some(names) = &snapshot.compatible_avatars {
+        tx.execute(
+            "UPDATE products SET compatible_avatars_json = ?1 WHERE booth_id = ?2",
+            params![to_json(names)?, snapshot.booth_id],
+        )
+        .sql()?;
+    }
+    if let Some(names) = &snapshot.unresolved_names {
+        tx.execute(
+            "UPDATE products SET unresolved_names_json = ?1 WHERE booth_id = ?2",
+            params![to_json(names)?, snapshot.booth_id],
+        )
+        .sql()?;
+    }
+    if let Some(generic) = snapshot.is_generic {
+        tx.execute(
+            "UPDATE products SET is_generic = ?1 WHERE booth_id = ?2",
+            params![generic, snapshot.booth_id],
+        )
+        .sql()?;
+    }
+    // Genre-move undo is the history #72 records. An owned-body snapshot carries
+    // links, and that registration stays out of classification_moves.
+    if changed && snapshot.links.is_none() {
+        record_classification_move(&tx, &snapshot.booth_id, "restore", &from, Some(&to))?;
+    }
+    tx.commit().sql()?;
     Ok(())
 }
 
 /// Clear both locks so the next reclassification may replace this placement.
+/// A product pinned as an owned avatar body is also unregistered: the category
+/// returns to the one implied by its genre, and the body link is removed.
 /// Returns the pinned snapshot so the unpin itself can be undone.
 pub(crate) fn unpin_product_classification(
-    connection: &Connection,
+    connection: &mut Connection,
     booth_id: &str,
 ) -> Result<ClassificationSnapshot, String> {
     let product = require_product(connection, booth_id)?;
     if !classification_pinned(&product) {
         return Err("この商品は手動で固定されていません".into());
+    }
+    if let Some(avatar_id) = manual_owned_body(connection, &product)? {
+        return release_manual_owned_body(connection, &product, &avatar_id);
     }
     let snapshot = classification_snapshot(&product);
     let from = placement_of(&product);
@@ -2035,6 +2097,91 @@ pub(crate) fn save_classification_feedback_body(path: &std::path::Path, body: &s
     }
     std::fs::write(&destination, body).map_err(|_| "ファイルを保存できません".to_string())?;
     Ok(())
+}
+
+/// Register a product that is not already an avatar body as an owned avatar.
+/// A single name from the extraction or the dictionary is used as-is.
+/// Several names, or none, ask for a name and leave the product unchanged.
+pub(crate) fn register_manual_owned_body(
+    connection: &mut Connection,
+    booth_id: &str,
+    name: Option<&str>,
+) -> Result<RegisterOwnedBodyResult, String> {
+    if product_excluded(connection, booth_id)? {
+        return Err("この商品は除外されています".into());
+    }
+    let product = require_product(connection, booth_id)?;
+    if product.category == Some(Category::Avatar) {
+        return Err("この商品はすでにアバター本体です".into());
+    }
+    let supplied = name.is_some();
+    let target = if let Some(name) = name {
+        resolve_supplied_name(connection, booth_id, name)?
+    } else {
+        match decide_owned_name(connection, &product)? {
+            OwnedName::Ready(target) => target,
+            OwnedName::Ask { suggested, candidates } => {
+                return Ok(RegisterOwnedBodyResult::NeedsName {
+                    suggested_name: suggested,
+                    candidates,
+                });
+            }
+        }
+    };
+    let previous_links = snapshot_links(connection, booth_id)?;
+    let existed = avatar_exists(connection, &target.avatar_id)?;
+    let was_owned = existed && avatar_is_owned(connection, &target.avatar_id)?;
+    let mut snapshot = classification_snapshot(&product);
+    snapshot.links_locked = Some(product.links_locked);
+    snapshot.links = Some(previous_links);
+    remember_extracted_names(&mut snapshot, &product);
+    if !was_owned {
+        snapshot.owned_avatars.push(OwnedAvatarRestore {
+            id: target.avatar_id.clone(),
+            display_name: target.display.clone(),
+            aliases: Vec::new(),
+            owned: false,
+            remove_if_unused: !existed,
+        });
+    }
+    let tx = connection.transaction().sql()?;
+    tx.execute(
+        "UPDATE products SET category_locked = 0, links_locked = 0 WHERE booth_id = ?1",
+        params![booth_id],
+    )
+    .sql()?;
+    if target.created {
+        if existed {
+            tx.execute(
+                "UPDATE avatars SET display_name = ?1 WHERE id = ?2 AND is_builtin = 0",
+                params![target.display, target.avatar_id],
+            )
+            .sql()?;
+        } else {
+            insert_placeholder(&tx, &target.avatar_id, &target.display, &[])?;
+        }
+    }
+    let unlocked = require_product(&tx, booth_id)?;
+    let from_catalog = !supplied
+        && catalog_body(&tx, booth_id)?.is_some_and(|(id, _)| id == target.avatar_id);
+    if from_catalog {
+        write_catalog_body(&tx, booth_id, &target.avatar_id, &target.display)?;
+    } else {
+        save_owned_body(&tx, &unlocked, &target.avatar_id)?;
+    }
+    tx.execute(
+        "UPDATE products SET category_locked = 1, genre_locked = 1, links_locked = 1, updated_at = ?1
+         WHERE booth_id = ?2",
+        params![now_iso(), booth_id],
+    )
+    .sql()?;
+    tx.commit().sql()?;
+    let display_name = avatar_display(connection, &target.avatar_id)?;
+    Ok(RegisterOwnedBodyResult::Registered {
+        snapshot,
+        avatar_id: target.avatar_id,
+        display_name,
+    })
 }
 
 /// Add one manual avatar link and lock links so reresolve keeps it.
@@ -4193,6 +4340,346 @@ fn write_catalog_body(
         )
         .sql()?;
     Ok(())
+}
+
+struct OwnedTarget {
+    avatar_id: String,
+    created: bool,
+    display: String,
+}
+
+enum OwnedName {
+    Ready(OwnedTarget),
+    Ask { suggested: String, candidates: Vec<String> },
+}
+
+fn decide_owned_name(connection: &Connection, product: &Product) -> Result<OwnedName, String> {
+    if let Some((id, display)) = catalog_body(connection, &product.booth_id)? {
+        return Ok(OwnedName::Ready(OwnedTarget {
+            avatar_id: id,
+            created: false,
+            display,
+        }));
+    }
+    let avatars = load_avatars(connection)?;
+    let mut labels = usable_owned_labels(&product.compatible_avatars);
+    if labels.is_empty() {
+        labels = usable_owned_labels(&product.unresolved_names);
+    }
+    if !labels.is_empty() {
+        return Ok(assign_placeholder(
+            decide_from_labels(&labels, &avatars),
+            &product.booth_id,
+        ));
+    }
+    if let Some(quoted) = single_acceptable_quote(&product.title) {
+        return Ok(assign_placeholder(
+            decide_from_labels(std::slice::from_ref(&quoted), &avatars),
+            &product.booth_id,
+        ));
+    }
+    let suggested = acceptable_title_name(&product.title).unwrap_or_default();
+    Ok(OwnedName::Ask {
+        suggested,
+        candidates: Vec::new(),
+    })
+}
+
+fn decide_from_labels(labels: &[String], avatars: &[crate::model::Avatar]) -> OwnedName {
+    let mut resolved = Vec::new();
+    let mut unresolved = Vec::new();
+    for label in labels {
+        if let Some(avatar) = crate::resolve::resolve_name(label, avatars) {
+            if !resolved.iter().any(|id: &String| id == &avatar.id) {
+                resolved.push(avatar.id.clone());
+            }
+        } else if !unresolved.iter().any(|existing: &String| existing == label) {
+            unresolved.push(label.clone());
+        }
+    }
+    if resolved.len() == 1 && unresolved.is_empty() {
+        let avatar_id = resolved.pop().expect("one id");
+        let display = avatars
+            .iter()
+            .find(|avatar| avatar.id == avatar_id)
+            .map(|avatar| avatar.display_name.clone())
+            .unwrap_or_default();
+        return OwnedName::Ready(OwnedTarget {
+            avatar_id,
+            created: false,
+            display,
+        });
+    }
+    if resolved.is_empty() && unresolved.len() == 1 {
+        let display = unresolved.pop().expect("one label");
+        return OwnedName::Ready(OwnedTarget {
+            avatar_id: String::new(),
+            created: true,
+            display,
+        });
+    }
+    let mut candidates = Vec::new();
+    for id in &resolved {
+        if let Some(avatar) = avatars.iter().find(|avatar| &avatar.id == id) {
+            push_unique(&mut candidates, &avatar.display_name);
+        }
+    }
+    for label in &unresolved {
+        push_unique(&mut candidates, label);
+    }
+    OwnedName::Ask {
+        suggested: String::new(),
+        candidates,
+    }
+}
+
+fn assign_placeholder(name: OwnedName, booth_id: &str) -> OwnedName {
+    match name {
+        OwnedName::Ready(mut target) if target.created && target.avatar_id.is_empty() => {
+            target.avatar_id = format!("owned-{booth_id}");
+            OwnedName::Ready(target)
+        }
+        other => other,
+    }
+}
+
+fn resolve_supplied_name(
+    connection: &Connection,
+    booth_id: &str,
+    name: &str,
+) -> Result<OwnedTarget, String> {
+    let display = clean_owned_name(name)?;
+    let avatars = load_avatars(connection)?;
+    if let Some(avatar) = crate::resolve::resolve_name(&display, &avatars)
+        .or_else(|| crate::resolve::resolve_name(name.trim(), &avatars))
+    {
+        return Ok(OwnedTarget {
+            avatar_id: avatar.id.clone(),
+            created: false,
+            display: avatar.display_name.clone(),
+        });
+    }
+    Ok(OwnedTarget {
+        avatar_id: format!("owned-{booth_id}"),
+        created: true,
+        display,
+    })
+}
+
+fn clean_owned_name(name: &str) -> Result<String, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("アバター名を入力してください".into());
+    }
+    if trimmed.chars().count() > 80 {
+        return Err("アバター名が長すぎます".into());
+    }
+    let display = crate::normalize::preferred_display_name(trimmed)
+        .ok_or_else(|| "アバター名として使えません".to_string())?;
+    if display == "名称未設定" || crate::normalize::is_blocked_avatar_label(&display) {
+        return Err("アバター名として使えません".into());
+    }
+    Ok(display)
+}
+
+fn usable_owned_labels(names: &[String]) -> Vec<String> {
+    let mut labels = Vec::new();
+    for name in names {
+        let trimmed = name.trim();
+        if trimmed.is_empty()
+            || trimmed == "名称未設定"
+            || crate::normalize::is_blocked_avatar_label(trimmed)
+        {
+            continue;
+        }
+        if let Some(display) = crate::normalize::preferred_display_name(trimmed) {
+            push_unique(&mut labels, &display);
+        }
+    }
+    labels
+}
+
+fn single_acceptable_quote(title: &str) -> Option<String> {
+    let segments = crate::normalize::quoted_segments(title);
+    if segments.len() != 1 {
+        return None;
+    }
+    let name = crate::normalize::preferred_display_name(&segments[0])?;
+    if name == "名称未設定" || crate::normalize::is_blocked_avatar_label(&name) {
+        None
+    } else {
+        Some(name)
+    }
+}
+
+fn acceptable_title_name(title: &str) -> Option<String> {
+    let name = crate::normalize::suggested_display_name(title);
+    if name.is_empty() || name == "名称未設定" || crate::normalize::is_blocked_avatar_label(&name) {
+        None
+    } else {
+        Some(name)
+    }
+}
+
+fn push_unique(labels: &mut Vec<String>, label: &str) {
+    if !label.is_empty() && !labels.iter().any(|existing| existing == label) {
+        labels.push(label.to_string());
+    }
+}
+
+/// A pinned avatar body whose link was written by owned-body registration.
+fn manual_owned_body(connection: &Connection, product: &Product) -> Result<Option<String>, String> {
+    if !classification_pinned(product)
+        || product.category != Some(Category::Avatar)
+        || !product.links_locked
+    {
+        return Ok(None);
+    }
+    connection
+        .query_row(
+            "SELECT avatar_id FROM product_avatars
+             WHERE product_id = ?1 AND source IN ('owned', 'catalog')
+             ORDER BY avatar_id LIMIT 1",
+            params![product.booth_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .sql()
+}
+
+fn release_manual_owned_body(
+    connection: &mut Connection,
+    product: &Product,
+    avatar_id: &str,
+) -> Result<ClassificationSnapshot, String> {
+    let mut snapshot = classification_snapshot(product);
+    snapshot.links_locked = Some(product.links_locked);
+    snapshot.links = Some(snapshot_links(connection, &product.booth_id)?);
+    remember_extracted_names(&mut snapshot, product);
+    snapshot.owned_avatars.push(OwnedAvatarRestore {
+        id: avatar_id.to_string(),
+        display_name: avatar_display(connection, avatar_id)?,
+        aliases: avatar_aliases(connection, avatar_id)?,
+        owned: true,
+        remove_if_unused: false,
+    });
+    let category = product
+        .genre
+        .as_deref()
+        .and_then(crate::genre::category_for_genre)
+        .map(|category| category.as_str().to_string());
+    let tx = connection.transaction().sql()?;
+    tx.execute(
+        "UPDATE products SET category = ?1, category_locked = 0, genre_locked = 0, links_locked = 0,
+         updated_at = ?2 WHERE booth_id = ?3",
+        params![category, now_iso(), product.booth_id],
+    )
+    .sql()?;
+    delete_links(&tx, &product.booth_id)?;
+    if body_count(&tx, avatar_id)? == 0 {
+        tx.execute(
+            "UPDATE avatars SET owned = 0 WHERE id = ?1",
+            params![avatar_id],
+        )
+        .sql()?;
+    }
+    tx.commit().sql()?;
+    Ok(snapshot)
+}
+
+fn apply_owned_restore(connection: &Connection, avatar: &OwnedAvatarRestore) -> Result<(), String> {
+    if avatar.owned {
+        if !avatar_exists(connection, &avatar.id)? {
+            if !avatar.id.starts_with("owned-") {
+                return Err(format!("アバター {} が対応表にありません", avatar.id));
+            }
+            insert_placeholder(connection, &avatar.id, &avatar.display_name, &avatar.aliases)?;
+        }
+        connection
+            .execute(
+                "UPDATE avatars SET owned = 1 WHERE id = ?1",
+                params![avatar.id],
+            )
+            .sql()?;
+        return Ok(());
+    }
+    if body_count(connection, &avatar.id)? > 0 {
+        return Ok(());
+    }
+    if avatar_exists(connection, &avatar.id)? {
+        connection
+            .execute(
+                "UPDATE avatars SET owned = 0 WHERE id = ?1",
+                params![avatar.id],
+            )
+            .sql()?;
+    }
+    if avatar.remove_if_unused && avatar.id.starts_with("owned-") {
+        let links: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM product_avatars WHERE avatar_id = ?1",
+                params![avatar.id],
+                |row| row.get(0),
+            )
+            .sql()?;
+        let builtin: i64 = connection
+            .query_row(
+                "SELECT is_builtin FROM avatars WHERE id = ?1",
+                params![avatar.id],
+                |row| row.get(0),
+            )
+            .optional()
+            .sql()?
+            .unwrap_or(0);
+        if links == 0 && builtin == 0 {
+            connection
+                .execute("DELETE FROM avatars WHERE id = ?1", params![avatar.id])
+                .sql()?;
+        }
+    }
+    Ok(())
+}
+
+fn snapshot_links(connection: &Connection, booth_id: &str) -> Result<Vec<SnapshotLink>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT avatar_id, source FROM product_avatars WHERE product_id = ?1 ORDER BY avatar_id",
+        )
+        .sql()?;
+    let links = statement
+        .query_map(params![booth_id], |row| {
+            Ok(SnapshotLink {
+                avatar_id: row.get(0)?,
+                source: row.get(1)?,
+            })
+        })
+        .sql()?
+        .collect::<Result<Vec<_>, _>>()
+        .sql()?;
+    Ok(links)
+}
+
+fn avatar_is_owned(connection: &Connection, id: &str) -> Result<bool, String> {
+    let owned: i64 = connection
+        .query_row(
+            "SELECT owned FROM avatars WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .sql()?;
+    Ok(owned != 0)
+}
+
+fn body_count(connection: &Connection, avatar_id: &str) -> Result<i64, String> {
+    connection
+        .query_row(
+            "SELECT COUNT(*) FROM product_avatars
+             JOIN products ON products.booth_id = product_avatars.product_id
+             WHERE product_avatars.avatar_id = ?1 AND products.category = 'avatar'",
+            params![avatar_id],
+            |row| row.get(0),
+        )
+        .sql()
 }
 
 pub(crate) fn mark_owned_body(
@@ -8298,7 +8785,7 @@ mod tests {
                 .any(|job| job.booth_id == "424242")
         );
 
-        let pinned = unpin_product_classification(&connection, "424242").unwrap();
+        let pinned = unpin_product_classification(&mut connection, "424242").unwrap();
         assert!(pinned.category_locked && pinned.genre_locked);
         let open = require_product(&connection, "424242").unwrap();
         assert_eq!(open.category, Some(Category::World));
@@ -8317,7 +8804,7 @@ mod tests {
             .iter()
             .any(|job| job.booth_id == "424242"));
 
-        restore_product_classification(&connection, &previous).unwrap();
+        restore_product_classification(&mut connection, &previous).unwrap();
         let restored = require_product(&connection, "424242").unwrap();
         assert_eq!(restored.category, Some(Category::Outfit));
         assert_eq!(restored.genre, previous.genre);
@@ -8336,6 +8823,270 @@ mod tests {
         let hair = require_product(&connection, "424242").unwrap();
         assert_eq!(hair.category, Some(Category::Hair));
         assert_eq!(hair.genre.as_deref(), Some("hair"));
+    }
+
+    #[test]
+    fn manual_owned_body_registers_pins_and_can_be_released() {
+        let mut connection = open_memory().unwrap();
+        let plain = r#"[
+            {"boothId":"424301","title":"架空丸の小物","shop":"見本","description":"ダミーです。"},
+            {"boothId":"424302","title":"色の違う小物","shop":"見本","description":"ダミーです。"},
+            {"boothId":"424303","title":"名前の無い小物","shop":"見本","description":"ダミーです。"},
+            {"boothId":"424304","title":"辞書の小物","shop":"見本","description":"ダミーです。"},
+            {"boothId":"424305","title":"ただの小物","shop":"見本","description":"ダミーです。"},
+            {"boothId":"424306","title":"除外する小物","shop":"見本","description":"ダミーです。"}
+        ]"#;
+        import_products(&mut connection, &parse_export(plain).unwrap()).unwrap();
+        apply_extraction(
+            &mut connection,
+            "424301",
+            &extraction(Category::Other, &["架空丸"], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        apply_extraction(
+            &mut connection,
+            "424302",
+            &extraction(Category::Other, &["ライム", "プラム"], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        apply_extraction(
+            &mut connection,
+            "424303",
+            &extraction(Category::Other, &[], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        apply_extraction(
+            &mut connection,
+            "424304",
+            &extraction(Category::Other, &[], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+
+        let before = require_product(&connection, "424302").unwrap();
+        match register_manual_owned_body(&mut connection, "424302", None).unwrap() {
+            RegisterOwnedBodyResult::NeedsName { candidates, .. } => {
+                assert!(candidates.iter().any(|name| name == "ライム"), "{candidates:?}");
+                assert!(candidates.iter().any(|name| name == "プラム"), "{candidates:?}");
+            }
+            RegisterOwnedBodyResult::Registered { .. } => panic!("ambiguous name was registered"),
+        }
+        let still = require_product(&connection, "424302").unwrap();
+        assert_eq!(still.category, before.category);
+        assert!(!still.category_locked && !still.genre_locked);
+        assert_eq!(
+            link_rows(&connection, "424302"),
+            vec![
+                ("lime".to_string(), "extracted".to_string()),
+                ("plum".to_string(), "extracted".to_string()),
+            ]
+        );
+
+        match register_manual_owned_body(&mut connection, "424303", None).unwrap() {
+            RegisterOwnedBodyResult::NeedsName { candidates, .. } => assert!(candidates.is_empty()),
+            RegisterOwnedBodyResult::Registered { .. } => panic!("missing name was registered"),
+        }
+        assert!(register_manual_owned_body(&mut connection, "424303", Some("")).is_err());
+        assert!(register_manual_owned_body(&mut connection, "424303", Some("汎用")).is_err());
+
+        let created = register_manual_owned_body(&mut connection, "424303", Some("見本丸")).unwrap();
+        let (snapshot, avatar_id) = match created {
+            RegisterOwnedBodyResult::Registered {
+                snapshot,
+                avatar_id,
+                display_name,
+            } => {
+                assert_eq!(display_name, "見本丸");
+                (snapshot, avatar_id)
+            }
+            RegisterOwnedBodyResult::NeedsName { .. } => panic!("name was required"),
+        };
+        assert_eq!(avatar_id, "owned-424303");
+        let body = require_product(&connection, "424303").unwrap();
+        assert_eq!(body.category, Some(Category::Avatar));
+        assert_eq!(body.genre.as_deref(), Some("other"));
+        assert!(body.category_locked && body.genre_locked && body.links_locked);
+        assert!(body.user_confirmed && !body.needs_review);
+        assert_eq!(
+            link_rows(&connection, "424303"),
+            vec![("owned-424303".to_string(), "owned".to_string())]
+        );
+        assert_eq!(owned_flag(&connection, "owned-424303"), 1);
+        assert!(!product_ids_by_genre(&connection, "asset", Some("other"))
+            .unwrap()
+            .contains(&"424303".into()));
+        assert!(avatar_cards(&load_snapshot(&connection).unwrap())
+            .iter()
+            .any(|card| card.id == "owned-424303" && card.owned));
+
+        apply_extraction(
+            &mut connection,
+            "424303",
+            &extraction(Category::Hair, &["ライム"], false, 0.99),
+            0.6,
+        )
+        .unwrap();
+        let resent = parse_export(
+            r#"[{"boothId":"424303","title":"名前の無い小物","shop":"見本","description":"説明を変えたダミーです。"}]"#,
+        )
+        .unwrap();
+        import_products(&mut connection, &resent).unwrap();
+        connection
+            .execute(
+                "UPDATE products SET classifier_version = 1 WHERE booth_id = '424303'",
+                [],
+            )
+            .unwrap();
+        reresolve_all(&mut connection).unwrap();
+        let kept = require_product(&connection, "424303").unwrap();
+        assert_eq!(kept.category, Some(Category::Avatar));
+        assert!(kept.category_locked && kept.genre_locked && kept.links_locked);
+        assert!(kept.user_confirmed);
+        assert_eq!(
+            link_rows(&connection, "424303"),
+            vec![("owned-424303".to_string(), "owned".to_string())]
+        );
+        for target in [ExtractTarget::Unclassified, ExtractTarget::Stale, ExtractTarget::All] {
+            assert!(
+                !products_for_extract(&connection, target)
+                    .unwrap()
+                    .iter()
+                    .any(|job| job.booth_id == "424303"),
+                "{target:?}"
+            );
+        }
+
+        restore_product_classification(&mut connection, &snapshot).unwrap();
+        let restored = require_product(&connection, "424303").unwrap();
+        assert_eq!(restored.category, Some(Category::Other));
+        assert!(!restored.category_locked && !restored.genre_locked && !restored.links_locked);
+        assert!(link_rows(&connection, "424303").is_empty());
+        assert!(restored.compatible_avatars.is_empty());
+        assert!(restored.unresolved_names.is_empty());
+        assert!(!avatar_exists(&connection, "owned-424303").unwrap());
+        match register_manual_owned_body(&mut connection, "424303", None).unwrap() {
+            RegisterOwnedBodyResult::NeedsName { candidates, .. } => assert!(candidates.is_empty()),
+            RegisterOwnedBodyResult::Registered { .. } => panic!("undone name was reused"),
+        }
+
+        let extracted = register_manual_owned_body(&mut connection, "424301", None).unwrap();
+        let extracted_snapshot = match extracted {
+            RegisterOwnedBodyResult::Registered {
+                snapshot,
+                avatar_id,
+                display_name,
+            } => {
+                assert_eq!(display_name, "架空丸");
+                assert_eq!(avatar_id, "owned-424301");
+                snapshot
+            }
+            RegisterOwnedBodyResult::NeedsName { .. } => panic!("one extracted name should register"),
+        };
+        assert!(register_manual_owned_body(&mut connection, "424301", None)
+            .unwrap_err()
+            .contains("すでにアバター"));
+        let released = unpin_product_classification(&mut connection, "424301").unwrap();
+        let open = require_product(&connection, "424301").unwrap();
+        assert_eq!(open.category, Some(Category::Other));
+        assert_eq!(open.genre.as_deref(), Some("other"));
+        assert!(!open.category_locked && !open.genre_locked && !open.links_locked);
+        assert!(link_rows(&connection, "424301").is_empty());
+        assert_eq!(owned_flag(&connection, "owned-424301"), 0);
+        assert!(avatar_exists(&connection, "owned-424301").unwrap());
+        restore_product_classification(&mut connection, &released).unwrap();
+        let again = require_product(&connection, "424301").unwrap();
+        assert_eq!(again.category, Some(Category::Avatar));
+        assert!(again.category_locked && again.genre_locked && again.links_locked);
+        assert_eq!(owned_flag(&connection, "owned-424301"), 1);
+        assert_eq!(
+            link_rows(&connection, "424301"),
+            vec![("owned-424301".to_string(), "owned".to_string())]
+        );
+        restore_product_classification(&mut connection, &extracted_snapshot).unwrap();
+        let extracted_back = require_product(&connection, "424301").unwrap();
+        assert_eq!(extracted_back.category, Some(Category::Other));
+        assert!(!extracted_back.category_locked && !extracted_back.links_locked);
+        assert!(!avatar_exists(&connection, "owned-424301").unwrap());
+
+        let known = register_manual_owned_body(&mut connection, "424302", Some("ライム")).unwrap();
+        match known {
+            RegisterOwnedBodyResult::Registered { avatar_id, .. } => assert_eq!(avatar_id, "lime"),
+            RegisterOwnedBodyResult::NeedsName { .. } => panic!("supplied name should register"),
+        }
+        assert_eq!(owned_flag(&connection, "lime"), 1);
+        assert_eq!(
+            link_rows(&connection, "424302"),
+            vec![("lime".to_string(), "owned".to_string())]
+        );
+        connection
+            .execute(
+                "INSERT INTO avatar_sources (booth_id, avatar_id) VALUES ('424304', 'plum')",
+                [],
+            )
+            .unwrap();
+        match register_manual_owned_body(&mut connection, "424304", None).unwrap() {
+            RegisterOwnedBodyResult::Registered {
+                avatar_id,
+                display_name,
+                ..
+            } => {
+                assert_eq!(avatar_id, "plum");
+                assert_eq!(display_name, "プラム");
+            }
+            RegisterOwnedBodyResult::NeedsName { .. } => panic!("catalog body should register"),
+        }
+        assert_eq!(
+            link_rows(&connection, "424304"),
+            vec![("plum".to_string(), "catalog".to_string())]
+        );
+        unpin_product_classification(&mut connection, "424302").unwrap();
+        let lime_back = require_product(&connection, "424302").unwrap();
+        assert_eq!(lime_back.category, Some(Category::Other));
+        assert_eq!(owned_flag(&connection, "lime"), 0);
+        assert!(avatar_exists(&connection, "lime").unwrap());
+        let plum_still = require_product(&connection, "424304").unwrap();
+        assert_eq!(plum_still.category, Some(Category::Avatar));
+        assert_eq!(owned_flag(&connection, "plum"), 1);
+
+        connection
+            .execute(
+                "UPDATE products SET title = ?1 WHERE booth_id = '424305'",
+                params!["オリジナル3Dモデル「見本子」"],
+            )
+            .unwrap();
+        match register_manual_owned_body(&mut connection, "424305", None).unwrap() {
+            RegisterOwnedBodyResult::Registered {
+                avatar_id,
+                display_name,
+                ..
+            } => {
+                assert_eq!(display_name, "見本子");
+                assert_eq!(avatar_id, "owned-424305");
+            }
+            RegisterOwnedBodyResult::NeedsName { .. } => panic!("quoted name should register"),
+        }
+        let quoted = require_product(&connection, "424305").unwrap();
+        assert_eq!(quoted.category, Some(Category::Avatar));
+        assert!(quoted.genre.is_none());
+        assert!(quoted.category_locked && quoted.genre_locked);
+        unpin_product_classification(&mut connection, "424305").unwrap();
+        let quoted_back = require_product(&connection, "424305").unwrap();
+        assert!(quoted_back.category.is_none());
+        assert!(!quoted_back.category_locked && !quoted_back.genre_locked);
+
+        set_product_excluded(&mut connection, "424306", true).unwrap();
+        assert!(register_manual_owned_body(&mut connection, "424306", Some("見本丸"))
+            .unwrap_err()
+            .contains("除外"));
+    }
+
+    fn owned_flag(connection: &Connection, id: &str) -> i64 {
+        connection
+            .query_row("SELECT owned FROM avatars WHERE id = ?1", params![id], |row| row.get(0))
+            .unwrap()
     }
 
     #[test]
@@ -8497,11 +9248,11 @@ mod tests {
         let before = move_product_genre(&mut connection, "8800204", "asset", "hair").unwrap();
         assert_eq!(before.category, None);
         move_product_genre(&mut connection, "8800204", "asset", "hair").unwrap();
-        let pinned = unpin_product_classification(&connection, "8800204").unwrap();
+        let pinned = unpin_product_classification(&mut connection, "8800204").unwrap();
         assert_eq!(pinned.category.as_deref(), Some("hair"));
-        restore_product_classification(&connection, &before).unwrap();
+        restore_product_classification(&mut connection, &before).unwrap();
         let same = classification_snapshot(&require_product(&connection, "8800204").unwrap());
-        restore_product_classification(&connection, &same).unwrap();
+        restore_product_classification(&mut connection, &same).unwrap();
 
         let moves: i64 = connection
             .query_row(

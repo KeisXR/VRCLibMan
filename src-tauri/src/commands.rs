@@ -2,6 +2,7 @@ use crate::AppState;
 use crate::db::{self, ExtractJob};
 use crate::model::{
     AvatarCandidate, AvatarInput, BaseBodyInput, CatalogInfo, CatalogRefresh, ClassificationSnapshot,
+    RegisterOwnedBodyResult,
     ExtractReport, ImportReport, JobProgress, Knowledge, LibraryStats, OllamaStatus, ProductUpdate,
     ScanReport, Category, Settings, SettingsInput, SetupStatus, StagedLeftover,
 };
@@ -652,8 +653,8 @@ pub fn restore_product_classification(
     state: State<'_, AppState>,
     snapshot: ClassificationSnapshot,
 ) -> Result<(), String> {
-    let connection = db(&state)?;
-    db::restore_product_classification(&connection, &snapshot)
+    let mut connection = db(&state)?;
+    db::restore_product_classification(&mut connection, &snapshot)
 }
 
 #[tauri::command]
@@ -662,8 +663,19 @@ pub fn unpin_product_classification(
     state: State<'_, AppState>,
     boothId: String,
 ) -> Result<ClassificationSnapshot, String> {
-    let connection = db(&state)?;
-    db::unpin_product_classification(&connection, &boothId)
+    let mut connection = db(&state)?;
+    db::unpin_product_classification(&mut connection, &boothId)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn register_owned_body(
+    state: State<'_, AppState>,
+    boothId: String,
+    name: Option<String>,
+) -> Result<RegisterOwnedBodyResult, String> {
+    let mut connection = db(&state)?;
+    db::register_manual_owned_body(&mut connection, &boothId, name.as_deref())
 }
 
 #[tauri::command]

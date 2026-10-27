@@ -29,6 +29,35 @@ export function useGenreMove() {
   );
 }
 
+export function useRegisterOwnedBody() {
+  const { refresh, notify, fail } = useShell();
+  return useCallback(
+    async (boothId: string, name?: string) => {
+      try {
+        const result = await api.registerOwnedBody(boothId, name);
+        if (result.kind === "registered") {
+          const label = result.displayName;
+          notify(`${label}をアバター本体として登録しました`, () => {
+            void api.restoreProductClassification(result.snapshot).then(
+              () => {
+                notify("登録を元に戻しました");
+                refresh();
+              },
+              (err: unknown) => fail(errorText(err)),
+            );
+          });
+          refresh();
+        }
+        return result;
+      } catch (err) {
+        fail(errorText(err));
+        return null;
+      }
+    },
+    [fail, notify, refresh],
+  );
+}
+
 export function useUnpinProduct() {
   const { refresh, notify, fail } = useShell();
   return useCallback(

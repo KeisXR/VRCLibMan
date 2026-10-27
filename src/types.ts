@@ -407,6 +407,19 @@ export interface ManagedProduct {
   excluded: boolean;
 }
 
+export interface SnapshotLink {
+  avatarId: string;
+  source: string;
+}
+
+export interface OwnedAvatarRestore {
+  id: string;
+  displayName: string;
+  aliases: string[];
+  owned: boolean;
+  removeIfUnused: boolean;
+}
+
 export interface ClassificationSnapshot {
   boothId: string;
   category: string | null;
@@ -415,7 +428,26 @@ export interface ClassificationSnapshot {
   genreLocked: boolean;
   userConfirmed: boolean;
   needsReview: boolean;
+  linksLocked?: boolean | null;
+  links?: SnapshotLink[] | null;
+  ownedAvatars?: OwnedAvatarRestore[];
+  compatibleAvatars?: string[];
+  unresolvedNames?: string[];
+  isGeneric?: boolean;
 }
+
+export type RegisterOwnedBodyResult =
+  | {
+      kind: "registered";
+      snapshot: ClassificationSnapshot;
+      avatarId: string;
+      displayName: string;
+    }
+  | {
+      kind: "needsName";
+      suggestedName: string;
+      candidates: string[];
+    };
 
 export interface ProductUpdate {
   boothId: string;
