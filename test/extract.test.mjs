@@ -495,3 +495,66 @@ test("card images use a pximg size the CDN serves", () => {
     "https://booth.pximg.net/c/150x150/abcdef/i/4876459/base.jpg",
   );
 });
+
+test("category and tags stay on public items and are dropped for adult json", () => {
+  const detail = detailFromItemJson({
+    id: 424242,
+    name: "架空の道具",
+    description: "ダミー説明",
+    category: { id: 215, name: "3Dツール・システム", parent: { name: "3Dモデル" } },
+    tags: [{ name: "VRChat" }, { name: "ダミー" }],
+    is_adult: false,
+  }, "424242");
+  assert.equal(detail.category.id, 215);
+  assert.equal(detail.category.name, "3Dツール・システム");
+  assert.equal(detail.category.parent.name, "3Dモデル");
+  assert.deepEqual(detail.tags, ["VRChat", "ダミー"]);
+  const product = { boothId: "424242", title: "架空の道具", shop: "", descriptionSnippet: "" };
+  mergeDetail(product, detail);
+  assert.equal(product.category.id, 215);
+  assert.deepEqual(product.tags, ["VRChat", "ダミー"]);
+
+  const adult = detailFromItemJson({
+    id: 424243,
+    name: "架空の制限商品",
+    description: "残してはいけない本文",
+    is_adult: true,
+    category: { id: 209, name: "3D衣装", parent: { name: "3Dモデル" } },
+    tags: ["衣装"],
+  }, "424243");
+  assert.equal(adult.descriptionSnippet, "");
+  assert.equal(adult.category, undefined);
+  assert.equal(adult.tags, undefined);
+  assert.equal(adult.isAdult, true);
+  const kept = {
+    boothId: "424243",
+    title: "架空の制限商品",
+    descriptionSnippet: "残してはいけない本文",
+    category: { id: 209, name: "3D衣装" },
+    tags: ["衣装"],
+  };
+  mergeDetail(kept, adult);
+  assert.equal(kept.descriptionSnippet, "");
+  assert.equal(kept.category, undefined);
+  assert.equal(kept.tags, undefined);
+
+  const html = `<!doctype html><body>
+    <h1>架空の服</h1>
+    <div id="js-item-category-breadcrumbs">
+      <a href="/browse/3d">3Dモデル</a>
+      <a href="/browse/outfit" data-category-id="209">3D衣装</a>
+    </div>
+    <ul id="js-item-tag-list"><li><a href="/tags/dummy">ダミー</a></li></ul>
+    <div class="item-card">
+      <a href="/browse/world">3D環境・ワールド</a>
+      <a href="/tags/furniture">家具</a>
+    </div>
+  </body>`;
+  const { document } = parseHTML(html);
+  const page = extractPage(document, "https://booth.pm/ja/items/424244");
+  assert.equal(page.length, 1);
+  assert.equal(page[0].category.id, 209);
+  assert.equal(page[0].category.name, "3D衣装");
+  assert.equal(page[0].category.parent.name, "3Dモデル");
+  assert.deepEqual(page[0].tags, ["ダミー"]);
+});

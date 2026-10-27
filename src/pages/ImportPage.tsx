@@ -8,6 +8,7 @@ import {
 } from "../api";
 import { useShell } from "../App";
 import type {
+  ExtractReport,
   ImportReport,
   StagedDownload,
   IntegrationStatus,
@@ -18,6 +19,16 @@ import { SettingRow } from "../components/SettingRow";
 import { ProductExclusions } from "../components/ProductExclusions";
 import { ExtensionInstructions } from "../components/BoothImportSettings";
 import { OllamaMemoryControls } from "../components/OllamaMemoryControls";
+
+function extractNotice(result: ExtractReport): string {
+  const head = result.cancelled
+    ? "分類を中断しました"
+    : `${result.processed} 件を分類しました${result.failed > 0 ? `（${result.failed} 件失敗）` : ""}`;
+  if (typeof result.boothSettled === "number" && typeof result.modelUsed === "number") {
+    return `${head}。カテゴリとタグで ${result.boothSettled} 件、モデルで ${result.modelUsed} 件`;
+  }
+  return head;
+}
 
 function StaleReclassifyRow({ busy, onExtract }: { busy: boolean; onExtract: () => void }) {
   const { revision } = useShell();
@@ -53,6 +64,7 @@ export function ImportPage() {
   const [progress, setProgress] = useState<JobProgress | null>(null);
   const [extracting, setExtracting] = useState(false);
   const [classificationErrors, setClassificationErrors] = useState<string[]>([]);
+  const [extractStats, setExtractStats] = useState<{ boothSettled: number; modelUsed: number } | null>(null);
   const [receiverStatus, setReceiverStatus] = useState("確認中");
   const [staged, setStaged] = useState<StagedDownload[]>([]);
   const [llmBackend, setLlmBackend] = useState<"ollama" | "apple">("ollama");
@@ -130,12 +142,11 @@ export function ImportPage() {
         setClassificationErrors([]);
         setExtracting(true);
         const extracted = await api.extractProducts("unclassified");
-        notify(
-          extracted.cancelled
-            ? "分類を中断しました"
-            : `${extracted.processed} 件を分類しました${extracted.failed > 0 ? `（${extracted.failed} 件失敗）` : ""}`,
-        );
+        notify(extractNotice(extracted));
         setClassificationErrors(extracted.errors);
+        if (typeof extracted.boothSettled === "number" && typeof extracted.modelUsed === "number") {
+          setExtractStats({ boothSettled: extracted.boothSettled, modelUsed: extracted.modelUsed });
+        }
         if (extracted.failed > 0) fail(`${extracted.failed} 件の商品を分類できませんでした。分類結果の詳細を確認してください。`);
         refresh();
       }
@@ -195,15 +206,15 @@ export function ImportPage() {
     setBusy(true);
     setExtracting(true);
     setClassificationErrors([]);
+    setExtractStats(null);
     setProgress(null);
     try {
       const result = await api.extractProducts(target);
-      notify(
-        result.cancelled
-          ? "分類を中断しました"
-          : `${result.processed} 件を分類しました${result.failed > 0 ? `（${result.failed} 件失敗）` : ""}`,
-      );
+      notify(extractNotice(result));
       setClassificationErrors(result.errors);
+      if (typeof result.boothSettled === "number" && typeof result.modelUsed === "number") {
+        setExtractStats({ boothSettled: result.boothSettled, modelUsed: result.modelUsed });
+      }
       if (result.failed > 0) fail(`${result.failed} 件の商品を分類できませんでした。分類結果の詳細を確認してください。`);
       refresh();
     } catch (err) {
@@ -343,7 +354,7 @@ export function ImportPage() {
         <section className="settings-section">
           <header>
             <h2>2. 分類</h2>
-            <p>商品説明からアバター名とカテゴリを整理します。</p>
+            <p>BOOTHのカテゴリとタグで決まる商品は先に分類し、決まらない商品だけ分類モデルへ渡します。</p>
           </header>
           <SettingRow
             label={
@@ -380,6 +391,11 @@ export function ImportPage() {
             <div className="section-body" role="status">
               {progress.message}（{progress.current} / {progress.total}）
             </div>
+          )}
+          {extractStats && (
+            <p className="meta">
+              カテゴリとタグで {extractStats.boothSettled} 件、モデルで {extractStats.modelUsed} 件
+            </p>
           )}
           <StaleReclassifyRow busy={busy} onExtract={() => void extract("stale")} />
           <details className="settings-details">

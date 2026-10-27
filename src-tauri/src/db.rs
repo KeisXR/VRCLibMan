@@ -92,6 +92,10 @@ pub(crate) struct ExtractJob {
     pub booth_id: String,
     pub title: String,
     pub description: String,
+    pub booth_category_id: Option<i64>,
+    pub booth_category_name: String,
+    pub booth_category_parent: String,
+    pub booth_tags: Vec<String>,
 }
 
 pub(crate) struct ThumbJob {
@@ -256,6 +260,43 @@ fn migrate(connection: &Connection) -> Result<(), String> {
             .sql()?;
         connection
             .execute_batch("PRAGMA user_version = 6;")
+            .sql()?;
+    }
+    // v7 stores the public BOOTH category and tags used before the model.
+    // booth_detail_at is set once a public document, adult flag, age gate, or 404 was seen.
+    if version < 7 {
+        ensure_column(
+            connection,
+            "products",
+            "booth_category_id",
+            "ALTER TABLE products ADD COLUMN booth_category_id INTEGER",
+        )?;
+        ensure_column(
+            connection,
+            "products",
+            "booth_category_name",
+            "ALTER TABLE products ADD COLUMN booth_category_name TEXT",
+        )?;
+        ensure_column(
+            connection,
+            "products",
+            "booth_category_parent",
+            "ALTER TABLE products ADD COLUMN booth_category_parent TEXT",
+        )?;
+        ensure_column(
+            connection,
+            "products",
+            "booth_tags",
+            "ALTER TABLE products ADD COLUMN booth_tags TEXT",
+        )?;
+        ensure_column(
+            connection,
+            "products",
+            "booth_detail_at",
+            "ALTER TABLE products ADD COLUMN booth_detail_at TEXT",
+        )?;
+        connection
+            .execute_batch("PRAGMA user_version = 7;")
             .sql()?;
     }
     Ok(())
@@ -941,7 +982,77 @@ fn merge_library_facts(
         }
         changed |= merge_download(connection, &incoming.booth_id, download)?;
     }
+    changed |= merge_booth_meta(connection, incoming)?;
     Ok(changed)
+}
+
+fn merge_booth_meta(connection: &Connection, incoming: &IncomingProduct) -> Result<bool, String> {
+    let mut changed = false;
+    if incoming.is_adult == Some(true) {
+        changed |= stamp_booth_detail(connection, &incoming.booth_id)?;
+        return Ok(changed);
+    }
+    if let Some(category) = &incoming.booth_category {
+        let id = category.id.filter(|id| *id > 0);
+        let name: String = category.name.trim().chars().take(80).collect();
+        let parent: String = category.parent.trim().chars().take(80).collect();
+        let updated = connection
+            .execute(
+                "UPDATE products SET
+                    booth_category_id = ?1,
+                    booth_category_name = ?2,
+                    booth_category_parent = ?3
+                 WHERE booth_id = ?4
+                   AND (
+                     booth_category_id IS NOT ?1
+                     OR IFNULL(booth_category_name, '') IS NOT ?2
+                     OR IFNULL(booth_category_parent, '') IS NOT ?3
+                   )",
+                params![id, name, parent, incoming.booth_id],
+            )
+            .sql()?;
+        changed |= updated > 0;
+        changed |= stamp_booth_detail(connection, &incoming.booth_id)?;
+    }
+    if let Some(tags) = &incoming.booth_tags {
+        let cleaned = clean_booth_tags(tags);
+        let json = to_json(&cleaned)?;
+        let updated = connection
+            .execute(
+                "UPDATE products SET booth_tags = ?1
+                 WHERE booth_id = ?2 AND IFNULL(booth_tags, '') IS NOT ?1",
+                params![json, incoming.booth_id],
+            )
+            .sql()?;
+        changed |= updated > 0;
+        changed |= stamp_booth_detail(connection, &incoming.booth_id)?;
+    }
+    Ok(changed)
+}
+
+fn clean_booth_tags(tags: &[String]) -> Vec<String> {
+    let mut cleaned = Vec::new();
+    for tag in tags {
+        let name: String = tag.trim().chars().take(40).collect();
+        if name.is_empty() || cleaned.iter().any(|existing| existing == &name) {
+            continue;
+        }
+        cleaned.push(name);
+        if cleaned.len() == 40 {
+            break;
+        }
+    }
+    cleaned
+}
+
+fn stamp_booth_detail(connection: &Connection, booth_id: &str) -> Result<bool, String> {
+    let updated = connection
+        .execute(
+            "UPDATE products SET booth_detail_at = ?1 WHERE booth_id = ?2 AND booth_detail_at IS NULL",
+            params![now_iso(), booth_id],
+        )
+        .sql()?;
+    Ok(updated > 0)
 }
 
 fn merge_flag(
@@ -1207,11 +1318,19 @@ pub(crate) fn apply_extraction(
         &avatars,
     );
     let category = decide_category(&existing, extraction.category, extraction.confidence);
+    let tags = booth_tags_of(connection, booth_id)?;
     let genre = if existing.genre_locked {
         existing.genre.clone()
     } else {
         category.map(|category| {
-            let selected = crate::genre::classify_text(category, &existing.title, &existing.description_snippet)
+            let selected = crate::genre::genre_from_tags(category, &tags)
+                .or_else(|| {
+                    crate::genre::classify_text(
+                        category,
+                        &existing.title,
+                        &existing.description_snippet,
+                    )
+                })
                 .or_else(|| extraction.genre.clone());
             crate::genre::validate(category, selected.as_deref())
         })
@@ -2239,6 +2358,21 @@ pub(crate) fn parse_extract_target(value: &str) -> Result<ExtractTarget, String>
     }
 }
 
+const EXTRACT_JOB_COLUMNS: &str = "booth_id, title, description_snippet, booth_category_id, booth_category_name, booth_category_parent, booth_tags";
+
+fn map_extract_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<ExtractJob> {
+    let tags: Option<String> = row.get(6)?;
+    Ok(ExtractJob {
+        booth_id: row.get(0)?,
+        title: row.get(1)?,
+        description: row.get(2)?,
+        booth_category_id: row.get(3)?,
+        booth_category_name: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
+        booth_category_parent: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+        booth_tags: parse_list(tags.as_deref().unwrap_or("[]")),
+    })
+}
+
 pub(crate) fn products_for_extract(
     connection: &Connection,
     target: ExtractTarget,
@@ -2246,59 +2380,47 @@ pub(crate) fn products_for_extract(
     let rows = match target {
         ExtractTarget::All => {
             let mut statement = connection
-                .prepare(
-                    "SELECT booth_id, title, description_snippet FROM products
+                .prepare(&format!(
+                    "SELECT {EXTRACT_JOB_COLUMNS} FROM products
                      WHERE booth_id NOT IN (SELECT booth_id FROM product_exclusions)
                        AND NOT (category_locked = 1 AND genre_locked = 1)
-                     ORDER BY updated_at DESC",
-                )
+                     ORDER BY updated_at DESC"
+                ))
                 .sql()?;
             statement
-                .query_map([], |row| {
-                    Ok(ExtractJob {
-                        booth_id: row.get(0)?,
-                        title: row.get(1)?,
-                        description: row.get(2)?,
-                    })
-                })
+                .query_map([], map_extract_job)
                 .sql()?
                 .collect::<Result<Vec<_>, _>>()
                 .sql()?
         }
         ExtractTarget::Unclassified => {
             let mut statement = connection
-                .prepare(
-                    "SELECT booth_id, title, description_snippet FROM products
+                .prepare(&format!(
+                    "SELECT {EXTRACT_JOB_COLUMNS} FROM products
                      WHERE (extracted_at IS NULL OR category IS NULL)
                        AND NOT (category_locked = 1 AND genre_locked = 1)
                        AND booth_id NOT IN (SELECT booth_id FROM product_exclusions)
-                     ORDER BY imported_at ASC",
-                )
+                     ORDER BY imported_at ASC"
+                ))
                 .sql()?;
             statement
-                .query_map([], |row| {
-                    Ok(ExtractJob {
-                        booth_id: row.get(0)?,
-                        title: row.get(1)?,
-                        description: row.get(2)?,
-                    })
-                })
+                .query_map([], map_extract_job)
                 .sql()?
                 .collect::<Result<Vec<_>, _>>()
                 .sql()?
         }
         ExtractTarget::Stale => {
             let mut statement = connection
-                .prepare(
-                    "SELECT booth_id, title, description_snippet FROM products
+                .prepare(&format!(
+                    "SELECT {EXTRACT_JOB_COLUMNS} FROM products
                      WHERE extracted_at IS NOT NULL
                        AND category IS NOT NULL
                        AND classifier_version < ?1
                        AND description_snippet != ?2
                        AND NOT (category_locked = 1 AND genre_locked = 1)
                        AND booth_id NOT IN (SELECT booth_id FROM product_exclusions)
-                     ORDER BY updated_at DESC",
-                )
+                     ORDER BY updated_at DESC"
+                ))
                 .sql()?;
             statement
                 .query_map(
@@ -2306,13 +2428,7 @@ pub(crate) fn products_for_extract(
                         crate::classifier::CLASSIFIER_VERSION,
                         crate::model::UNAVAILABLE_DESCRIPTION
                     ],
-                    |row| {
-                        Ok(ExtractJob {
-                            booth_id: row.get(0)?,
-                            title: row.get(1)?,
-                            description: row.get(2)?,
-                        })
-                    },
+                    map_extract_job,
                 )
                 .sql()?
                 .collect::<Result<Vec<_>, _>>()
@@ -2320,6 +2436,157 @@ pub(crate) fn products_for_extract(
         }
     };
     Ok(rows)
+}
+
+struct BoothMeta {
+    id: Option<i64>,
+    name: String,
+    tags: Vec<String>,
+}
+
+fn booth_tags_of(connection: &Connection, booth_id: &str) -> Result<Vec<String>, String> {
+    Ok(booth_meta(connection, booth_id)?.tags)
+}
+
+fn booth_meta(connection: &Connection, booth_id: &str) -> Result<BoothMeta, String> {
+    connection
+        .query_row(
+            "SELECT booth_category_id, booth_category_name, booth_tags FROM products WHERE booth_id = ?1",
+            params![booth_id],
+            |row| {
+                let tags: Option<String> = row.get(2)?;
+                Ok(BoothMeta {
+                    id: row.get(0)?,
+                    name: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    tags: parse_list(tags.as_deref().unwrap_or("[]")),
+                })
+            },
+        )
+        .sql()
+}
+
+/// Category id or name, plus tags when the category is ambiguous, decides the row.
+/// A locked category that disagrees is left for the model. Both locks are already excluded.
+pub(crate) fn apply_booth_settlement(
+    connection: &mut Connection,
+    booth_id: &str,
+) -> Result<bool, String> {
+    if product_excluded(connection, booth_id)? {
+        return Ok(false);
+    }
+    let existing = require_product(connection, booth_id)?;
+    if classification_pinned(&existing) {
+        return Ok(false);
+    }
+    if existing.description_snippet == crate::model::UNAVAILABLE_DESCRIPTION {
+        return Ok(false);
+    }
+    let meta = booth_meta(connection, booth_id)?;
+    let Some(settlement) = crate::booth_category::settle(meta.id, &meta.name, &meta.tags) else {
+        return Ok(false);
+    };
+    if existing.category_locked && existing.category != Some(settlement.category) {
+        return Ok(false);
+    }
+    let threshold = settings(connection)?.confidence_threshold;
+    apply_extraction(
+        connection,
+        booth_id,
+        &Extraction {
+            category: settlement.category,
+            genre: settlement.genre,
+            compatible_avatars: Vec::new(),
+            is_generic: false,
+            confidence: 0.95,
+        },
+        threshold,
+    )?;
+    Ok(true)
+}
+
+pub(crate) fn products_needing_booth_detail(connection: &Connection) -> Result<Vec<String>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT booth_id FROM products
+             WHERE booth_detail_at IS NULL
+               AND IFNULL(is_adult, 0) = 0
+               AND booth_id NOT IN (SELECT booth_id FROM product_exclusions)
+             ORDER BY imported_at ASC",
+        )
+        .sql()?;
+    let rows = statement
+        .query_map([], |row| row.get(0))
+        .sql()?
+        .collect::<Result<Vec<_>, _>>()
+        .sql()?;
+    Ok(rows)
+}
+
+/// `true` means stop the batch. RetryLater and a transport error leave the row unchecked.
+pub(crate) fn store_booth_detail(
+    connection: &mut Connection,
+    booth_id: &str,
+    outcome: &crate::booth_detail::DetailOutcome,
+) -> Result<bool, String> {
+    use crate::booth_detail::DetailOutcome;
+    if product_by_id(connection, booth_id)?.is_none() {
+        return Ok(false);
+    }
+    match outcome {
+        DetailOutcome::RetryLater => Ok(true),
+        DetailOutcome::Again => Ok(false),
+        DetailOutcome::Adult => {
+            let _ = merge_flag(connection, booth_id, "is_adult", Some(true))?;
+            let _ = stamp_booth_detail(connection, booth_id)?;
+            Ok(false)
+        }
+        DetailOutcome::AgeGate => {
+            let _ = stamp_booth_detail(connection, booth_id)?;
+            Ok(false)
+        }
+        DetailOutcome::Missing => {
+            let product = require_product(connection, booth_id)?;
+            if product.description_snippet.trim().is_empty() {
+                connection
+                    .execute(
+                        "UPDATE products SET description_snippet = ?1 WHERE booth_id = ?2",
+                        params![crate::model::UNAVAILABLE_DESCRIPTION, booth_id],
+                    )
+                    .sql()?;
+                note_unavailable(connection, booth_id)?;
+            }
+            let _ = stamp_booth_detail(connection, booth_id)?;
+            Ok(false)
+        }
+        DetailOutcome::Public(item) => {
+            let booth_category = if item.category_id.is_some() || !item.category_name.is_empty() {
+                Some(crate::model::BoothCategoryInput {
+                    id: item.category_id,
+                    name: item.category_name.clone(),
+                    parent: item.category_parent.clone(),
+                })
+            } else {
+                None
+            };
+            let incoming = IncomingProduct {
+                booth_id: booth_id.to_string(),
+                title: String::new(),
+                shop: item.shop.clone(),
+                description_snippet: item.description.clone(),
+                url: String::new(),
+                thumbnail_url: None,
+                variations: Vec::new(),
+                downloads: Vec::new(),
+                is_free: item.is_free,
+                is_adult: item.is_adult,
+                unpublished: None,
+                booth_category,
+                booth_tags: Some(item.tags.clone()),
+            };
+            upsert(connection, &incoming)?;
+            Ok(false)
+        }
+    }
 }
 
 pub(crate) fn classification_status(connection: &Connection) -> Result<crate::model::ClassificationStatus, String> {
@@ -2703,6 +2970,8 @@ pub(crate) fn add_free_product(connection: &mut Connection, url: &str) -> Result
         is_free: Some(true),
         is_adult: None,
         unpublished: None,
+        booth_category: None,
+        booth_tags: None,
     };
     upsert(connection, &incoming)?;
     Ok(booth_id)
@@ -2783,6 +3052,8 @@ pub(crate) fn prepare_download(
                 None
             },
             unpublished: None,
+            booth_category: None,
+            booth_tags: None,
         };
         upsert(connection, &incoming)?;
     } else {
@@ -4760,8 +5031,24 @@ mod tests {
             connection
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
-            6
+            7
         );
+        let detail_at: Option<String> = connection
+            .query_row(
+                "SELECT booth_detail_at FROM products WHERE booth_id = '9001'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(detail_at, None);
+        let category_id: Option<i64> = connection
+            .query_row(
+                "SELECT booth_category_id FROM products WHERE booth_id = '9001'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(category_id, None);
         let moves: i64 = connection
             .query_row("SELECT COUNT(*) FROM classification_moves", [], |row| row.get(0))
             .unwrap();
@@ -5330,6 +5617,149 @@ mod tests {
     }
 
     #[test]
+    fn booth_category_settles_without_a_model_and_locks_and_adult_rows_stay() {
+        let mut connection = open_memory().unwrap();
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 7);
+        let json = r#"{
+            "products": [
+                {
+                    "boothId": "424242",
+                    "title": "架空の道具",
+                    "description": "説明だけです",
+                    "category": {"id": 215, "name": "3Dツール・システム", "parent": {"name": "3Dモデル"}},
+                    "tags": ["VRChat", "Unity"]
+                },
+                {
+                    "boothId": "424243",
+                    "title": "架空の小道具",
+                    "description": "タグが足りません",
+                    "category": {"id": 210, "name": "3D小道具", "parent": {"name": "3Dモデル"}},
+                    "tags": ["VRChat", "3Dモデル"]
+                },
+                {
+                    "boothId": "424244",
+                    "title": "架空の制限商品",
+                    "description": "保存しない説明",
+                    "isAdult": true,
+                    "category": {"id": 209, "name": "3D衣装", "parent": {"name": "3Dモデル"}},
+                    "tags": ["衣装"]
+                },
+                {
+                    "boothId": "424245",
+                    "title": "架空の衣装",
+                    "description": "手で移します",
+                    "category": {"id": 209, "name": "3D衣装", "parent": {"name": "3Dモデル"}},
+                    "tags": ["VRChat"]
+                },
+                {
+                    "boothId": "424246",
+                    "title": "消えた見本",
+                    "description": ""
+                },
+                {
+                    "boothId": "424247",
+                    "title": "ロックした道具",
+                    "description": "手動のカテゴリです",
+                    "category": {"id": 215, "name": "3Dツール・システム", "parent": {"name": "3Dモデル"}},
+                    "tags": ["ダミー"]
+                }
+            ]
+        }"#;
+        import_export_json(&mut connection, json).unwrap();
+        let category_of = |connection: &Connection, id: &str| {
+            connection
+                .query_row(
+                    "SELECT booth_category_id, IFNULL(booth_category_name, ''), IFNULL(booth_tags, ''), description_snippet,
+                            CASE WHEN booth_detail_at IS NULL THEN 0 ELSE 1 END
+                     FROM products WHERE booth_id = ?1",
+                    params![id],
+                    |row| {
+                        Ok((
+                            row.get::<_, Option<i64>>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                            row.get::<_, i64>(4)?,
+                        ))
+                    },
+                )
+                .unwrap()
+        };
+        let tool = category_of(&connection, "424242");
+        assert_eq!(tool.0, Some(215));
+        assert_eq!(tool.1, "3Dツール・システム");
+        assert!(tool.2.contains("VRChat"));
+        assert_eq!(tool.4, 1);
+        import_export_json(
+            &mut connection,
+            r#"{"products":[{"boothId":"424242","title":"架空の道具","description":"説明だけです"}]}"#,
+        )
+        .unwrap();
+        let kept = category_of(&connection, "424242");
+        assert_eq!(kept.0, Some(215));
+        assert!(kept.2.contains("Unity"));
+        let adult = category_of(&connection, "424244");
+        assert_eq!(adult.0, None);
+        assert_eq!(adult.3, "");
+        assert!(!adult.2.contains("衣装"));
+        let adult_flag: Option<i64> = connection
+            .query_row(
+                "SELECT is_adult FROM products WHERE booth_id = '424244'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(adult_flag, Some(1));
+        assert!(apply_booth_settlement(&mut connection, "424242").unwrap());
+        let settled = product_by_id(&connection, "424242").unwrap().unwrap();
+        assert_eq!(settled.category, Some(Category::Other));
+        assert_eq!(settled.genre.as_deref(), Some("tool_editor"));
+        assert!(!apply_booth_settlement(&mut connection, "424243").unwrap());
+        assert!(product_by_id(&connection, "424243").unwrap().unwrap().category.is_none());
+        move_product_genre(&mut connection, "424245", "asset", "hair").unwrap();
+        assert!(!apply_booth_settlement(&mut connection, "424245").unwrap());
+        let locked = product_by_id(&connection, "424245").unwrap().unwrap();
+        assert_eq!(locked.category, Some(Category::Hair));
+        assert_eq!(locked.genre.as_deref(), Some("hair"));
+        assert!(locked.category_locked && locked.genre_locked);
+        connection
+            .execute(
+                "UPDATE products SET category = 'avatar', category_locked = 1, genre_locked = 0, extracted_at = NULL WHERE booth_id = '424247'",
+                [],
+            )
+            .unwrap();
+        assert!(!apply_booth_settlement(&mut connection, "424247").unwrap());
+        let disagreed = product_by_id(&connection, "424247").unwrap().unwrap();
+        assert_eq!(disagreed.category, Some(Category::Avatar));
+        let pending = products_needing_booth_detail(&connection).unwrap();
+        assert_eq!(pending, vec!["424246".to_string()]);
+        assert!(!pending.iter().any(|id| id == "424244"));
+        let stop = store_booth_detail(
+            &mut connection,
+            "424246",
+            &crate::booth_detail::DetailOutcome::Missing,
+        )
+        .unwrap();
+        assert!(!stop);
+        let missing = product_by_id(&connection, "424246").unwrap().unwrap();
+        assert_eq!(
+            missing.description_snippet,
+            crate::model::UNAVAILABLE_DESCRIPTION
+        );
+        assert!(products_needing_booth_detail(&connection).unwrap().is_empty());
+        let again = store_booth_detail(
+            &mut connection,
+            "424243",
+            &crate::booth_detail::DetailOutcome::RetryLater,
+        )
+        .unwrap();
+        assert!(again);
+    }
+
+    #[test]
     fn sample_export_on_file_database_reaches_list_and_detail() {
         struct Temp(std::path::PathBuf);
         impl Drop for Temp {
@@ -5360,7 +5790,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
         let report = import_products(&mut connection, &parsed).unwrap();
         assert_eq!(report.inserted, 7);
         assert_eq!(report.skipped, 0);

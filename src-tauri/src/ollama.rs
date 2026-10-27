@@ -45,6 +45,8 @@ is_generic は、汎用、どのアバターでも、素体を問わない、と
 - 「【半額セール中】真冬 Mafuyu / オリジナル3Dモデル」→ avatar, [\"真冬\"], false
 - 「クルミ ver1.2 対応のワンピース」→ outfit, [\"クルミ ver1.2\"], false
 
+入力にある「BOOTHカテゴリ:」と「タグ:」はヒントです。説明文と食い違うときは説明文を優先します。「なし」のときはその行を使いません。
+
 confidence は 0 から 1。対応アバターかカテゴリが文中ではっきり分かるとき 0.8 以上。\
 推測が混ざるとき 0.5 以下。情報がほとんど無いとき 0.2 以下。";
 
@@ -212,11 +214,15 @@ pub async fn extract_product(
     model: &str,
     title: &str,
     description: &str,
+    category_line: &str,
+    tags_line: &str,
 ) -> Result<Extraction, String> {
     let base = validate_base_url(base)?;
     let model = validate_model_name(model)?;
-    let description = clip_for_model(&description);
-    let user = format!("タイトル: {title}\n説明文:\n{description}");
+    let description = clip_for_model(description);
+    let user = format!(
+        "タイトル: {title}\nBOOTHカテゴリ: {category_line}\nタグ: {tags_line}\n説明文:\n{description}"
+    );
     let mut payload = serde_json::json!({
         "model": model,
         "stream": false,
@@ -527,6 +533,11 @@ mod tests {
                 request.as_reader().read_to_string(&mut body).unwrap();
                 let payload: Value = serde_json::from_str(&body).unwrap();
                 assert_eq!(payload["model"], model);
+                let user = payload["messages"][1]["content"].as_str().unwrap();
+                assert!(user.contains("BOOTHカテゴリ: 3D衣装（親: 3Dモデル）"));
+                assert!(user.contains("タグ: ダミー"));
+                assert!(user.contains("説明文:\nテスト用の汎用衣装"));
+                assert!(!user.starts_with("説明文:"));
                 assert_eq!(payload["think"], false);
                 assert_eq!(payload["format"]["type"], "object");
                 let answer = serde_json::json!({"message": {"content": "{\"category\":\"outfit\",\"compatible_avatars\":[],\"is_generic\":true,\"confidence\":0.9}"}});
@@ -544,6 +555,8 @@ mod tests {
                     model,
                     "ダミー衣装",
                     "テスト用の汎用衣装",
+                    "3D衣装（親: 3Dモデル）",
+                    "ダミー",
                 )
                 .await
                 .unwrap();

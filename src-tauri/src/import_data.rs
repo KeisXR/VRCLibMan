@@ -1,4 +1,4 @@
-use crate::model::{IncomingDownload, IncomingProduct, IncomingVariation};
+use crate::model::{BoothCategoryInput, IncomingDownload, IncomingProduct, IncomingVariation};
 use regex::Regex;
 use serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -92,14 +92,24 @@ fn parse_one(value: &Value) -> Result<IncomingProduct, String> {
         url_text
     };
     let thumbnail = first_text(map, &["thumbnailUrl", "thumbnail_url", "imageUrl", "image"]);
+    let is_adult = optional_bool(map, &["isAdult", "is_adult"]);
+    let (description_snippet, booth_category, booth_tags) = if is_adult == Some(true) {
+        (String::new(), None, None)
+    } else {
+        (
+            cap(
+                &first_text(map, &["descriptionSnippet", "description_snippet", "description"]),
+                8000,
+            ),
+            parse_booth_category(map),
+            parse_booth_tags(map),
+        )
+    };
     Ok(IncomingProduct {
         booth_id,
         title,
         shop: cap(&first_text(map, &["shop", "shopName", "shop_name"]), 120),
-        description_snippet: cap(
-            &first_text(map, &["descriptionSnippet", "description_snippet", "description"]),
-            8000,
-        ),
+        description_snippet,
         url,
         thumbnail_url: if thumbnail.is_empty() {
             None
@@ -109,9 +119,86 @@ fn parse_one(value: &Value) -> Result<IncomingProduct, String> {
         variations: parse_variations(map.get("variations")),
         downloads: parse_downloads(map.get("downloads").or_else(|| map.get("files"))),
         is_free: optional_bool(map, &["isFree", "is_free"]),
-        is_adult: optional_bool(map, &["isAdult", "is_adult"]),
+        is_adult,
         unpublished: optional_bool(map, &["unpublished"]),
+        booth_category,
+        booth_tags,
     })
+}
+
+fn parse_booth_category(map: &Map<String, Value>) -> Option<BoothCategoryInput> {
+    if let Some(value) = map.get("category").or_else(|| map.get("boothCategory")) {
+        if let Some(object) = value.as_object() {
+            let parent = match object.get("parent") {
+                Some(Value::String(text)) => cap(text.trim(), 80),
+                Some(Value::Object(parent)) => cap(&first_text(parent, &["name"]), 80),
+                _ => String::new(),
+            };
+            return Some(BoothCategoryInput {
+                id: object.get("id").and_then(value_i64),
+                name: cap(&first_text(object, &["name"]), 80),
+                parent,
+            });
+        }
+        if !value.is_null() {
+            return None;
+        }
+    }
+    let id = map
+        .get("boothCategoryId")
+        .or_else(|| map.get("booth_category_id"))
+        .and_then(value_i64);
+    let name = cap(
+        &first_text(map, &["boothCategoryName", "booth_category_name"]),
+        80,
+    );
+    let parent = cap(
+        &first_text(map, &["boothCategoryParent", "booth_category_parent"]),
+        80,
+    );
+    if id.is_none() && name.is_empty() && parent.is_empty() {
+        None
+    } else {
+        Some(BoothCategoryInput { id, name, parent })
+    }
+}
+
+fn parse_booth_tags(map: &Map<String, Value>) -> Option<Vec<String>> {
+    let value = map
+        .get("tags")
+        .or_else(|| map.get("boothTags"))
+        .or_else(|| map.get("booth_tags"))?;
+    if value.is_null() {
+        return None;
+    }
+    let Value::Array(items) = value else {
+        return None;
+    };
+    let mut tags = Vec::new();
+    for item in items {
+        let name = match item {
+            Value::String(text) => cap(text.trim(), 40),
+            Value::Object(object) => cap(&first_text(object, &["name"]), 40),
+            _ => continue,
+        };
+        if name.is_empty() || tags.iter().any(|existing| existing == &name) {
+            continue;
+        }
+        tags.push(name);
+        if tags.len() == 40 {
+            break;
+        }
+    }
+    Some(tags)
+}
+
+fn value_i64(value: &Value) -> Option<i64> {
+    let id = match value {
+        Value::Number(number) => number.as_i64(),
+        Value::String(text) => text.trim().parse().ok(),
+        _ => None,
+    }?;
+    (1..1_000_000).contains(&id).then_some(id)
 }
 
 fn parse_variations(value: Option<&Value>) -> Vec<IncomingVariation> {
@@ -388,5 +475,33 @@ mod tests {
         let json = format!(r#"[{{"boothId":"10001","title":"服","description":"{description}"}}]"#);
         let parsed = parse_export(&json).unwrap();
         assert_eq!(parsed.products[0].description_snippet.chars().count(), 8000);
+    }
+
+    #[test]
+    fn category_and_tags_are_kept_and_adult_payloads_drop_them() {
+        let parsed = parse_export(
+            r#"{"boothId":"424242","title":"ダミー衣装","description":"説明です","category":{"id":209,"name":"3D衣装","parent":{"name":"3Dモデル"}},"tags":[{"name":"VRChat"},"ダミー"]}"#,
+        )
+        .unwrap();
+        let product = &parsed.products[0];
+        let category = product.booth_category.as_ref().unwrap();
+        assert_eq!(category.id, Some(209));
+        assert_eq!(category.name, "3D衣装");
+        assert_eq!(category.parent, "3Dモデル");
+        assert_eq!(
+            product.booth_tags.as_deref(),
+            Some(["VRChat".to_string(), "ダミー".to_string()].as_slice())
+        );
+        let omitted = parse_export(r#"{"boothId":"424243","title":"説明だけ"}"#).unwrap();
+        assert!(omitted.products[0].booth_category.is_none());
+        assert!(omitted.products[0].booth_tags.is_none());
+        let adult = parse_export(
+            r#"{"boothId":"424244","title":"ダミー","is_adult":true,"description":"残してはいけない説明","category":{"id":209,"name":"3D衣装"},"tags":["ダミー"]}"#,
+        )
+        .unwrap();
+        assert_eq!(adult.products[0].is_adult, Some(true));
+        assert!(adult.products[0].description_snippet.is_empty());
+        assert!(adult.products[0].booth_category.is_none());
+        assert!(adult.products[0].booth_tags.is_none());
     }
 }

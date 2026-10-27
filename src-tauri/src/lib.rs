@@ -1,4 +1,6 @@
 mod apple_fm;
+mod booth_category;
+mod booth_detail;
 mod browser;
 mod browser_url;
 #[cfg(target_os = "linux")]

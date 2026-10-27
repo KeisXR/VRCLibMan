@@ -187,6 +187,7 @@ test("setup, import and version flows with synthetic local data", async (t) => {
           ].map((h) => h.textContent),
           ["1. BOOTH から読み込む", "2. 分類", "3. 手元のファイル", "その他"],
         );
+        assert.ok(text().includes("決まらない商品だけ分類モデルへ渡します"));
         const drop = document.querySelector(".drop");
         assert.ok(drop.closest("details"));
         assert.ok(!drop.closest("details").hasAttribute("open"));
@@ -214,14 +215,20 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         assert.ok(stopped);
         await wait(() => !button("すべて再分類").disabled);
         api.extractProducts = async () => ({
-          processed: 0,
+          processed: 6,
           failed: 2,
           cancelled: false,
           errors: ["商品A: 分類モデルの応答の詳細", "商品B: 接続エラーの詳細"],
+          boothSettled: 4,
+          modelUsed: 2,
         });
         await click(button("すべて再分類"));
         await wait(() => document.querySelector(".banner.error")?.textContent.includes("2 件"));
         assert.ok(!document.querySelector(".banner.error").textContent.includes("商品A"));
+        const stats = [...document.querySelectorAll("main p.meta")].find((node) =>
+          node.textContent.includes("カテゴリとタグで 4 件、モデルで 2 件"),
+        );
+        assert.ok(stats);
         const errorDetails = [...document.querySelectorAll("main details")].find((node) => node.querySelector("summary")?.textContent === "分類結果の詳細");
         assert.ok(errorDetails);
         assert.ok(!errorDetails.hasAttribute("open"));
@@ -714,6 +721,10 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         await wait(() => document.querySelector('main a[href="#/browser"]'));
         await wait(() => !document.querySelector("main").textContent.includes("ペアリング"));
         assert.ok(!document.querySelector("main").textContent.includes("拡張機能の使い方・受信履歴"));
+        await route("#/browser");
+        await wait(() => document.querySelector("main").textContent.includes("3秒以上あけて確認します"));
+        assert.ok(document.querySelector("main").textContent.includes("年齢制限の商品は確認しません"));
+        await route("#/import");
         await wait(() => document.querySelector(".account-menu .account-pill"));
         await click(document.querySelector(".account-menu .account-pill"));
         await click(button("ログアウト", document.querySelector(".account-popover")));

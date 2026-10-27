@@ -825,6 +825,8 @@ pub async fn extract_products(
     let total = jobs.len() as u32;
     let mut processed = 0;
     let mut failed = 0;
+    let mut booth_settled = 0;
+    let mut model_used = 0;
     let mut errors = Vec::new();
     let mut cancelled = false;
     for (index, job) in jobs.iter().enumerate() {
@@ -860,6 +862,16 @@ pub async fn extract_products(
             processed += 1;
             continue;
         }
+        let from_booth = {
+            let mut connection = db(&state)?;
+            db::apply_booth_settlement(&mut connection, &job.booth_id)?
+        };
+        if from_booth {
+            booth_settled += 1;
+            processed += 1;
+            continue;
+        }
+        model_used += 1;
         let classified = classify_product(&client, &settings, job, &keep, &lists, ollama_ready).await;
         {
             let connection = db(&state)?;
@@ -908,7 +920,7 @@ pub async fn extract_products(
         if cancelled {
             "分類を中断しました".into()
         } else {
-            format!("{processed} 件分類、{failed} 件失敗")
+            format!("{processed} 件分類、{failed} 件失敗（カテゴリとタグ {booth_settled}、モデル {model_used}）")
         },
     );
     if settings.llm_backend == "ollama" && settings.unload_ollama_after_classification {
@@ -924,6 +936,8 @@ pub async fn extract_products(
         failed,
         cancelled,
         errors,
+        booth_settled,
+        model_used,
     })
 }
 
@@ -950,6 +964,11 @@ async fn classify_product(
     lists: &std::path::Path,
     ollama_ready: bool,
 ) -> Result<Classified, String> {
+    let category_line = crate::booth_category::category_line(
+        &job.booth_category_name,
+        &job.booth_category_parent,
+    );
+    let tags_line = crate::booth_category::tags_line(&job.booth_tags);
     if settings.llm_backend != "apple" {
         let extraction = ollama::extract_product(
             client,
@@ -957,6 +976,8 @@ async fn classify_product(
             &settings.ollama_model,
             &job.title,
             &job.description,
+            &category_line,
+            &tags_line,
         )
         .await?;
         return Ok(Classified::Done(extraction));
@@ -964,7 +985,7 @@ async fn classify_product(
     let first = run_apple(
         ollama::SYSTEM_PROMPT,
         &job.title,
-        &job.description,
+        &description_with_booth_hints(&job.description, &category_line, &tags_line),
     )
     .await?;
     match first {
@@ -983,7 +1004,13 @@ async fn classify_product(
                 }
             };
             if let Some((title, description)) = masked {
-                match run_apple(ollama::SYSTEM_PROMPT, &title, &description).await? {
+                match run_apple(
+                    ollama::SYSTEM_PROMPT,
+                    &title,
+                    &description_with_booth_hints(&description, &category_line, &tags_line),
+                )
+                .await?
+                {
                     Ok(extraction) => return Ok(Classified::Done(extraction)),
                     Err(_) => {}
                 }
@@ -995,6 +1022,8 @@ async fn classify_product(
                     &settings.ollama_model,
                     &job.title,
                     &job.description,
+                    &category_line,
+                    &tags_line,
                 )
                 .await?;
                 Ok(Classified::Done(extraction))
@@ -1004,6 +1033,10 @@ async fn classify_product(
         }
         Err(AppleError::Message(message)) => Err(message),
     }
+}
+
+fn description_with_booth_hints(description: &str, category_line: &str, tags_line: &str) -> String {
+    format!("BOOTHカテゴリ: {category_line}\nタグ: {tags_line}\n{description}")
 }
 
 async fn run_apple(
