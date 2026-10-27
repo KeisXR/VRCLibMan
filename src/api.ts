@@ -41,6 +41,10 @@ import type {
   GenreProducts,
 } from "./types";
 
+export type ClassificationFeedbackScope = "other" | "unclassified" | "both";
+
+const CLASSIFICATION_FEEDBACK_FILENAME = "vrclibman-classification-feedback.json";
+
 export async function appVersion(): Promise<string> {
   if (isTauri()) {
     const { getVersion } = await import("@tauri-apps/api/app");
@@ -201,7 +205,49 @@ export const api = {
   cacheThumbnails: () => call<number>("cache_thumbnails"),
   stagedDownloads: () => call<StagedDownload[]>("list_staged_downloads"),
   routeStagedDownload: (path: string) => call<void>("route_staged_download", { path }),
+  classificationFeedback: (scope: ClassificationFeedbackScope) =>
+    call<string>("classification_feedback", { scope }),
+  saveClassificationFeedback: (scope: ClassificationFeedbackScope, path: string) =>
+    call<void>("save_classification_feedback", { scope, path }),
 };
+
+export async function copyClassificationFeedback(scope: ClassificationFeedbackScope): Promise<void> {
+  const json = await api.classificationFeedback(scope);
+  if (!navigator.clipboard?.writeText) {
+    throw new Error("クリップボードにコピーできません");
+  }
+  await navigator.clipboard.writeText(json);
+}
+
+export async function saveClassificationFeedback(
+  scope: ClassificationFeedbackScope,
+): Promise<"saved" | "cancelled"> {
+  if (!isTauri()) {
+    downloadJson(CLASSIFICATION_FEEDBACK_FILENAME, await api.classificationFeedback(scope));
+    return "saved";
+  }
+  const { save } = await import("@tauri-apps/plugin-dialog");
+  const selected = await save({
+    title: "分類改善用データを保存",
+    defaultPath: CLASSIFICATION_FEEDBACK_FILENAME,
+    filters: [{ name: "JSON", extensions: ["json"] }],
+  });
+  if (typeof selected !== "string") return "cancelled";
+  await api.saveClassificationFeedback(scope, selected);
+  return "saved";
+}
+
+function downloadJson(filename: string, json: string) {
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
 
 export async function saveLibraryAndScan(folder: string): Promise<ScanReport> {
   const saved = await api.updateSettings({ libraryFolder: folder });

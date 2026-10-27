@@ -667,6 +667,25 @@ pub fn unpin_product_classification(
 }
 
 #[tauri::command]
+pub fn classification_feedback(state: State<'_, AppState>, scope: String) -> Result<String, String> {
+    let connection = db(&state)?;
+    db::classification_feedback_json(&connection, &scope)
+}
+
+#[tauri::command]
+pub fn save_classification_feedback(
+    state: State<'_, AppState>,
+    scope: String,
+    path: String,
+) -> Result<(), String> {
+    let json = {
+        let connection = db(&state)?;
+        db::classification_feedback_json(&connection, &scope)?
+    };
+    db::save_classification_feedback_body(Path::new(&path), &json)
+}
+
+#[tauri::command]
 #[allow(non_snake_case)]
 pub fn attach_product_to_avatar(
     state: State<'_, AppState>,

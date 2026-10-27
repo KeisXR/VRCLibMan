@@ -293,6 +293,28 @@ const store: Store = {
       confidence: 0.7,
       needsReview: true,
     }),
+    product({
+      boothId: "8800201",
+      title: "分類できなかった小物",
+      shop: "サンプル工房",
+      category: "other",
+      genre: "other",
+      categoryLocked: false,
+      genreLocked: false,
+      needsReview: false,
+      descriptionSnippet: `用途の説明がありません。${"あ".repeat(450)}末尾マーカー`,
+    }),
+    product({
+      boothId: "8800202",
+      title: "手動で髪にしたリボン",
+      shop: "サンプル工房",
+      category: "hair",
+      genre: "hair",
+      categoryLocked: true,
+      genreLocked: true,
+      needsReview: false,
+      descriptionSnippet: "小物として届きましたが、髪として使っています。",
+    }),
   ],
   links: [
     { productId: "4876459", avatarId: "lime" },
@@ -927,6 +949,100 @@ const GENRE_CATEGORY: Record<string, Category> = {
   tool_other: "world",
 };
 
+const DESCRIPTION_HEAD_CHARS = 400;
+const CLASSIFICATION_FEEDBACK_PURPOSE =
+  "分類ルールの改善に渡すデータです。説明は先頭だけです。corrections は手動で移した履歴と、自動分類へ戻した操作、その取り消しです。過去の移動は復元していません。manualClassifications はいま手動で固定している分類です。トークンやファイルの場所は含みません。";
+
+interface FeedbackPlacement {
+  category: string | null;
+  genre: string | null;
+}
+
+interface FeedbackMove {
+  boothId: string;
+  at: string;
+  action: "move" | "unpin" | "restore";
+  from: FeedbackPlacement;
+  to: FeedbackPlacement | null;
+}
+
+const classificationMoves: FeedbackMove[] = [
+  {
+    boothId: "8800202",
+    at: "2026-10-27T00:00:00Z",
+    action: "move",
+    from: { category: "other", genre: "other" },
+    to: { category: "hair", genre: "hair" },
+  },
+];
+
+function descriptionHead(text: string): string {
+  return Array.from(text).slice(0, DESCRIPTION_HEAD_CHARS).join("");
+}
+
+function feedbackStatus(item: Product): string {
+  if (item.category == null) return "unclassified";
+  if (item.categoryLocked && item.genreLocked) return "manual";
+  if (item.needsReview) return "needs_review";
+  return "classified";
+}
+
+function feedbackPlacement(item: Product): FeedbackPlacement {
+  return { category: item.category, genre: item.genre ?? null };
+}
+
+function feedbackProduct(item: Product) {
+  return {
+    boothId: item.boothId,
+    title: item.title,
+    shop: item.shop,
+    descriptionHead: descriptionHead(item.descriptionSnippet),
+    category: item.category,
+    genre: item.genre ?? null,
+    classificationStatus: feedbackStatus(item),
+  };
+}
+
+function pushClassificationMove(
+  action: FeedbackMove["action"],
+  boothId: string,
+  from: FeedbackPlacement,
+  to: FeedbackPlacement | null,
+) {
+  classificationMoves.push({ boothId, at: new Date().toISOString(), action, from, to });
+}
+
+function classificationFeedback(scope: string): string {
+  if (scope !== "other" && scope !== "unclassified" && scope !== "both") {
+    throw new Error("対象が不正です");
+  }
+  const matches = (item: Product) => {
+    const unclassified = item.category == null;
+    const other = item.category === "other";
+    if (scope === "other") return other;
+    if (scope === "unclassified") return unclassified;
+    return other || unclassified;
+  };
+  const byId = (left: Product, right: Product) => (left.boothId < right.boothId ? -1 : left.boothId > right.boothId ? 1 : 0);
+  const products = activeProducts().filter(matches).sort(byId).map(feedbackProduct);
+  const manualClassifications = activeProducts()
+    .filter((item) => item.categoryLocked && item.genreLocked)
+    .sort(byId)
+    .map(feedbackProduct);
+  return `${JSON.stringify({
+    format: "vrclibman.classification-feedback",
+    version: 1,
+    scope,
+    descriptionHeadChars: DESCRIPTION_HEAD_CHARS,
+    purpose: CLASSIFICATION_FEEDBACK_PURPOSE,
+    products,
+    corrections: classificationMoves
+      .filter((row) => !excludedProducts.has(row.boothId))
+      .map((row) => ({ ...row, from: { ...row.from }, to: row.to ? { ...row.to } : null })),
+    manualClassifications,
+  }, null, 2)}\n`;
+}
+
 function previewSnapshot(item: Product): ClassificationSnapshot {
   return {
     boothId: item.boothId,
@@ -948,8 +1064,12 @@ function movePreviewGenre(boothId: string, kind: string, genre: string): Classif
   if (!item) throw new Error("商品が見つかりません");
   if (excludedProducts.has(boothId)) throw new Error("この商品は除外されています");
   const snapshot = previewSnapshot(item);
+  const from = feedbackPlacement(item);
   const already = item.category === category && item.genre === genre && item.categoryLocked && Boolean(item.genreLocked);
-  if (!already) updateProduct({ boothId, category, genre });
+  if (!already) {
+    updateProduct({ boothId, category, genre });
+    pushClassificationMove("move", boothId, from, { category, genre });
+  }
   return snapshot;
 }
 
@@ -957,12 +1077,24 @@ function restorePreviewClassification(raw: unknown) {
   const snapshot = raw as ClassificationSnapshot;
   const item = store.products.find((product) => product.boothId === snapshot?.boothId);
   if (!item) throw new Error("商品が見つかりません");
+  const from = feedbackPlacement(item);
+  const categoryLockedBefore = item.categoryLocked;
+  const genreLockedBefore = Boolean(item.genreLocked);
   item.category = snapshot.category as Category | null;
   item.genre = snapshot.genre;
   item.categoryLocked = snapshot.categoryLocked;
   item.genreLocked = snapshot.genreLocked;
   item.userConfirmed = snapshot.userConfirmed;
   item.needsReview = snapshot.needsReview;
+  const to = feedbackPlacement(item);
+  if (
+    from.category !== to.category ||
+    from.genre !== to.genre ||
+    categoryLockedBefore !== item.categoryLocked ||
+    genreLockedBefore !== Boolean(item.genreLocked)
+  ) {
+    pushClassificationMove("restore", item.boothId, from, to);
+  }
 }
 
 function unpinPreviewClassification(boothId: string): ClassificationSnapshot {
@@ -970,8 +1102,10 @@ function unpinPreviewClassification(boothId: string): ClassificationSnapshot {
   if (!item) throw new Error("商品が見つかりません");
   if (!(item.categoryLocked && item.genreLocked)) throw new Error("この商品は手動で固定されていません");
   const snapshot = previewSnapshot(item);
+  const from = feedbackPlacement(item);
   item.categoryLocked = false;
   item.genreLocked = false;
+  pushClassificationMove("unpin", boothId, from, null);
   return snapshot;
 }
 
@@ -1417,6 +1551,12 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       return undefined as T;
     case "unpin_product_classification":
       return unpinPreviewClassification(String(args.boothId ?? "")) as T;
+    case "classification_feedback":
+      return classificationFeedback(String(args.scope ?? "")) as T;
+    case "save_classification_feedback":
+      classificationFeedback(String(args.scope ?? ""));
+      if (!String(args.path ?? "").toLowerCase().endsWith(".json")) throw new Error("保存先は JSON ファイルにしてください");
+      return undefined as T;
     case "attach_product_to_avatar": {
       const avatarId = String(args.avatarId ?? "");
       const boothId = String(args.boothId ?? "");

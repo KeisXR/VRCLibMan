@@ -1,4 +1,5 @@
 use crate::import_data::ParsedExport;
+use serde::Serialize;
 use crate::matching::{LabelScore, choose_match, contains_booth_id, score_label};
 use crate::model::{
     Avatar, AvatarCandidate, AvatarInput, BaseBody, BaseBodyInput, CatalogInfo, CatalogRefresh,
@@ -233,6 +234,28 @@ fn migrate(connection: &Connection) -> Result<(), String> {
         )?;
         connection
             .execute_batch("PRAGMA user_version = 5;")
+            .sql()?;
+    }
+    // v6 is only `classification_moves` (manual genre moves, unpin, and undo).
+    // Older libraries have no history. Current pins are the lock columns.
+    if version < 6 {
+        connection
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS classification_moves (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    booth_id TEXT NOT NULL,
+                    at TEXT NOT NULL,
+                    action TEXT NOT NULL CHECK (action IN ('move', 'unpin', 'restore')),
+                    from_category TEXT,
+                    from_genre TEXT,
+                    to_category TEXT,
+                    to_genre TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_classification_moves_booth ON classification_moves(booth_id);",
+            )
+            .sql()?;
+        connection
+            .execute_batch("PRAGMA user_version = 6;")
             .sql()?;
     }
     Ok(())
@@ -1557,6 +1580,50 @@ fn classification_snapshot(product: &Product) -> ClassificationSnapshot {
     }
 }
 
+const DESCRIPTION_HEAD_CHARS: usize = 400;
+const CLASSIFICATION_FEEDBACK_FORMAT: &str = "vrclibman.classification-feedback";
+const CLASSIFICATION_FEEDBACK_PURPOSE: &str = "分類ルールの改善に渡すデータです。説明は先頭だけです。corrections は手動で移した履歴と、自動分類へ戻した操作、その取り消しです。過去の移動は復元していません。manualClassifications はいま手動で固定している分類です。トークンやファイルの場所は含みません。";
+
+#[derive(Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClassificationPlacement {
+    category: Option<String>,
+    genre: Option<String>,
+}
+
+fn placement_of(product: &Product) -> ClassificationPlacement {
+    ClassificationPlacement {
+        category: product.category.map(|category| category.as_str().to_string()),
+        genre: product.genre.clone(),
+    }
+}
+
+fn record_classification_move(
+    connection: &Connection,
+    booth_id: &str,
+    action: &str,
+    from: &ClassificationPlacement,
+    to: Option<&ClassificationPlacement>,
+) -> Result<(), String> {
+    connection
+        .execute(
+            "INSERT INTO classification_moves (
+                booth_id, at, action, from_category, from_genre, to_category, to_genre
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                booth_id,
+                now_iso(),
+                action,
+                from.category,
+                from.genre,
+                to.and_then(|place| place.category.clone()),
+                to.and_then(|place| place.genre.clone()),
+            ],
+        )
+        .sql()?;
+    Ok(())
+}
+
 /// Move one product onto an asset or world genre and pin it by locking category and genre together.
 /// Returns the classification from before the move.
 pub(crate) fn move_product_genre(
@@ -1586,6 +1653,11 @@ pub(crate) fn move_product_genre(
         && product.genre.as_deref() == Some(genre)
         && classification_pinned(&product);
     if !already {
+        let from = placement_of(&product);
+        let to = ClassificationPlacement {
+            category: Some(category.as_str().to_string()),
+            genre: Some(validated.to_string()),
+        };
         update_product(
             connection,
             &ProductUpdate {
@@ -1597,6 +1669,7 @@ pub(crate) fn move_product_genre(
                 confirm: None,
             },
         )?;
+        record_classification_move(connection, booth_id, "move", &from, Some(&to))?;
     }
     Ok(snapshot)
 }
@@ -1605,12 +1678,20 @@ pub(crate) fn restore_product_classification(
     connection: &Connection,
     snapshot: &ClassificationSnapshot,
 ) -> Result<(), String> {
-    let _product = require_product(connection, &snapshot.booth_id)?;
+    let product = require_product(connection, &snapshot.booth_id)?;
     if let Some(category) = snapshot.category.as_deref() {
         if Category::parse(category).is_none() {
             return Err("カテゴリが不正です".into());
         }
     }
+    let from = placement_of(&product);
+    let to = ClassificationPlacement {
+        category: snapshot.category.clone(),
+        genre: snapshot.genre.clone(),
+    };
+    let changed = from != to
+        || product.category_locked != snapshot.category_locked
+        || product.genre_locked != snapshot.genre_locked;
     connection
         .execute(
             "UPDATE products SET category = ?1, category_locked = ?2, genre = ?3, genre_locked = ?4,
@@ -1627,6 +1708,9 @@ pub(crate) fn restore_product_classification(
             ],
         )
         .sql()?;
+    if changed {
+        record_classification_move(connection, &snapshot.booth_id, "restore", &from, Some(&to))?;
+    }
     Ok(())
 }
 
@@ -1641,13 +1725,197 @@ pub(crate) fn unpin_product_classification(
         return Err("この商品は手動で固定されていません".into());
     }
     let snapshot = classification_snapshot(&product);
+    let from = placement_of(&product);
     connection
         .execute(
             "UPDATE products SET category_locked = 0, genre_locked = 0, updated_at = ?1 WHERE booth_id = ?2",
             params![now_iso(), booth_id],
         )
         .sql()?;
+    record_classification_move(connection, booth_id, "unpin", &from, None)?;
     Ok(snapshot)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClassificationFeedbackProduct {
+    booth_id: String,
+    title: String,
+    shop: String,
+    description_head: String,
+    category: Option<String>,
+    genre: Option<String>,
+    classification_status: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClassificationCorrection {
+    booth_id: String,
+    at: String,
+    action: String,
+    from: ClassificationPlacement,
+    to: Option<ClassificationPlacement>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClassificationFeedbackFile {
+    format: &'static str,
+    version: u32,
+    scope: String,
+    description_head_chars: usize,
+    purpose: &'static str,
+    products: Vec<ClassificationFeedbackProduct>,
+    corrections: Vec<ClassificationCorrection>,
+    manual_classifications: Vec<ClassificationFeedbackProduct>,
+}
+
+fn description_head(text: &str) -> String {
+    text.chars().take(DESCRIPTION_HEAD_CHARS).collect()
+}
+
+fn feedback_status(product: &Product) -> &'static str {
+    if product.category.is_none() {
+        "unclassified"
+    } else if classification_pinned(product) {
+        "manual"
+    } else if product.needs_review {
+        "needs_review"
+    } else {
+        "classified"
+    }
+}
+
+fn feedback_product(product: &Product) -> ClassificationFeedbackProduct {
+    ClassificationFeedbackProduct {
+        booth_id: product.booth_id.clone(),
+        title: product.title.clone(),
+        shop: product.shop.clone(),
+        description_head: description_head(&product.description_snippet),
+        category: product.category.map(|category| category.as_str().to_string()),
+        genre: product.genre.clone(),
+        classification_status: feedback_status(product).to_string(),
+    }
+}
+
+fn feedback_scope_matches(product: &Product, scope: &str) -> bool {
+    let unclassified = product.category.is_none();
+    let other = product.category == Some(Category::Other);
+    match scope {
+        "other" => other,
+        "unclassified" => unclassified,
+        "both" => other || unclassified,
+        _ => false,
+    }
+}
+
+fn classification_corrections(connection: &Connection) -> Result<Vec<ClassificationCorrection>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT booth_id, at, action, from_category, from_genre, to_category, to_genre
+             FROM classification_moves
+             WHERE booth_id NOT IN (SELECT booth_id FROM product_exclusions)
+             ORDER BY id",
+        )
+        .sql()?;
+    let rows = statement
+        .query_map([], |row| {
+            let action: String = row.get(2)?;
+            let to = if action == "unpin" {
+                None
+            } else {
+                Some(ClassificationPlacement {
+                    category: row.get(5)?,
+                    genre: row.get(6)?,
+                })
+            };
+            Ok(ClassificationCorrection {
+                booth_id: row.get(0)?,
+                at: row.get(1)?,
+                action,
+                from: ClassificationPlacement {
+                    category: row.get(3)?,
+                    genre: row.get(4)?,
+                },
+                to,
+            })
+        })
+        .sql()?;
+    rows.collect::<Result<Vec<_>, _>>().sql()
+}
+
+/// JSON for improving classification rules. No URLs, thumbnails, tokens, or local paths.
+pub(crate) fn classification_feedback_json(connection: &Connection, scope: &str) -> Result<String, String> {
+    if !matches!(scope, "other" | "unclassified" | "both") {
+        return Err("対象が不正です".into());
+    }
+    let excluded = excluded_product_ids(connection)?;
+    let mut products: Vec<Product> = load_products(connection)?
+        .into_iter()
+        .filter(|product| !excluded.contains(&product.booth_id) && feedback_scope_matches(product, scope))
+        .collect();
+    products.sort_by(|left, right| left.booth_id.cmp(&right.booth_id));
+    let mut manual: Vec<Product> = load_products(connection)?
+        .into_iter()
+        .filter(|product| !excluded.contains(&product.booth_id) && classification_pinned(product))
+        .collect();
+    manual.sort_by(|left, right| left.booth_id.cmp(&right.booth_id));
+    let file = ClassificationFeedbackFile {
+        format: CLASSIFICATION_FEEDBACK_FORMAT,
+        version: 1,
+        scope: scope.to_string(),
+        description_head_chars: DESCRIPTION_HEAD_CHARS,
+        purpose: CLASSIFICATION_FEEDBACK_PURPOSE,
+        products: products.iter().map(feedback_product).collect(),
+        corrections: classification_corrections(connection)?,
+        manual_classifications: manual.iter().map(feedback_product).collect(),
+    };
+    let mut json = serde_json::to_string_pretty(&file).map_err(|_| "JSONにできません".to_string())?;
+    json.push('\n');
+    Ok(json)
+}
+
+pub(crate) fn save_classification_feedback(
+    connection: &Connection,
+    scope: &str,
+    path: &std::path::Path,
+) -> Result<(), String> {
+    let json = classification_feedback_json(connection, scope)?;
+    save_classification_feedback_body(path, &json)
+}
+
+pub(crate) fn save_classification_feedback_body(path: &std::path::Path, body: &str) -> Result<(), String> {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| {
+            !name.is_empty()
+                && *name != ".json"
+                && name.to_ascii_lowercase().ends_with(".json")
+                && !name.contains(['/', '\\', '\0'])
+        })
+        .ok_or("保存先は JSON ファイルにしてください")?;
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .ok_or("保存先が不正です")?;
+    let parent = parent
+        .canonicalize()
+        .map_err(|_| "保存先のフォルダを確認できません".to_string())?;
+    if !parent.is_dir() {
+        return Err("保存先のフォルダを確認できません".into());
+    }
+    let destination = parent.join(name);
+    if destination
+        .symlink_metadata()
+        .map(|meta| meta.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return Err("シンボリックリンクには保存できません".into());
+    }
+    std::fs::write(&destination, body).map_err(|_| "ファイルを保存できません".to_string())?;
+    Ok(())
 }
 
 /// Add one manual avatar link and lock links so reresolve keeps it.
@@ -4492,8 +4760,12 @@ mod tests {
             connection
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
-            5
+            6
         );
+        let moves: i64 = connection
+            .query_row("SELECT COUNT(*) FROM classification_moves", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(moves, 0);
         let unpublished: Option<i64> = connection
             .query_row(
                 "SELECT unpublished FROM products WHERE booth_id = '9001'",
@@ -5088,7 +5360,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
         let report = import_products(&mut connection, &parsed).unwrap();
         assert_eq!(report.inserted, 7);
         assert_eq!(report.skipped, 0);
@@ -7732,6 +8004,253 @@ mod tests {
         assert!(attach_product_to_avatar(&mut connection, "lime", "545454").unwrap_err().contains("除外"));
         assert!(attach_product_to_avatar(&mut connection, "missing", "515151").is_err());
         assert!(attach_product_to_avatar(&mut connection, "lime", "999999").is_err());
+    }
+
+    #[test]
+    fn classification_feedback_exports_targets_and_records_manual_moves() {
+        let mut connection = open_memory().unwrap();
+        let head = "用途の説明がありません。";
+        let description = format!("{head}{}末尾マーカー", "あ".repeat(450));
+        let parsed = parse_export(&format!(
+            r#"[
+                {{"boothId":"8800201","title":"分類できなかった小物","shop":"サンプル工房","description":{description}}},
+                {{"boothId":"8800203","title":"手動でその他のままにした小物","shop":"サンプル工房","description":"小物のまま使っています。"}},
+                {{"boothId":"8800204","title":"まだ分類していない小物","shop":"サンプル工房","description":"説明は短いです。"}},
+                {{"boothId":"8800205","title":"普通の衣装","shop":"サンプル工房","description":"衣装です。"}},
+                {{"boothId":"8800299","title":"除外した小物","shop":"サンプル工房","description":"管理対象から外しました。"}}
+            ]"#,
+            description = serde_json::to_string(&description).unwrap(),
+        ))
+        .unwrap();
+        import_products(&mut connection, &parsed).unwrap();
+        connection
+            .execute(
+                "UPDATE products SET category = 'other', genre = 'shader', category_locked = 0, genre_locked = 0,
+                 needs_review = 0, thumbnail_url = 'https://pximg.net/secret-thumb', thumbnail_path = 'C:\\Secret\\thumb.png'
+                 WHERE booth_id = '8800201'",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE products SET category = 'other', genre = 'other', category_locked = 1, genre_locked = 1,
+                 needs_review = 0 WHERE booth_id = '8800203'",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE products SET category = 'outfit', genre = 'outfit', category_locked = 0, genre_locked = 0,
+                 needs_review = 0 WHERE booth_id = '8800205'",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE products SET category = 'other', genre = 'other', needs_review = 1 WHERE booth_id = '8800299'",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO local_files (path, filename, linked_product_id, scanned_at)
+                 VALUES ('/home/secret/library/file.unitypackage', 'file.unitypackage', '8800201', 't')",
+                [],
+            )
+            .unwrap();
+        set_setting(&connection, "library_folder", "/home/secret/library").unwrap();
+        set_setting(&connection, "extension_token", "SECRETTOKEN").unwrap();
+        set_product_excluded(&mut connection, "8800299", true).unwrap();
+
+        assert!(classification_feedback_json(&connection, "avatars").is_err());
+
+        let before = move_product_genre(&mut connection, "8800204", "asset", "hair").unwrap();
+        assert_eq!(before.category, None);
+        move_product_genre(&mut connection, "8800204", "asset", "hair").unwrap();
+        let pinned = unpin_product_classification(&connection, "8800204").unwrap();
+        assert_eq!(pinned.category.as_deref(), Some("hair"));
+        restore_product_classification(&connection, &before).unwrap();
+        let same = classification_snapshot(&require_product(&connection, "8800204").unwrap());
+        restore_product_classification(&connection, &same).unwrap();
+
+        let moves: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM classification_moves WHERE booth_id = '8800204'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(moves, 3);
+
+        let both: serde_json::Value =
+            serde_json::from_str(&classification_feedback_json(&connection, "both").unwrap()).unwrap();
+        assert_eq!(both["format"], "vrclibman.classification-feedback");
+        assert_eq!(both["version"], 1);
+        assert_eq!(both["scope"], "both");
+        assert_eq!(both["descriptionHeadChars"], 400);
+        assert!(both["purpose"].as_str().unwrap().contains("トークン"));
+        let ids: Vec<&str> = both["products"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["boothId"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, vec!["8800201", "8800203", "8800204"]);
+        let long = both["products"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["boothId"] == "8800201")
+            .unwrap();
+        assert_eq!(long["descriptionHead"].as_str().unwrap().chars().count(), 400);
+        assert!(!long["descriptionHead"].as_str().unwrap().contains("末尾マーカー"));
+        assert_eq!(long["classificationStatus"], "classified");
+        assert_eq!(long["category"], "other");
+        assert_eq!(long["genre"], "shader");
+        assert_eq!(long["shop"], "サンプル工房");
+        let pinned_other = both["products"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["boothId"] == "8800203")
+            .unwrap();
+        assert_eq!(pinned_other["classificationStatus"], "manual");
+        let open = both["products"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["boothId"] == "8800204")
+            .unwrap();
+        assert_eq!(open["classificationStatus"], "unclassified");
+        assert!(open["category"].is_null());
+        let actions: Vec<&str> = both["corrections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["action"].as_str().unwrap())
+            .collect();
+        assert_eq!(actions, vec!["move", "unpin", "restore"]);
+        let correction = &both["corrections"][0];
+        assert_eq!(correction["boothId"], "8800204");
+        assert!(correction["from"]["category"].is_null());
+        assert_eq!(correction["to"]["category"], "hair");
+        assert_eq!(correction["to"]["genre"], "hair");
+        assert!(both["corrections"][1]["to"].is_null());
+        assert!(correction["at"].as_str().unwrap().contains('T'));
+        let manual: Vec<&str> = both["manualClassifications"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["boothId"].as_str().unwrap())
+            .collect();
+        assert_eq!(manual, vec!["8800203"]);
+
+        let other: serde_json::Value =
+            serde_json::from_str(&classification_feedback_json(&connection, "other").unwrap()).unwrap();
+        let other_ids: Vec<&str> = other["products"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["boothId"].as_str().unwrap())
+            .collect();
+        assert_eq!(other_ids, vec!["8800201", "8800203"]);
+        assert_eq!(other["manualClassifications"].as_array().unwrap().len(), 1);
+        assert_eq!(other["corrections"].as_array().unwrap().len(), 3);
+
+        let unclassified: serde_json::Value =
+            serde_json::from_str(&classification_feedback_json(&connection, "unclassified").unwrap()).unwrap();
+        let unclassified_ids: Vec<&str> = unclassified["products"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["boothId"].as_str().unwrap())
+            .collect();
+        assert_eq!(unclassified_ids, vec!["8800204"]);
+
+        let raw = classification_feedback_json(&connection, "both").unwrap();
+        for secret in [
+            "booth.pm",
+            "pximg",
+            "SECRETTOKEN",
+            "/home/secret",
+            "unitypackage",
+            "thumbnail",
+            "8800205",
+            "8800299",
+            "普通の衣装",
+            "除外した小物",
+            "末尾マーカー",
+        ] {
+            assert!(!raw.contains(secret), "{secret}");
+        }
+        fn keys(value: &serde_json::Value, found: &mut Vec<String>) {
+            match value {
+                serde_json::Value::Object(map) => {
+                    for (key, child) in map {
+                        found.push(key.clone());
+                        keys(child, found);
+                    }
+                }
+                serde_json::Value::Array(items) => {
+                    for child in items {
+                        keys(child, found);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut found = Vec::new();
+        keys(&both, &mut found);
+        for key in ["url", "thumbnailUrl", "thumbnailPath", "path", "token", "localPath", "filename"] {
+            assert!(!found.iter().any(|item| item == key), "{key}");
+        }
+
+        let dir = std::env::temp_dir().join(format!(
+            "vrclibman-feedback-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let destination = dir.join("vrclibman-classification-feedback.json");
+        save_classification_feedback(&connection, "both", &destination).unwrap();
+        let saved = std::fs::read_to_string(&destination).unwrap();
+        assert!(!saved.contains(&dir.display().to_string()));
+        assert!(saved.contains("8800201"));
+        assert!(save_classification_feedback(&connection, "both", &dir.join("notes.txt")).is_err());
+        assert!(save_classification_feedback(&connection, "nope", &destination).is_err());
+        assert!(save_classification_feedback(
+            &connection,
+            "both",
+            &dir.join("missing").join("out.json")
+        )
+        .is_err());
+        #[cfg(unix)]
+        {
+            let secret = dir.join("secret.json");
+            std::fs::write(&secret, b"keep").unwrap();
+            let link = dir.join("link.json");
+            std::os::unix::fs::symlink(&secret, &link).unwrap();
+            assert!(save_classification_feedback(&connection, "both", &link).is_err());
+            assert_eq!(std::fs::read(&secret).unwrap(), b"keep");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+
+        move_product_genre(&mut connection, "8800201", "asset", "accessory").unwrap();
+        set_product_excluded(&mut connection, "8800201", true).unwrap();
+        let hidden = classification_feedback_json(&connection, "both").unwrap();
+        assert!(!hidden.contains("8800201"), "excluded product");
+        assert!(!hidden.contains("分類できなかった小物"));
+        let still: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM classification_moves WHERE booth_id = '8800201'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(still >= 1);
     }
 
     fn link_rows(connection: &Connection, booth_id: &str) -> Vec<(String, String)> {

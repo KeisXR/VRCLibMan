@@ -294,6 +294,97 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       },
     );
 
+    await t.test("debug export copies classification feedback without secrets", async () => {
+      await route("#/settings");
+      await wait(() => document.querySelector("details.debug-section"));
+      const details = document.querySelector("details.debug-section");
+      assert.equal(details.hasAttribute("open"), false);
+      assert.ok(details.querySelector("summary").textContent.includes("デバッグ"));
+      assert.ok(button("分類改善用データを書き出す", details));
+      assert.ok(button("クリップボードにコピー", details));
+      const scope = details.querySelector(".scope-choices");
+      assert.equal(scope.querySelector('input[value="both"]').checked, true);
+      let copied = "";
+      navigator.clipboard.writeText = async (value) => {
+        copied = String(value);
+      };
+      const copy = () => click(button("クリップボードにコピー", details));
+      const read = async () => {
+        copied = "";
+        await copy();
+        await wait(() => copied.length > 0 && !button("クリップボードにコピー", details).disabled);
+        return JSON.parse(copied);
+      };
+      const keys = (value, found = []) => {
+        if (Array.isArray(value)) value.forEach((item) => keys(item, found));
+        else if (value && typeof value === "object") {
+          for (const [key, child] of Object.entries(value)) {
+            found.push(key);
+            keys(child, found);
+          }
+        }
+        return found;
+      };
+      const both = await read();
+      assert.equal(both.format, "vrclibman.classification-feedback");
+      assert.equal(both.scope, "both");
+      assert.equal(both.descriptionHeadChars, 400);
+      assert.ok(both.purpose.includes("トークン"));
+      assert.ok(both.products.some((item) => item.boothId === "8800105"));
+      assert.ok(both.products.some((item) => item.boothId === "8800201"));
+      assert.ok(both.products.every((item) => item.category == null || item.category === "other"));
+      const otherProduct = both.products.find((item) => item.boothId === "8800201");
+      assert.equal(otherProduct.title, "分類できなかった小物");
+      assert.equal(otherProduct.shop, "サンプル工房");
+      assert.equal(otherProduct.category, "other");
+      assert.equal(otherProduct.classificationStatus, "classified");
+      assert.equal([...otherProduct.descriptionHead].length, 400);
+      assert.equal(otherProduct.descriptionHead.includes("末尾マーカー"), false);
+      const unclassified = both.products.find((item) => item.boothId === "8800105");
+      assert.equal(unclassified.classificationStatus, "unclassified");
+      assert.equal(unclassified.category, null);
+      assert.deepEqual(
+        both.manualClassifications.map((item) => item.boothId),
+        ["8800131", "8800202"],
+      );
+      assert.ok(both.manualClassifications.every((item) => item.classificationStatus === "manual"));
+      assert.equal(both.corrections[0].boothId, "8800202");
+      assert.equal(both.corrections[0].action, "move");
+      assert.equal(both.corrections[0].from.category, "other");
+      assert.equal(both.corrections[0].to.genre, "hair");
+      for (const secret of ["C:\\Assets", "\\\\nas", "K7NP-4Q2M", "年齢制限", "thumbnail", "unitypackage"]) {
+        assert.equal(copied.includes(secret), false, secret);
+      }
+      for (const key of ["url", "thumbnailUrl", "thumbnailPath", "path", "token", "localPath"]) {
+        assert.equal(keys(both).includes(key), false, key);
+      }
+
+      await click(scope.querySelector('input[value="other"]'));
+      const otherOnly = await read();
+      assert.ok(otherOnly.products.some((item) => item.boothId === "8800201"));
+      assert.ok(otherOnly.products.every((item) => item.category === "other"));
+      assert.equal(otherOnly.manualClassifications.length, 2);
+      await click(scope.querySelector('input[value="unclassified"]'));
+      const unclassifiedOnly = await read();
+      assert.ok(unclassifiedOnly.products.some((item) => item.boothId === "8800105"));
+      assert.ok(unclassifiedOnly.products.every((item) => item.category == null));
+      await click(scope.querySelector('input[value="both"]'));
+
+      const before = both.corrections.length;
+      const snapshot = await api.moveProductGenre("8800201", "asset", "hair");
+      await api.restoreProductClassification(snapshot);
+      const moved = await read();
+      assert.ok(moved.corrections.some((row) => row.boothId === "8800201" && row.action === "move" && row.to.genre === "hair"));
+      assert.ok(moved.corrections.some((row) => row.boothId === "8800201" && row.action === "restore" && row.to.category === "other"));
+      assert.ok(moved.products.some((item) => item.boothId === "8800201" && item.category === "other"));
+      const pin = await api.unpinProductClassification("8800202");
+      await api.restoreProductClassification(pin);
+      const unpinned = await read();
+      assert.ok(unpinned.corrections.some((row) => row.boothId === "8800202" && row.action === "unpin" && row.to == null));
+      assert.ok(unpinned.manualClassifications.some((item) => item.boothId === "8800202"));
+      assert.ok(unpinned.corrections.length > before);
+    });
+
     await t.test(
       "irrelevant products can be excluded, remain excluded on reimport, and be restored",
       async () => {
