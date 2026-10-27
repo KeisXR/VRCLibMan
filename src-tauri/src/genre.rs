@@ -49,6 +49,27 @@ pub fn genres(category: Category) -> &'static [(&'static str, &'static str)] {
     }
 }
 
+/// Category stored when a person moves a product onto this genre.
+/// Asset genres stay on the asset side; every world genre is `world`.
+pub fn category_for_genre(genre: &str) -> Option<Category> {
+    if WORLD_GENRES.iter().any(|(key, _)| *key == genre) {
+        return Some(Category::World);
+    }
+    let category = match genre {
+        "outfit" | "shoes_socks" => Category::Outfit,
+        "hair" => Category::Hair,
+        "accessory" | "head_ears_tail" => Category::Accessory,
+        "makeup_skin" | "eye_texture" => Category::Texture,
+        "expression_animation" | "pose" | "gimmick" | "particle_effect" => Category::Gimmick,
+        "shader" | "tool_editor" | "other" => Category::Other,
+        _ => return None,
+    };
+    if validate(category, Some(genre)) != genre {
+        return None;
+    }
+    Some(category)
+}
+
 pub fn validate(category: Category, genre: Option<&str>) -> String {
     let fallback = if category == Category::World {
         "tool_other"
@@ -141,5 +162,20 @@ mod tests {
     fn mismatched_genre_falls_back() {
         assert_eq!(validate(Category::World, Some("hair")), "tool_other");
         assert_eq!(validate(Category::Hair, Some("skybox")), "other");
+    }
+
+    #[test]
+    fn move_category_stays_inside_the_genre_kind() {
+        for (key, _) in ASSET_GENRES {
+            let category = category_for_genre(key).unwrap();
+            assert_ne!(category, Category::World, "{key}");
+            assert_eq!(validate(category, Some(key)), *key);
+        }
+        for (key, _) in WORLD_GENRES {
+            assert_eq!(category_for_genre(key), Some(Category::World));
+            assert_eq!(validate(Category::World, Some(key)), *key);
+        }
+        assert_eq!(category_for_genre("unset"), None);
+        assert_eq!(category_for_genre("avatar"), None);
     }
 }

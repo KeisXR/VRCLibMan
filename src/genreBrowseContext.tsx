@@ -4,6 +4,7 @@ import { useShell } from "./App";
 import { selectedGenre } from "./genreBrowseUtils";
 import type { GenreKind, GenreProducts } from "./types";
 import { errorText } from "./ui";
+import { useGenreMove } from "./useGenreMove";
 
 interface GenreBrowseContextValue {
   kind: GenreKind;
@@ -14,6 +15,9 @@ interface GenreBrowseContextValue {
   error: string | null;
   narrowLayout: boolean;
   reload: () => void;
+  draggingId: string | null;
+  setDraggingId: (id: string | null) => void;
+  moveProduct: (boothId: string, kind: GenreKind, genre: string) => Promise<void>;
 }
 
 const GenreBrowseContext = createContext<GenreBrowseContextValue | null>(null);
@@ -32,6 +36,8 @@ export function GenreBrowseProvider({
   children: React.ReactNode;
 }) {
   const { revision } = useShell();
+  const moveProduct = useGenreMove();
+  const [draggingId, setDraggingId] = useState<string | null>(null);
   const selected = selectedGenre(kind, genre);
   const key = `${kind}:${selected ?? ""}`;
   const [loaded, setLoaded] = useState<{ key: string; data: GenreProducts } | null>(null);
@@ -65,8 +71,11 @@ export function GenreBrowseProvider({
       error,
       narrowLayout,
       reload: () => setAttempt((value) => value + 1),
+      draggingId,
+      setDraggingId,
+      moveProduct,
     }),
-    [kind, basePath, genre, selected, data, error, narrowLayout],
+    [kind, basePath, genre, selected, data, error, narrowLayout, draggingId, moveProduct],
   );
 
   return <GenreBrowseContext.Provider value={value}>{children}</GenreBrowseContext.Provider>;

@@ -250,10 +250,14 @@ function UnsupportedOutfits({
 
 export function ItemCard({
   item,
+  movable = false,
+  onDragChange,
   remoteProbeStatus = "ok",
   onRetryRemoteProbe,
 }: {
   item: ItemView;
+  movable?: boolean;
+  onDragChange?: (boothId: string | null) => void;
   remoteProbeStatus?: RemoteProbeStatus;
   onRetryRemoteProbe?: () => void;
 }) {
@@ -287,11 +291,31 @@ export function ItemCard({
   }
 
   return (
-    <article className="item">
+    <article
+      className="item"
+      draggable={movable}
+      onDragStart={(event) => {
+        if (!movable) return;
+        const target = event.target as HTMLElement | null;
+        if (target?.closest("button, a, input, summary, label")) {
+          event.preventDefault();
+          return;
+        }
+        event.dataTransfer.setData("text/plain", item.boothId);
+        event.dataTransfer.effectAllowed = "move";
+        event.currentTarget.classList.add("dragging");
+        onDragChange?.(item.boothId);
+      }}
+      onDragEnd={(event) => {
+        event.currentTarget.classList.remove("dragging");
+        onDragChange?.(null);
+      }}
+    >
       <Thumb path={item.thumbnailPath} url={item.thumbnailUrl} name={item.title} small />
       <div>
         <h3>
           {item.title}
+          {item.classificationPinned && <span className="badge">手動</span>}
           {item.isFree && <span className="badge">無料</span>}
           {item.isAdult && <span className="badge adult">R-18</span>}
           <FileMark
@@ -359,7 +383,7 @@ export function ItemCard({
           )}
         </div>
       </div>
-      <div className="row-actions"><button className="button" type="button" onClick={() => void openExternal(item.url)}>BOOTH</button><ExcludeProductButton boothId={item.boothId} title={item.title} /></div>
+      <div className="row-actions"><button className="button" type="button" onClick={() => void openExternal(item.url)}>BOOTH</button><ExcludeProductButton boothId={item.boothId} title={item.title} category={item.category} genre={item.genre} classificationPinned={item.classificationPinned} /></div>
     </article>
   );
 }

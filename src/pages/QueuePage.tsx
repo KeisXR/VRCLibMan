@@ -511,6 +511,7 @@ const ProductEditor = memo(function ProductEditor({
         <div>
           <h2 className="card-title">
             {product.title}
+            {product.classificationPinned && <span className="badge">手動</span>}
             <FileMark
               presence={product.filePresence}
               href={
@@ -527,7 +528,7 @@ const ProductEditor = memo(function ProductEditor({
           <button className="button" type="button" onClick={() => void openExternal(product.url)}>
             BOOTH を開く
           </button>
-          <ExcludeProductButton boothId={product.boothId} title={product.title} />
+          <ExcludeProductButton boothId={product.boothId} title={product.title} category={product.category} genre={product.genre} classificationPinned={product.classificationPinned} />
         </div>
       </div>
       {product.unresolvedNames.length > 0 && (
