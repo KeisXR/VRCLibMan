@@ -374,11 +374,13 @@ export function ImportPage() {
             </details>
           )}
           {llmBackend === "ollama" && (
-            <OllamaMemoryControls
-              key={`${revision}-${extracting ? "run" : "idle"}`}
-              model={ollamaModel}
-              enabled
-            />
+            <SettingRow label="読み込み状態" help="同じ PC のほかのアプリが同じモデルを使っている場合も影響します。">
+              <OllamaMemoryControls
+                key={`${revision}-${extracting ? "run" : "idle"}`}
+                model={ollamaModel}
+                enabled
+              />
+            </SettingRow>
           )}
         </section>
         <section className="settings-section">

@@ -317,11 +317,13 @@ export function SettingsPage() {
                     有効にする
                   </label>
                 </SettingRow>
-                <OllamaMemoryControls
-                  model={settings.ollamaModel}
-                  enabled={settings.llmBackend === "ollama"}
-                  onStatus={setOllamaStatus}
-                />
+                <SettingRow label="読み込み状態" help="同じ PC のほかのアプリが同じモデルを使っている場合も影響します。">
+                  <OllamaMemoryControls
+                    model={settings.ollamaModel}
+                    enabled={settings.llmBackend === "ollama"}
+                    onStatus={setOllamaStatus}
+                  />
+                </SettingRow>
                 <div className="section-actions">
                   <button className="button" type="button" onClick={() => void testOllama()}>接続を確認</button>
                   <span className="meta">{installedSize ? `モデルサイズ ${formatBytes(installedSize)}` : models.length ? `導入済み: ${models.join("、")}` : "導入済みモデル：未確認"}</span>

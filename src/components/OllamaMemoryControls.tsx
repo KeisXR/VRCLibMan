@@ -59,12 +59,11 @@ export function OllamaMemoryControls({
   }
 
   return (
-    <div className="ollama-memory">
-      <p className="meta" role="status">
-        読み込み状態: {stateLabel}
+    <div className="inline-control">
+      <span className="meta" role="status">
+        {stateLabel}
         {active && active.sizeBytes > 0 ? `（${formatBytes(active.sizeBytes)}）` : ""}
-      </p>
-      <p className="meta">同じ PC のほかのアプリが同じモデルを使っている場合も影響します。</p>
+      </span>
       <button className="button" type="button" disabled={pending || !model.trim()} onClick={() => void unload()}>
         モデルをアンロード
       </button>
