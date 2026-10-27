@@ -20,6 +20,7 @@ import type {
   DownloadView,
   ItemView,
   Knowledge,
+  RemoteProductProbe,
   LibraryStats,
   OwnedBody,
   ProductUpdate,
@@ -28,6 +29,7 @@ import type {
   QueueProduct,
   Section,
   Settings,
+  AppUpdateStatus,
 } from "../types";
 
 const excludedProducts = new Set<string>();
@@ -144,6 +146,10 @@ const store: Store = {
     backgroundMode: false,
     launchAtLogin: false,
     classificationDismissedVersion: 0,
+    uiRailWidth: 232,
+    uiGenreWidth: 200,
+    checkUpdateOnStartup: false,
+    uiUpdateDismissedVersion: "",
   },
   setupComplete: false,
   baseBodies: [
@@ -354,6 +360,17 @@ const stressPreview =
 
 if (typeof location !== "undefined" && new URLSearchParams(location.search).get("remote") === "down") {
   store.remoteReachable = false;
+}
+
+type PreviewRemoteProbeOutcome = "ok" | "fail" | "timeout";
+let previewRemoteProbeOutcome: PreviewRemoteProbeOutcome = "ok";
+if (typeof location !== "undefined") {
+  const mode = new URLSearchParams(location.search).get("remoteProbe");
+  if (mode === "fail" || mode === "timeout") previewRemoteProbeOutcome = mode;
+}
+
+export function previewRemoteProbeDownloads(boothId: string): DownloadView[] {
+  return placedDownloads(boothId);
 }
 
 store.products.push(
@@ -1003,6 +1020,31 @@ export function listenPreviewProgress(onProgress: (progress: JobProgress) => voi
   return () => previewProgress.removeEventListener("progress", listener);
 }
 
+const previewUpdaterBus = new EventTarget();
+let previewUpdaterStatus: AppUpdateStatus = {
+  revision: 0,
+  phase: "unavailable",
+  version: null,
+  notes: null,
+  downloaded: 0,
+  total: null,
+  error: null,
+  message: "アプリ内更新はインストールした配布版で利用できます。",
+};
+
+function emitPreviewUpdater(status: AppUpdateStatus): void {
+  previewUpdaterStatus = status;
+  previewUpdaterBus.dispatchEvent(new CustomEvent("updater", { detail: status }));
+}
+
+export function listenPreviewUpdaterChanged(onStatus: (status: AppUpdateStatus) => void): () => void {
+  const listener = (event: Event) => {
+    onStatus((event as CustomEvent<AppUpdateStatus>).detail);
+  };
+  previewUpdaterBus.addEventListener("updater", listener);
+  return () => previewUpdaterBus.removeEventListener("updater", listener);
+}
+
 function previewWalkMessage(
   label: string,
   page: number,
@@ -1076,10 +1118,44 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
   notePreviewCall(command);
   switch (command) {
     case "updater_status":
-    case "check_app_update":
-    case "download_app_update":
-    case "install_app_update":
-      return { revision: 0, phase: "unavailable", version: null, notes: null, downloaded: 0, total: null, error: null, message: "アプリ内更新はインストールした配布版で利用できます。" } as T;
+      return previewUpdaterStatus as T;
+    case "check_app_update": {
+      const manual = args.manual !== false;
+      const next: AppUpdateStatus = {
+        revision: previewUpdaterStatus.revision + 1,
+        phase: "available",
+        version: "99.0.0",
+        notes: "見本の更新内容",
+        downloaded: 0,
+        total: null,
+        error: manual ? null : null,
+        message: null,
+      };
+      emitPreviewUpdater(next);
+      return next as T;
+    }
+    case "download_app_update": {
+      const next: AppUpdateStatus = {
+        ...previewUpdaterStatus,
+        revision: previewUpdaterStatus.revision + 1,
+        phase: "ready",
+        downloaded: 1024,
+        total: 1024,
+        error: null,
+      };
+      emitPreviewUpdater(next);
+      return next as T;
+    }
+    case "install_app_update": {
+      const next: AppUpdateStatus = {
+        ...previewUpdaterStatus,
+        revision: previewUpdaterStatus.revision + 1,
+        phase: "ready",
+        error: "見本では再起動しません",
+      };
+      emitPreviewUpdater(next);
+      return next as T;
+    }
     case "list_managed_products":
       return store.products.map((p) => ({ boothId: p.boothId, title: p.title, shop: p.shop, category: p.category, excluded: excludedProducts.has(p.boothId) })) as T;
     case "set_product_excluded": {
@@ -1111,6 +1187,22 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     case "probe_remote_files":
       store.remoteChecked = true;
       return detail(String(args.id ?? "")) as T;
+    case "probe_remote_products": {
+      const ids = Array.isArray(args.ids) ? args.ids.map((id) => String(id)) : [];
+      if (previewRemoteProbeOutcome === "timeout") {
+        await new Promise((resolve) => setTimeout(resolve, 15_000));
+      }
+      store.remoteChecked = true;
+      const reachable = previewRemoteProbeOutcome !== "fail" && store.remoteReachable;
+      return ids.map(
+        (boothId): RemoteProductProbe => ({
+          boothId,
+          remoteChecked: true,
+          remoteReachable: reachable,
+          downloads: placedDownloads(boothId),
+        }),
+      ) as T;
+    }
     case "list_queue":
       return queue(String(args.kind ?? "review")) as T;
     case "list_product_options":

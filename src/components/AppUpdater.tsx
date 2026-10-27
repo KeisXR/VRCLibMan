@@ -1,7 +1,6 @@
-import { useEffect, useState } from "react";
 import { appUpdater, openExternal } from "../api";
 import { formatBytes } from "../media";
-import type { AppUpdateStatus } from "../types";
+import { useAppUpdater } from "../useAppUpdater";
 import { errorText } from "../ui";
 
 export function AppUpdater({
@@ -11,47 +10,7 @@ export function AppUpdater({
   beforeInstall: () => Promise<unknown>;
   workInProgress: boolean;
 }) {
-  const [status, setStatus] = useState<AppUpdateStatus | null>(null);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState("");
-
-  function accept(next: AppUpdateStatus) {
-    setStatus((current) =>
-      !current || next.revision >= current.revision ? next : current,
-    );
-  }
-
-  useEffect(() => {
-    let alive = true;
-    let timer: ReturnType<typeof setTimeout>;
-    const poll = async () => {
-      try {
-        const next = await appUpdater.status();
-        if (alive) accept(next);
-      } catch (err) {
-        if (alive) setError(errorText(err));
-      }
-      if (alive) timer = setTimeout(() => void poll(), 1000);
-    };
-    void poll();
-    return () => {
-      alive = false;
-      clearTimeout(timer);
-    };
-  }, []);
-
-  async function run(operation: () => Promise<AppUpdateStatus>) {
-    if (pending) return;
-    setPending(true);
-    setError("");
-    try {
-      accept(await operation());
-    } catch (err) {
-      setError(errorText(err));
-    } finally {
-      setPending(false);
-    }
-  }
+  const { status, pending, error, setError, run, check } = useAppUpdater();
 
   async function install() {
     if (
@@ -96,24 +55,20 @@ export function AppUpdater({
                   : "「更新を確認」を押すと、新しいバージョンを確認できます。";
 
   return (
-    <div className="app-updater">
+    <div className="app-updater" id="settings-app-update">
       <p role="status" aria-live="polite">
         {message}
       </p>
       {phase === "downloading" && (
-        <progress
-          aria-label="更新のダウンロード"
-          max={100}
-          value={percent ?? undefined}
-        />
+        <progress aria-label="更新のダウンロード" max={100} value={percent ?? undefined} />
       )}
       <div className="inline-control">
         {phase !== "ready" && (
           <button
             type="button"
             className="button"
-            disabled={busy || phase === "unavailable"}
-            onClick={() => void run(appUpdater.check)}
+            disabled={busy || phase === "unavailable" || workInProgress}
+            onClick={() => void check(true)}
           >
             更新を確認
           </button>
@@ -122,8 +77,8 @@ export function AppUpdater({
           <button
             type="button"
             className="button primary"
-            disabled={busy}
-            onClick={() => void run(appUpdater.download)}
+            disabled={busy || workInProgress}
+            onClick={() => void run(() => appUpdater.download())}
           >
             更新をダウンロード
           </button>
@@ -142,9 +97,9 @@ export function AppUpdater({
           type="button"
           className="button"
           onClick={() =>
-            void openExternal(
-              "https://github.com/KeisXR/VRCLibMan/releases",
-            ).catch((err) => setError(errorText(err)))
+            void openExternal("https://github.com/KeisXR/VRCLibMan/releases").catch((err) =>
+              setError(errorText(err)),
+            )
           }
         >
           リリース一覧
@@ -164,9 +119,7 @@ export function AppUpdater({
           <div className="update-notes">{status.notes}</div>
         </details>
       )}
-      <p className="meta">
-        拡張機能は別途更新してください。
-      </p>
+      <p className="meta">拡張機能は別途更新してください。</p>
     </div>
   );
 }

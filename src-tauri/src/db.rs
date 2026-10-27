@@ -292,6 +292,10 @@ fn ensure_ready(connection: &Connection) -> Result<(), String> {
         ("background_mode", "0"),
         ("launch_at_login", "0"),
         ("classification_dismissed_version", "0"),
+        ("ui_rail_width", "232"),
+        ("ui_genre_width", "200"),
+        ("check_update_on_startup", "0"),
+        ("ui_update_dismissed_version", ""),
     ] {
         connection
             .execute(
@@ -347,6 +351,19 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
         classification_dismissed_version: setting(connection, "classification_dismissed_version")?
             .and_then(|value| value.parse::<i32>().ok())
             .unwrap_or(0),
+        ui_rail_width: crate::model::clamp_ui_rail_width(
+            setting(connection, "ui_rail_width")?
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(232),
+        ),
+        ui_genre_width: crate::model::clamp_ui_genre_width(
+            setting(connection, "ui_genre_width")?
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(200),
+        ),
+        check_update_on_startup: setting(connection, "check_update_on_startup")?.as_deref() == Some("1"),
+        ui_update_dismissed_version: setting(connection, "ui_update_dismissed_version")?
+            .unwrap_or_default(),
     })
 }
 
@@ -470,6 +487,22 @@ fn save_settings_values(
         "classification_dismissed_version",
         &input.classification_dismissed_version.to_string(),
     )?;
+    set_setting(
+        connection,
+        "ui_rail_width",
+        &crate::model::clamp_ui_rail_width(input.ui_rail_width).to_string(),
+    )?;
+    set_setting(
+        connection,
+        "ui_genre_width",
+        &crate::model::clamp_ui_genre_width(input.ui_genre_width).to_string(),
+    )?;
+    set_setting(
+        connection,
+        "check_update_on_startup",
+        if input.check_update_on_startup { "1" } else { "0" },
+    )?;
+    set_setting(connection, "ui_update_dismissed_version", &input.ui_update_dismissed_version)?;
     tx.commit().sql()
 }
 
@@ -4951,6 +4984,10 @@ mod tests {
                 background_mode: false,
                 launch_at_login: false,
                 classification_dismissed_version: 0,
+                ui_rail_width: 232,
+                ui_genre_width: 200,
+                check_update_on_startup: false,
+                ui_update_dismissed_version: String::new(),
             },
         )
         .unwrap();
@@ -5009,6 +5046,10 @@ mod tests {
                 background_mode: false,
                 launch_at_login: false,
                 classification_dismissed_version: 0,
+                ui_rail_width: 232,
+                ui_genre_width: 200,
+                check_update_on_startup: false,
+                ui_update_dismissed_version: String::new(),
             },
         )
         .unwrap();
@@ -6067,6 +6108,10 @@ mod tests {
                 background_mode: false,
                 launch_at_login: false,
                 classification_dismissed_version: 0,
+                ui_rail_width: 232,
+                ui_genre_width: 200,
+                check_update_on_startup: false,
+                ui_update_dismissed_version: String::new(),
             },
         );
         assert!(refused.unwrap_err().contains("ライブラリ"));
@@ -6085,6 +6130,10 @@ mod tests {
                 background_mode: false,
                 launch_at_login: false,
                 classification_dismissed_version: 0,
+                ui_rail_width: 232,
+                ui_genre_width: 200,
+                check_update_on_startup: false,
+                ui_update_dismissed_version: String::new(),
             },
         )
         .unwrap();
@@ -6198,6 +6247,10 @@ mod tests {
                 background_mode: false,
                 launch_at_login: false,
                 classification_dismissed_version: 0,
+                ui_rail_width: 232,
+                ui_genre_width: 200,
+                check_update_on_startup: false,
+                ui_update_dismissed_version: String::new(),
             },
         )
     }
@@ -6458,6 +6511,10 @@ mod tests {
             background_mode: false,
             launch_at_login: true,
                 classification_dismissed_version: 0,
+            ui_rail_width: 232,
+            ui_genre_width: 200,
+            check_update_on_startup: false,
+            ui_update_dismissed_version: String::new(),
         };
         save_settings(&connection, &base).unwrap();
         let saved = settings(&connection).unwrap();
@@ -6617,6 +6674,10 @@ mod tests {
                 background_mode: false,
                 launch_at_login: false,
                 classification_dismissed_version: 0,
+                ui_rail_width: 232,
+                ui_genre_width: 200,
+                check_update_on_startup: false,
+                ui_update_dismissed_version: String::new(),
             },
         )
         .unwrap();

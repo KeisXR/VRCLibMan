@@ -53,10 +53,19 @@ export function isTauri(): boolean {
 
 export const appUpdater = {
   status: () => call<AppUpdateStatus>("updater_status"),
-  check: () => call<AppUpdateStatus>("check_app_update"),
+  check: (manual = true) => call<AppUpdateStatus>("check_app_update", { manual }),
   download: () => call<AppUpdateStatus>("download_app_update"),
   install: () => call<AppUpdateStatus>("install_app_update"),
 };
+
+export function listenUpdaterChanged(onStatus: (status: AppUpdateStatus) => void): Promise<() => void> {
+  if (!isTauri()) {
+    return import("./preview/api").then((preview) => preview.listenPreviewUpdaterChanged(onStatus));
+  }
+  return import("@tauri-apps/api/event").then(({ listen }) =>
+    listen<AppUpdateStatus>("updater-changed", (event) => onStatus(event.payload)),
+  );
+}
 
 const refreshBus = new EventTarget();
 
@@ -109,6 +118,7 @@ export const api = {
   productsByCategory: (category: string) => call<ItemView[]>("list_products_by_category", { category }),
   productsByGenre: (kind: GenreKind, genre?: string | null) => call<GenreProducts>("list_products_by_genre", { kind, genre: genre ?? null }),
   probeRemoteFiles: (id: string) => call<AvatarDetail>("probe_remote_files", { id }),
+  probeRemoteProducts: (ids: string[]) => call<import("./types").RemoteProductProbe[]>("probe_remote_products", { ids }),
   queue: (kind: string, offset = 0, limit = 50) =>
     call<QueuePage>("list_queue", { kind, offset, limit }),
   managedProducts: () => call<ManagedProduct[]>("list_managed_products"),
