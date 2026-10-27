@@ -1123,6 +1123,9 @@ function restorePreviewClassification(raw: unknown) {
     pushClassificationMove("restore", item.boothId, from, to);
   }
   if (typeof snapshot.linksLocked === "boolean") item.linksLocked = snapshot.linksLocked;
+  if (Array.isArray(snapshot.compatibleAvatars)) item.compatibleAvatars = [...snapshot.compatibleAvatars];
+  if (Array.isArray(snapshot.unresolvedNames)) item.unresolvedNames = [...snapshot.unresolvedNames];
+  if (typeof snapshot.isGeneric === "boolean") item.isGeneric = snapshot.isGeneric;
   if (Array.isArray(snapshot.links)) {
     store.links = store.links.filter((link) => link.productId !== item.boothId);
     for (const link of snapshot.links) {
@@ -1192,6 +1195,9 @@ function unpinPreviewClassification(boothId: string): ClassificationSnapshot {
     const avatar = store.avatars.find((row) => row.id === body.avatarId);
     snapshot.linksLocked = true;
     snapshot.links = previewLinks(boothId);
+    snapshot.compatibleAvatars = [...item.compatibleAvatars];
+    snapshot.unresolvedNames = [...item.unresolvedNames];
+    snapshot.isGeneric = item.isGeneric;
     if (avatar) {
       snapshot.ownedAvatars = [{
         id: avatar.id,
@@ -1295,6 +1301,9 @@ function registerPreviewOwnedBody(boothId: string, name: string | null): Registe
     ...previewSnapshot(item),
     linksLocked: item.linksLocked,
     links: previewLinks(boothId),
+    compatibleAvatars: [...item.compatibleAvatars],
+    unresolvedNames: [...item.unresolvedNames],
+    isGeneric: item.isGeneric,
     ownedAvatars:
       previousOwned?.owned
         ? []

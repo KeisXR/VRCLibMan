@@ -548,6 +548,14 @@ pub struct ClassificationSnapshot {
     pub links: Option<Vec<SnapshotLink>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub owned_avatars: Vec<OwnedAvatarRestore>,
+    /// Extraction names from before this placement. Absent on a genre move,
+    /// so restoring that move leaves the name lists alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compatible_avatars: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unresolved_names: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_generic: Option<bool>,
 }
 
 /// Result of registering a misclassified product as an owned avatar body.

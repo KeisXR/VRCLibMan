@@ -1700,7 +1700,16 @@ fn classification_snapshot(product: &Product) -> ClassificationSnapshot {
         links_locked: None,
         links: None,
         owned_avatars: Vec::new(),
+        compatible_avatars: None,
+        unresolved_names: None,
+        is_generic: None,
     }
+}
+
+fn remember_extracted_names(snapshot: &mut ClassificationSnapshot, product: &Product) {
+    snapshot.compatible_avatars = Some(product.compatible_avatars.clone());
+    snapshot.unresolved_names = Some(product.unresolved_names.clone());
+    snapshot.is_generic = Some(product.is_generic);
 }
 
 const DESCRIPTION_HEAD_CHARS: usize = 400;
@@ -1850,6 +1859,27 @@ pub(crate) fn restore_product_classification(
     }
     for avatar in &snapshot.owned_avatars {
         apply_owned_restore(&tx, avatar)?;
+    }
+    if let Some(names) = &snapshot.compatible_avatars {
+        tx.execute(
+            "UPDATE products SET compatible_avatars_json = ?1 WHERE booth_id = ?2",
+            params![to_json(names)?, snapshot.booth_id],
+        )
+        .sql()?;
+    }
+    if let Some(names) = &snapshot.unresolved_names {
+        tx.execute(
+            "UPDATE products SET unresolved_names_json = ?1 WHERE booth_id = ?2",
+            params![to_json(names)?, snapshot.booth_id],
+        )
+        .sql()?;
+    }
+    if let Some(generic) = snapshot.is_generic {
+        tx.execute(
+            "UPDATE products SET is_generic = ?1 WHERE booth_id = ?2",
+            params![generic, snapshot.booth_id],
+        )
+        .sql()?;
     }
     // Genre-move undo is the history #72 records. An owned-body snapshot carries
     // links, and that registration stays out of classification_moves.
@@ -2104,6 +2134,7 @@ pub(crate) fn register_manual_owned_body(
     let mut snapshot = classification_snapshot(&product);
     snapshot.links_locked = Some(product.links_locked);
     snapshot.links = Some(previous_links);
+    remember_extracted_names(&mut snapshot, &product);
     if !was_owned {
         snapshot.owned_avatars.push(OwnedAvatarRestore {
             id: target.avatar_id.clone(),
@@ -4524,6 +4555,7 @@ fn release_manual_owned_body(
     let mut snapshot = classification_snapshot(product);
     snapshot.links_locked = Some(product.links_locked);
     snapshot.links = Some(snapshot_links(connection, &product.booth_id)?);
+    remember_extracted_names(&mut snapshot, product);
     snapshot.owned_avatars.push(OwnedAvatarRestore {
         id: avatar_id.to_string(),
         display_name: avatar_display(connection, avatar_id)?,
@@ -8932,7 +8964,13 @@ mod tests {
         assert_eq!(restored.category, Some(Category::Other));
         assert!(!restored.category_locked && !restored.genre_locked && !restored.links_locked);
         assert!(link_rows(&connection, "424303").is_empty());
+        assert!(restored.compatible_avatars.is_empty());
+        assert!(restored.unresolved_names.is_empty());
         assert!(!avatar_exists(&connection, "owned-424303").unwrap());
+        match register_manual_owned_body(&mut connection, "424303", None).unwrap() {
+            RegisterOwnedBodyResult::NeedsName { candidates, .. } => assert!(candidates.is_empty()),
+            RegisterOwnedBodyResult::Registered { .. } => panic!("undone name was reused"),
+        }
 
         let extracted = register_manual_owned_body(&mut connection, "424301", None).unwrap();
         let extracted_snapshot = match extracted {

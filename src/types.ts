@@ -431,6 +431,9 @@ export interface ClassificationSnapshot {
   linksLocked?: boolean | null;
   links?: SnapshotLink[] | null;
   ownedAvatars?: OwnedAvatarRestore[];
+  compatibleAvatars?: string[];
+  unresolvedNames?: string[];
+  isGeneric?: boolean;
 }
 
 export type RegisterOwnedBodyResult =
