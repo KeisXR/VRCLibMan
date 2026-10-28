@@ -1,6 +1,7 @@
 /// Bump when extraction prompt, schema, or genre/category rules change materially.
-/// 4: title phrases fill products that BOOTH category and tags did not settle.
-pub const CLASSIFIER_VERSION: i32 = 4;
+/// 5: a settled BOOTH category keeps a fitting genre. Title phrases do not replace it.
+/// Category 201 (software) settles as other / tool_editor.
+pub const CLASSIFIER_VERSION: i32 = 5;
 
 /// Title and description decide the label. Shop names are not features.
 pub fn classify_listing(
@@ -208,6 +209,6 @@ mod tests {
             classify_listing("無関係な題", "Phone Shop", ""),
             (Category::Other, "other".into())
         );
-        assert_eq!(CLASSIFIER_VERSION, 4);
+        assert_eq!(CLASSIFIER_VERSION, 5);
     }
 }

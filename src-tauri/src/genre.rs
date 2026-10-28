@@ -73,6 +73,11 @@ pub fn category_for_genre(genre: &str) -> Option<Category> {
     Some(category)
 }
 
+/// A genre may be stored on this category only when it is one of that category's genres.
+pub fn fits(category: Category, genre: &str) -> bool {
+    validate(category, Some(genre)) == genre && category_for_genre(genre) == Some(category)
+}
+
 pub fn validate(category: Category, genre: Option<&str>) -> String {
     let fallback = if category == Category::World {
         "tool_other"
@@ -329,6 +334,22 @@ mod tests {
         assert_eq!(validate(Category::Hair, Some("skybox")), "other");
         assert_eq!(validate(Category::Accessory, Some(FREE)), "other");
         assert_eq!(validate(Category::World, Some(FREE)), "tool_other");
+    }
+
+    #[test]
+    fn a_genre_fits_only_its_own_category() {
+        assert!(fits(Category::Outfit, "outfit"));
+        assert!(fits(Category::Outfit, "shoes_socks"));
+        assert!(!fits(Category::Outfit, "hair"));
+        assert!(!fits(Category::Outfit, "eye_texture"));
+        assert!(!fits(Category::Outfit, "accessory"));
+        assert!(fits(Category::Other, "tool_editor"));
+        assert!(!fits(Category::Other, "outfit"));
+        assert!(!fits(Category::Other, "eye_texture"));
+        assert!(!fits(Category::Other, "gimmick"));
+        assert!(!fits(Category::Other, "expression_animation"));
+        assert!(fits(Category::Texture, "eye_texture"));
+        assert!(fits(Category::World, "furniture_props"));
     }
 
     #[test]

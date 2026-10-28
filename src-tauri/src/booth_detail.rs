@@ -151,7 +151,13 @@ pub fn interpret_json(body: &str) -> DetailOutcome {
     })
 }
 
-pub async fn fetch_public_item(booth_id: &str) -> Result<DetailOutcome, String> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FetchReport {
+    pub http_status: Option<u16>,
+    pub outcome: DetailOutcome,
+}
+
+pub async fn fetch_public_item(booth_id: &str) -> Result<FetchReport, String> {
     let mut current = item_json_url(booth_id)?;
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -159,9 +165,13 @@ pub async fn fetch_public_item(booth_id: &str) -> Result<DetailOutcome, String> 
         .connect_timeout(Duration::from_secs(10))
         .build()
         .map_err(|_| "商品情報を確認できません".to_string())?;
+    let mut last_status = None;
     for _ in 0..3 {
         if age_gate_url(&current) || !is_item_json_url(&current) {
-            return Ok(DetailOutcome::AgeGate);
+            return Ok(FetchReport {
+                http_status: last_status,
+                outcome: DetailOutcome::AgeGate,
+            });
         }
         let response = client
             .get(current.clone())
@@ -171,6 +181,7 @@ pub async fn fetch_public_item(booth_id: &str) -> Result<DetailOutcome, String> 
             .await
             .map_err(|_| "商品情報を確認できません".to_string())?;
         let status = response.status();
+        last_status = Some(status.as_u16());
         if is_redirect(status) {
             let location = response
                 .headers()
@@ -181,10 +192,16 @@ pub async fn fetch_public_item(booth_id: &str) -> Result<DetailOutcome, String> 
                 .join(location)
                 .map_err(|_| "商品情報を確認できません".to_string())?;
             if age_gate_url(&joined) {
-                return Ok(DetailOutcome::AgeGate);
+                return Ok(FetchReport {
+                    http_status: last_status,
+                    outcome: DetailOutcome::AgeGate,
+                });
             }
             if !is_item_json_url(&joined) {
-                return Ok(DetailOutcome::Again);
+                return Ok(FetchReport {
+                    http_status: last_status,
+                    outcome: DetailOutcome::Again,
+                });
             }
             current = joined;
             continue;
@@ -200,14 +217,43 @@ pub async fn fetch_public_item(booth_id: &str) -> Result<DetailOutcome, String> 
             .text()
             .await
             .map_err(|_| "商品情報を確認できません".to_string())?;
-        return Ok(classify_http(
-            status.as_u16(),
-            &final_url,
-            &content_type,
-            &body,
-        ));
+        return Ok(FetchReport {
+            http_status: last_status,
+            outcome: classify_http(status.as_u16(), &final_url, &content_type, &body),
+        });
     }
-    Ok(DetailOutcome::Again)
+    Ok(FetchReport {
+        http_status: last_status,
+        outcome: DetailOutcome::Again,
+    })
+}
+
+/// Last four digits only. The line never includes the title, description, tags, or shop.
+pub fn id_tail(booth_id: &str) -> &str {
+    let len = booth_id.len();
+    if len <= 4 { booth_id } else { &booth_id[len - 4..] }
+}
+
+pub fn detail_log_line(
+    booth_id: &str,
+    http_status: Option<u16>,
+    outcome: &DetailOutcome,
+    interval_ms: u64,
+) -> String {
+    let status = http_status
+        .map(|code| code.to_string())
+        .unwrap_or_else(|| "-".into());
+    let kind = match outcome {
+        DetailOutcome::Public(_) => "成功",
+        DetailOutcome::Adult | DetailOutcome::AgeGate => "年齢制限",
+        DetailOutcome::Missing => "公開終了",
+        DetailOutcome::RetryLater => "再試行",
+        DetailOutcome::Again => "失敗",
+    };
+    format!(
+        "商品情報 {} HTTP{status} {kind} 間隔{interval_ms}ms",
+        id_tail(booth_id)
+    )
 }
 
 pub fn unavailable_description() -> &'static str {
@@ -372,6 +418,38 @@ mod tests {
         assert!(item_json_url("../secret").is_err());
         assert_eq!(detail_pause_ms(250), 3000);
         assert_eq!(detail_pause_ms(1000), 3000);
+    }
+
+    #[test]
+    fn detail_log_lines_keep_only_the_tail_status_and_kind() {
+        let public = DetailOutcome::Public(PublicItem {
+            description: "残してはいけない説明".to_string(),
+            shop: "架空工房".to_string(),
+            category_id: Some(209),
+            category_name: "3D衣装".into(),
+            category_parent: "3Dモデル".into(),
+            tags: vec!["衣装".into()],
+            is_free: Some(false),
+            is_adult: Some(false),
+        });
+        let line = detail_log_line("42424299", Some(200), &public, 3000);
+        assert_eq!(line, "商品情報 4299 HTTP200 成功 間隔3000ms");
+        assert!(!line.contains("42424299"));
+        assert!(!line.contains("残してはいけない"));
+        assert!(!line.contains("架空工房"));
+        assert!(!line.contains("衣装"));
+        assert_eq!(
+            detail_log_line("8800881", Some(200), &DetailOutcome::Adult, 3000),
+            "商品情報 0881 HTTP200 年齢制限 間隔3000ms"
+        );
+        assert_eq!(
+            detail_log_line("8800881", Some(404), &DetailOutcome::Missing, 1000),
+            "商品情報 0881 HTTP404 公開終了 間隔1000ms"
+        );
+        assert_eq!(
+            detail_log_line("12", None, &DetailOutcome::Again, 3000),
+            "商品情報 12 HTTP- 失敗 間隔3000ms"
+        );
     }
 
     #[test]

@@ -102,7 +102,8 @@ private func generate(
         ]
         return ["ok": true, "json": json]
     } catch {
-        return ["ok": false, "error": errorCode(error), "message": "Apple のオンデバイスモデルが応答できません"]
+        let code = errorCode(error)
+        return ["ok": false, "error": code, "message": "Apple のオンデバイスモデルが応答できません (\(code))"]
     }
 }
 
@@ -112,7 +113,9 @@ private func clip(
     title: String,
     description: String
 ) async -> String {
-    let reserve = 768
+    // Guided generation adds a schema the token budget above does not count.
+    // Leave room so a long description is clipped instead of failing the product.
+    let reserve = 1792
     let budget = max(512, model.contextSize - reserve)
     var body = description
     while true {

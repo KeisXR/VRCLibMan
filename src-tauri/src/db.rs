@@ -1339,7 +1339,11 @@ fn apply_extraction_inner(
         existing.genre.clone()
     } else {
         category.map(|category| {
-            let from_tags = crate::genre::genre_from_tags(category, &tags);
+            // Tags win only when the genre belongs to this category. A hair tag
+            // must not turn a settled outfit into a hair genre, and a clothing
+            // tag must not turn a tool into an outfit.
+            let from_tags = crate::genre::genre_from_tags(category, &tags)
+                .filter(|genre| crate::genre::fits(category, genre));
             let from_title = if title_fill {
                 crate::genre::classify_title_gap(
                     category,
@@ -4115,12 +4119,20 @@ pub(crate) fn settle_dictionary(connection: &mut Connection) -> Result<u32, Stri
     let mut statement = connection
         .prepare(
             "SELECT booth_id FROM products
-             WHERE user_confirmed = 0 AND links_locked = 0
+             WHERE links_locked = 0
                AND booth_id NOT IN (SELECT booth_id FROM product_exclusions)
                AND (
-                 extracted_at IS NULL
-                 OR booth_id IN (SELECT booth_id FROM avatar_sources)
-                 OR (category = 'avatar' AND extracted_at IS NOT NULL)
+                 (
+                   user_confirmed = 0 AND (
+                     extracted_at IS NULL
+                     OR booth_id IN (SELECT booth_id FROM avatar_sources)
+                     OR (category = 'avatar' AND extracted_at IS NOT NULL)
+                   )
+                 )
+                 OR booth_id IN (
+                   SELECT product_id FROM product_avatars
+                   WHERE source IN ('owned', 'catalog')
+                 )
                )",
         )
         .sql()?;
@@ -4148,6 +4160,9 @@ pub(crate) fn settle_dictionary(connection: &mut Connection) -> Result<u32, Stri
 fn settle_dictionary_includes(connection: &Connection, booth_id: &str) -> Result<bool, String> {
     let product = require_product(connection, booth_id)?;
     if product.extracted_at.is_none() || catalog_body(connection, booth_id)?.is_some() {
+        return Ok(true);
+    }
+    if written_body_link(connection, booth_id)? {
         return Ok(true);
     }
     repairable_extracted_original_body(connection, &product)
@@ -4227,6 +4242,11 @@ pub(crate) fn skip_model(connection: &mut Connection, booth_id: &str) -> Result<
         return Ok(true);
     }
     let product = require_product(connection, booth_id)?;
+    // Catalog and owned-body rows are already classified. Refresh their
+    // classifier version and do not send them through the model.
+    if protect_written_body(connection, &product)? {
+        return Ok(true);
+    }
     if product.user_confirmed || product.links_locked {
         return Ok(false);
     }
@@ -4239,6 +4259,7 @@ fn settle_one(connection: &mut Connection, booth_id: &str, redo: bool) -> Result
     }
     let product = require_product(connection, booth_id)?;
     if classification_pinned(&product) || product.user_confirmed || product.links_locked {
+        let _ = protect_written_body(connection, &product)?;
         return Ok(false);
     }
     if let Some((avatar_id, display)) = catalog_body(connection, booth_id)? {
@@ -4352,6 +4373,55 @@ fn catalog_body(
         .sql()
 }
 
+fn written_body_link(connection: &Connection, booth_id: &str) -> Result<bool, String> {
+    let count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM product_avatars
+             WHERE product_id = ?1 AND source IN ('owned', 'catalog')",
+            params![booth_id],
+            |row| row.get(0),
+        )
+        .sql()?;
+    Ok(count > 0)
+}
+
+/// A catalog match or owned-body registration is already a classification.
+/// When its version is behind, refresh it and tell the caller to leave the
+/// model unused. A current row, a manual lock, and an ended listing are left alone.
+fn protect_written_body(connection: &Connection, product: &Product) -> Result<bool, String> {
+    if product.category_locked
+        || product.category != Some(Category::Avatar)
+        || product.extracted_at.is_none()
+        || product.description_snippet == crate::model::UNAVAILABLE_DESCRIPTION
+        || !written_body_link(connection, &product.booth_id)?
+    {
+        return Ok(false);
+    }
+    let version: i64 = connection
+        .query_row(
+            "SELECT classifier_version FROM products WHERE booth_id = ?1",
+            params![product.booth_id],
+            |row| row.get(0),
+        )
+        .sql()?;
+    if version >= i64::from(crate::classifier::CLASSIFIER_VERSION) {
+        return Ok(false);
+    }
+    connection
+        .execute(
+            "UPDATE products SET classifier_version = ?1
+             WHERE booth_id = ?2 AND category_locked = 0
+               AND description_snippet != ?3",
+            params![
+                crate::classifier::CLASSIFIER_VERSION,
+                product.booth_id,
+                crate::model::UNAVAILABLE_DESCRIPTION
+            ],
+        )
+        .sql()?;
+    Ok(true)
+}
+
 fn write_catalog_body(
     connection: &Connection,
     booth_id: &str,
@@ -4363,9 +4433,15 @@ fn write_catalog_body(
         .execute(
             "UPDATE products SET category = 'avatar', compatible_avatars_json = ?1,
              unresolved_names_json = '[]', is_generic = 0, confidence = 1, needs_review = 0,
-             user_confirmed = 1, extracted_at = COALESCE(extracted_at, ?2), updated_at = ?2
-             WHERE booth_id = ?3 AND category_locked = 0",
-            params![to_json(&vec![display.to_string()])?, now, booth_id],
+             user_confirmed = 1, extracted_at = COALESCE(extracted_at, ?2), updated_at = ?2,
+             classifier_version = ?3
+             WHERE booth_id = ?4 AND category_locked = 0",
+            params![
+                to_json(&vec![display.to_string()])?,
+                now,
+                crate::classifier::CLASSIFIER_VERSION,
+                booth_id
+            ],
         )
         .sql()?;
     replace_links(connection, booth_id, &[avatar_id.to_string()], "catalog")?;
@@ -4789,9 +4865,15 @@ fn save_owned_body(connection: &Connection, product: &Product, avatar_id: &str) 
         .execute(
             "UPDATE products SET category = 'avatar', compatible_avatars_json = ?1,
              unresolved_names_json = '[]', is_generic = 0, confidence = 1, needs_review = 0,
-             user_confirmed = 1, extracted_at = COALESCE(extracted_at, ?2), updated_at = ?2
-             WHERE booth_id = ?3 AND category_locked = 0",
-            params![to_json(&vec![display])?, now, booth_id],
+             user_confirmed = 1, extracted_at = COALESCE(extracted_at, ?2), updated_at = ?2,
+             classifier_version = ?3
+             WHERE booth_id = ?4 AND category_locked = 0",
+            params![
+                to_json(&vec![display])?,
+                now,
+                crate::classifier::CLASSIFIER_VERSION,
+                booth_id
+            ],
         )
         .sql()?;
     if !product.links_locked {
@@ -5018,23 +5100,24 @@ fn decide_category(
     if existing.category_locked {
         return existing.category;
     }
-    if let Some(category) = crate::compat::strong_category_override(&existing.title) {
-        return Some(category);
-    }
-    if llm == Category::Avatar && crate::normalize::is_avatar_count_title(&existing.title) {
-        return Some(Category::Other);
-    }
-    if crate::compat::world_hint_overrides(
-        &existing.title,
-        &existing.description_snippet,
-        llm,
-        confidence,
-    ) {
-        return Some(Category::World);
-    }
     // Title phrases fill a product the BOOTH category and tags left unset.
     // A settled BOOTH label calls this with title_fill = false and stays put.
+    // Manual category locks above stay ahead of both.
     if title_fill {
+        if let Some(category) = crate::compat::strong_category_override(&existing.title) {
+            return Some(category);
+        }
+        if llm == Category::Avatar && crate::normalize::is_avatar_count_title(&existing.title) {
+            return Some(Category::Other);
+        }
+        if crate::compat::world_hint_overrides(
+            &existing.title,
+            &existing.description_snippet,
+            llm,
+            confidence,
+        ) {
+            return Some(Category::World);
+        }
         if let Some(category) = crate::compat::title_fill_category(&existing.title, llm) {
             return Some(category);
         }
@@ -6321,6 +6404,333 @@ mod tests {
         let pinned = require_product(&connection, "7702101").unwrap();
         assert_eq!(pinned.category, Some(Category::Gimmick));
         assert_eq!(pinned.genre.as_deref(), Some("gimmick"));
+    }
+
+    fn classifier_version_of(connection: &Connection, booth_id: &str) -> i64 {
+        connection
+            .query_row(
+                "SELECT classifier_version FROM products WHERE booth_id = ?1",
+                params![booth_id],
+                |row| row.get(0),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn settled_booth_categories_keep_a_fitting_genre_and_ignore_title_phrases() {
+        let mut connection = open_memory().unwrap();
+        import_export_json(
+            &mut connection,
+            r#"{
+                "products": [
+                    {
+                        "boothId": "7702201",
+                        "title": "オリジナル3Dモデル「架空子」",
+                        "description": "髪と瞳の説明",
+                        "category": {"id": 209, "name": "3D衣装", "parent": {"name": "3Dモデル"}},
+                        "tags": ["髪", "瞳", "アクセサリ"]
+                    },
+                    {
+                        "boothId": "7702202",
+                        "title": "架空Udonスイッチ",
+                        "description": "ワールド用のスイッチです",
+                        "category": {"id": 209, "name": "3D衣装", "parent": {"name": "3Dモデル"}},
+                        "tags": ["VRChat"]
+                    },
+                    {
+                        "boothId": "7702203",
+                        "title": "架空の靴",
+                        "description": "靴です",
+                        "category": {"id": 209, "name": "3D衣装", "parent": {"name": "3Dモデル"}},
+                        "tags": ["靴"]
+                    },
+                    {
+                        "boothId": "7702204",
+                        "title": "架空の道具",
+                        "description": "ツールです",
+                        "category": {"id": 215, "name": "3Dツール・システム", "parent": {"name": "3Dモデル"}},
+                        "tags": ["衣装", "瞳", "ギミック", "表情"]
+                    },
+                    {
+                        "boothId": "7702205",
+                        "title": "オリジナル3Dモデル「架空子」",
+                        "description": "ソフトウェアです",
+                        "category": {"id": 201, "name": "ソフトウェア", "parent": {"name": "3Dモデル"}},
+                        "tags": ["衣装"]
+                    },
+                    {
+                        "boothId": "7702206",
+                        "title": "架空の瞳",
+                        "description": "瞳テクスチャです",
+                        "category": {"id": 214, "name": "3Dテクスチャ", "parent": {"name": "3Dモデル"}},
+                        "tags": ["瞳"]
+                    },
+                    {
+                        "boothId": "7702207",
+                        "title": "架空の布地",
+                        "description": "テクスチャ枠の衣装タグ",
+                        "category": {"id": 214, "name": "3Dテクスチャ", "parent": {"name": "3Dモデル"}},
+                        "tags": ["衣装"]
+                    },
+                    {
+                        "boothId": "7702208",
+                        "title": "架空の家具",
+                        "description": "小道具です",
+                        "category": {"id": 210, "name": "3D小道具", "parent": {"name": "3Dモデル"}},
+                        "tags": ["家具"]
+                    },
+                    {
+                        "boothId": "7702209",
+                        "title": "架空の服",
+                        "description": "その他枠の衣装タグ",
+                        "category": {"id": 127, "name": "3Dモデル（その他）", "parent": {"name": "3Dモデル"}},
+                        "tags": ["衣装"]
+                    },
+                    {
+                        "boothId": "7702210",
+                        "title": "未確認その1",
+                        "description": "カテゴリが不明です",
+                        "category": {"id": 157, "name": "未確認の分類"},
+                        "tags": ["VRChat"]
+                    },
+                    {
+                        "boothId": "7702211",
+                        "title": "未確認その2",
+                        "description": "カテゴリが不明です",
+                        "category": {"id": 142, "name": "未確認の分類"},
+                        "tags": []
+                    },
+                    {
+                        "boothId": "7702212",
+                        "title": "未確認その3",
+                        "description": "カテゴリが不明です",
+                        "category": {"id": 6, "name": "未確認の分類"},
+                        "tags": []
+                    },
+                    {
+                        "boothId": "7702213",
+                        "title": "オリジナル3Dモデル「架空子」",
+                        "description": "カテゴリが無い本体候補"
+                    },
+                    {
+                        "boothId": "7702214",
+                        "title": "架空Udonスイッチ",
+                        "description": "カテゴリが無いワールド候補"
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+        let expect = |connection: &Connection, id: &str, category: Category, genre: &str| {
+            let product = require_product(connection, id).unwrap();
+            assert_eq!(product.category, Some(category), "{id}");
+            assert_eq!(product.genre.as_deref(), Some(genre), "{id}");
+        };
+        assert!(apply_booth_settlement(&mut connection, "7702201").unwrap());
+        expect(&connection, "7702201", Category::Outfit, "outfit");
+        assert!(apply_booth_settlement(&mut connection, "7702202").unwrap());
+        expect(&connection, "7702202", Category::Outfit, "outfit");
+        assert!(apply_booth_settlement(&mut connection, "7702203").unwrap());
+        expect(&connection, "7702203", Category::Outfit, "shoes_socks");
+        assert!(apply_booth_settlement(&mut connection, "7702204").unwrap());
+        expect(&connection, "7702204", Category::Other, "tool_editor");
+        assert!(apply_booth_settlement(&mut connection, "7702205").unwrap());
+        expect(&connection, "7702205", Category::Other, "tool_editor");
+        assert!(apply_booth_settlement(&mut connection, "7702206").unwrap());
+        expect(&connection, "7702206", Category::Texture, "eye_texture");
+        assert!(!apply_booth_settlement(&mut connection, "7702207").unwrap());
+        assert!(require_product(&connection, "7702207").unwrap().category.is_none());
+        assert!(apply_booth_settlement(&mut connection, "7702208").unwrap());
+        expect(&connection, "7702208", Category::World, "furniture_props");
+        assert!(apply_booth_settlement(&mut connection, "7702209").unwrap());
+        expect(&connection, "7702209", Category::Outfit, "outfit");
+        for id in ["7702210", "7702211", "7702212"] {
+            assert!(!apply_booth_settlement(&mut connection, id).unwrap(), "{id}");
+            assert!(require_product(&connection, id).unwrap().category.is_none(), "{id}");
+        }
+        move_product_genre(&mut connection, "7702201", "asset", "gimmick").unwrap();
+        assert!(!apply_booth_settlement(&mut connection, "7702201").unwrap());
+        expect(&connection, "7702201", Category::Gimmick, "gimmick");
+
+        assert!(!apply_booth_settlement(&mut connection, "7702213").unwrap());
+        apply_extraction(
+            &mut connection,
+            "7702213",
+            &extraction(Category::Other, &[], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        assert_eq!(
+            require_product(&connection, "7702213").unwrap().category,
+            Some(Category::Avatar)
+        );
+        apply_extraction(
+            &mut connection,
+            "7702214",
+            &extraction(Category::Gimmick, &[], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        assert_eq!(
+            require_product(&connection, "7702214").unwrap().category,
+            Some(Category::World)
+        );
+    }
+
+    #[test]
+    fn catalog_and_owned_bodies_are_current_and_other_rows_stay_old() {
+        let mut connection = open_memory().unwrap();
+        connection
+            .execute(
+                "INSERT INTO avatars (id, display_name, base_body, aliases_json, is_builtin, owned, notes)
+                 VALUES ('fictional-body', '架空丸', NULL, '[]', 0, 0, '')",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO avatar_sources (booth_id, avatar_id) VALUES ('8800881', 'fictional-body')",
+                [],
+            )
+            .unwrap();
+        import_products(
+            &mut connection,
+            &parse_export(
+                r#"{
+                    "products": [
+                        {"boothId":"8800881","title":"架空丸","description":"本体です。"},
+                        {"boothId":"8800882","title":"オリジナル3Dモデル「架空子」","description":"架空子の説明です。"},
+                        {"boothId":"8800883","title":"未分類の見本","description":"まだ分類しません。"},
+                        {"boothId":"8800884","title":"消えた見本","description":"あとで公開終了にします。"},
+                        {"boothId":"8800885","title":"手で固定した見本","description":"手動ロックです。"},
+                        {"boothId":"8800886","title":"古い分類の見本","description":"ルールが古いです。"},
+                        {"boothId":"8800887","title":"確認済みの見本","description":"モデル結果を確認済みにします。"}
+                    ]
+                }"#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let current = i64::from(crate::classifier::CLASSIFIER_VERSION);
+        let catalog = require_product(&connection, "8800881").unwrap();
+        assert_eq!(catalog.category, Some(Category::Avatar));
+        assert!(catalog.extracted_at.is_some());
+        assert_eq!(classifier_version_of(&connection, "8800881"), current);
+        let owned = require_product(&connection, "8800882").unwrap();
+        assert_eq!(owned.category, Some(Category::Avatar));
+        assert!(owned.extracted_at.is_some());
+        assert_eq!(classifier_version_of(&connection, "8800882"), current);
+        assert!(require_product(&connection, "8800883").unwrap().extracted_at.is_none());
+        assert_eq!(classifier_version_of(&connection, "8800883"), 1);
+
+        connection
+            .execute(
+                "UPDATE products SET description_snippet = ?1 WHERE booth_id = '8800884'",
+                params![crate::model::UNAVAILABLE_DESCRIPTION],
+            )
+            .unwrap();
+        note_unavailable(&connection, "8800884").unwrap();
+        let ended = require_product(&connection, "8800884").unwrap();
+        assert_eq!(ended.description_snippet, crate::model::UNAVAILABLE_DESCRIPTION);
+        assert!(ended.extracted_at.is_some());
+        assert_eq!(classifier_version_of(&connection, "8800884"), 1);
+
+        apply_extraction(
+            &mut connection,
+            "8800885",
+            &extraction(Category::Outfit, &[], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        move_product_genre(&mut connection, "8800885", "asset", "gimmick").unwrap();
+        connection
+            .execute(
+                "UPDATE products SET classifier_version = 1 WHERE booth_id = '8800885'",
+                [],
+            )
+            .unwrap();
+        apply_extraction(
+            &mut connection,
+            "8800886",
+            &extraction(Category::Outfit, &[], true, 0.9),
+            0.6,
+        )
+        .unwrap();
+        connection
+            .execute(
+                "UPDATE products SET classifier_version = 1 WHERE booth_id = '8800886'",
+                [],
+            )
+            .unwrap();
+        apply_extraction(
+            &mut connection,
+            "8800887",
+            &extraction(Category::Hair, &[], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        connection
+            .execute(
+                "UPDATE products SET classifier_version = 1, user_confirmed = 1 WHERE booth_id = '8800887'",
+                [],
+            )
+            .unwrap();
+
+        let stale = products_for_extract(&connection, ExtractTarget::Stale).unwrap();
+        let stale_ids: Vec<_> = stale.iter().map(|job| job.booth_id.as_str()).collect();
+        assert!(stale_ids.contains(&"8800886"), "{stale_ids:?}");
+        assert!(stale_ids.contains(&"8800887"), "{stale_ids:?}");
+        for kept in ["8800881", "8800882", "8800883", "8800884", "8800885"] {
+            assert!(!stale_ids.contains(&kept), "{kept} {stale_ids:?}");
+        }
+        assert_eq!(
+            classification_status(&connection).unwrap().stale_count as usize,
+            stale_ids.len()
+        );
+        assert_eq!(classifier_version_of(&connection, "8800885"), 1);
+        assert!(require_product(&connection, "8800885").unwrap().category_locked);
+        assert!(require_product(&connection, "8800885").unwrap().genre_locked);
+
+        connection
+            .execute(
+                "UPDATE products SET classifier_version = 1 WHERE booth_id IN ('8800881', '8800882')",
+                [],
+            )
+            .unwrap();
+        settle_dictionary(&mut connection).unwrap();
+        assert_eq!(classifier_version_of(&connection, "8800881"), current);
+        assert_eq!(classifier_version_of(&connection, "8800882"), current);
+        assert_eq!(classifier_version_of(&connection, "8800884"), 1);
+        assert_eq!(classifier_version_of(&connection, "8800885"), 1);
+        assert_eq!(classifier_version_of(&connection, "8800887"), 1);
+        assert_eq!(
+            require_product(&connection, "8800881").unwrap().category,
+            Some(Category::Avatar)
+        );
+        assert_eq!(
+            require_product(&connection, "8800882").unwrap().category,
+            Some(Category::Avatar)
+        );
+        assert!(!skip_model(&mut connection, "8800887").unwrap());
+        assert_eq!(classifier_version_of(&connection, "8800887"), 1);
+        connection
+            .execute(
+                "UPDATE products SET classifier_version = 1 WHERE booth_id = '8800882'",
+                [],
+            )
+            .unwrap();
+        assert!(skip_model(&mut connection, "8800882").unwrap());
+        assert_eq!(classifier_version_of(&connection, "8800882"), current);
+        assert_eq!(
+            require_product(&connection, "8800882").unwrap().category,
+            Some(Category::Avatar)
+        );
+        let after = products_for_extract(&connection, ExtractTarget::Stale).unwrap();
+        let after_ids: Vec<_> = after.iter().map(|job| job.booth_id.as_str()).collect();
+        assert!(!after_ids.contains(&"8800881"));
+        assert!(!after_ids.contains(&"8800882"));
+        assert!(after_ids.contains(&"8800886"));
+        assert!(after_ids.contains(&"8800887"));
     }
 
     #[test]
