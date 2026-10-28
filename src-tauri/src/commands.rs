@@ -913,12 +913,26 @@ pub async fn extract_products(
             }
             Err(err) => {
                 failed += 1;
+                crate::browser::browser_log(
+                    &app,
+                    &crate::browser::classification_failure_line(&job.booth_id, &err),
+                );
                 if errors.len() < 8 {
                     errors.push(format!("{label}: {err}"));
                 }
             }
         }
     }
+    crate::browser::browser_log(
+        &app,
+        &crate::browser::classification_done_line(
+            processed,
+            failed,
+            booth_settled,
+            model_used,
+            cancelled,
+        ),
+    );
     if processed > 0 {
         emit_progress(&app, "extract", total, total, "分類結果を整理しています");
         let mut connection = db(&state)?;
@@ -994,14 +1008,24 @@ async fn classify_product(
         .await?;
         return Ok(Classified::Done(extraction));
     }
-    let first = run_apple(
-        ollama::SYSTEM_PROMPT,
-        &job.title,
-        &description_with_booth_hints(&job.description, &category_line, &tags_line),
-    )
-    .await?;
-    match first {
+    let described = description_with_booth_hints(&job.description, &category_line, &tags_line);
+    let mut attempt = run_apple(ollama::SYSTEM_PROMPT, &job.title, &described).await?;
+    if matches!(attempt, Err(AppleError::ContextWindow)) {
+        let shorter = crate::compat::clip_description(&job.description, 800);
+        if shorter.chars().count() < job.description.chars().count() {
+            attempt = run_apple(
+                ollama::SYSTEM_PROMPT,
+                &job.title,
+                &description_with_booth_hints(&shorter, &category_line, &tags_line),
+            )
+            .await?;
+        }
+    }
+    match attempt {
         Ok(extraction) => Ok(Classified::Done(extraction)),
+        Err(AppleError::ContextWindow) => {
+            Err("Apple のオンデバイスモデルのコンテキストを超えました".into())
+        }
         Err(AppleError::Guardrail) => {
             let masked = match (
                 crate::mask::mask_text(&job.title, keep, lists),

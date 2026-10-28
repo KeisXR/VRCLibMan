@@ -20,6 +20,7 @@ pub struct AppleStatus {
 #[derive(Debug)]
 pub enum AppleError {
     Guardrail,
+    ContextWindow,
     Message(String),
 }
 
@@ -326,11 +327,19 @@ pub fn parse_generation(line: &str) -> Result<Extraction, AppleError> {
         if code == "guardrailViolation" {
             return Err(AppleError::Guardrail);
         }
+        if code == "contextWindow" {
+            return Err(AppleError::ContextWindow);
+        }
         let message = value
             .get("message")
             .and_then(Value::as_str)
             .unwrap_or("Apple のオンデバイスモデルが応答できません");
-        return Err(AppleError::Message(message.to_string()));
+        let message = if code.is_empty() || message.contains(code) {
+            message.to_string()
+        } else {
+            format!("{message} ({code})")
+        };
+        return Err(AppleError::Message(message));
     }
     let json = value.get("json").cloned().unwrap_or(Value::Null);
     let text = if json.is_string() {
@@ -424,6 +433,15 @@ mod tests {
         );
         let blocked = parse_generation(r#"{"ok":false,"error":"guardrailViolation"}"#);
         assert!(matches!(blocked, Err(AppleError::Guardrail)));
+        let narrow = parse_generation(
+            r#"{"ok":false,"error":"contextWindow","message":"Apple のオンデバイスモデルが応答できません"}"#,
+        );
+        assert!(matches!(narrow, Err(AppleError::ContextWindow)));
+        match parse_generation(r#"{"ok":false,"error":"failed","message":"Apple のオンデバイスモデルが応答できません"}"#)
+        {
+            Err(AppleError::Message(message)) => assert!(message.contains("failed")),
+            other => panic!("expected a coded failure, got {other:?}"),
+        }
     }
 
     #[cfg(unix)]

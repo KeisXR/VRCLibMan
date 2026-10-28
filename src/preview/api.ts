@@ -127,7 +127,7 @@ function product(partial: Partial<Product> & Pick<Product, "boothId" | "title" |
     isFree: false,
     isAdult: false,
     unpublished: false,
-    classifierVersion: partial.category ? 3 : 1,
+    classifierVersion: partial.category ? 5 : 1,
     ...partial,
   };
 }
@@ -1928,7 +1928,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       return undefined as T;
     case "scan_library":
     case "classification_status": {
-      const classifierVersion = 3;
+      const classifierVersion = 5;
       const staleCount = store.products.filter(
         (item) =>
           !(item.categoryLocked && item.genreLocked) &&

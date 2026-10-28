@@ -263,9 +263,12 @@ pub fn parse_extraction(raw: &str) -> Result<Extraction, String> {
         .ok_or("分類結果を読み取れませんでした。もう一度分類してください")?;
     let value: Value = serde_json::from_str(json)
         .map_err(|err| format!("分類結果を読み取れませんでした: {err}"))?;
-    let category = value
+    let category_text = value
         .get("category")
         .and_then(Value::as_str)
+        .map(|text| text.trim().to_ascii_lowercase());
+    let category = category_text
+        .as_deref()
         .and_then(Category::parse)
         .ok_or("分類結果の商品カテゴリを読み取れませんでした。もう一度分類してください")?;
     let is_generic = value
@@ -277,12 +280,16 @@ pub fn parse_extraction(raw: &str) -> Result<Extraction, String> {
         .and_then(Value::as_f64)
         .ok_or("分類結果の確信度を読み取れませんでした。もう一度分類してください")?;
     let mut names = Vec::new();
-    let Some(list) = value.get("compatible_avatars").and_then(Value::as_array) else {
-        return Err(
-            "分類結果の対応アバターを読み取れませんでした。もう一度分類してください".into(),
-        );
+    let list = match value.get("compatible_avatars") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Array(list)) => list.clone(),
+        Some(_) => {
+            return Err(
+                "分類結果の対応アバターを読み取れませんでした。もう一度分類してください".into(),
+            );
+        }
     };
-    for item in list {
+    for item in &list {
         let Some(name) = item.as_str() else {
             continue;
         };
@@ -430,13 +437,24 @@ async fn post_chat(
 fn chat_content(body: &str) -> Result<String, String> {
     let value: Value =
         serde_json::from_str(body).map_err(|_| "Ollamaの応答を解釈できません".to_string())?;
-    value
+    let content = value
         .pointer("/message/content")
         .and_then(Value::as_str)
         .map(str::trim)
-        .filter(|text| !text.is_empty())
-        .map(str::to_string)
-        .ok_or_else(|| "Ollamaが空の応答を返しました".into())
+        .unwrap_or("");
+    if !content.is_empty() {
+        return Ok(content.to_string());
+    }
+    // Some models still put the JSON in the thinking channel when content is empty.
+    if let Some(thinking) = value
+        .pointer("/message/thinking")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|text| json_object(text).is_some())
+    {
+        return Ok(thinking.to_string());
+    }
+    Err("Ollamaが空の応答を返しました".into())
 }
 
 fn extraction_schema() -> Value {
@@ -490,12 +508,27 @@ fn connection_error(err: reqwest::Error) -> String {
 }
 
 fn ollama_status_error(status: reqwest::StatusCode, body: &str) -> String {
-    let detail: String = body.chars().take(240).collect();
+    let detail = ollama_error_detail(body);
     if status.as_u16() == 404 {
         format!("Ollamaにモデルがありません。設定のモデル名を確認してください。{detail}")
+    } else if detail.is_empty() {
+        format!("Ollamaがエラーを返しました ({status})")
     } else {
         format!("Ollamaがエラーを返しました ({status}): {detail}")
     }
+}
+
+/// Keep the short `error` field. The raw body can echo the prompt, so it is not logged.
+fn ollama_error_detail(body: &str) -> String {
+    serde_json::from_str::<Value>(body)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("error")
+                .and_then(Value::as_str)
+                .map(|text| text.chars().take(120).collect())
+        })
+        .unwrap_or_default()
 }
 
 #[derive(Deserialize)]
@@ -620,6 +653,21 @@ mod tests {
         assert!(!SYSTEM_PROMPT.contains("ワールド用の小物は gimmick"));
         assert!(!SYSTEM_PROMPT.contains("こたつ」「表情"));
         assert_eq!(crate::model::DEFAULT_OLLAMA_MODEL, "qwen3.5:9b");
+    }
+
+    #[test]
+    fn empty_content_uses_thinking_json_and_a_loose_category_still_parses() {
+        let body = r#"{"message":{"content":"","thinking":"考え中\n{\"category\":\"Outfit\",\"compatible_avatars\":null,\"is_generic\":true,\"confidence\":0.8}"}}"#;
+        let parsed = parse_extraction(&chat_content(body).unwrap()).unwrap();
+        assert_eq!(parsed.category, Category::Outfit);
+        assert!(parsed.compatible_avatars.is_empty());
+        assert!(chat_content(r#"{"message":{"content":"  "}}"#).unwrap_err().contains("空の応答"));
+        let detail = ollama_error_detail(
+            r#"{"error":"model failed","prompt":"タイトル: 架空の題\n説明文:\n残してはいけない"}"#,
+        );
+        assert_eq!(detail, "model failed");
+        assert!(!detail.contains("架空"));
+        assert!(!detail.contains("説明文"));
     }
 
     #[test]

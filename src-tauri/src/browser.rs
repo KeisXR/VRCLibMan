@@ -134,6 +134,52 @@ fn log_path(app: &AppHandle) -> Result<PathBuf, String> {
         .join(LOG_NAME))
 }
 
+pub fn classification_failure_line(booth_id: &str, message: &str) -> String {
+    let kind = classification_failure_kind(message);
+    let message = log_safe_message(booth_id, message);
+    format!(
+        "分類失敗 {} {kind} {message}",
+        crate::booth_detail::id_tail(booth_id)
+    )
+}
+
+pub fn classification_done_line(
+    processed: u32,
+    failed: u32,
+    booth_settled: u32,
+    model_used: u32,
+    cancelled: bool,
+) -> String {
+    let head = if cancelled { "分類中断" } else { "分類完了" };
+    format!("{head} 処理{processed} 失敗{failed} カテゴリとタグ{booth_settled} モデル{model_used}")
+}
+
+fn classification_failure_kind(message: &str) -> &'static str {
+    if message.contains("タイムアウト") || message.contains("timeout") {
+        "タイムアウト"
+    } else if message.contains("空の応答") || message.contains("空応答") {
+        "空応答"
+    } else if message.contains("コンテキスト") || message.contains("contextWindow") {
+        "コンテキスト"
+    } else if message.contains("読み取れません") || message.contains("解釈できません") {
+        "不正な出力"
+    } else if message.contains("接続できません") {
+        "接続失敗"
+    } else if message.contains("guardrail") || message.contains("ガード") {
+        "ガードレール"
+    } else {
+        "失敗"
+    }
+}
+
+fn log_safe_message(booth_id: &str, message: &str) -> String {
+    let mut flat = message.split_whitespace().collect::<Vec<_>>().join(" ");
+    if booth_id.len() > 4 {
+        flat = flat.replace(booth_id, crate::booth_detail::id_tail(booth_id));
+    }
+    flat.chars().take(160).collect()
+}
+
 pub(crate) fn browser_log(app: &AppHandle, message: &str) {
     let stamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
     let line = format!("{stamp} {message}\n");
@@ -1409,9 +1455,30 @@ async fn fill_public_details(app: &AppHandle) -> Result<(), String> {
             total,
             &library_walk::detail_progress_line(current, total),
         );
+        let interval_ms = pause.as_millis() as u64;
         let outcome = match crate::booth_detail::fetch_public_item(booth_id).await {
-            Ok(outcome) => outcome,
+            Ok(fetched) => {
+                browser_log(
+                    app,
+                    &crate::booth_detail::detail_log_line(
+                        booth_id,
+                        fetched.http_status,
+                        &fetched.outcome,
+                        interval_ms,
+                    ),
+                );
+                fetched.outcome
+            }
             Err(_) => {
+                browser_log(
+                    app,
+                    &crate::booth_detail::detail_log_line(
+                        booth_id,
+                        None,
+                        &crate::booth_detail::DetailOutcome::Again,
+                        interval_ms,
+                    ),
+                );
                 browser_log(app, "商品情報の確認を中断しました");
                 return Ok(());
             }
@@ -1513,7 +1580,17 @@ mod tests {
         assert!(!public_url(&login).contains("secret"));
         let library = Url::parse("https://accounts.booth.pm/library?page=2").unwrap();
         assert_eq!(public_url(&library), "https://accounts.booth.pm/library");
-
+        let failure = classification_failure_line(
+            "88008821",
+            "Ollamaが空の応答を返しました\n88008821 架空の題",
+        );
+        assert_eq!(failure, "分類失敗 8821 空応答 Ollamaが空の応答を返しました 8821 架空の題");
+        assert!(!failure.contains("88008821"));
+        assert_eq!(
+            classification_done_line(117, 3, 89, 28, false),
+            "分類完了 処理117 失敗3 カテゴリとタグ89 モデル28"
+        );
+        assert!(classification_failure_line("4242", "Apple のオンデバイスモデルのコンテキストを超えました").contains("コンテキスト"));
     }
 
     #[test]

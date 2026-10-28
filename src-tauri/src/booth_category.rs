@@ -69,6 +69,8 @@ fn id_decision(id: i64, tags: &[String]) -> IdDecision {
         230 => Some(fixed(Category::Hair, Some("hair"), tags, true)),
         217 => Some(fixed(Category::Accessory, Some("accessory"), tags, true)),
         215 => Some(fixed(Category::Other, Some("tool_editor"), tags, true)),
+        // ソフトウェア
+        201 => Some(fixed(Category::Other, Some("tool_editor"), tags, true)),
         216 => Some(fixed(
             Category::Gimmick,
             Some("expression_animation"),
@@ -96,6 +98,7 @@ fn settle_name(category_name: &str, tags: &[String]) -> Option<Settlement> {
     const NAMES: &[(&str, NameKind)] = &[
         ("3dモーション・アニメーション", NameKind::Motion),
         ("3dツール・システム", NameKind::Tool),
+        ("ソフトウェア", NameKind::Tool),
         ("3d環境・ワールド", NameKind::World),
         ("3dモデル（その他）", NameKind::Loose),
         ("3dキャラクター", NameKind::Avatar),
@@ -154,10 +157,7 @@ fn fixed(
     allow_tag_genre: bool,
 ) -> Settlement {
     let from_tags = if allow_tag_genre {
-        genre_from_tags(category, tags).filter(|genre| {
-            genre::validate(category, Some(genre)) == *genre
-                && genre::category_for_genre(genre) == Some(category)
-        })
+        genre_from_tags(category, tags).filter(|genre| genre::fits(category, genre))
     } else {
         None
     };
@@ -169,7 +169,7 @@ fn fixed(
 
 fn texture_from_tags(tags: &[String]) -> Option<Settlement> {
     genre_from_tags(Category::Texture, tags)
-        .filter(|genre| genre::validate(Category::Texture, Some(genre)) == *genre)
+        .filter(|genre| genre::fits(Category::Texture, genre))
         .map(|genre| Settlement {
             category: Category::Texture,
             genre: Some(genre),
@@ -178,7 +178,7 @@ fn texture_from_tags(tags: &[String]) -> Option<Settlement> {
 
 fn world_from_tags(tags: &[String]) -> Option<Settlement> {
     genre_from_tags(Category::World, tags)
-        .filter(|genre| genre::validate(Category::World, Some(genre)) == *genre)
+        .filter(|genre| genre::fits(Category::World, genre))
         .map(|genre| Settlement {
             category: Category::World,
             genre: Some(genre),
@@ -331,6 +331,38 @@ mod tests {
         assert_eq!(outfit.genre.as_deref(), Some("outfit"));
         let shoes = settle(None, "3D衣装", &tags(&["靴"])).unwrap();
         assert_eq!(shoes.genre.as_deref(), Some("shoes_socks"));
+    }
+
+    #[test]
+    fn software_settles_as_a_tool_and_unknown_ids_stay_for_the_model() {
+        let software = settle(Some(201), "別の名前", &[]).unwrap();
+        assert_eq!(software.category, Category::Other);
+        assert_eq!(software.genre.as_deref(), Some("tool_editor"));
+        let named = settle(None, "配布ソフトウェア", &tags(&["衣装"])).unwrap();
+        assert_eq!(named.category, Category::Other);
+        assert_eq!(named.genre.as_deref(), Some("tool_editor"));
+        let conflict = settle(Some(201), "3D衣装", &tags(&["衣装", "瞳", "ギミック"])).unwrap();
+        assert_eq!(conflict.category, Category::Other);
+        assert_eq!(conflict.genre.as_deref(), Some("tool_editor"));
+        for id in [157, 142, 6] {
+            assert!(settle(Some(id), "未確認の分類", &[]).is_none(), "{id}");
+            assert!(settle(Some(id), "", &tags(&["VRChat"])).is_none(), "{id}");
+        }
+    }
+
+    #[test]
+    fn tag_genres_stay_inside_the_settled_category() {
+        let outfit = settle(Some(209), "3D衣装", &tags(&["髪", "瞳", "アクセサリ"])).unwrap();
+        assert_eq!(outfit.category, Category::Outfit);
+        assert_eq!(outfit.genre.as_deref(), Some("outfit"));
+        let shoes = settle(Some(209), "3D衣装", &tags(&["靴"])).unwrap();
+        assert_eq!(shoes.genre.as_deref(), Some("shoes_socks"));
+        let tool = settle(Some(215), "3Dツール・システム", &tags(&["衣装", "瞳", "ギミック", "表情"])).unwrap();
+        assert_eq!(tool.category, Category::Other);
+        assert_eq!(tool.genre.as_deref(), Some("tool_editor"));
+        assert!(settle(Some(214), "3Dテクスチャ", &tags(&["衣装"])).is_none());
+        let eye = settle(Some(214), "3Dテクスチャ", &tags(&["瞳"])).unwrap();
+        assert_eq!(eye.genre.as_deref(), Some("eye_texture"));
     }
 
     #[test]
