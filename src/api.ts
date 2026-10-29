@@ -206,6 +206,8 @@ export const api = {
   pushRemoteFile: (boothId: string, variation: string, filename: string) =>
     call<void>("push_remote_file", { boothId, variation, filename }),
   cacheThumbnails: () => call<number>("cache_thumbnails"),
+  cacheProductPreview: (boothId: string, download: boolean, reveal: boolean) =>
+    call<string | null>("cache_product_preview", { boothId, download, reveal }),
   stagedDownloads: () => call<StagedDownload[]>("list_staged_downloads"),
   routeStagedDownload: (path: string) => call<void>("route_staged_download", { path }),
   classificationFeedback: (scope: ClassificationFeedbackScope) =>

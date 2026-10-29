@@ -1,11 +1,13 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ItemCard } from "../pages/AvatarDetailPage";
 import { GENRE_FREE, GENRE_LABEL, GENRE_UNSET, genresForKind } from "../types";
 import type { GenreKind } from "../types";
 import { useGenreBrowse } from "../genreBrowseContext";
 import { filterItems, genreHref, selectedGenre } from "../genreBrowseUtils";
 import { useRemoteProductProbe } from "../remoteProductProbe";
+import { isPreviewMoveKey, nextPreviewId, previewKeysBlocked } from "../previewPane";
 import { GenreTarget } from "./GenreColumn";
+import { PreviewOverlay, PreviewPane, useLargePreview, usePreviewOpen } from "./PreviewPane";
 
 const NOUN: Record<string, string> = { asset: "アセット", world: "ワールド" };
 
@@ -14,8 +16,12 @@ export { filterItems, genreHref, selectedGenre } from "../genreBrowseUtils";
 export function GenreBrowser({ title, lede }: { title: string; lede?: string }) {
   const { kind, basePath, routeGenre, selected, data, error, narrowLayout, reload, draggingId, setDraggingId, moveProduct } = useGenreBrowse();
   const [filter, setFilter] = useState("");
+  const [previewOpen, togglePreview] = usePreviewOpen();
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const keyboardMove = useRef(false);
   const current = data;
   const shown = useMemo(() => filterItems(current?.items ?? [], filter), [current, filter]);
+  const shownIds = useMemo(() => shown.map((item) => item.boothId), [shown]);
   const { items: probedItems, statusFor, retryProbe } = useRemoteProductProbe(shown);
   const probedMap = useMemo(
     () => new Map(probedItems.map((item) => [item.boothId, item])),
@@ -24,6 +30,76 @@ export function GenreBrowser({ title, lede }: { title: string; lede?: string }) 
   const noun = NOUN[kind];
   const selectedLabel = selected ? GENRE_LABEL[selected] ?? selected : "すべて";
   const unknownGenre = routeGenre != null && routeGenre !== "" && selectedGenre(kind, routeGenre) === null;
+  const selectedItem = selectedId ? probedMap.get(selectedId) ?? shown.find((item) => item.boothId === selectedId) ?? null : null;
+  const preview = useLargePreview(previewOpen ? selectedItem : null, previewOpen && selectedItem != null);
+  const tabStopId = selectedId ?? shownIds[0] ?? null;
+  const closePreview = () => setSelectedId(null);
+
+  useEffect(() => {
+    if (selectedId && !shownIds.includes(selectedId)) setSelectedId(null);
+  }, [shownIds, selectedId]);
+
+  useEffect(() => {
+    if (!keyboardMove.current || !selectedId) return;
+    keyboardMove.current = false;
+    const node = document.getElementById(`product-${selectedId}`);
+    if (node instanceof HTMLElement) {
+      node.focus();
+      node.scrollIntoView({ block: "nearest" });
+    }
+  }, [selectedId]);
+
+  useEffect(() => {
+    if (!previewOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.altKey || event.ctrlKey || event.metaKey || event.defaultPrevented) return;
+      if (!isPreviewMoveKey(event.key)) return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const editable = target instanceof HTMLElement && target.isContentEditable;
+      const inMenu = Boolean(target.closest(".product-actions-panel, [role='menu']"));
+      if (previewKeysBlocked(target.tagName, editable, inMenu)) return;
+      if (shownIds.length === 0) return;
+      event.preventDefault();
+      keyboardMove.current = true;
+      setSelectedId((currentId) => nextPreviewId(shownIds, currentId, event.key));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [previewOpen, shownIds]);
+
+  const list = (
+    <div className="stack">
+      {shown.map((item) => {
+        const resolved = probedMap.get(item.boothId) ?? item;
+        const isSelected = previewOpen && item.boothId === selectedId;
+        return (
+          <ItemCard
+            key={item.boothId}
+            item={resolved}
+            movable
+            onDragChange={setDraggingId}
+            remoteProbeStatus={statusFor(item.boothId)}
+            onRetryRemoteProbe={() => retryProbe([item.boothId])}
+            selectable={previewOpen}
+            selected={isSelected}
+            tabStop={previewOpen && item.boothId === tabStopId}
+            onSelect={previewOpen ? () => setSelectedId(item.boothId) : undefined}
+          />
+        );
+      })}
+    </div>
+  );
+
+  const pane = (
+    <PreviewPane
+      item={selectedItem}
+      largePath={preview.largePath}
+      phase={preview.phase}
+      onReveal={preview.reveal}
+      onClose={narrowLayout ? closePreview : undefined}
+    />
+  );
 
   return (
     <section className="genre-browser">
@@ -90,6 +166,17 @@ export function GenreBrowser({ title, lede }: { title: string; lede?: string }) 
           <h1>{title}</h1>
           {lede && <p>{lede}</p>}
         </div>
+        <div className="toolbar">
+          <button
+            className="button"
+            type="button"
+            aria-pressed={previewOpen}
+            aria-controls="asset-preview"
+            onClick={togglePreview}
+          >
+            プレビュー
+          </button>
+        </div>
       </div>
       <input
         className="search genre-list-search"
@@ -128,26 +215,25 @@ export function GenreBrowser({ title, lede }: { title: string; lede?: string }) 
         <p className="empty">「{selectedLabel}」の商品はまだありません。</p>
       ) : shown.length === 0 ? (
         <p className="empty">条件に合う商品はありません。</p>
+      ) : previewOpen && !narrowLayout ? (
+        <div className="split with-side">
+          <div>
+            <p className="meta genre-result" role="status">
+              {selectedLabel} {shown.length} 件
+            </p>
+            {list}
+          </div>
+          <div className="preview-column">{pane}</div>
+        </div>
       ) : (
         <>
           <p className="meta genre-result" role="status">
             {selectedLabel} {shown.length} 件
           </p>
-          <div className="stack">
-            {shown.map((item) => {
-              const resolved = probedMap.get(item.boothId) ?? item;
-              return (
-                <ItemCard
-                  key={item.boothId}
-                  item={resolved}
-                  movable
-                  onDragChange={setDraggingId}
-                  remoteProbeStatus={statusFor(item.boothId)}
-                  onRetryRemoteProbe={() => retryProbe([item.boothId])}
-                />
-              );
-            })}
-          </div>
+          {list}
+          {previewOpen && narrowLayout && selectedItem && (
+            <PreviewOverlay onClose={closePreview}>{pane}</PreviewOverlay>
+          )}
         </>
       )}
     </section>

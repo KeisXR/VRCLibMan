@@ -65,7 +65,7 @@ npm run tauri build
 
 フロントエンドは React / TypeScript、デスクトップ部分は Tauri v2 / Rust です。インポート、正規化、ファイル照合、名前解決、分類結果の保存、SQLite を Rust が担当します。
 
-商品・分類・対応表・設定・ブックマークはアプリデータ内の `library.sqlite`、サムネイルは `thumbs` に保存します。
+商品・分類・対応表・設定・ブックマークはアプリデータ内の `library.sqlite`、サムネイルは `thumbs`、選択した商品の大きいプレビューは `previews` に保存します。
 
 | データ | Windows | macOS |
 | --- | --- | --- |

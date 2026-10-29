@@ -253,6 +253,8 @@ export interface Settings {
   classificationDismissedVersion: number;
   uiRailWidth: number;
   uiGenreWidth: number;
+  /** アセットとワールドの大きい画像欄。列幅と同じく設定に残す。 */
+  previewPane: boolean;
   checkUpdateOnStartup: boolean;
   uiUpdateDismissedVersion: string;
 }

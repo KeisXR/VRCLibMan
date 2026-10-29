@@ -356,12 +356,20 @@ export function ItemCard({
   onDragChange,
   remoteProbeStatus = "ok",
   onRetryRemoteProbe,
+  selectable = false,
+  selected = false,
+  tabStop = false,
+  onSelect,
 }: {
   item: ItemView;
   movable?: boolean;
   onDragChange?: (boothId: string | null) => void;
   remoteProbeStatus?: RemoteProbeStatus;
   onRetryRemoteProbe?: () => void;
+  selectable?: boolean;
+  selected?: boolean;
+  tabStop?: boolean;
+  onSelect?: () => void;
 }) {
   const { refresh, notify, fail } = useShell();
   const [busy, setBusy] = useState("");
@@ -394,8 +402,21 @@ export function ItemCard({
 
   return (
     <article
-      className={item.unpublished ? "item item-unpublished" : "item"}
+      id={selectable ? `product-${item.boothId}` : undefined}
+      className={`${item.unpublished ? "item item-unpublished" : "item"}${selected ? " selected" : ""}`}
+      aria-current={selected ? "true" : undefined}
+      tabIndex={selectable ? (tabStop ? 0 : -1) : undefined}
       draggable={movable}
+      onClick={() => onSelect?.()}
+      onKeyDown={(event) => {
+        if (!onSelect) return;
+        if (event.key !== " " && event.key !== "Spacebar") return;
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        if (target.closest("button, a, input, textarea, select, summary, label")) return;
+        event.preventDefault();
+        onSelect();
+      }}
       onDragStart={(event) => {
         if (!movable) return;
         const target = event.target as HTMLElement | null;

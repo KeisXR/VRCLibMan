@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use url::Url;
 
-const USER_AGENT: &str = "VRCLibMan/0.1 (local asset organizer)";
-const MAX_BYTES: usize = 4_000_000;
+pub(crate) const USER_AGENT: &str = "VRCLibMan/0.1 (local asset organizer)";
+pub(crate) const MAX_BYTES: usize = 4_000_000;
 
 pub fn download_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
@@ -77,7 +77,7 @@ fn card_image_url(raw: &str) -> Result<Url, String> {
     }
 }
 
-fn ensure_allowed_host(url: &Url) -> Result<(), String> {
+pub(crate) fn ensure_allowed_host(url: &Url) -> Result<(), String> {
     if url.scheme() != "https" {
         return Err("サムネイルは https だけを保存します".into());
     }
@@ -93,7 +93,7 @@ fn ensure_allowed_host(url: &Url) -> Result<(), String> {
     }
 }
 
-fn is_pximg(url: &Url) -> bool {
+pub(crate) fn is_pximg(url: &Url) -> bool {
     let host = url.host_str().unwrap_or("");
     host == "booth.pximg.net" || host.ends_with(".pximg.net")
 }
