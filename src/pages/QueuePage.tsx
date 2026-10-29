@@ -1,5 +1,5 @@
 import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { api, openExternal, openLocal } from "../api";
+import { api, openBoothLink, openLocal } from "../api";
 import { useShell } from "../App";
 import { formatBytes } from "../media";
 import { CATEGORIES, CATEGORY_LABEL, GENRE_LABEL, genresForCategory } from "../types";
@@ -525,7 +525,7 @@ const ProductEditor = memo(function ProductEditor({
             {product.shop || "ショップ不明"}
           </div>
           {product.descriptionSnippet && <p className="meta">{product.descriptionSnippet.slice(0, 280)}</p>}
-          <button className="button" type="button" onClick={() => void openExternal(product.url)}>
+          <button className="button" type="button" onClick={() => void openBoothLink(product.url)}>
             BOOTH を開く
           </button>
           <ExcludeProductButton boothId={product.boothId} title={product.title} category={product.category} genre={product.genre} classificationPinned={product.classificationPinned} />

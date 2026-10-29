@@ -360,6 +360,7 @@ pub fn save_settings(
                 confidence_threshold: settings.confidence_threshold,
                 library_folder: settings.library_folder,
                 builtin_browser: settings.builtin_browser,
+                booth_link_target: settings.booth_link_target,
                 remote_library_folder: settings.remote_library_folder,
                 remote_auto_sync: settings.remote_auto_sync,
                 route_downloads: settings.route_downloads,
@@ -882,6 +883,16 @@ pub async fn extract_products(
             booth_settled += 1;
             processed += 1;
             continue;
+        }
+        if crate::booth_category::category_rule(job.booth_category_id, &job.booth_category_name)
+            == crate::booth_category::CategoryRule::Unknown
+        {
+            crate::browser::log_unknown_category_once(
+                &app,
+                job.booth_category_id,
+                &job.booth_category_name,
+                &job.booth_category_parent,
+            );
         }
         model_used += 1;
         let classified = classify_product(&client, &settings, job, &keep, &lists, ollama_ready).await;
