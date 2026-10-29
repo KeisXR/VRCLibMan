@@ -375,6 +375,8 @@ fn ensure_ready(connection: &Connection) -> Result<(), String> {
         ("classification_dismissed_version", "0"),
         ("ui_rail_width", "232"),
         ("ui_genre_width", "200"),
+        ("preview_pane", "0"),
+        ("preview_pane_width", "300"),
         ("check_update_on_startup", "0"),
         ("ui_update_dismissed_version", ""),
     ] {
@@ -447,6 +449,12 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
             setting(connection, "ui_genre_width")?
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(200),
+        ),
+        preview_pane: setting(connection, "preview_pane")?.as_deref() == Some("1"),
+        preview_pane_width: crate::model::clamp_preview_pane_width(
+            setting(connection, "preview_pane_width")?
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(300),
         ),
         check_update_on_startup: setting(connection, "check_update_on_startup")?.as_deref() == Some("1"),
         ui_update_dismissed_version: setting(connection, "ui_update_dismissed_version")?
@@ -601,6 +609,16 @@ fn save_settings_values(
         connection,
         "ui_genre_width",
         &crate::model::clamp_ui_genre_width(input.ui_genre_width).to_string(),
+    )?;
+    set_setting(
+        connection,
+        "preview_pane",
+        if input.preview_pane { "1" } else { "0" },
+    )?;
+    set_setting(
+        connection,
+        "preview_pane_width",
+        &crate::model::clamp_preview_pane_width(input.preview_pane_width).to_string(),
     )?;
     set_setting(
         connection,
@@ -5328,6 +5346,31 @@ fn require_product(connection: &Connection, booth_id: &str) -> Result<Product, S
     product_by_id(connection, booth_id)?.ok_or_else(|| "商品が見つかりません".into())
 }
 
+pub(crate) struct ProductPreviewSource {
+    pub thumbnail_url: Option<String>,
+    pub is_adult: bool,
+}
+
+pub(crate) fn product_preview_source(
+    connection: &Connection,
+    booth_id: &str,
+) -> Result<Option<ProductPreviewSource>, String> {
+    connection
+        .query_row(
+            "SELECT thumbnail_url, is_adult FROM products WHERE booth_id = ?1",
+            params![booth_id],
+            |row| {
+                let adult: Option<i64> = row.get(1)?;
+                Ok(ProductPreviewSource {
+                    thumbnail_url: row.get(0)?,
+                    is_adult: adult.unwrap_or(0) != 0,
+                })
+            },
+        )
+        .optional()
+        .sql()
+}
+
 fn product_by_id(connection: &Connection, booth_id: &str) -> Result<Option<Product>, String> {
     connection
         .query_row(
@@ -7061,6 +7104,8 @@ mod tests {
                 classification_dismissed_version: 0,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
+                preview_pane: false,
+                preview_pane_width: 300,
                 check_update_on_startup: false,
                 ui_update_dismissed_version: String::new(),
             },
@@ -7102,6 +7147,64 @@ mod tests {
     }
 
     #[test]
+    fn preview_pane_defaults_off_without_a_schema_change() {
+        let connection = open_memory().unwrap();
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 7);
+        assert!(!settings(&connection).unwrap().preview_pane);
+        assert_eq!(settings(&connection).unwrap().preview_pane_width, 300);
+        let saved = update_settings(
+            &connection,
+            &crate::model::SettingsPatch {
+                preview_pane: Some(true),
+                preview_pane_width: Some(420),
+                ..crate::model::SettingsPatch::default()
+            },
+        )
+        .unwrap();
+        assert!(saved.preview_pane);
+        assert_eq!(saved.preview_pane_width, 420);
+        assert_eq!(saved.ollama_model, "qwen3.5:9b");
+        assert_eq!(saved.ui_rail_width, 232);
+        let kept = update_settings(
+            &connection,
+            &crate::model::SettingsPatch {
+                ui_rail_width: Some(240),
+                ..crate::model::SettingsPatch::default()
+            },
+        )
+        .unwrap();
+        assert!(kept.preview_pane);
+        assert_eq!(kept.preview_pane_width, 420);
+        assert_eq!(kept.ui_rail_width, 240);
+        let clamped = update_settings(
+            &connection,
+            &crate::model::SettingsPatch {
+                preview_pane_width: Some(10),
+                ..crate::model::SettingsPatch::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(clamped.preview_pane_width, 240);
+        assert!(clamped.preview_pane);
+        let huge = update_settings(
+            &connection,
+            &crate::model::SettingsPatch {
+                preview_pane_width: Some(9000),
+                ..crate::model::SettingsPatch::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(huge.preview_pane_width, 1600);
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 7);
+    }
+
+    #[test]
     fn builtin_browser_stays_off_until_the_user_enables_it() {
         let connection = open_memory().unwrap();
         assert!(!settings(&connection).unwrap().builtin_browser);
@@ -7125,6 +7228,8 @@ mod tests {
                 classification_dismissed_version: 0,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
+                preview_pane: false,
+                preview_pane_width: 300,
                 check_update_on_startup: false,
                 ui_update_dismissed_version: String::new(),
             },
@@ -8543,6 +8648,8 @@ mod tests {
                 classification_dismissed_version: 0,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
+                preview_pane: false,
+                preview_pane_width: 300,
                 check_update_on_startup: false,
                 ui_update_dismissed_version: String::new(),
             },
@@ -8567,6 +8674,8 @@ mod tests {
                 classification_dismissed_version: 0,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
+                preview_pane: false,
+                preview_pane_width: 300,
                 check_update_on_startup: false,
                 ui_update_dismissed_version: String::new(),
             },
@@ -8686,6 +8795,8 @@ mod tests {
                 classification_dismissed_version: 0,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
+                preview_pane: false,
+                preview_pane_width: 300,
                 check_update_on_startup: false,
                 ui_update_dismissed_version: String::new(),
             },
@@ -8952,6 +9063,8 @@ mod tests {
                 classification_dismissed_version: 0,
             ui_rail_width: 232,
             ui_genre_width: 200,
+            preview_pane: false,
+            preview_pane_width: 300,
             check_update_on_startup: false,
             ui_update_dismissed_version: String::new(),
         };
@@ -9118,6 +9231,8 @@ mod tests {
                 classification_dismissed_version: 0,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
+                preview_pane: false,
+                preview_pane_width: 300,
                 check_update_on_startup: false,
                 ui_update_dismissed_version: String::new(),
             },

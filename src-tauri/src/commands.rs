@@ -371,6 +371,8 @@ pub fn save_settings(
                 classification_dismissed_version: settings.classification_dismissed_version,
                 ui_rail_width: settings.ui_rail_width,
                 ui_genre_width: settings.ui_genre_width,
+                preview_pane: settings.preview_pane,
+                preview_pane_width: settings.preview_pane_width,
                 check_update_on_startup: settings.check_update_on_startup,
                 ui_update_dismissed_version: settings.ui_update_dismissed_version,
             },
@@ -1339,6 +1341,62 @@ pub async fn cache_thumbnails(app: AppHandle, state: State<'_, AppState>) -> Res
         format!("{saved} 件のサムネイルを保存しました"),
     );
     Ok(saved)
+}
+
+fn preview_fetch_lock() -> &'static tauri::async_runtime::Mutex<()> {
+    static LOCK: std::sync::OnceLock<tauri::async_runtime::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| tauri::async_runtime::Mutex::new(()))
+}
+
+/// 選択中の商品の大きい画像を1件扱う。`download` が false のときは保存済みだけを返す。
+/// 年齢制限の商品は `reveal` まで大きい画像を返さない。
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn cache_product_preview(
+    state: State<'_, AppState>,
+    boothId: String,
+    download: bool,
+    reveal: bool,
+) -> Result<Option<String>, String> {
+    if !crate::preview_image::valid_preview_id(&boothId) {
+        return Err("商品IDが不正です".into());
+    }
+    let source = {
+        let connection = db(&state)?;
+        db::product_preview_source(&connection, &boothId)?
+    };
+    let Some(source) = source else {
+        return Ok(None);
+    };
+    if !crate::preview_image::may_show_large(source.is_adult, reveal) {
+        return Ok(None);
+    }
+    let Some(raw) = source.thumbnail_url.filter(|url| !url.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let original = match crate::preview_image::original_image_url(&raw) {
+        Ok(url) => url,
+        Err(_) => return Ok(None),
+    };
+    let directory = state.previews_dir.clone();
+    if let Some(path) = crate::preview_image::cached_preview(&directory, &boothId, original.as_str()) {
+        return Ok(Some(path.display().to_string()));
+    }
+    if !download {
+        return Ok(None);
+    }
+    let client = match crate::thumb::download_client() {
+        Ok(client) => client,
+        Err(_) => return Ok(None),
+    };
+    let _guard = preview_fetch_lock().lock().await;
+    if let Some(path) = crate::preview_image::cached_preview(&directory, &boothId, original.as_str()) {
+        return Ok(Some(path.display().to_string()));
+    }
+    match crate::preview_image::download_preview(&client, &original, &directory, &boothId).await {
+        Ok(path) => Ok(Some(path.display().to_string())),
+        Err(_) => Ok(None),
+    }
 }
 
 fn trusted_browser_controls(view: &tauri::Webview) -> Result<(), String> {

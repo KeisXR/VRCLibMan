@@ -157,6 +157,8 @@ const store: Store = {
     classificationDismissedVersion: 0,
     uiRailWidth: 232,
     uiGenreWidth: 200,
+    previewPane: false,
+    previewPaneWidth: 300,
     checkUpdateOnStartup: false,
     uiUpdateDismissedVersion: "",
   },
@@ -205,6 +207,7 @@ const store: Store = {
       boothId: "8800101",
       title: "しなの・ライム・マヌカ対応 ワンピース",
       shop: "サンプル工房",
+      thumbnailUrl: "/samples/ribbon.svg",
       category: "outfit",
       compatibleAvatars: ["しなの", "ライム", "マヌカ"],
     }),
@@ -243,6 +246,7 @@ const store: Store = {
       boothId: "8800112",
       title: "年齢制限のアクセサリ",
       shop: "サンプル工房",
+      thumbnailUrl: "/samples/seal.svg",
       category: "accessory",
       isAdult: true,
       descriptionSnippet: "",
@@ -251,6 +255,7 @@ const store: Store = {
       boothId: "8800102",
       title: "マヌカ用ヘア",
       shop: "サンプル工房",
+      thumbnailUrl: "/samples/hair.svg",
       category: "hair",
       compatibleAvatars: ["マヌカ"],
     }),
@@ -258,6 +263,7 @@ const store: Store = {
       boothId: "8800103",
       title: "汎用ペンライト",
       shop: "サンプル工房",
+      thumbnailUrl: "/samples/lamp.svg",
       category: "gimmick",
       isGeneric: true,
       descriptionSnippet: "どのアバターでも使えるギミックです。",
@@ -266,6 +272,7 @@ const store: Store = {
       boothId: "8800120",
       title: "瞳のテクスチャ集",
       shop: "サンプル工房",
+      thumbnailUrl: "/samples/eye.svg",
       category: "texture",
       genre: "eye_texture",
       confidence: 1,
@@ -465,6 +472,8 @@ export function previewRemoteProbeDownloads(boothId: string): DownloadView[] {
   return placedDownloads(boothId);
 }
 
+const previewImageCache = new Map<string, string>();
+
 store.products.push(
   product({
     boothId: "8901001",
@@ -478,6 +487,7 @@ store.products.push(
     boothId: "8901002",
     title: "見本の夜空スカイボックス",
     shop: "見本",
+    thumbnailUrl: "/samples/sky.svg",
     category: "world",
     genre: "skybox",
     descriptionSnippet: "ワールドの空に使う見本です。",
@@ -2161,6 +2171,19 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     case "clear_booth_session":
       previewBoothLoggedIn = false;
       return undefined as T;
+    case "cache_product_preview": {
+      const boothId = String(args.boothId ?? "");
+      if (!/^\d{4,12}$/.test(boothId)) throw new Error("商品IDが不正です");
+      const item = store.products.find((row) => row.boothId === boothId);
+      if (!item) return null as T;
+      if (item.isAdult && args.reveal !== true) return null as T;
+      if (!item.thumbnailUrl) return null as T;
+      const hit = previewImageCache.get(boothId);
+      if (hit) return hit as T;
+      if (args.download !== true) return null as T;
+      previewImageCache.set(boothId, item.thumbnailUrl);
+      return item.thumbnailUrl as T;
+    }
     case "import_booth_page":
     case "cache_thumbnails":
     case "route_staged_download":

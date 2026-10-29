@@ -25,6 +25,7 @@ mod model;
 mod normalize;
 mod ollama;
 mod presence;
+mod preview_image;
 mod quiet;
 mod resolve;
 mod scan;
@@ -47,6 +48,7 @@ pub struct AppState {
     pub cancel_extract: AtomicBool,
     pub extract_running: Arc<AtomicBool>,
     pub thumbs_dir: std::path::PathBuf,
+    pub previews_dir: std::path::PathBuf,
     pub receiver_error: Mutex<Option<String>>,
     pub import_guard: Mutex<local_import::ImportGuard>,
     pub background_mode: AtomicBool,
@@ -81,7 +83,9 @@ pub fn run() {
             let directory = app.path().app_data_dir()?;
             std::fs::create_dir_all(&directory)?;
             let thumbs = directory.join("thumbs");
+            let previews = directory.join("previews");
             std::fs::create_dir_all(&thumbs)?;
+            std::fs::create_dir_all(&previews)?;
             let connection = db::open(&directory.join("library.sqlite"))
                 .map_err(|err| std::io::Error::other(err))?;
             app.manage(AppState {
@@ -89,6 +93,7 @@ pub fn run() {
                 cancel_extract: AtomicBool::new(false),
                 extract_running: Arc::new(AtomicBool::new(false)),
                 thumbs_dir: thumbs,
+                previews_dir: previews,
                 receiver_error: Mutex::new(None),
                 import_guard: Mutex::new(local_import::ImportGuard::default()),
                 background_mode: AtomicBool::new(false),
@@ -226,6 +231,7 @@ pub fn run() {
             commands::push_remote_file,
             commands::remote_sync_status,
             commands::cache_thumbnails,
+            commands::cache_product_preview,
             commands::open_booth_browser,
             commands::browser_state,
             commands::browser_action,

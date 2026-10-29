@@ -9,6 +9,7 @@ export function ResizeSeparator({
   onChange,
   onCommit,
   onReset,
+  grows = "right",
 }: {
   label: string;
   value: number;
@@ -17,7 +18,10 @@ export function ResizeSeparator({
   onChange: (next: number) => void;
   onCommit: (next: number) => void;
   onReset: () => void;
+  /** "right" increases the value as the pointer moves right. "left" increases it as the pointer moves left. */
+  grows?: "right" | "left";
 }) {
+  const sign = grows === "left" ? -1 : 1;
   const dragging = useRef(false);
   const startX = useRef(0);
   const startValue = useRef(value);
@@ -43,29 +47,30 @@ export function ResizeSeparator({
   const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!dragging.current) return;
     const delta = event.clientX - startX.current;
-    const next = Math.min(max, Math.max(min, startValue.current + delta));
+    const next = Math.min(max, Math.max(min, startValue.current + sign * delta));
     onChange(next);
   };
 
   const onPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!dragging.current) return;
     event.currentTarget.releasePointerCapture(event.pointerId);
-    finish(Math.min(max, Math.max(min, startValue.current + (event.clientX - startX.current))));
+    finish(Math.min(max, Math.max(min, startValue.current + sign * (event.clientX - startX.current))));
   };
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "ArrowLeft") {
+    const enlarge = grows === "left" ? event.key === "ArrowLeft" : event.key === "ArrowRight";
+    const shrink = grows === "left" ? event.key === "ArrowRight" : event.key === "ArrowLeft";
+    if (enlarge || shrink) {
       event.preventDefault();
-      const next = Math.max(min, value - UI_RESIZE_STEP_PX);
-      onChange(next);
-      onCommit(next);
-    } else if (event.key === "ArrowRight") {
-      event.preventDefault();
-      const next = Math.min(max, value + UI_RESIZE_STEP_PX);
+      event.stopPropagation();
+      const next = enlarge
+        ? Math.min(max, value + UI_RESIZE_STEP_PX)
+        : Math.max(min, value - UI_RESIZE_STEP_PX);
       onChange(next);
       onCommit(next);
     } else if (event.key === "Home") {
       event.preventDefault();
+      event.stopPropagation();
       onReset();
     }
   };

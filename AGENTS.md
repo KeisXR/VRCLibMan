@@ -38,7 +38,7 @@ VRCLibMan を変更するときは、このファイルを先に読む。実装�
 - フロントは React + TypeScript。画面は `invoke` だけの薄い層。
 - インポート、正規化、突合、名前解決、抽出、SQLite は Rust。`rusqlite` の bundled を使い、`tauri-plugin-sql` は使わない。WebView なしでテストするため。
 - クレート名は雛形の `tauri-app` / `tauri_app_lib` のまま。`main.rs` が `tauri_app_lib::run()` を呼ぶ。配布する実行ファイルは `mainBinaryName` の `VRCLibMan.exe`。NSIS のファイル名は productName から `VRCLibMan_<version>_x64-setup.exe`。
-- DB はアプリデータディレクトリの `library.sqlite`。サムネイルは同じ場所の `thumbs`。識別子 `app.vrclibman.desktop` は、インストールしたアプリと `tauri dev` で同じなので、Windows では `%APPDATA%\app.vrclibman.desktop` の DB と `%LOCALAPPDATA%\app.vrclibman.desktop\EBWebView` の WebView プロファイルを共有する。Mac の DB は `~/Library/Application Support/app.vrclibman.desktop`。内蔵ブラウザのログインは WebKit のデータストアにあり、メイン画面とは別である。`npm run dev` の見本はこのディレクトリを使わない。
+- DB はアプリデータディレクトリの `library.sqlite`。サムネイルは同じ場所の `thumbs`。選択した商品の大きいプレビューは隣の `previews`。識別子 `app.vrclibman.desktop` は、インストールしたアプリと `tauri dev` で同じなので、Windows では `%APPDATA%\app.vrclibman.desktop` の DB と `%LOCALAPPDATA%\app.vrclibman.desktop\EBWebView` の WebView プロファイルを共有する。Mac の DB は `~/Library/Application Support/app.vrclibman.desktop`。内蔵ブラウザのログインは WebKit のデータストアにあり、メイン画面とは別である。`npm run dev` の見本はこのディレクトリを使わない。
 - アンインストールの `src-tauri/windows/hooks.nsh` は `NSIS_HOOK_POSTUNINSTALL` で `HKCU\Software\VRCLibMan` だけを消す。アプリデータのディレクトリは消さない。
 - `user_version` が 0 のときだけ `SCHEMA` を流す。既存 DB の列を変えるときは、新しい版の移行を足す。`SCHEMA` 定数の書き換えだけでは入らない。
 - 変更系の関数は `&mut Connection`。`transaction()` が可変借用を要求するため。
@@ -125,6 +125,7 @@ Windows では、BOOTH の窓を同期コマンドの中で作らない。WebVie
 - Ollama は `http` かつ `127.0.0.1` / `localhost` / `::1` だけ。ユーザー情報付き URL は拒否する。
 - 説明の補完もサムネイルも、ログインセッションと `adult` クッキーを送らない。アプリの受信口は `Cookie` を読まない。拡張からアプリへの POST は `credentials: "omit"`。
 - サムネイルは https かつ `pximg.net` / `booth.pm` だけ。`Referer: https://booth.pm/` を付け、pximg は `/c/150x150/` に書き換える。`360x360` と素の `300x300` は 403 になる。4MB まで。
+- アセットとワールドのプレビューは、選択が落ち着いてから 1 件だけ、保存済みサムネイル URL の `/c/` を外した画像を `previews` に置く。Cookie は送らない。失敗したら 150px のサムネイルに戻す。年齢制限の商品は「表示する」まで大きい画像を取らない。オンオフは `settings.preview_pane`（既定オフ）、幅は `settings.preview_pane_width`（既定 300、240〜1600。画面上の上限は窓幅の半分と一覧の余り）。スキーマ版は変えない。ログに商品名は出さない。
 - スキャンはドライブ直下、`Windows`、`Program Files` を拒否する。Mac では `/System`、`/Library`、`/Applications`、`/private` の木と、ホームフォルダそのもの、`/Volumes` そのものを拒否する。一時ディレクトリの中はテストのため許可する。深さ 8、2 万件、シンボリックリンクは追わない。上限で打ち切ったときは、見えていないパスを削除しない。
 
 ## 抽出と確認の契約
@@ -276,6 +277,7 @@ Mac の内蔵ブラウザは `data_directory` を使わない。固定の 16 バ
 | `src-tauri/src/ollama.rs` | 抽出プロンプト、`num_ctx`、ループバック制限 |
 | `src-tauri/src/booth_category.rs` | BOOTH カテゴリとタグで即決するか、モデルへ回すか |
 | `src-tauri/src/booth_detail.rs` | 公開の商品 JSON。Cookie は付けない |
+| `src-tauri/src/preview_image.rs` | 選択中の大きいプレビュー。Cookie は付けない |
 | `src-tauri/src/view.rs` | 一覧、詳細、キューの形 |
 | `src-tauri/src/commands.rs` | Tauri コマンド |
 | `src/pages` | 画面 |
