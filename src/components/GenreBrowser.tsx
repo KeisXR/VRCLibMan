@@ -7,7 +7,8 @@ import { filterItems, genreHref, selectedGenre } from "../genreBrowseUtils";
 import { useRemoteProductProbe } from "../remoteProductProbe";
 import { isPreviewMoveKey, nextPreviewId, previewKeysBlocked } from "../previewPane";
 import { GenreTarget } from "./GenreColumn";
-import { PreviewOverlay, PreviewPane, useLargePreview, usePreviewOpen } from "./PreviewPane";
+import { PreviewOverlay, PreviewPane, useLargePreview, usePreviewOpen, usePreviewPaneWidth } from "./PreviewPane";
+import { ResizeSeparator } from "./ResizeSeparator";
 
 const NOUN: Record<string, string> = { asset: "アセット", world: "ワールド" };
 
@@ -17,6 +18,10 @@ export function GenreBrowser({ title, lede }: { title: string; lede?: string }) 
   const { kind, basePath, routeGenre, selected, data, error, narrowLayout, reload, draggingId, setDraggingId, moveProduct } = useGenreBrowse();
   const [filter, setFilter] = useState("");
   const [previewOpen, togglePreview] = usePreviewOpen();
+  const [windowWidth, setWindowWidth] = useState(() => (typeof window === "undefined" ? 1280 : window.innerWidth));
+  const [splitWidth, setSplitWidth] = useState<number | null>(null);
+  const splitRef = useRef<HTMLDivElement>(null);
+  const previewWidth = usePreviewPaneWidth(windowWidth, splitWidth);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const keyboardMove = useRef(false);
   const current = data;
@@ -40,6 +45,22 @@ export function GenreBrowser({ title, lede }: { title: string; lede?: string }) 
   }, [shownIds, selectedId]);
 
   useEffect(() => {
+    const onResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  useEffect(() => {
+    const node = splitRef.current;
+    if (!node) return;
+    const measure = () => setSplitWidth(node.clientWidth);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [previewOpen, narrowLayout, shown.length]);
+
+  useEffect(() => {
     if (!keyboardMove.current || !selectedId) return;
     keyboardMove.current = false;
     const node = document.getElementById(`product-${selectedId}`);
@@ -57,7 +78,7 @@ export function GenreBrowser({ title, lede }: { title: string; lede?: string }) 
       const target = event.target;
       if (!(target instanceof Element)) return;
       const editable = target instanceof HTMLElement && target.isContentEditable;
-      const inMenu = Boolean(target.closest(".product-actions-panel, [role='menu']"));
+      const inMenu = Boolean(target.closest(".product-actions-panel, [role='menu'], [role='separator']"));
       if (previewKeysBlocked(target.tagName, editable, inMenu)) return;
       if (shownIds.length === 0) return;
       event.preventDefault();
@@ -216,13 +237,27 @@ export function GenreBrowser({ title, lede }: { title: string; lede?: string }) 
       ) : shown.length === 0 ? (
         <p className="empty">条件に合う商品はありません。</p>
       ) : previewOpen && !narrowLayout ? (
-        <div className="split with-side">
+        <div
+          ref={splitRef}
+          className="split with-side"
+          style={{ ["--preview-width" as string]: `${previewWidth.width}px` }}
+        >
           <div>
             <p className="meta genre-result" role="status">
               {selectedLabel} {shown.length} 件
             </p>
             {list}
           </div>
+          <ResizeSeparator
+            label="プレビューの幅"
+            value={previewWidth.width}
+            min={previewWidth.min}
+            max={previewWidth.max}
+            grows="left"
+            onChange={previewWidth.resize}
+            onCommit={previewWidth.commit}
+            onReset={previewWidth.reset}
+          />
           <div className="preview-column">{pane}</div>
         </div>
       ) : (

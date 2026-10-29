@@ -5,9 +5,14 @@ import { api, isTauri, openExternal } from "../api";
 import { useShell } from "../App";
 import { filePresence, mediaSrc } from "../media";
 import {
+  PREVIEW_PANE_WIDTH,
   PREVIEW_SETTLE_MS,
+  clampStoredPreviewPaneWidth,
+  previewPaneMaxWidth,
   rememberPreviewOpen,
+  rememberPreviewWidth,
   rememberedPreviewOpen,
+  rememberedPreviewWidth,
   shouldRequestLargePreview,
 } from "../previewPane";
 import { GENRE_LABEL } from "../types";
@@ -44,6 +49,46 @@ export function usePreviewOpen(): [boolean, () => void] {
     });
   };
   return [open, toggle];
+}
+
+export function usePreviewPaneWidth(windowWidth: number, splitWidth: number | null) {
+  const { fail } = useShell();
+  const [preferred, setPreferred] = useState(rememberedPreviewWidth);
+  const dirty = useRef(false);
+  useEffect(() => {
+    let alive = true;
+    void api.settings().then(
+      (settings) => {
+        if (!alive || dirty.current) return;
+        const next = clampStoredPreviewPaneWidth(settings.previewPaneWidth);
+        rememberPreviewWidth(next);
+        setPreferred(next);
+      },
+      () => undefined,
+    );
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const min = PREVIEW_PANE_WIDTH.min;
+  const max = previewPaneMaxWidth(windowWidth, splitWidth);
+  const width = Math.min(max, Math.max(min, preferred));
+  const publish = (next: number, persist: boolean) => {
+    const stored = clampStoredPreviewPaneWidth(next);
+    dirty.current = true;
+    rememberPreviewWidth(stored);
+    setPreferred(stored);
+    if (!persist) return;
+    void api.updateSettings({ previewPaneWidth: stored }).catch((err: unknown) => fail(errorText(err)));
+  };
+  return {
+    width,
+    min,
+    max,
+    resize: (next: number) => publish(next, false),
+    commit: (next: number) => publish(next, true),
+    reset: () => publish(PREVIEW_PANE_WIDTH.default, true),
+  };
 }
 
 export function useLargePreview(item: ItemView | null, enabled: boolean) {

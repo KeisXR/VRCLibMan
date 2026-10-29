@@ -631,8 +631,20 @@ a.tab { display: inline-flex; align-items: center; gap: 6px; text-decoration: no
   background: var(--surface-secondary);
   font-weight: 650;
 }
-.genre-browser .split.with-side { align-items: stretch; }
+.genre-browser .split.with-side {
+  align-items: stretch;
+  grid-template-columns: minmax(0, 1fr) var(--space-5) var(--preview-width, 300px);
+  gap: 0;
+}
 .genre-browser .split.with-side > * { min-width: 0; }
+.genre-browser .split.with-side > .resize-separator {
+  width: auto;
+  margin: 0;
+  justify-self: stretch;
+}
+.genre-browser .split.with-side > .resize-separator::after {
+  inset: 0 calc(50% - 1px);
+}
 .preview-column { min-width: 0; }
 .panel.preview-pane {
   position: sticky;

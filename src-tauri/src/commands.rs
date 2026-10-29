@@ -371,6 +371,7 @@ pub fn save_settings(
                 ui_rail_width: settings.ui_rail_width,
                 ui_genre_width: settings.ui_genre_width,
                 preview_pane: settings.preview_pane,
+                preview_pane_width: settings.preview_pane_width,
                 check_update_on_startup: settings.check_update_on_startup,
                 ui_update_dismissed_version: settings.ui_update_dismissed_version,
             },

@@ -326,6 +326,7 @@ pub struct Settings {
     pub ui_rail_width: u32,
     pub ui_genre_width: u32,
     pub preview_pane: bool,
+    pub preview_pane_width: u32,
     pub check_update_on_startup: bool,
     pub ui_update_dismissed_version: String,
     pub unload_ollama_after_classification: bool,
@@ -360,6 +361,8 @@ pub struct SettingsInput {
     pub ui_genre_width: u32,
     #[serde(default = "default_preview_pane")]
     pub preview_pane: bool,
+    #[serde(default = "default_preview_pane_width")]
+    pub preview_pane_width: u32,
     #[serde(default)]
     pub check_update_on_startup: bool,
     #[serde(default)]
@@ -391,6 +394,7 @@ pub struct SettingsPatch {
     pub ui_genre_width: Option<u32>,
     #[serde(default)]
     pub preview_pane: Option<bool>,
+    pub preview_pane_width: Option<u32>,
     pub check_update_on_startup: Option<bool>,
     pub ui_update_dismissed_version: Option<String>,
     pub unload_ollama_after_classification: Option<bool>,
@@ -427,6 +431,9 @@ impl SettingsPatch {
             ui_rail_width: self.ui_rail_width.unwrap_or(current.ui_rail_width),
             ui_genre_width: self.ui_genre_width.unwrap_or(current.ui_genre_width),
             preview_pane: self.preview_pane.unwrap_or(current.preview_pane),
+            preview_pane_width: clamp_preview_pane_width(
+                self.preview_pane_width.unwrap_or(current.preview_pane_width),
+            ),
             check_update_on_startup: self
                 .check_update_on_startup
                 .unwrap_or(current.check_update_on_startup),
@@ -457,12 +464,20 @@ fn default_preview_pane() -> bool {
     false
 }
 
+fn default_preview_pane_width() -> u32 {
+    300
+}
+
 pub(crate) fn clamp_ui_rail_width(value: u32) -> u32 {
     value.clamp(180, 360)
 }
 
 pub(crate) fn clamp_ui_genre_width(value: u32) -> u32 {
     value.clamp(160, 320)
+}
+
+pub(crate) fn clamp_preview_pane_width(value: u32) -> u32 {
+    value.clamp(240, 1600)
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -157,6 +157,7 @@ const store: Store = {
     uiRailWidth: 232,
     uiGenreWidth: 200,
     previewPane: false,
+    previewPaneWidth: 300,
     checkUpdateOnStartup: false,
     uiUpdateDismissedVersion: "",
   },
