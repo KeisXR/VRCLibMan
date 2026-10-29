@@ -1,5 +1,5 @@
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { api, listenBoothFile, openExternal, openLocal, revealInFolder } from "../api";
+import { api, listenBoothFile, openBoothLink, openLocal, revealInFolder } from "../api";
 import { useShell } from "../App";
 import { filePresence, formatBytes } from "../media";
 import { CATEGORY_LABEL } from "../types";
@@ -507,7 +507,7 @@ export function ItemCard({
           )}
         </div>
       </div>
-      <div className="row-actions"><button className="button" type="button" onClick={() => void openExternal(item.url)}>BOOTH</button><ExcludeProductButton boothId={item.boothId} title={item.title} category={item.category} genre={item.genre} classificationPinned={item.classificationPinned} /></div>
+      <div className="row-actions"><button className="button" type="button" onClick={() => void openBoothLink(item.url)}>BOOTH</button><ExcludeProductButton boothId={item.boothId} title={item.title} category={item.category} genre={item.genre} classificationPinned={item.classificationPinned} /></div>
     </article>
   );
 }

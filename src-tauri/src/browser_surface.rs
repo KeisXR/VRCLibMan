@@ -666,6 +666,13 @@ pub fn new_tab(app: &AppHandle, url: Option<&str>) -> Result<(), String> {
         &host_window(app).ok_or("ブラウザが開いていません")?,
         target,
     )?;
+    // An already-open window does not come forward when a tab is added.
+    // Match open(): show and focus. Do not navigate to an age-gate URL from here.
+    if let Some(window) = host_window(app) {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
     Ok(())
 }
 pub fn navigate(app: &AppHandle, input: &str) -> Result<(), String> {
@@ -794,5 +801,24 @@ mod tests {
         }
         .split(136.0);
         assert_eq!(tiny.height, 1.0);
+    }
+
+    #[test]
+    fn adding_a_tab_raises_an_existing_window() {
+        let source = include_str!("browser_surface.rs");
+        let start = source
+            .find("pub fn new_tab")
+            .expect("new_tab");
+        let rest = &source[start..];
+        let end = rest.find("\npub fn navigate").expect("navigate");
+        let body = &rest[..end];
+        let raised = body
+            .rfind("host_window(app)")
+            .expect("focus the existing window");
+        let focus = &body[raised..];
+        assert!(focus.contains(".show()"));
+        assert!(focus.contains("unminimize()"));
+        assert!(focus.contains("set_focus()"));
+        assert!(!body.contains("age_verification"));
     }
 }

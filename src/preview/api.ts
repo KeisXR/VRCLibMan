@@ -127,7 +127,7 @@ function product(partial: Partial<Product> & Pick<Product, "boothId" | "title" |
     isFree: false,
     isAdult: false,
     unpublished: false,
-    classifierVersion: partial.category ? 5 : 1,
+    classifierVersion: partial.category ? 6 : 1,
     ...partial,
   };
 }
@@ -146,6 +146,7 @@ const store: Store = {
     confidenceThreshold: 0.6,
     libraryFolder: "C:\\Assets",
     builtinBrowser: false,
+    boothLinkTarget: "external",
     remoteAutoSync: false,
     remoteLibraryFolder: "\\\\nas\\vrclibman",
     routeDownloads: false,
@@ -1835,7 +1836,8 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       if (settings.remoteAutoSync && !settings.remoteLibraryFolder.trim()) throw new Error("自動同期をオンにする前に、リモートライブラリのフォルダを選んでください");
       if (settings.routeDownloads && !settings.libraryFolder.trim()) throw new Error("自動整理をオンにする前に、ライブラリのフォルダを選んでください");
       const backgroundMode = Boolean(settings.backgroundMode);
-      store.settings = { ...settings, ollamaModel: settings.ollamaModel.trim(), backgroundMode, launchAtLogin: backgroundMode && Boolean(settings.launchAtLogin), confidenceThreshold: Math.min(1, Math.max(0, settings.confidenceThreshold)) };
+      const boothLinkTarget = settings.boothLinkTarget === "builtin" ? "builtin" : "external";
+      store.settings = { ...settings, ollamaModel: settings.ollamaModel.trim(), backgroundMode, launchAtLogin: backgroundMode && Boolean(settings.launchAtLogin), confidenceThreshold: Math.min(1, Math.max(0, settings.confidenceThreshold)), boothLinkTarget };
       return (command === "update_settings" ? { ...store.settings } : undefined) as T;
     }
     case "import_export":
@@ -1938,7 +1940,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       return undefined as T;
     case "scan_library":
     case "classification_status": {
-      const classifierVersion = 5;
+      const classifierVersion = 6;
       const staleCount = store.products.filter(
         (item) =>
           !(item.categoryLocked && item.genreLocked) &&

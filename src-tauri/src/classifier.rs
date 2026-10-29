@@ -1,7 +1,9 @@
 /// Bump when extraction prompt, schema, or genre/category rules change materially.
 /// 5: a settled BOOTH category keeps a fitting genre. Title phrases do not replace it.
 /// Category 201 (software) settles as other / tool_editor.
-pub const CLASSIFIER_VERSION: i32 = 5;
+/// 6: category-name variants 3Dアクセサリ, 3Dモーション, and アバター用テクスチャ settle
+/// the same way as the longer official names. Ids 157, 142, and 6 stay unsettled.
+pub const CLASSIFIER_VERSION: i32 = 6;
 
 /// Title and description decide the label. Shop names are not features.
 pub fn classify_listing(
@@ -209,6 +211,6 @@ mod tests {
             classify_listing("無関係な題", "Phone Shop", ""),
             (Category::Other, "other".into())
         );
-        assert_eq!(CLASSIFIER_VERSION, 5);
+        assert_eq!(CLASSIFIER_VERSION, 6);
     }
 }

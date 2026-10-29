@@ -378,6 +378,14 @@ export function SettingsPage() {
           <section className="settings-section">
             <header><h2>BOOTH の読み込み方</h2><p>拡張機能・内蔵ブラウザ・併用を選びます。</p></header>
             <div className="section-body"><BoothImportSettings onFail={fail} onChange={() => refresh()} /></div>
+            {settings.builtinBrowser && (
+              <SettingRow label="商品ページを開くブラウザ" help="アバター詳細と確認の商品リンクに使います。取得中やエラーのときは既定のブラウザで開きます。">
+                <select value={settings.boothLinkTarget === "builtin" ? "builtin" : "external"} onChange={(e) => changeSettings({ boothLinkTarget: e.target.value === "builtin" ? "builtin" : "external" })}>
+                  <option value="external">既定のブラウザ</option>
+                  <option value="builtin">内蔵ブラウザ</option>
+                </select>
+              </SettingRow>
+            )}
             {settings.builtinBrowser && <div className="section-actions"><button className="button danger" type="button" onClick={() => void (async () => { if (!window.confirm("ブラウザを閉じ、内蔵ブラウザで開いたすべてのサイトのログイン状態と閲覧データを消します。ブックマークは残ります。")) return; try { await api.clearBoothSession(); notify("閲覧データを削除しました"); } catch (err) { fail(errorText(err)); } })()}>内蔵ブラウザの閲覧データを削除</button></div>}
           </section>
 

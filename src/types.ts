@@ -243,6 +243,7 @@ export interface Settings {
   confidenceThreshold: number;
   libraryFolder: string;
   builtinBrowser: boolean;
+  boothLinkTarget: "external" | "builtin";
   remoteLibraryFolder: string;
   remoteAutoSync: boolean;
   routeDownloads: boolean;

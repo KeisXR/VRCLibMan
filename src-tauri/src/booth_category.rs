@@ -12,6 +12,14 @@ pub struct Settlement {
     pub genre: Option<String>,
 }
 
+/// Whether the id or the category name is one of the rules in this module.
+/// `Known` still may need the model when tags are not enough.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CategoryRule {
+    Known,
+    Unknown,
+}
+
 /// `true` when category id or name, plus tags when the category is ambiguous,
 /// is enough to skip Ollama and Apple.
 pub fn settle(category_id: Option<i64>, category_name: &str, tags: &[String]) -> Option<Settlement> {
@@ -23,6 +31,22 @@ pub fn settle(category_id: Option<i64>, category_name: &str, tags: &[String]) ->
         }
     }
     settle_name(category_name, tags)
+}
+
+/// `Unknown` means neither the id nor the name is in the rule table.
+/// Callers log that once. Do not invent an id for it.
+pub fn category_rule(category_id: Option<i64>, category_name: &str) -> CategoryRule {
+    if let Some(id) = category_id.filter(|id| *id > 0) {
+        match id_decision(id, &[]) {
+            IdDecision::Unknown => {}
+            IdDecision::Settled(_) | IdDecision::NeedsModel => return CategoryRule::Known,
+        }
+    }
+    if name_kind(category_name).is_some() {
+        CategoryRule::Known
+    } else {
+        CategoryRule::Unknown
+    }
 }
 
 pub fn category_line(name: &str, parent: &str) -> String {
@@ -81,6 +105,8 @@ fn id_decision(id: i64, tags: &[String]) -> IdDecision {
         214 => texture_from_tags(tags),
         211 => world_from_tags(tags),
         210 | 127 => from_tags_only(tags),
+        // 157, 142, and 6 show up in saved libraries, but their public names are not confirmed.
+        // Leave them unknown instead of assigning an id by guess.
         _ => return IdDecision::Unknown,
     };
     match settled {
@@ -90,51 +116,58 @@ fn id_decision(id: i64, tags: &[String]) -> IdDecision {
 }
 
 fn settle_name(category_name: &str, tags: &[String]) -> Option<Settlement> {
+    let kind = name_kind(category_name)?;
+    match kind {
+        NameKind::Avatar => Some(fixed(Category::Avatar, None, tags, false)),
+        NameKind::Outfit => Some(fixed(Category::Outfit, Some("outfit"), tags, true)),
+        NameKind::Shoes => Some(fixed(Category::Outfit, Some("shoes_socks"), tags, true)),
+        NameKind::Hair => Some(fixed(Category::Hair, Some("hair"), tags, true)),
+        NameKind::Accessory => Some(fixed(Category::Accessory, Some("accessory"), tags, true)),
+        NameKind::Tool => Some(fixed(Category::Other, Some("tool_editor"), tags, true)),
+        NameKind::Motion => Some(fixed(
+            Category::Gimmick,
+            Some("expression_animation"),
+            tags,
+            true,
+        )),
+        NameKind::Texture => texture_from_tags(tags),
+        NameKind::World => world_from_tags(tags),
+        NameKind::Loose => from_tags_only(tags),
+    }
+}
+
+fn name_kind(category_name: &str) -> Option<NameKind> {
     let folded = nfkc(category_name).to_lowercase();
     if folded.is_empty() {
         return None;
     }
     // Longer phrases first so「3Dモデル（その他）」does not match a shorter label.
-    const NAMES: &[(&str, NameKind)] = &[
-        ("3dモーション・アニメーション", NameKind::Motion),
-        ("3dツール・システム", NameKind::Tool),
-        ("ソフトウェア", NameKind::Tool),
-        ("3d環境・ワールド", NameKind::World),
-        ("3dモデル（その他）", NameKind::Loose),
-        ("3dキャラクター", NameKind::Avatar),
-        ("3d装飾品", NameKind::Accessory),
-        ("3dテクスチャ", NameKind::Texture),
-        ("3d小道具", NameKind::Loose),
-        ("3d衣装", NameKind::Outfit),
-        ("3d髪型", NameKind::Hair),
-        ("3d靴", NameKind::Shoes),
-        ("vroid", NameKind::Avatar),
-    ];
-    for (phrase, kind) in NAMES {
-        if folded.contains(phrase) {
-            return match kind {
-                NameKind::Avatar => Some(fixed(Category::Avatar, None, tags, false)),
-                NameKind::Outfit => Some(fixed(Category::Outfit, Some("outfit"), tags, true)),
-                NameKind::Shoes => Some(fixed(Category::Outfit, Some("shoes_socks"), tags, true)),
-                NameKind::Hair => Some(fixed(Category::Hair, Some("hair"), tags, true)),
-                NameKind::Accessory => {
-                    Some(fixed(Category::Accessory, Some("accessory"), tags, true))
-                }
-                NameKind::Tool => Some(fixed(Category::Other, Some("tool_editor"), tags, true)),
-                NameKind::Motion => Some(fixed(
-                    Category::Gimmick,
-                    Some("expression_animation"),
-                    tags,
-                    true,
-                )),
-                NameKind::Texture => texture_from_tags(tags),
-                NameKind::World => world_from_tags(tags),
-                NameKind::Loose => from_tags_only(tags),
-            };
-        }
-    }
-    None
+    NAMES
+        .iter()
+        .find(|(phrase, _)| folded.contains(*phrase))
+        .map(|(_, kind)| *kind)
 }
+
+// Longer phrases first. Short words such as「モーション」or「ボイス」are omitted:
+// 「モーション」is inside「エモーション」, and a voice category name is not confirmed.
+const NAMES: &[(&str, NameKind)] = &[
+    ("3dモーション・アニメーション", NameKind::Motion),
+    ("アバター用テクスチャ", NameKind::Texture),
+    ("3dツール・システム", NameKind::Tool),
+    ("ソフトウェア", NameKind::Tool),
+    ("3d環境・ワールド", NameKind::World),
+    ("3dモデル（その他）", NameKind::Loose),
+    ("3dキャラクター", NameKind::Avatar),
+    ("3dアクセサリ", NameKind::Accessory),
+    ("3d装飾品", NameKind::Accessory),
+    ("3dテクスチャ", NameKind::Texture),
+    ("3d小道具", NameKind::Loose),
+    ("3d衣装", NameKind::Outfit),
+    ("3d髪型", NameKind::Hair),
+    ("3dモーション", NameKind::Motion),
+    ("3d靴", NameKind::Shoes),
+    ("vroid", NameKind::Avatar),
+];
 
 #[derive(Clone, Copy)]
 enum NameKind {
@@ -344,10 +377,55 @@ mod tests {
         let conflict = settle(Some(201), "3D衣装", &tags(&["衣装", "瞳", "ギミック"])).unwrap();
         assert_eq!(conflict.category, Category::Other);
         assert_eq!(conflict.genre.as_deref(), Some("tool_editor"));
+        // These ids are not assigned: their public category names are still unknown.
+        // A confirmed name can still settle them. An unrecognized name stays for the model.
         for id in [157, 142, 6] {
             assert!(settle(Some(id), "未確認の分類", &[]).is_none(), "{id}");
             assert!(settle(Some(id), "", &tags(&["VRChat"])).is_none(), "{id}");
+            assert_eq!(
+                category_rule(Some(id), "未確認の分類"),
+                CategoryRule::Unknown,
+                "{id}"
+            );
+            assert_eq!(category_rule(Some(id), ""), CategoryRule::Unknown, "{id}");
+            let named = settle(Some(id), "3D衣装", &[]).unwrap();
+            assert_eq!(named.category, Category::Outfit, "{id}");
+            assert_eq!(category_rule(Some(id), "3D衣装"), CategoryRule::Known, "{id}");
         }
+    }
+
+    #[test]
+    fn safe_category_name_variants_settle_without_guessing_ids() {
+        let accessory = settle(None, "3Dアクセサリー", &[]).unwrap();
+        assert_eq!(accessory.category, Category::Accessory);
+        assert_eq!(accessory.genre.as_deref(), Some("accessory"));
+        let ears = settle(Some(999), "3Dアクセサリ", &tags(&["耳"])).unwrap();
+        assert_eq!(ears.category, Category::Accessory);
+        assert_eq!(ears.genre.as_deref(), Some("head_ears_tail"));
+        let motion = settle(None, "3Dモーション", &[]).unwrap();
+        assert_eq!(motion.category, Category::Gimmick);
+        assert_eq!(motion.genre.as_deref(), Some("expression_animation"));
+        let full = settle(None, "3Dモーション・アニメーション", &[]).unwrap();
+        assert_eq!(full.genre.as_deref(), Some("expression_animation"));
+        assert!(settle(None, "アバター用テクスチャ", &[]).is_none());
+        assert_eq!(
+            category_rule(None, "アバター用テクスチャ"),
+            CategoryRule::Known
+        );
+        let eye = settle(None, "アバター用テクスチャ", &tags(&["瞳"])).unwrap();
+        assert_eq!(eye.category, Category::Texture);
+        assert_eq!(eye.genre.as_deref(), Some("eye_texture"));
+        assert!(settle(Some(214), "アバター用テクスチャ", &tags(&["衣装"])).is_none());
+        // Short or unconfirmed labels stay out of the table. 「モーション」is inside「エモーション」.
+        for name in ["モーション", "エモーション", "ボイス", "音声"] {
+            assert!(settle(None, name, &[]).is_none(), "{name}");
+            assert_eq!(category_rule(None, name), CategoryRule::Unknown, "{name}");
+        }
+        assert_eq!(
+            category_rule(Some(214), "3Dテクスチャ"),
+            CategoryRule::Known
+        );
+        assert!(settle(Some(214), "3Dテクスチャ", &[]).is_none());
     }
 
     #[test]

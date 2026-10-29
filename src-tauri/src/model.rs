@@ -316,6 +316,8 @@ pub struct Settings {
     pub confidence_threshold: f64,
     pub library_folder: String,
     pub builtin_browser: bool,
+    /// `external` (system browser) or `builtin` (in-app browser tab).
+    pub booth_link_target: String,
     pub remote_library_folder: String,
     pub remote_auto_sync: bool,
     pub route_downloads: bool,
@@ -341,6 +343,8 @@ pub struct SettingsInput {
     pub library_folder: String,
     #[serde(default)]
     pub builtin_browser: bool,
+    #[serde(default = "default_booth_link_target")]
+    pub booth_link_target: String,
     #[serde(default)]
     pub remote_library_folder: String,
     #[serde(default)]
@@ -383,6 +387,7 @@ pub struct SettingsPatch {
     pub confidence_threshold: Option<f64>,
     pub library_folder: Option<String>,
     pub builtin_browser: Option<bool>,
+    pub booth_link_target: Option<String>,
     pub remote_library_folder: Option<String>,
     pub remote_auto_sync: Option<bool>,
     pub route_downloads: Option<bool>,
@@ -416,6 +421,10 @@ impl SettingsPatch {
                 .clone()
                 .unwrap_or(current.library_folder),
             builtin_browser: self.builtin_browser.unwrap_or(current.builtin_browser),
+            booth_link_target: self
+                .booth_link_target
+                .clone()
+                .unwrap_or(current.booth_link_target),
             remote_library_folder: self
                 .remote_library_folder
                 .clone()
@@ -450,6 +459,10 @@ impl SettingsPatch {
 
 fn default_llm_backend() -> String {
     "ollama".into()
+}
+
+fn default_booth_link_target() -> String {
+    "external".into()
 }
 
 fn default_ui_rail_width() -> u32 {
