@@ -283,6 +283,7 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
                         confidence_threshold: settings.confidence_threshold,
                         library_folder: settings.library_folder,
                         builtin_browser: settings.builtin_browser,
+                        booth_link_target: settings.booth_link_target,
                         remote_library_folder: settings.remote_library_folder,
                         remote_auto_sync: settings.remote_auto_sync,
                         route_downloads: enabled,

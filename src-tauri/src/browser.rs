@@ -5,6 +5,7 @@ use crate::library_walk::{
 };
 use crate::model::ImportReport;
 use serde::Serialize;
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -154,22 +155,145 @@ pub fn classification_done_line(
     format!("{head} 処理{processed} 失敗{failed} カテゴリとタグ{booth_settled} モデル{model_used}")
 }
 
+/// Maps the strings `apple_fm`, `afm/main.swift`, and `ollama` actually return.
+/// English codes (`failed`, `badRequest`, `unavailable`, `contextWindow`) get a
+/// fixed Japanese kind so they do not collapse into the generic「失敗」.
 fn classification_failure_kind(message: &str) -> &'static str {
-    if message.contains("タイムアウト") || message.contains("timeout") {
-        "タイムアウト"
-    } else if message.contains("空の応答") || message.contains("空応答") {
-        "空応答"
-    } else if message.contains("コンテキスト") || message.contains("contextWindow") {
-        "コンテキスト"
-    } else if message.contains("読み取れません") || message.contains("解釈できません") {
-        "不正な出力"
-    } else if message.contains("接続できません") {
-        "接続失敗"
-    } else if message.contains("guardrail") || message.contains("ガード") {
-        "ガードレール"
-    } else {
-        "失敗"
+    let lower = message.to_ascii_lowercase();
+    let has = |token: &str| lower.contains(token);
+    let word = |token: &str| {
+        lower
+            .split(|ch: char| !ch.is_ascii_alphanumeric())
+            .any(|part| part == token)
+    };
+    if has("タイムアウト") || word("timeout") || has("timed out") {
+        return "タイムアウト";
     }
+    if has("空の応答") || has("空応答") || has("empty response") {
+        return "空応答";
+    }
+    // Bare "context" is not enough: Ollama's "context canceled" is not a window overflow.
+    if has("コンテキスト")
+        || word("contextwindow")
+        || has("context size")
+        || has("context length")
+        || has("context window")
+    {
+        return "コンテキスト";
+    }
+    if has("guardrail") || has("ガード") {
+        return "ガードレール";
+    }
+    // Swift: badRequest / 「依頼のJSONを読めません」. Ollama and Apple JSON that cannot be read.
+    if has("読み取れません")
+        || has("解釈できません")
+        || has("応答を読めません")
+        || has("依頼のjsonを読めません")
+        || word("badrequest")
+        || has("unknown field")
+    {
+        return "不正な出力";
+    }
+    if has("接続できません")
+        || has("connection refused")
+        || has("connection reset")
+        || has("error sending request")
+    {
+        return "接続失敗";
+    }
+    if has("モデルがありません") || has("not found") {
+        return "モデルなし";
+    }
+    // Swift availability and generate(): error code `unavailable`.
+    if word("unavailable")
+        || has("今は使えません")
+        || has("この pc では使えません")
+        || has("macos 27.2")
+    {
+        return "利用不可";
+    }
+    if has("終了しました") {
+        return "プロセス終了";
+    }
+    // Swift collapses other LanguageModelError cases to `(failed)`.
+    // Ollama wraps HTTP failures as「エラーを返しました」and runner crashes in English.
+    if word("failed")
+        || has("llama runner")
+        || has("runner process")
+        || has("エラーを返しました")
+        || has("応答できません")
+    {
+        return "モデル応答";
+    }
+    if has("送れません") || has("通信に失敗") || has("起動できません") || has("実行できません") {
+        return "通信失敗";
+    }
+    "失敗"
+}
+
+/// One log line for a category whose id and name are both outside the rule table.
+/// Category fields only: no product title, description, tags, or shop.
+pub fn unknown_category_line(id: Option<i64>, name: &str, parent: &str) -> Option<String> {
+    let name = category_log_field(name);
+    let parent = category_log_field(parent);
+    if id.is_none() && name.is_empty() {
+        return None;
+    }
+    let id = id.map(|value| value.to_string()).unwrap_or_default();
+    Some(format!("未対応カテゴリ id={id} name={name} parent={parent}"))
+}
+
+fn category_log_field(value: &str) -> String {
+    let flat: String = value
+        .chars()
+        .map(|ch| if ch.is_control() { ' ' } else { ch })
+        .collect();
+    flat.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(80)
+        .collect()
+}
+
+pub(crate) fn seed_unknown_category_lines(text: &str, seen: &mut HashSet<String>) {
+    for line in text.lines() {
+        if let Some(index) = line.find("未対応カテゴリ ") {
+            seen.insert(line[index..].to_string());
+        }
+    }
+}
+
+pub(crate) fn claim_unique(seen: &mut HashSet<String>, line: &str) -> bool {
+    seen.insert(line.to_string())
+}
+
+pub fn log_unknown_category_once(app: &AppHandle, id: Option<i64>, name: &str, parent: &str) {
+    let Some(line) = unknown_category_line(id, name, parent) else {
+        return;
+    };
+    if !claim_unknown_category_line(app, &line) {
+        return;
+    }
+    browser_log(app, &line);
+}
+
+fn claim_unknown_category_line(app: &AppHandle, line: &str) -> bool {
+    static SEEN: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+    let mut guard = match SEEN.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if guard.is_none() {
+        let mut seen = HashSet::new();
+        if let Ok(path) = log_path(app) {
+            if let Ok(text) = std::fs::read_to_string(path) {
+                seed_unknown_category_lines(&text, &mut seen);
+            }
+        }
+        *guard = Some(seen);
+    }
+    claim_unique(guard.as_mut().expect("seeded"), line)
 }
 
 fn log_safe_message(booth_id: &str, message: &str) -> String {
@@ -1506,6 +1630,7 @@ async fn fill_public_details(app: &AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     #[test]
     fn only_the_open_library_page_can_be_imported() {
@@ -1591,6 +1716,93 @@ mod tests {
             "分類完了 処理117 失敗3 カテゴリとタグ89 モデル28"
         );
         assert!(classification_failure_line("4242", "Apple のオンデバイスモデルのコンテキストを超えました").contains("コンテキスト"));
+        let kinds = [
+            (
+                "Apple のオンデバイスモデルが応答できません (failed)",
+                "モデル応答",
+            ),
+            ("応答を書けません (failed)", "モデル応答"),
+            ("依頼のJSONを読めません (badRequest)", "不正な出力"),
+            (
+                "Apple のオンデバイスモデルは今は使えません (unavailable)",
+                "利用不可",
+            ),
+            (
+                "Apple のオンデバイスモデルが応答できません (contextWindow)",
+                "コンテキスト",
+            ),
+            (
+                "Apple のオンデバイスモデルが応答できません (guardrailViolation)",
+                "ガードレール",
+            ),
+            (
+                "Apple のオンデバイスモデルの応答がタイムアウトしました",
+                "タイムアウト",
+            ),
+            ("Apple のオンデバイスモデルが終了しました", "プロセス終了"),
+            ("Apple のオンデバイスモデルへ送れません", "通信失敗"),
+            ("Apple のオンデバイスモデルを実行できません", "通信失敗"),
+            (
+                "Ollamaに接続できません。Ollamaを起動し、モデルを取得してください。",
+                "接続失敗",
+            ),
+            ("Ollamaの応答がタイムアウトしました", "タイムアウト"),
+            (
+                "Ollamaへの通信に失敗しました: error sending request for url: connection refused",
+                "接続失敗",
+            ),
+            (
+                "Ollamaへの通信に失敗しました: error decoding response body",
+                "通信失敗",
+            ),
+            (
+                "Ollamaがエラーを返しました (500): llama runner process has terminated",
+                "モデル応答",
+            ),
+            (
+                "Ollamaがエラーを返しました (500): timed out waiting for llama runner",
+                "タイムアウト",
+            ),
+            (
+                "Ollamaがエラーを返しました (500): context canceled",
+                "モデル応答",
+            ),
+            (
+                "Ollamaにモデルがありません。設定のモデル名を確認してください。model 'sample' not found",
+                "モデルなし",
+            ),
+            ("Ollamaの応答を解釈できません", "不正な出力"),
+            ("分類結果を読み取れませんでした: expected value", "不正な出力"),
+            ("想定していないエラー", "失敗"),
+        ];
+        for (message, kind) in kinds {
+            assert_eq!(classification_failure_kind(message), kind, "{message}");
+        }
+        assert_ne!(
+            classification_failure_kind("Apple のオンデバイスモデルが応答できません (failed)"),
+            "失敗"
+        );
+    }
+
+    #[test]
+    fn unknown_category_lines_are_unique_and_omit_product_text() {
+        let line = unknown_category_line(Some(157), "架空カテゴリ", "架空の親").unwrap();
+        assert_eq!(line, "未対応カテゴリ id=157 name=架空カテゴリ parent=架空の親");
+        assert!(unknown_category_line(None, "  \n  ", "親だけ").is_none());
+        let broken = unknown_category_line(Some(6), "架空\n改行", "親\t名").unwrap();
+        assert!(!broken.contains('\n'));
+        assert!(!broken.contains('\t'));
+        assert!(broken.contains("name=架空 改行"));
+        let mut seen = HashSet::new();
+        let prior = "2026-10-29 12:00:00 未対応カテゴリ id=142 name=架空カテゴリ parent=架空の親\n分類完了 処理1 失敗0 カテゴリとタグ0 モデル1\n";
+        seed_unknown_category_lines(prior, &mut seen);
+        let again = unknown_category_line(Some(142), "架空カテゴリ", "架空の親").unwrap();
+        assert!(!claim_unique(&mut seen, &again));
+        let other = unknown_category_line(Some(142), "別の架空", "架空の親").unwrap();
+        assert!(claim_unique(&mut seen, &other));
+        assert!(!claim_unique(&mut seen, &other));
+        assert!(!again.contains("商品"));
+        assert!(!again.contains("タグ"));
     }
 
     #[test]

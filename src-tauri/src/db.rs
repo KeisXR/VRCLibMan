@@ -363,6 +363,7 @@ fn ensure_ready(connection: &Connection) -> Result<(), String> {
         ("confidence_threshold", "0.6"),
         ("library_folder", ""),
         ("builtin_browser", "0"),
+        ("booth_link_target", "external"),
         ("booth_page_interval_ms", "1000"),
         ("remote_library_folder", ""),
         ("remote_auto_sync", "0"),
@@ -420,6 +421,9 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
         confidence_threshold: threshold,
         library_folder: setting(connection, "library_folder")?.unwrap_or_default(),
         builtin_browser: setting(connection, "builtin_browser")?.as_deref() == Some("1"),
+        booth_link_target: normalize_booth_link_target(
+            &setting(connection, "booth_link_target")?.unwrap_or_else(|| "external".into()),
+        ),
         remote_library_folder: setting(connection, "remote_library_folder")?.unwrap_or_default(),
         remote_auto_sync: setting(connection, "remote_auto_sync")?.as_deref() == Some("1"),
         route_downloads: setting(connection, "route_downloads")?.as_deref() == Some("1"),
@@ -455,6 +459,14 @@ fn normalize_backend(value: &str) -> String {
         "apple".into()
     } else {
         "ollama".into()
+    }
+}
+
+fn normalize_booth_link_target(value: &str) -> String {
+    if value.trim() == "builtin" {
+        "builtin".into()
+    } else {
+        "external".into()
     }
 }
 
@@ -538,6 +550,11 @@ fn save_settings_values(
         connection,
         "builtin_browser",
         if input.builtin_browser { "1" } else { "0" },
+    )?;
+    set_setting(
+        connection,
+        "booth_link_target",
+        &normalize_booth_link_target(&input.booth_link_target),
     )?;
     set_setting(
         connection,
@@ -5955,6 +5972,59 @@ mod tests {
     }
 
     #[test]
+    fn booth_link_target_defaults_to_the_system_browser_and_roundtrips() {
+        let connection = open_memory().unwrap();
+        assert_eq!(settings(&connection).unwrap().booth_link_target, "external");
+        let saved = update_settings(
+            &connection,
+            &SettingsPatch {
+                booth_link_target: Some("builtin".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(saved.booth_link_target, "builtin");
+        assert_eq!(saved.ollama_model, "qwen3.5:9b");
+        assert!(!saved.builtin_browser);
+        ensure_ready(&connection).unwrap();
+        assert_eq!(settings(&connection).unwrap().booth_link_target, "builtin");
+        connection
+            .execute(
+                "DELETE FROM settings WHERE key = 'booth_link_target'",
+                [],
+            )
+            .unwrap();
+        assert_eq!(settings(&connection).unwrap().booth_link_target, "external");
+        ensure_ready(&connection).unwrap();
+        assert_eq!(
+            setting(&connection, "booth_link_target").unwrap().as_deref(),
+            Some("external")
+        );
+        let saved = update_settings(
+            &connection,
+            &SettingsPatch {
+                booth_link_target: Some("  somewhere  ".into()),
+                builtin_browser: Some(true),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(saved.booth_link_target, "external");
+        assert!(saved.builtin_browser);
+        let saved = update_settings(
+            &connection,
+            &SettingsPatch {
+                booth_link_target: Some(" builtin ".into()),
+                builtin_browser: Some(false),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(saved.booth_link_target, "builtin");
+        assert!(!saved.builtin_browser);
+    }
+
+    #[test]
     fn failed_settings_write_rolls_back_the_entire_patch() {
         let connection = open_memory().unwrap();
         connection.execute_batch("CREATE TRIGGER fail_settings BEFORE UPDATE ON settings WHEN NEW.key = 'confidence_threshold' BEGIN SELECT RAISE(ABORT, 'fixture write failure'); END;").unwrap();
@@ -6980,6 +7050,7 @@ mod tests {
                 confidence_threshold: 0.6,
                 library_folder: String::new(),
                 builtin_browser: false,
+                booth_link_target: "external".into(),
                 remote_library_folder: String::new(),
                 remote_auto_sync: false,
                 route_downloads: false,
@@ -7043,6 +7114,7 @@ mod tests {
                 confidence_threshold: 0.6,
                 library_folder: String::new(),
                 builtin_browser: true,
+                booth_link_target: "external".into(),
                 remote_library_folder: String::new(),
                 remote_auto_sync: false,
                 route_downloads: false,
@@ -8460,6 +8532,7 @@ mod tests {
                 confidence_threshold: 0.6,
                 library_folder: String::new(),
                 builtin_browser: false,
+                booth_link_target: "external".into(),
                 remote_library_folder: String::new(),
                 remote_auto_sync: false,
                 route_downloads: true,
@@ -8483,6 +8556,7 @@ mod tests {
                 confidence_threshold: 0.6,
                 library_folder: library.display().to_string(),
                 builtin_browser: false,
+                booth_link_target: "external".into(),
                 remote_library_folder: String::new(),
                 remote_auto_sync: false,
                 route_downloads: true,
@@ -8601,6 +8675,7 @@ mod tests {
                 confidence_threshold: 0.6,
                 library_folder: library.display().to_string(),
                 builtin_browser: browser,
+                booth_link_target: "external".into(),
                 remote_library_folder: String::new(),
                 remote_auto_sync: false,
                 route_downloads: route,
@@ -8866,6 +8941,7 @@ mod tests {
             confidence_threshold: 0.6,
             library_folder: String::new(),
             builtin_browser: false,
+            booth_link_target: "external".into(),
             remote_library_folder: String::new(),
             remote_auto_sync: false,
             route_downloads: false,
@@ -9031,6 +9107,7 @@ mod tests {
                 confidence_threshold: 0.6,
                 library_folder: library.display().to_string(),
                 builtin_browser: false,
+                booth_link_target: "external".into(),
                 remote_library_folder: String::new(),
                 remote_auto_sync: false,
                 route_downloads: true,

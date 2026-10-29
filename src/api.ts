@@ -285,6 +285,41 @@ export async function openExternal(url: string): Promise<void> {
   await openUrl(url);
 }
 
+export interface BoothLinkDeps {
+  settings: () => Promise<Pick<Settings, "builtinBrowser" | "boothLinkTarget">>;
+  openBuiltin: (url: string) => Promise<unknown>;
+  openExternal: (url: string) => Promise<void>;
+}
+
+/** Product links only. Other URLs stay on openExternal. */
+export async function openBoothLinkWith(url: string, deps: BoothLinkDeps): Promise<"builtin" | "external"> {
+  let useBuiltin = false;
+  try {
+    const settings = await deps.settings();
+    useBuiltin = settings.builtinBrowser && settings.boothLinkTarget === "builtin";
+  } catch {
+    useBuiltin = false;
+  }
+  if (useBuiltin) {
+    try {
+      await deps.openBuiltin(url);
+      return "builtin";
+    } catch {
+      // Busy, disabled, or any other failure opens the system browser.
+    }
+  }
+  await deps.openExternal(url);
+  return "external";
+}
+
+export async function openBoothLink(url: string): Promise<void> {
+  await openBoothLinkWith(url, {
+    settings: () => api.settings(),
+    openBuiltin: (target) => api.browserAction({ kind: "newTab", url: target }),
+    openExternal,
+  });
+}
+
 export async function openLocal(path: string): Promise<void> {
   if (!isTauri()) {
     return;
