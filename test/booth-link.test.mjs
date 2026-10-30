@@ -70,10 +70,13 @@ test("product links follow boothLinkTarget and fall back to the system browser",
     const queue = readFileSync("src/pages/QueuePage.tsx", "utf8");
     const settingsPage = readFileSync("src/pages/SettingsPage.tsx", "utf8");
     const updater = readFileSync("src/components/AppUpdater.tsx", "utf8");
+    const previewPane = readFileSync("src/components/PreviewPane.tsx", "utf8");
     assert.match(detail, /openBoothLink\(item\.url\)/);
     assert.doesNotMatch(detail, /openExternal\(/);
     assert.match(queue, /openBoothLink\(product\.url\)/);
     assert.doesNotMatch(queue, /openExternal\(/);
+    assert.match(previewPane, /openBoothLink\(item\.url\)/);
+    assert.doesNotMatch(previewPane, /openExternal\(/);
     assert.match(settingsPage, /商品ページを開くブラウザ/);
     assert.match(settingsPage, /settings\.builtinBrowser &&/);
     assert.match(settingsPage, /openExternal\(catalog\.sourceUrl\)/);
