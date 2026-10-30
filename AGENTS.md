@@ -98,6 +98,7 @@ VRCLibMan を変更するときは、このファイルを先に読む。実装�
 
 ### Linux の試験配布
 
+- Linux は実機未検証のテスト版として、各リリースで両 CPU の AppImage をビルド・署名し、通常 Release に添付する。README と毎回の Release 本文に、配布先での起動・各機能・アプリ内更新が未検証であることを明記する。Linux の実機確認は公開の必須条件にしないが、成果物・署名の必須チェックは維持する。
 - Linux は glibc 系デスクトップの x86_64 / aarch64 を対象に、Ubuntu 22.04 / ubuntu-22.04-arm のネイティブランナーで AppImage を作る。`tauri.linux.conf.json` は AppImage だけを指定する。クロスパッケージ化はしない。実機確認の対象は Ubuntu / Mint・Fedora・Arch 系、GNOME / KDE、X11 / Wayland で、ビルド成功を実機検証済みとは扱わない。
 - 共通の下書き Release に Windows / Mac / Linux 両 CPU の成果物を載せる。集約する `latest.json` は `windows-x86_64`、`darwin-aarch64`、`linux-x86_64-appimage`、`linux-aarch64-appimage` の全4対象を必須とし、ファイル・署名の欠落を許可しない。AppImage は通常の `.AppImage` と `.AppImage.sig` を使い、更新のためにユーザー所有の書き換え可能な場所へ置く。
 - `settings.background_supported` は保存項目ではなくプラットフォームの能力を返す。Linux はトレイ未対応のため常駐とログイン起動を無効にし、旧設定が真でも通常の窓を開き、閉じたら終了する。Windows / Mac の常駐は維持する。

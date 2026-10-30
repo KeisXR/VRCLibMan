@@ -47,13 +47,15 @@ Windows x64 の NSIS 配布版、Apple Silicon Mac の .app、Linux x86_64 / aar
 2. `.github/release-notes/<アプリ版>.md` にその版の利用者向け変更を記載し、main にマージします。版別ファイルがなければリリース本文の生成は失敗します。
 3. main に含まれるコミットへ `v<版>` タグを付けて push します。`.github/workflows/release.yml` が下書き Release を作り、Windows NSIS、Apple Silicon dmg、Linux の両 CPU の AppImage、拡張 zip を載せます。
 4. 全4ターゲットのビルドと最後の `publish complete updater manifest` の成功後に、インストーラ、dmg、更新用 `.app.tar.gz`、両 CPU の `.AppImage`、対応する `.sig`、拡張 zip、`latest.json` と本文を確認します。`latest.json` には `windows-x86_64`、`darwin-aarch64`、`linux-x86_64-appimage`、`linux-aarch64-appimage` が必要です。
-5. 実機確認の結果を記録し、下書きの「Publish release」で公開します。
+5. 実施した確認の結果を記録し、下書きの「Publish release」で公開します。Linux は配布先での起動・各機能・アプリ内更新が未検証のテスト版として、実機確認を待たずに公開します。Release 本文の Linux ダウンロード欄と注意書きに、その扱いが明記されていることを確認してください。
 
 タグとアプリの版が違う、版が揃っていない、タグのコミットが main に含まれない、同じタグの Release が公開済みの場合は、ビルド前に失敗します。「Run workflow」はタグも Release も作らない試しビルドで、成果物は Artifacts に保存します。
 
 下書き Release の `browser_download_url` は `untagged-*` になる場合があるため、更新情報には公開後の `v<版>` の URL を生成します。更新情報だけの再生成は、上記の `finalize updater manifest` を使います。署名済みの配布ファイル、タグ、公開状態は変更しません。
 
 ## Linux の導入と更新
+
+Linux は実機未検証のテスト版として、通常の各リリースに両 CPU の AppImage を添付します。CI でのビルド・署名と成果物の確認を配布条件とし、Linux の実機確認は公開の必須条件にしません。Release 全体は通常版のまま、Linux の配布物をテスト版と明記します。アプリ内更新の経路も提供しますが、配布先での実際の更新は未検証です。
 
 Linux は Ubuntu 22.04 相当を基準に、x86_64 と aarch64 のネイティブ環境で AppImage を作成します。Windows / Mac と同じ署名鍵の設定方式を使い、配布する `.AppImage` とその `.AppImage.sig` を更新にも使います。v1 互換の tar.gz は生成しません。CPU ごとの更新キーを分け、異なる CPU やパッケージ形式のファイルを配信しません。
 
@@ -74,4 +76,4 @@ Linux の更新は AppImage として通常起動した署名設定付きビル�
 
 `npm test` は UI の明示操作、再起動確認の取消、設定保存エラー、再試行、リリース情報生成を検証します。Rust テストは、実際に Tauri CLI で署名した短いテストファイルで、改ざん拒否・版の差し替え拒否・再試行を検証します。テスト鍵は配布には使いません。
 
-Windows / Mac の実インストーラと Linux の両 CPU の AppImage は、署名付きの次版を使って更新を確認し、対象コミット・OS・CPU・実施日・結果を記録します。Linux は AppImage の置換後の再起動と DB・設定の保持、書き込み不可時の失敗、異なる CPU の更新物を選ばないことも確認します。自動テストの成功だけで、配布物による更新まで確認済みと扱わないでください。記録方法は [検証記録](verification.md) にあります。アップデータを持たない v0.1.7 以前には、対応版を一度手動でインストールする案内が必要です。
+Windows / Mac の実インストーラは、署名付きの次版を使って更新を確認し、対象コミット・OS・CPU・実施日・結果を記録します。Linux の両 CPU の AppImage は、今後実機を用意できたときに、署名付き次版への更新、置換後の再起動と DB・設定の保持、書き込み不可時の失敗、異なる CPU の更新物を選ばないことを確認します。この Linux 実機確認を待たずにテスト版を配布します。自動テストの成功だけで、配布物による更新まで確認済みと扱わないでください。記録方法は [検証記録](verification.md) にあります。アップデータを持たない v0.1.7 以前には、対応版を一度手動でインストールする案内が必要です。

@@ -8,12 +8,14 @@ BOOTH で入手した衣装・髪・小物を、アバターごとに探せる�
 | --- | --- |
 | Windows x64 | `VRCLibMan_<version>_x64-setup.exe` |
 | Apple Silicon Mac・macOS 14 以降 | `VRCLibMan_<version>_aarch64.dmg` |
-| Linux x86_64 / aarch64（試験対応） | `VRCLibMan_<version>_amd64.AppImage` / `VRCLibMan_<version>_aarch64.AppImage` |
+| Linux x86_64 / aarch64（実機未検証のテスト版） | `VRCLibMan_<version>_amd64.AppImage` / `VRCLibMan_<version>_aarch64.AppImage` |
 | Chrome / Edge 拡張 | `vrclibman-booth-export-<version>.zip` |
 
 Windows 版は未署名です。Mac 版に Apple の正式な署名・公証はありません。OS の警告が出る場合があります。Intel Mac 向けの配布物はありません。Windows 10 では WebView2 が別途必要になる場合があります。
 
-Linux は Ubuntu 22.04 相当をビルドの基準とする、glibc 系デスクトップ向けの試験対応です。CPU に合う AppImage に実行権限を付け、`~/Applications` など自分で書き換えられる場所から起動します。通常起動には FUSE が必要です。Linux の常駐とログイン時起動は現在利用できません。対応環境の実機確認は [検証記録](docs/verification.md) に記載します。現在公開されている版の提供ファイルは Releases を確認してください。
+Linux は実機未検証のテスト版として、各リリースに両 CPU の AppImage を添付します。CI でビルド・署名しますが、配布先での起動・各機能・アプリ内更新の動作は未検証です。Ubuntu 22.04 相当をビルドの基準とする glibc 系デスクトップを対象にしています。
+
+CPU に合う AppImage に実行権限を付け、`~/Applications` など自分で書き換えられる場所から起動します。通常起動には FUSE が必要です。Linux の常駐とログイン時起動は現在利用できません。確認済みの範囲は [検証記録](docs/verification.md) に記載します。現在公開されている版の提供ファイルは Releases を確認してください。
 
 ## はじめる
 
