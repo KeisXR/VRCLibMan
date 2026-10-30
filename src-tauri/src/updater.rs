@@ -56,7 +56,7 @@ impl UpdateState {
                 error: None,
                 message: if !supported {
                     Some(
-                        "アプリ内更新は Windows x64 と Apple Silicon Mac の配布版で利用できます。"
+                        "アプリ内更新は Windows x64、Apple Silicon Mac、Linux x64 / ARM64 の AppImage 配布版で利用できます。"
                             .into(),
                     )
                 } else if !configured {
@@ -103,6 +103,14 @@ impl Inner {
     }
 }
 
+fn supported_platform(os: &str, arch: &str, appimage: bool) -> bool {
+    match (os, arch) {
+        ("windows", "x86_64") | ("macos", "aarch64") => true,
+        ("linux", "x86_64" | "aarch64") => appimage,
+        _ => false,
+    }
+}
+
 pub fn initialize(app: &AppHandle) {
     let configured = app
         .config()
@@ -112,10 +120,15 @@ pub fn initialize(app: &AppHandle) {
         .and_then(|config| config.get("pubkey"))
         .and_then(|key| key.as_str())
         .is_some_and(|key| !key.trim().is_empty());
-    let supported = cfg!(any(
-        all(target_os = "windows", target_arch = "x86_64"),
-        all(target_os = "macos", target_arch = "aarch64")
-    ));
+    // The updater replaces the outer AppImage, not an extracted binary or a deb/rpm.
+    // Require both Tauri's bundle marker and its captured AppImage launch path.
+    #[cfg(target_os = "linux")]
+    let appimage = tauri::utils::platform::bundle_type()
+        == Some(tauri::utils::config::BundleType::AppImage)
+        && app.env().appimage.is_some_and(|path| !path.is_empty());
+    #[cfg(not(target_os = "linux"))]
+    let appimage = false;
+    let supported = supported_platform(std::env::consts::OS, std::env::consts::ARCH, appimage);
     app.manage(UpdateState::new(configured, supported));
 }
 
@@ -321,6 +334,21 @@ fn update_error(context: &str, error: &tauri_plugin_updater::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn linux_updates_require_an_appimage_for_each_supported_architecture() {
+        for arch in ["x86_64", "aarch64"] {
+            assert!(supported_platform("linux", arch, true));
+            assert!(!supported_platform("linux", arch, false));
+        }
+        for arch in ["x86", "arm", "riscv64"] {
+            assert!(!supported_platform("linux", arch, true));
+        }
+        assert!(supported_platform("windows", "x86_64", false));
+        assert!(supported_platform("macos", "aarch64", false));
+        assert!(!supported_platform("macos", "x86_64", false));
+        assert!(!supported_platform("android", "aarch64", true));
+    }
 
     #[test]
     fn missing_key_or_unsupported_platform_never_enables_updates() {

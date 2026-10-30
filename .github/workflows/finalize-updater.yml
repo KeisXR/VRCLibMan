@@ -37,6 +37,8 @@ jobs:
           stage="${RUNNER_TEMP}/updater-finalize"
           mkdir -p "${stage}/signatures"
           git show "${RELEASE_TAG}:package.json" > "${stage}/package.json"
+          # Use the tag's platform set: older drafts have two targets, newer ones four.
+          git show "${RELEASE_TAG}:scripts/create-updater-manifest.mjs" > "${stage}/create-updater-manifest.mjs"
           version=$(node -p "JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8')).version" "${stage}/package.json")
           test "${RELEASE_TAG}" = "v${version}"
           gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" --jq '.[]' > "${stage}/releases.jsonl"
@@ -46,7 +48,7 @@ jobs:
           jq -r '.[0].body' "${stage}/matches.json" > "${stage}/notes.md"
           gh api "repos/${GITHUB_REPOSITORY}/releases/${id}/assets" > "${stage}/assets.json"
           gh release download "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --pattern '*.sig' --dir "${stage}/signatures"
-          node scripts/create-updater-manifest.mjs "${version}" "${GITHUB_REPOSITORY}" \
+          node "${stage}/create-updater-manifest.mjs" "${version}" "${GITHUB_REPOSITORY}" \
             "${stage}/assets.json" "${stage}/signatures" "${stage}/notes.md" "${stage}/latest.json"
           # Refuse a release that was published while the metadata was being generated.
           gh api "repos/${GITHUB_REPOSITORY}/releases/${id}" --jq '.draft' | grep -qx true

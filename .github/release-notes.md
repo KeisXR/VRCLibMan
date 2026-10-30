@@ -4,6 +4,8 @@ VRCLibMan {{APP_VERSION}}（同梱の拡張は {{EXTENSION_VERSION}}）
 
 - Windows: `VRCLibMan_{{APP_VERSION}}_x64-setup.exe`（未署名の NSIS インストーラ）
 - Mac: `VRCLibMan_{{APP_VERSION}}_aarch64.dmg`（Apple Silicon、macOS 14 以降）
+- Linux x86_64: `VRCLibMan_{{APP_VERSION}}_amd64.AppImage`
+- Linux ARM64: `VRCLibMan_{{APP_VERSION}}_aarch64.AppImage`
 - Chrome / Edge 拡張: `vrclibman-booth-export-{{EXTENSION_VERSION}}.zip`
 
 ## v{{APP_VERSION}} の変更
@@ -14,7 +16,7 @@ VRCLibMan {{APP_VERSION}}（同梱の拡張は {{EXTENSION_VERSION}}）
 
 {{RECLASSIFY_NOTE}}
 
-初回インストールには上記の exe / dmg を使用します。更新用の `.app.tar.gz`・`.sig`・`latest.json` はアプリ内更新で使用します。
+初回導入には上記の exe / dmg / AppImage を使用します。AppImage は実行権限を付け、ユーザー自身がファイルを置き換えられる場所（例: `~/Applications`）へ保存してください。AppImage はアプリ内更新にも使います。更新用の `.app.tar.gz`・`.sig`・`latest.json` は直接開く必要はありません。
 
 アプリ内更新を利用できない版からは、上記のインストーラで手動更新してください。ライブラリと設定は引き継がれます。
 
@@ -23,4 +25,5 @@ VRCLibMan {{APP_VERSION}}（同梱の拡張は {{EXTENSION_VERSION}}）
 - Windows 版は未署名です。SmartScreen が「Windows によって PC が保護されました」と出すことがあります。「詳細情報」から「実行」を選んでください。
 - Mac 版は ad-hoc 署名だけで、Apple の署名も公証もしていません。Gatekeeper に止められたら、Finder で右クリックして「開く」を選ぶか、システム設定の「プライバシーとセキュリティ」で「このまま開く」を選んでください。それでも開けないときは、`/Applications` に置いたあとで `xattr -dr com.apple.quarantine /Applications/VRCLibMan.app` を実行してください。
 - `vrclibman://` は、Mac では .app を `/Applications` に置いたときだけ動きます。
+- Linux 版は Ubuntu 22.04 を基準に各 CPU でビルドしています。glibc 2.35 以降と AppImage の実行に対応する FUSE 環境が必要です。すべてのディストリビューションでの動作を保証するものではありません。
 - 拡張は zip を展開し、直下に `manifest.json` があるフォルダを、拡張機能管理画面の「パッケージ化されていない拡張機能を読み込む」で読み込みます。更新するときは同じ場所に上書きして「再読み込み」を押してください。

@@ -338,6 +338,8 @@ pub struct Settings {
     /// OpenAI-compatible base URL for the opt-in cloud classifier. The key is never here.
     pub cloud_base_url: String,
     pub cloud_model: String,
+    /// Whether this platform provides the tray controls needed for background operation.
+    pub background_supported: bool,
     pub background_mode: bool,
     pub launch_at_login: bool,
     pub classification_dismissed_version: i32,

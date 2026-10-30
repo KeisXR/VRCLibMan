@@ -89,12 +89,20 @@ VRCLibMan を変更するときは、このファイルを先に読む。実装�
 
 ### アプリ内更新
 
-- `updater.rs` が Tauri updater を Rust から呼ぶ。Windows x64 / Apple Silicon Mac の署名設定を持つ配布版だけ有効。設定での「更新を確認」「更新をダウンロード」「再起動して更新」が必要。`check_update_on_startup`（既定オフ）をオンにした起動時だけ GitHub へ1回確認する。定期的な外部通信や自動適用はしない。状態変化は `updater-changed` を送る。
+- `updater.rs` が Tauri updater を Rust から呼ぶ。Windows x64 / Apple Silicon Mac / Linux x86_64・aarch64 AppImage の署名設定を持つ配布版だけ有効。Linux は配布形式のマーカーと AppImage の起動パスを両方確認し、開発用・展開したバイナリ・deb/rpm では有効にしない。設定での「更新を確認」「更新をダウンロード」「再起動して更新」が必要。`check_update_on_startup`（既定オフ）をオンにした起動時だけ GitHub へ1回確認する。定期的な外部通信や自動適用はしない。状態変化は `updater-changed` を送る。
 - 更新先は本体公開後の GitHub Releases の `latest/download/latest.json`。HTTPS、署名と署名された版の検証、既定の新しい版だけの比較を維持する。アプリへ GitHub token・秘密鍵を含めない。リモート WebView とブラウザ操作バーには更新コマンドを許可しない。プラグインの JS 用 updater / process 権限も追加しない。
 - 検証済みのバイト列と更新状態はプロセス内に保持し、ウィンドウ再作成後も参照できる。適用前に未保存の設定を保存し、分類・ライブラリ全取得・BOOTH ダウンロード中の適用は Rust でも拒否する。ライブラリ・設定を削除しない。
-- release は Actions Secret `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` と Variable `TAURI_UPDATER_PUBLIC_KEY` を使う。`configure-updater.mjs` の追加設定で公開鍵と `createUpdaterArtifacts` を渡す。秘密鍵はリポジトリに置かない。両 OS のビルド完了後に一つのジョブで `latest.json` を作る。欠落した成果物・署名のまま公開用情報を作らない。初回設定と実機検証の手順は `docs/updater.md`。
+- release は Actions Secret `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` と Variable `TAURI_UPDATER_PUBLIC_KEY` を使う。`configure-updater.mjs` の追加設定で公開鍵と `createUpdaterArtifacts` を渡す。秘密鍵はリポジトリに置かない。全ターゲットのビルド完了後に一つのジョブで `latest.json` を作る。欠落した成果物・署名のまま公開用情報を作らない。初回設定と実機検証の手順は `docs/updater.md`。
 - `tauri-action` の通常の workflow Artifacts は更新用 `.app.tar.gz` / `.sig` を含まないので、試しビルドは `stage-updater-artifacts.mjs` で更新ファイル・署名・公開鍵を別途保存する。Windows MSVC のライブラリテストは、Tauri の生成済み resource を明示的にリンクし、Common Controls v6 の manifest を含める。
 - 下書き Release の `browser_download_url` は `untagged-*` になる。`latest.json` には公開後の `v<版>` URL を生成する。更新情報だけの再生成は `finalize-updater.yml` の手動実行で行え、既存タグが main に含まれる下書きだけを変更する。署名済みの配布ファイルとタグは変更しない。
+
+### Linux の試験配布
+
+- Linux は glibc 系デスクトップの x86_64 / aarch64 を対象に、Ubuntu 22.04 / ubuntu-22.04-arm のネイティブランナーで AppImage を作る。`tauri.linux.conf.json` は AppImage だけを指定する。クロスパッケージ化はしない。実機確認の対象は Ubuntu / Mint・Fedora・Arch 系、GNOME / KDE、X11 / Wayland で、ビルド成功を実機検証済みとは扱わない。
+- 共通の下書き Release に Windows / Mac / Linux 両 CPU の成果物を載せる。集約する `latest.json` は `windows-x86_64`、`darwin-aarch64`、`linux-x86_64-appimage`、`linux-aarch64-appimage` の全4対象を必須とし、ファイル・署名の欠落を許可しない。AppImage は通常の `.AppImage` と `.AppImage.sig` を使い、更新のためにユーザー所有の書き換え可能な場所へ置く。
+- `settings.background_supported` は保存項目ではなくプラットフォームの能力を返す。Linux はトレイ未対応のため常駐とログイン起動を無効にし、旧設定が真でも通常の窓を開き、閉じたら終了する。Windows / Mac の常駐は維持する。
+- Linux のダウンロード先は `dirs::download_dir()` で XDG の設定を読み、未設定ならホーム配下の `Downloads` に戻す。相対パス・親ディレクトリ成分を拒否し、移動前の既知の保存元・商品ID・シンボリックリンクの検査は緩めない。
+- Linux の URL 関連付けは `update-desktop-database` / `xdg-mime` の欠落や失敗でアプリ全体を終了させない。起動中のアプリへの拡張送信と JSON のインポートは使える。Windows の開発用登録は既存どおりである。
 
 ### 内蔵ブラウザ
 
@@ -251,7 +259,7 @@ Windows では、BOOTH の窓を同期コマンドの中で作らない。WebVie
 5. 名前解決、突合、詳細の出し分けを変えるときは、先に `src-tauri/src` のテストを更新する。見本の `src/preview/api.ts` は画面用なので、同じ変更が必要なら別途合わせる。
 6. スキーマを変えるときは `user_version` を上げた移行を足す。既存の `library.sqlite` を暗黙に作り直さない。
 
-Windows の配布は未署名の NSIS（`.exe`）である。実行ファイルは `VRCLibMan.exe`。Mac は Apple Silicon（`aarch64-apple-darwin`）と macOS 14 以降だけの未署名 dmg で、ad-hoc 署名（`signingIdentity` が `-`）だけを付ける。公証はしない。Intel と universal は作らない。`v*` タグが `package.json`、`package-lock.json`、`tauri.conf.json`、`Cargo.toml`、`Cargo.lock` の版と一致し、タグのコミットが main に含まれるとき、`.github/workflows/release.yml` が下書き Release を 1 回だけ作り（`scripts/check-release-version.mjs` で照合）、その release id に Windows と Mac のビルドを載せる。公開済みの同じタグには載せない。拡張の版は独立しており、タグとは照合しない。拡張 zip は ubuntu の別ジョブが作る。`manifest.json` と `popup.html` が参照するファイルが無いときは失敗する。Mac は補助プログラムに macOS 27.2 SDK が要るので `xcode-27` ランナーで Xcode 27.2 を選ぶ。`workflow_dispatch` はタグも Release も作らない試しビルドで、成果物は Artifacts に置く。`num_ctx` は8192のまま。モデルの初期値は `qwen3.5:9b` で、保存済みの選択は変えない。コード署名の秘密情報は置かない。
+Windows の配布は未署名の NSIS（`.exe`）である。実行ファイルは `VRCLibMan.exe`。Mac は Apple Silicon（`aarch64-apple-darwin`）と macOS 14 以降だけの未署名 dmg で、ad-hoc 署名（`signingIdentity` が `-`）だけを付ける。公証はしない。Intel と universal は作らない。`v*` タグが `package.json`、`package-lock.json`、`tauri.conf.json`、`Cargo.toml`、`Cargo.lock` の版と一致し、タグのコミットが main に含まれるとき、`.github/workflows/release.yml` が下書き Release を 1 回だけ作り（`scripts/check-release-version.mjs` で照合）、その release id に Windows、Mac、Linux 両 CPU のビルドを載せる。公開済みの同じタグには載せない。拡張の版は独立しており、タグとは照合しない。拡張 zip は ubuntu の別ジョブが作る。`manifest.json` と `popup.html` が参照するファイルが無いときは失敗する。Mac は補助プログラムに macOS 27.2 SDK が要るので `xcode-27` ランナーで Xcode 27.2 を選ぶ。`workflow_dispatch` はタグも Release も作らない試しビルドで、成果物は Artifacts に置く。`num_ctx` は8192のまま。モデルの初期値は `qwen3.5:9b` で、保存済みの選択は変えない。コード署名の秘密情報は置かない。
 
 Mac の内蔵ブラウザは `data_directory` を使わない。固定の 16 バイト `data_store_identifier`（`vrclibman-booth!`）でメイン画面と分ける。ログアウトはフォルダ削除ではなく、そのデータストアの `clear_all_browsing_data` と `remove_data_store` である。`vrclibman://` は `.app` を `/Applications` に置いたときだけ動く。
 

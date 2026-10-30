@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// Run once after both platform builds finish; parallel builds never overwrite latest.json.
+// Run once after all platform builds finish; parallel builds never overwrite latest.json.
 export function createUpdaterManifest({
   version,
   repository,
@@ -18,6 +18,8 @@ export function createUpdaterManifest({
   const names = {
     "windows-x86_64": `VRCLibMan_${version}_x64-setup.exe`,
     "darwin-aarch64": `VRCLibMan_${version}_aarch64.app.tar.gz`,
+    "linux-x86_64-appimage": `VRCLibMan_${version}_amd64.AppImage`,
+    "linux-aarch64-appimage": `VRCLibMan_${version}_aarch64.AppImage`,
   };
   const platforms = {};
   for (const [target, name] of Object.entries(names)) {

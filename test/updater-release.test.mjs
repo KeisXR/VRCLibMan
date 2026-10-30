@@ -29,6 +29,8 @@ const signature = readFileSync(
 const names = [
   "VRCLibMan_99.0.0_x64-setup.exe",
   "VRCLibMan_99.0.0_aarch64.app.tar.gz",
+  "VRCLibMan_99.0.0_amd64.AppImage",
+  "VRCLibMan_99.0.0_aarch64.AppImage",
 ];
 const assets = names
   .flatMap((name) => [name, `${name}.sig`])
@@ -78,12 +80,14 @@ test("a release without its own notes cannot reuse an older version's changes", 
   }
 });
 
-test("dry-run artifacts preserve package, signature and public key for both platforms", () => {
+test("dry-run artifacts preserve package, signature and public key for all four targets", () => {
   const directory = mkdtempSync(join(tmpdir(), "vrclibman-updater-stage-"));
   try {
     for (const [target, name] of [
       ["windows-x64", names[0]],
       ["macos-aarch64", "VRCLibMan.app.tar.gz"],
+      ["linux-x64", names[2]],
+      ["linux-aarch64", names[3]],
     ]) {
       const artifact = join(directory, name);
       writeFileSync(artifact, "test updater bytes");
@@ -151,6 +155,56 @@ test("dry-run artifacts reject missing signatures, keys, and empty packages", ()
   }
 });
 
+test("Linux dry-run artifacts select only their CPU's raw AppImage and require its signature", () => {
+  const directory = mkdtempSync(join(tmpdir(), "vrclibman-linux-updater-stage-"));
+  try {
+    const packages = names.slice(2).map((name) => join(directory, name));
+    for (const path of packages) {
+      writeFileSync(path, `updater for ${path}`);
+      writeFileSync(`${path}.sig`, signature);
+    }
+    const allPaths = packages.flatMap((path) => [path, `${path}.sig`]);
+    for (const [index, target] of ["linux-x64", "linux-aarch64"].entries()) {
+      const artifact = packages[index];
+      const input = {
+        target,
+        paths: allPaths,
+        destination: join(directory, target),
+        pubkey,
+      };
+      stageUpdaterArtifacts(input);
+      assert.deepEqual(
+        readdirSync(input.destination).sort(),
+        [names[index + 2], `${names[index + 2]}.sig`, "updater-public-key.txt"].sort(),
+      );
+      assert.throws(
+        () => stageUpdaterArtifacts({
+          ...input,
+          paths: allPaths.filter((path) => path !== `${artifact}.sig`),
+        }),
+        /署名/,
+      );
+      assert.throws(
+        () => stageUpdaterArtifacts({
+          ...input,
+          paths: allPaths.filter((path) => path !== artifact),
+        }),
+        /特定/,
+      );
+      assert.throws(
+        () => stageUpdaterArtifacts({ ...input, paths: [`${artifact}.tar.gz`, `${artifact}.tar.gz.sig`] }),
+        /特定/,
+      );
+      assert.throws(
+        () => stageUpdaterArtifacts({ ...input, paths: [...allPaths, join(directory, `other_${index === 0 ? "amd64" : "aarch64"}.AppImage`)] }),
+        /特定/,
+      );
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("release builds require a signing key and embed only the public key", () => {
   assert.throws(() => updaterConfig({}), /登録/);
   assert.throws(
@@ -174,11 +228,13 @@ test("release builds require a signing key and embed only the public key", () =>
   assert.ok(!JSON.stringify(config).includes("never-embed-this-secret"));
 });
 
-test("complete manifest uses public asset URLs and both exact target keys", () => {
+test("complete manifest uses public asset URLs and all four exact target keys", () => {
   const manifest = createUpdaterManifest(input);
   assert.deepEqual(Object.keys(manifest.platforms), [
     "windows-x86_64",
     "darwin-aarch64",
+    "linux-x86_64-appimage",
+    "linux-aarch64-appimage",
   ]);
   assert.equal(manifest.version, "99.0.0");
   assert.equal(manifest.notes, "変更点\nテスト");
@@ -190,6 +246,14 @@ test("complete manifest uses public asset URLs and both exact target keys", () =
   assert.equal(
     manifest.platforms["darwin-aarch64"].signature,
     signature.trim(),
+  );
+  assert.equal(
+    manifest.platforms["linux-x86_64-appimage"].url,
+    assets[4].browser_download_url,
+  );
+  assert.equal(
+    manifest.platforms["linux-aarch64-appimage"].url,
+    assets[6].browser_download_url,
   );
 });
 
@@ -209,6 +273,14 @@ test("draft assets produce their final published tag URLs", () => {
   assert.equal(
     manifest.platforms["darwin-aarch64"].url,
     assets[2].browser_download_url,
+  );
+  assert.equal(
+    manifest.platforms["linux-x86_64-appimage"].url,
+    assets[4].browser_download_url,
+  );
+  assert.equal(
+    manifest.platforms["linux-aarch64-appimage"].url,
+    assets[6].browser_download_url,
   );
   assert.ok(!JSON.stringify(manifest).includes("untagged-"));
   for (const invalid of [

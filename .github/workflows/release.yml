@@ -1,7 +1,8 @@
 name: release
 
-# Pushing a v* tag builds the Windows NSIS installer and the Apple Silicon dmg,
-# signs updater bundles, zips the Chrome extension, and creates a DRAFT GitHub Release.
+# Pushing a v* tag builds the Windows NSIS installer, Apple Silicon dmg and
+# Linux x86_64 / aarch64 AppImages, signs updater bundles, zips the Chrome
+# extension, and creates a DRAFT GitHub Release.
 # Nothing is published until someone presses "Publish release".
 #
 # workflow_dispatch is a dry run: it runs the same checks and builds on the chosen
@@ -214,9 +215,27 @@ jobs:
             platform: xcode-27
             target: aarch64-apple-darwin
             args: --target aarch64-apple-darwin
+          # Build both AppImages natively on the oldest supported Ubuntu base.
+          # linuxdeploy does not support cross-compiling ARM AppImages.
+          - name: linux-x64
+            platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            args: --target x86_64-unknown-linux-gnu
+          - name: linux-aarch64
+            platform: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            args: --target aarch64-unknown-linux-gnu
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v7
+
+      - name: install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential curl wget file libwebkit2gtk-4.1-dev libxdo-dev \
+            libssl-dev librsvg2-dev patchelf libfuse2
 
       - name: select Xcode with the macOS 27.2 SDK
         if: runner.os == 'macOS'
@@ -271,6 +290,7 @@ jobs:
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPIMAGE_EXTRACT_AND_RUN: ${{ runner.os == 'Linux' && '1' || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
@@ -314,7 +334,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: lts/*
-      - name: verify both platforms and upload latest.json to the draft
+      - name: verify all four targets and upload latest.json to the draft
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

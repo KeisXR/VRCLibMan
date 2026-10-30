@@ -133,7 +133,29 @@ fn known_downloads_folder() -> Result<PathBuf, String> {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn known_downloads_folder() -> Result<PathBuf, String> {
+    linux_downloads_folder(dirs::download_dir(), dirs::home_dir())
+}
+
+#[cfg(target_os = "linux")]
+fn linux_downloads_folder(configured: Option<PathBuf>, home: Option<PathBuf>) -> Result<PathBuf, String> {
+    // dirs reads XDG_DOWNLOAD_DIR from user-dirs.dirs, including localized and
+    // relocated folders. Preserve the previous default when XDG has no directory.
+    let path = configured
+        .or_else(|| home.map(|home| home.join("Downloads")))
+        .ok_or_else(|| "ダウンロードフォルダを確認できません".to_string())?;
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err("ダウンロードフォルダの場所が不正です".into());
+    }
+    Ok(path)
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 fn known_downloads_folder() -> Result<PathBuf, String> {
     let home = std::env::var_os("HOME")
         .filter(|value| !value.is_empty())
@@ -957,6 +979,70 @@ pub(crate) fn staged_download_candidates(downloads: &Path) -> Vec<PathBuf> {
 mod tests {
     use super::*;
     use std::time::Instant;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_downloads_support_xdg_and_keep_a_safe_default() {
+        let home = PathBuf::from("/home/example");
+        for path in ["/home/example/ダウンロード", "/mnt/data/downloads"] {
+            assert_eq!(
+                linux_downloads_folder(Some(path.into()), Some(home.clone())).unwrap(),
+                PathBuf::from(path)
+            );
+        }
+        assert_eq!(
+            linux_downloads_folder(None, Some(home)).unwrap(),
+            PathBuf::from("/home/example/Downloads")
+        );
+        assert!(linux_downloads_folder(None, None).is_err());
+        for path in ["relative", "/home/example/../elsewhere"] {
+            assert!(linux_downloads_folder(Some(path.into()), None).is_err());
+        }
+        assert!(linux_downloads_folder(None, Some("relative".into())).is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_reads_the_xdg_downloads_configuration_without_widening_the_staging_root() {
+        const CHILD: &str = "VRCLIBMAN_TEST_XDG_DOWNLOADS";
+        if let Some(expected) = std::env::var_os(CHILD) {
+            let downloads = known_downloads_folder().unwrap();
+            assert_eq!(downloads, PathBuf::from(expected));
+            let source = downloads.join("VRCLibMan/900001/body.unitypackage");
+            write_file(&source, b"pkg");
+            assert!(staged_download_ok(&source, &downloads, "900001").is_ok());
+            let unrelated = downloads
+                .parent()
+                .unwrap()
+                .join("other/VRCLibMan/900001/body.unitypackage");
+            write_file(&unrelated, b"other");
+            assert!(staged_download_ok(&unrelated, &downloads, "900001").is_err());
+            return;
+        }
+        // Use a child process so parallel tests never observe a temporary global
+        // XDG_CONFIG_HOME. Only fixture paths are written by that process.
+        let root = tempfile::tempdir_in(resolved_temp_dir()).unwrap();
+        let config = root.path().join("config");
+        let downloads = root.path().join("ダウンロード");
+        std::fs::create_dir(&config).unwrap();
+        std::fs::write(
+            config.join("user-dirs.dirs"),
+            format!("XDG_DOWNLOAD_DIR=\"{}\"\n", downloads.display()),
+        )
+        .unwrap();
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "library_files::tests::linux_reads_the_xdg_downloads_configuration_without_widening_the_staging_root", "--nocapture"])
+            .env("XDG_CONFIG_HOME", config)
+            .env(CHILD, downloads)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
 
     #[test]
     fn file_place_prefers_local_then_remote() {

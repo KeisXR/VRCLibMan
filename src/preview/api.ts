@@ -153,6 +153,7 @@ const store: Store = {
     llmBackend: "ollama",
     cloudBaseUrl: "https://api.openai.com/v1",
     cloudModel: "gpt-4.1-mini",
+    backgroundSupported: true,
     backgroundMode: false,
     launchAtLogin: false,
     unloadOllamaAfterClassification: true,
@@ -1855,13 +1856,14 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       if (!/^[a-zA-Z0-9._:/-]{1,80}$/.test(settings.ollamaModel.trim())) throw new Error("モデル名が不正です");
       if (settings.remoteAutoSync && !settings.remoteLibraryFolder.trim()) throw new Error("自動同期をオンにする前に、リモートライブラリのフォルダを選んでください");
       if (settings.routeDownloads && !settings.libraryFolder.trim()) throw new Error("自動整理をオンにする前に、ライブラリのフォルダを選んでください");
-      const backgroundMode = Boolean(settings.backgroundMode);
+      const backgroundSupported = store.settings.backgroundSupported;
+      const backgroundMode = backgroundSupported && Boolean(settings.backgroundMode);
       const boothLinkTarget = settings.boothLinkTarget === "builtin" ? "builtin" : "external";
       const cloudBaseUrl = previewCloudBaseUrl(settings.cloudBaseUrl ?? "https://api.openai.com/v1");
       const cloudModel = String(settings.cloudModel ?? "").trim();
       if (cloudModel.length > 200 || /[\u0000-\u001f]/.test(cloudModel)) throw new Error("クラウドAPIのモデル名に使えない文字があります");
       const llmBackend = settings.llmBackend === "apple" || settings.llmBackend === "cloud" ? settings.llmBackend : "ollama";
-      store.settings = { ...settings, llmBackend, cloudBaseUrl, cloudModel, ollamaModel: settings.ollamaModel.trim(), backgroundMode, launchAtLogin: backgroundMode && Boolean(settings.launchAtLogin), confidenceThreshold: Math.min(1, Math.max(0, settings.confidenceThreshold)), boothLinkTarget };
+      store.settings = { ...settings, llmBackend, cloudBaseUrl, cloudModel, ollamaModel: settings.ollamaModel.trim(), backgroundSupported, backgroundMode, launchAtLogin: backgroundMode && Boolean(settings.launchAtLogin), confidenceThreshold: Math.min(1, Math.max(0, settings.confidenceThreshold)), boothLinkTarget };
       return (command === "update_settings" ? { ...store.settings } : undefined) as T;
     }
     case "import_export":

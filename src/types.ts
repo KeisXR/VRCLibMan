@@ -253,6 +253,8 @@ export interface Settings {
   /** OpenAI 互換 API の接続先。APIキーはここに含めず、OS の資格情報に保存する。 */
   cloudBaseUrl: string;
   cloudModel: string;
+  /** 実行環境が常駐とログイン起動を利用できるか。設定では変更しない。 */
+  backgroundSupported: boolean;
   backgroundMode: boolean;
   launchAtLogin: boolean;
   unloadOllamaAfterClassification: boolean;
