@@ -138,7 +138,8 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
 
   const presenceReady = backgroundChoice !== "unset" && loginChoice !== "unset";
   const model = selectedModel ?? status?.model ?? DEFAULT_OLLAMA_MODEL;
-  const usingApple = status?.backend === "apple";
+  const usingCloud = status?.backend === "cloud";
+  const usingApple = status?.backend === "apple" || usingCloud;
   const appleAvailable = apple?.availability === "available";
   const ready = usingApple || modelInstalled(ollama?.models ?? [], model);
   const connected = ollama != null && ollamaError === "";
@@ -172,7 +173,7 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
             {!checking && usingApple && apple && !appleAvailable && apple.message && (
               <p className="meta">{apple.message}</p>
             )}
-            {usingApple && <><p className="meta">Apple のオンデバイスモデルで分類します。</p><button className="button" type="button" onClick={() => void api.settings().then(async (settings) => { await api.saveSettings({ ...settings, llmBackend: "ollama" }); await check(); }).catch((err: unknown) => setMessage(errorText(err)))}>Ollama を使う</button></>}
+            {usingApple && <><p className="meta">{usingCloud ? "クラウド(APIキー)で分類します。キーと接続先は設定で変更できます。" : "Apple のオンデバイスモデルで分類します。"}</p><button className="button" type="button" onClick={() => void api.settings().then(async (settings) => { await api.saveSettings({ ...settings, llmBackend: "ollama" }); await check(); }).catch((err: unknown) => setMessage(errorText(err)))}>Ollama を使う</button></>}
             {message && <p className="meta">{message}</p>}
             <div className="row-actions">
               {appleAvailable && !usingApple && (

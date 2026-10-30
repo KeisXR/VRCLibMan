@@ -159,6 +159,10 @@ pub fn classification_done_line(
 /// English codes (`failed`, `badRequest`, `unavailable`, `contextWindow`) get a
 /// fixed Japanese kind so they do not collapse into the generic「失敗」.
 fn classification_failure_kind(message: &str) -> &'static str {
+    // Cloud classifier errors carry their own fixed kind (認証失敗, 回数制限, ...).
+    if let Some(kind) = crate::cloud::failure_kind(message) {
+        return kind;
+    }
     let lower = message.to_ascii_lowercase();
     let has = |token: &str| lower.contains(token);
     let word = |token: &str| {

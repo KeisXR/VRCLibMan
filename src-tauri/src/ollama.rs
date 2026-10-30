@@ -221,10 +221,7 @@ pub async fn extract_product(
 ) -> Result<Extraction, String> {
     let base = validate_base_url(base)?;
     let model = validate_model_name(model)?;
-    let description = clip_for_model(description);
-    let user = format!(
-        "タイトル: {title}\nBOOTHカテゴリ: {category_line}\nタグ: {tags_line}\n説明文:\n{description}"
-    );
+    let user = user_prompt(title, description, category_line, tags_line);
     let mut payload = serde_json::json!({
         "model": model,
         "stream": false,
@@ -255,6 +252,19 @@ pub async fn extract_product(
     };
     let content = chat_content(&text)?;
     parse_extraction(&content)
+}
+
+/// User message shared by the Ollama and cloud paths.
+pub(crate) fn user_prompt(
+    title: &str,
+    description: &str,
+    category_line: &str,
+    tags_line: &str,
+) -> String {
+    let description = clip_for_model(description);
+    format!(
+        "タイトル: {title}\nBOOTHカテゴリ: {category_line}\nタグ: {tags_line}\n説明文:\n{description}"
+    )
 }
 
 pub fn parse_extraction(raw: &str) -> Result<Extraction, String> {

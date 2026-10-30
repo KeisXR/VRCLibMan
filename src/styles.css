@@ -1202,3 +1202,5 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 }
 .app-updater > progress { accent-color: var(--accent); }
 .update-notes { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; overflow: auto; }
+/* クラウド分類の APIキー欄。保存状態の行は入力欄の下に少し空けて置く */
+.setting-control .cloud-key-status { margin-top: var(--space-2); }

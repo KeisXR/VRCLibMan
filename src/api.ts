@@ -40,6 +40,7 @@ import type {
   ItemView,
   GenreKind,
   GenreProducts,
+  CloudTestResult,
 } from "./types";
 
 export type ClassificationFeedbackScope = "other" | "unclassified" | "both";
@@ -187,6 +188,11 @@ export const api = {
   ollamaLoadedModels: () => call<OllamaLoadedModel[]>("ollama_loaded_models"),
   unloadOllamaModel: (model?: string) => call<void>("unload_ollama_model", { model }),
   appleFmStatus: () => call<AppleFmStatus>("apple_fm_status"),
+  cloudKeyStatus: () => call<boolean>("cloud_key_status"),
+  /** キーは OS の資格情報へ直接保存する。戻り値は保存済みかどうかだけ。 */
+  saveCloudApiKey: (key: string) => call<boolean>("save_cloud_api_key", { key }),
+  deleteCloudApiKey: () => call<boolean>("delete_cloud_api_key"),
+  testCloudClassifier: () => call<CloudTestResult>("test_cloud_classifier"),
   catalogInfo: () => call<CatalogInfo>("catalog_info"),
   refreshAvatarCatalog: () => call<CatalogRefresh>("refresh_avatar_catalog"),
   setupStatus: () => call<SetupStatus>("setup_status"),

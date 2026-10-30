@@ -97,6 +97,8 @@ pub(crate) struct ExtractJob {
     pub booth_category_name: String,
     pub booth_category_parent: String,
     pub booth_tags: Vec<String>,
+    /// BOOTH's age-restriction flag. These never go to the cloud classifier.
+    pub is_adult: bool,
 }
 
 pub(crate) struct ThumbJob {
@@ -369,6 +371,8 @@ fn ensure_ready(connection: &Connection) -> Result<(), String> {
         ("remote_auto_sync", "0"),
         ("route_downloads", "0"),
         ("llm_backend", "ollama"),
+        ("cloud_base_url", crate::cloud::DEFAULT_BASE_URL),
+        ("cloud_model", ""),
         ("background_mode", "0"),
         ("launch_at_login", "0"),
         ("unload_ollama_after_classification", "1"),
@@ -432,6 +436,10 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
         llm_backend: normalize_backend(
             &setting(connection, "llm_backend")?.unwrap_or_else(|| "ollama".into()),
         ),
+        cloud_base_url: setting(connection, "cloud_base_url")?
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| crate::cloud::DEFAULT_BASE_URL.into()),
+        cloud_model: setting(connection, "cloud_model")?.unwrap_or_default(),
         background_mode: setting(connection, "background_mode")?.as_deref() == Some("1"),
         launch_at_login: setting(connection, "launch_at_login")?.as_deref() == Some("1"),
         unload_ollama_after_classification: setting(connection, "unload_ollama_after_classification")?
@@ -463,10 +471,10 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
 }
 
 fn normalize_backend(value: &str) -> String {
-    if value.trim() == "apple" {
-        "apple".into()
-    } else {
-        "ollama".into()
+    match value.trim() {
+        "apple" => "apple".into(),
+        "cloud" => "cloud".into(),
+        _ => "ollama".into(),
     }
 }
 
@@ -502,6 +510,8 @@ fn save_settings_values(
 ) -> Result<(), String> {
     let base = crate::ollama::validate_base_url(&input.ollama_base_url)?;
     let model = crate::ollama::validate_model_name(&input.ollama_model)?;
+    let cloud_base = crate::cloud::validate_base_url(&input.cloud_base_url)?;
+    let cloud_model = crate::cloud::validate_model_name(&input.cloud_model)?;
     let (background_mode, launch_at_login) =
         crate::presence::normalize_presence(input.background_mode, input.launch_at_login);
     let library = input.library_folder.trim();
@@ -580,6 +590,8 @@ fn save_settings_values(
         if input.route_downloads { "1" } else { "0" },
     )?;
     set_setting(connection, "llm_backend", &backend)?;
+    set_setting(connection, "cloud_base_url", &cloud_base)?;
+    set_setting(connection, "cloud_model", &cloud_model)?;
     set_setting(
         connection,
         "background_mode",
@@ -2579,7 +2591,7 @@ pub(crate) fn parse_extract_target(value: &str) -> Result<ExtractTarget, String>
     }
 }
 
-const EXTRACT_JOB_COLUMNS: &str = "booth_id, title, description_snippet, booth_category_id, booth_category_name, booth_category_parent, booth_tags";
+const EXTRACT_JOB_COLUMNS: &str = "booth_id, title, description_snippet, booth_category_id, booth_category_name, booth_category_parent, booth_tags, IFNULL(is_adult, 0)";
 
 fn map_extract_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<ExtractJob> {
     let tags: Option<String> = row.get(6)?;
@@ -2591,6 +2603,7 @@ fn map_extract_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<ExtractJob> {
         booth_category_name: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
         booth_category_parent: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
         booth_tags: parse_list(tags.as_deref().unwrap_or("[]")),
+        is_adult: row.get::<_, i64>(7)? != 0,
     })
 }
 
@@ -7098,6 +7111,8 @@ mod tests {
                 remote_auto_sync: false,
                 route_downloads: false,
                 llm_backend: "ollama".into(),
+                cloud_base_url: crate::cloud::DEFAULT_BASE_URL.into(),
+                cloud_model: String::new(),
                 background_mode: false,
                 launch_at_login: false,
                 unload_ollama_after_classification: true,
@@ -7222,6 +7237,8 @@ mod tests {
                 remote_auto_sync: false,
                 route_downloads: false,
                 llm_backend: "ollama".into(),
+                cloud_base_url: crate::cloud::DEFAULT_BASE_URL.into(),
+                cloud_model: String::new(),
                 background_mode: false,
                 launch_at_login: false,
                 unload_ollama_after_classification: true,
@@ -8642,6 +8659,8 @@ mod tests {
                 remote_auto_sync: false,
                 route_downloads: true,
                 llm_backend: "ollama".into(),
+                cloud_base_url: crate::cloud::DEFAULT_BASE_URL.into(),
+                cloud_model: String::new(),
                 background_mode: false,
                 launch_at_login: false,
                 unload_ollama_after_classification: true,
@@ -8668,6 +8687,8 @@ mod tests {
                 remote_auto_sync: false,
                 route_downloads: true,
                 llm_backend: "ollama".into(),
+                cloud_base_url: crate::cloud::DEFAULT_BASE_URL.into(),
+                cloud_model: String::new(),
                 background_mode: false,
                 launch_at_login: false,
                 unload_ollama_after_classification: true,
@@ -8789,6 +8810,8 @@ mod tests {
                 remote_auto_sync: false,
                 route_downloads: route,
                 llm_backend: "ollama".into(),
+                cloud_base_url: crate::cloud::DEFAULT_BASE_URL.into(),
+                cloud_model: String::new(),
                 background_mode: false,
                 launch_at_login: false,
                 unload_ollama_after_classification: true,
@@ -9057,6 +9080,8 @@ mod tests {
             remote_auto_sync: false,
             route_downloads: false,
             llm_backend: "ollama".into(),
+            cloud_base_url: crate::cloud::DEFAULT_BASE_URL.into(),
+            cloud_model: String::new(),
             background_mode: false,
             launch_at_login: true,
                 unload_ollama_after_classification: true,
@@ -9225,6 +9250,8 @@ mod tests {
                 remote_auto_sync: false,
                 route_downloads: true,
                 llm_backend: "ollama".into(),
+                cloud_base_url: crate::cloud::DEFAULT_BASE_URL.into(),
+                cloud_model: String::new(),
                 background_mode: false,
                 launch_at_login: false,
                 unload_ollama_after_classification: true,
@@ -10209,5 +10236,65 @@ mod tests {
                     .map(|item| (item.booth_id.clone(), item.via_base_body))
             })
             .collect()
+    }
+
+    #[test]
+    fn cloud_settings_round_trip_and_never_hold_the_api_key() {
+        const DUMMY_KEY: &str = "sk-dummy-settings-TESTONLY-0000";
+        let connection = open_memory().unwrap();
+        let fresh = settings(&connection).unwrap();
+        assert_eq!(fresh.llm_backend, "ollama");
+        assert_eq!(fresh.cloud_base_url, crate::cloud::DEFAULT_BASE_URL);
+        assert_eq!(fresh.cloud_model, "");
+        let store = crate::cloud::MemoryKeyStore(std::sync::Mutex::new(None));
+        crate::cloud::save_key(&store, DUMMY_KEY).unwrap();
+        let saved = update_settings(
+            &connection,
+            &SettingsPatch {
+                llm_backend: Some("cloud".into()),
+                cloud_base_url: Some(" https://api.x.ai/v1/ ".into()),
+                cloud_model: Some(" grok-test ".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(saved.llm_backend, "cloud");
+        assert_eq!(saved.cloud_base_url, "https://api.x.ai/v1");
+        assert_eq!(saved.cloud_model, "grok-test");
+        let dump: Vec<(String, String)> = connection
+            .prepare("SELECT key, value FROM settings")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(!dump.is_empty());
+        assert!(dump.iter().all(|(key, value)| !key.contains(DUMMY_KEY) && !value.contains(DUMMY_KEY)));
+        assert!(dump.iter().all(|(key, _)| !key.contains("api_key") && !key.contains("secret")));
+        let serialized = serde_json::to_string(&saved).unwrap();
+        assert!(!serialized.contains(DUMMY_KEY));
+        assert!(!serialized.to_lowercase().contains("apikey"));
+        assert!(update_settings(
+            &connection,
+            &SettingsPatch {
+                cloud_base_url: Some("http://api.example.com/v1".into()),
+                ..Default::default()
+            },
+        )
+        .is_err());
+        assert_eq!(settings(&connection).unwrap().cloud_base_url, "https://api.x.ai/v1");
+        assert!(serde_json::from_str::<SettingsPatch>(r#"{"cloudApiKey":"x"}"#).is_err());
+    }
+
+    #[test]
+    fn extract_jobs_carry_the_age_restriction_flag() {
+        let mut connection = open_memory().unwrap();
+        import_products(&mut connection, &parse_export(SAMPLE).unwrap()).unwrap();
+        connection
+            .execute("UPDATE products SET is_adult = 1 WHERE booth_id = '1004'", [])
+            .unwrap();
+        let jobs = products_for_extract(&connection, ExtractTarget::All).unwrap();
+        assert!(jobs.iter().any(|job| job.booth_id == "1004" && job.is_adult));
+        assert!(jobs.iter().filter(|job| job.booth_id != "1004").all(|job| !job.is_adult));
     }
 }

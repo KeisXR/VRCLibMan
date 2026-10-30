@@ -151,6 +151,8 @@ const store: Store = {
     remoteLibraryFolder: "\\\\nas\\vrclibman",
     routeDownloads: false,
     llmBackend: "ollama",
+    cloudBaseUrl: "https://api.openai.com/v1",
+    cloudModel: "gpt-4.1-mini",
     backgroundMode: false,
     launchAtLogin: false,
     unloadOllamaAfterClassification: true,
@@ -1705,6 +1707,24 @@ const previewIntegration = {
   browserImport: null,
 };
 
+/** 見本のクラウド分類。キーの文字列は持たず、保存済みかどうかだけを再現する。 */
+let previewCloudKeySaved = true;
+
+function previewCloudBaseUrl(value: string): string {
+  const trimmed = value.trim().replace(/\/+$/, "");
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    throw new Error("クラウドAPIの接続先 URL が正しくありません");
+  }
+  const loopback = ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) throw new Error("クラウドAPIの接続先は https にしてください");
+  if (url.username || url.password) throw new Error("クラウドAPIの接続先に認証情報は入れられません。キーは別欄に保存します");
+  if (url.search || url.hash) throw new Error("クラウドAPIの接続先に ? や # は入れられません");
+  return trimmed;
+}
+
 export async function dispatch<T>(command: string, args: Record<string, unknown>): Promise<T> {
   notePreviewCall(command);
   switch (command) {
@@ -1837,7 +1857,11 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       if (settings.routeDownloads && !settings.libraryFolder.trim()) throw new Error("自動整理をオンにする前に、ライブラリのフォルダを選んでください");
       const backgroundMode = Boolean(settings.backgroundMode);
       const boothLinkTarget = settings.boothLinkTarget === "builtin" ? "builtin" : "external";
-      store.settings = { ...settings, ollamaModel: settings.ollamaModel.trim(), backgroundMode, launchAtLogin: backgroundMode && Boolean(settings.launchAtLogin), confidenceThreshold: Math.min(1, Math.max(0, settings.confidenceThreshold)), boothLinkTarget };
+      const cloudBaseUrl = previewCloudBaseUrl(settings.cloudBaseUrl ?? "https://api.openai.com/v1");
+      const cloudModel = String(settings.cloudModel ?? "").trim();
+      if (cloudModel.length > 200 || /[\u0000-\u001f]/.test(cloudModel)) throw new Error("クラウドAPIのモデル名に使えない文字があります");
+      const llmBackend = settings.llmBackend === "apple" || settings.llmBackend === "cloud" ? settings.llmBackend : "ollama";
+      store.settings = { ...settings, llmBackend, cloudBaseUrl, cloudModel, ollamaModel: settings.ollamaModel.trim(), backgroundMode, launchAtLogin: backgroundMode && Boolean(settings.launchAtLogin), confidenceThreshold: Math.min(1, Math.max(0, settings.confidenceThreshold)), boothLinkTarget };
       return (command === "update_settings" ? { ...store.settings } : undefined) as T;
     }
     case "import_export":
@@ -1990,6 +2014,30 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
         defaultModel: "qwen3.5:9b",
         backend: store.settings.llmBackend,
       } as T;
+    case "cloud_key_status":
+      return previewCloudKeySaved as T;
+    case "save_cloud_api_key": {
+      const key = String(args.key ?? "").trim();
+      if (!key) throw new Error("APIキーを入力してください");
+      if (!/^[\x21-\x7e]+$/.test(key)) throw new Error("APIキーに使えない文字（空白や全角文字）があります");
+      previewCloudKeySaved = true;
+      return true as T;
+    }
+    case "delete_cloud_api_key":
+      previewCloudKeySaved = false;
+      return false as T;
+    case "test_cloud_classifier": {
+      if (!previewCloudKeySaved) {
+        return { ok: false, kind: "キー未保存", message: "クラウドAPIのキーが保存されていません。設定で保存してください", modelListed: null } as T;
+      }
+      const model = store.settings.cloudModel.trim();
+      return {
+        ok: true,
+        kind: "成功",
+        message: model ? `接続できました。モデル ${model} を使えます（見本）` : "接続できました。モデル名を入力してください（見本）",
+        modelListed: model ? true : null,
+      } as T;
+    }
     case "apple_fm_status":
       return {
         availability: "available",

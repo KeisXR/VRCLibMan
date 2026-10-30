@@ -8,7 +8,7 @@ VRCLibMan を変更するときは、このファイルを先に読む。実装�
 
 持っている VRChat / Booth のアバターを開き、同じ素体の衣装・髪・ギミックを手元だけで見る。製品名は VRCLibMan、識別子は `app.vrclibman.desktop`。UI は日本語。
 
-アプリは Booth のパスワードを独自に取得・保存しない。標準のブラウザ拡張は既存のログインセッションから商品情報だけを JSON にし、Cookie はアプリへ送らない。任意の内蔵ブラウザは専用 WebView データストアにログイン状態を保持する。1件の購入済みファイルを「ダウンロード」操作時は WebView の Cookie を Rust 側で読み、BOOTH へのダウンロード要求にだけ使用する。分類の文章抽出には、同じ PC の Ollama または対応する Mac の Apple オンデバイスモデルを使う。Apple が処理を拒否した場合は文字列を伏せて再試行し、導入済み Ollama が使えればそちらでも再試行する。どの商品がどのアバターか、どのアバターが同じ素体かは、編集できる対応表が決める。
+アプリは Booth のパスワードを独自に取得・保存しない。標準のブラウザ拡張は既存のログインセッションから商品情報だけを JSON にし、Cookie はアプリへ送らない。任意の内蔵ブラウザは専用 WebView データストアにログイン状態を保持する。1件の購入済みファイルを「ダウンロード」操作時は WebView の Cookie を Rust 側で読み、BOOTH へのダウンロード要求にだけ使用する。分類の文章抽出には、既定で同じ PC の Ollama または対応する Mac の Apple オンデバイスモデルを使う。利用者が「クラウド(APIキー)」を選んだときだけ、OpenAI 互換 API へ送る（下の「抽出と安全境界」）。Apple が処理を拒否した場合は文字列を伏せて再試行し、導入済み Ollama が使えればそちらでも再試行する。どの商品がどのアバターか、どのアバターが同じ素体かは、編集できる対応表が決める。
 
 続けて作らないもの:
 
@@ -123,6 +123,10 @@ Windows では、BOOTH の窓を同期コマンドの中で作らない。WebVie
 細かい分類規則は次節。ここは境界だけを書く。
 
 - Ollama は `http` かつ `127.0.0.1` / `localhost` / `::1` だけ。ユーザー情報付き URL は拒否する。
+- クラウド分類（`llm_backend = "cloud"`、既定オフ）は `src-tauri/src/cloud.rs`。接続先は `settings.cloud_base_url`（既定 `https://api.openai.com/v1`。https、またはループバックの http だけ。ユーザー情報・`?`・`#` は拒否）、モデルは `settings.cloud_model`。プロンプトとパーサーとガードレールはローカルと同じ（`ollama::SYSTEM_PROMPT`、`ollama::user_prompt`、`ollama::parse_extraction`、`db::apply_extraction`）。
+- APIキーは OS の資格情報（Windows 資格情報マネージャー / macOS キーチェーン、service はアプリの identifier、account は `cloud-classifier-api-key`）だけに置く。SQLite・ログ・書き出し・バックアップ・設定・エラー文に入れない。画面へ読み戻さず、保存済みかどうかだけ返す。エラー文は固定文と HTTP 状態だけで、応答本文を含めない。
+- 年齢制限の商品（`products.is_adult`、または題名・タグの R-18 / 18禁 / 成人向け）はクラウドへ送らない。Ollama が使えればそちら、なければ Apple、どちらもなければ未分類のまま残し、`booth-browser.log` に ID 末尾 4 桁だけ書く。
+- クラウドへの同時送信は最大 2 件。429 は Retry-After（60 秒まで）か 2・4・8 秒で最大 3 回やり直す。400 は `response_format` と `temperature` を外して 1 回だけ再送する。接続テストは `GET {接続先}/models` で、商品情報は送らない。
 - 説明の補完もサムネイルも、ログインセッションと `adult` クッキーを送らない。アプリの受信口は `Cookie` を読まない。拡張からアプリへの POST は `credentials: "omit"`。
 - サムネイルは https かつ `pximg.net` / `booth.pm` だけ。`Referer: https://booth.pm/` を付け、pximg は `/c/150x150/` に書き換える。`360x360` と素の `300x300` は 403 になる。4MB まで。
 - アセットとワールドのプレビューは、選択が落ち着いてから 1 件だけ、保存済みサムネイル URL の `/c/` を外した画像を `previews` に置く。Cookie は送らない。失敗したら 150px のサムネイルに戻す。年齢制限の商品は「表示する」まで大きい画像を取らない。オンオフは `settings.preview_pane`（既定オフ）、幅は `settings.preview_pane_width`（既定 300、240〜1600。画面上の上限は窓幅の半分と一覧の余り）。スキーマ版は変えない。ログに商品名は出さない。

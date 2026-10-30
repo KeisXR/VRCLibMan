@@ -237,6 +237,8 @@ export interface ClassificationStatus {
   staleCount: number;
 }
 
+export type LlmBackend = "ollama" | "apple" | "cloud";
+
 export interface Settings {
   ollamaBaseUrl: string;
   ollamaModel: string;
@@ -247,7 +249,10 @@ export interface Settings {
   remoteLibraryFolder: string;
   remoteAutoSync: boolean;
   routeDownloads: boolean;
-  llmBackend: "ollama" | "apple";
+  llmBackend: LlmBackend;
+  /** OpenAI 互換 API の接続先。APIキーはここに含めず、OS の資格情報に保存する。 */
+  cloudBaseUrl: string;
+  cloudModel: string;
   backgroundMode: boolean;
   launchAtLogin: boolean;
   unloadOllamaAfterClassification: boolean;
@@ -337,6 +342,8 @@ export interface ExtractReport {
   /** Present after a classification run. Omitted by older callers. */
   boothSettled?: number;
   modelUsed?: number;
+  /** クラウド分類で送らずに残した年齢制限の商品数。 */
+  cloudWithheld?: number;
 }
 
 export const DEFAULT_OLLAMA_MODEL = "qwen3.5:9b";
@@ -373,7 +380,15 @@ export interface SetupStatus {
   complete: boolean;
   model: string;
   defaultModel: string;
-  backend: "ollama" | "apple";
+  backend: LlmBackend;
+}
+
+/** クラウド分類の接続テスト結果。キーは含まない。 */
+export interface CloudTestResult {
+  ok: boolean;
+  kind: string;
+  message: string;
+  modelListed: boolean | null;
 }
 
 export interface AppleFmStatus {
