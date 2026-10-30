@@ -7,6 +7,10 @@ pub(crate) const MAIN_WINDOW: &str = "main";
 #[cfg(any(windows, target_os = "macos"))]
 const TRAY_ID: &str = "vrclibman";
 
+pub(crate) fn background_supported() -> bool {
+    cfg!(any(windows, target_os = "macos"))
+}
+
 /// What closing the main window should do.
 /// `Quit` ends the process. `DestroyWindowKeepProcess` drops the webview and leaves the server up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,7 +20,7 @@ pub(crate) enum CloseDecision {
 }
 
 pub(crate) fn decide_close(background_mode: bool) -> CloseDecision {
-    if background_mode {
+    if background_supported() && background_mode {
         CloseDecision::DestroyWindowKeepProcess
     } else {
         CloseDecision::Quit
@@ -24,7 +28,7 @@ pub(crate) fn decide_close(background_mode: bool) -> CloseDecision {
 }
 
 pub(crate) fn normalize_presence(background_mode: bool, launch_at_login: bool) -> (bool, bool) {
-    if background_mode {
+    if background_supported() && background_mode {
         (true, launch_at_login)
     } else {
         (false, false)
@@ -32,6 +36,7 @@ pub(crate) fn normalize_presence(background_mode: bool, launch_at_login: bool) -
 }
 
 pub(crate) fn autostart_should_enable(background_mode: bool, launch_at_login: bool) -> bool {
+    let (background_mode, launch_at_login) = normalize_presence(background_mode, launch_at_login);
     background_mode && launch_at_login
 }
 
@@ -43,19 +48,23 @@ pub(crate) fn launched_by_login_item<S: AsRef<str>>(args: impl IntoIterator<Item
 /// A windowless start is only for a login launch while background mode is on.
 /// Background mode off always opens a window, including a leftover login launch.
 pub(crate) fn should_open_window_on_start(background_mode: bool, launched_by_login: bool) -> bool {
-    !(background_mode && launched_by_login)
+    !(background_supported() && background_mode && launched_by_login)
 }
 
 pub(crate) fn remember_background<R: Runtime>(app: &AppHandle<R>, enabled: bool) {
     if let Some(state) = app.try_state::<crate::AppState>() {
-        state.background_mode.store(enabled, Ordering::SeqCst);
+        state
+            .background_mode
+            .store(background_supported() && enabled, Ordering::SeqCst);
     }
 }
 
 pub(crate) fn background_mode_enabled<R: Runtime>(app: &AppHandle<R>) -> bool {
-    app.try_state::<crate::AppState>()
-        .map(|state| state.background_mode.load(Ordering::SeqCst))
-        .unwrap_or(false)
+    background_supported()
+        && app
+            .try_state::<crate::AppState>()
+            .map(|state| state.background_mode.load(Ordering::SeqCst))
+            .unwrap_or(false)
 }
 
 pub(crate) fn show_main_later<R: Runtime>(app: &AppHandle<R>) {
@@ -146,6 +155,7 @@ pub(crate) fn apply_presence<R: Runtime>(
     background_mode: bool,
     launch_at_login: bool,
 ) -> Result<(), String> {
+    let (background_mode, launch_at_login) = normalize_presence(background_mode, launch_at_login);
     let login = sync_login_item(
         app,
         autostart_should_enable(background_mode, launch_at_login),
@@ -161,6 +171,7 @@ pub(crate) fn apply_presence<R: Runtime>(
 }
 
 pub(crate) fn sync_login_item<R: Runtime>(app: &AppHandle<R>, enabled: bool) -> Result<(), String> {
+    let enabled = background_supported() && enabled;
     use tauri_plugin_autostart::ManagerExt;
     let manager = app.autolaunch();
     let current = manager
@@ -279,7 +290,11 @@ mod tests {
     fn background_on_close_destroys_the_window_and_keeps_the_process() {
         assert_eq!(
             decide_close(true),
-            CloseDecision::DestroyWindowKeepProcess
+            if background_supported() {
+                CloseDecision::DestroyWindowKeepProcess
+            } else {
+                CloseDecision::Quit
+            }
         );
     }
 
@@ -288,10 +303,16 @@ mod tests {
         assert!(!autostart_should_enable(false, false));
         assert!(!autostart_should_enable(false, true));
         assert!(!autostart_should_enable(true, false));
-        assert!(autostart_should_enable(true, true));
+        assert_eq!(autostart_should_enable(true, true), background_supported());
         assert_eq!(normalize_presence(false, true), (false, false));
-        assert_eq!(normalize_presence(true, true), (true, true));
-        assert_eq!(normalize_presence(true, false), (true, false));
+        assert_eq!(
+            normalize_presence(true, true),
+            (background_supported(), background_supported())
+        );
+        assert_eq!(
+            normalize_presence(true, false),
+            (background_supported(), false)
+        );
     }
 
     #[test]
@@ -299,9 +320,29 @@ mod tests {
         assert!(should_open_window_on_start(false, true));
         assert!(should_open_window_on_start(false, false));
         assert!(should_open_window_on_start(true, false));
-        assert!(!should_open_window_on_start(true, true));
+        assert_eq!(
+            should_open_window_on_start(true, true),
+            !background_supported()
+        );
         assert!(launched_by_login_item(["VRCLibMan", AUTOSTART_ARG]));
         assert!(!launched_by_login_item(["VRCLibMan"]));
         assert!(!launched_by_login_item(["VRCLibMan", "--other"]));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_never_starts_or_remains_windowless_even_with_stale_settings() {
+        assert!(!background_supported());
+        for background_mode in [false, true] {
+            for launch_at_login in [false, true] {
+                assert_eq!(
+                    normalize_presence(background_mode, launch_at_login),
+                    (false, false)
+                );
+                assert!(!autostart_should_enable(background_mode, launch_at_login));
+                assert!(should_open_window_on_start(background_mode, launch_at_login));
+                assert_eq!(decide_close(background_mode), CloseDecision::Quit);
+            }
+        }
     }
 }

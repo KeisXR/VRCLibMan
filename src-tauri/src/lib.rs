@@ -112,7 +112,13 @@ pub fn run() {
                     }
                 }
             }
-            #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
+            #[cfg(target_os = "linux")]
+            if app.deep_link().register("vrclibman").is_err() {
+                // URL registration uses external desktop tools. Receiving imports in an
+                // already running app and importing JSON must remain available without them.
+                eprintln!("URL の関連付けを登録できませんでした。アプリを起動してから拡張機能で送信するか、JSON を読み込んでください。");
+            }
+            #[cfg(all(debug_assertions, windows))]
             {
                 app.deep_link()
                     .register_all()

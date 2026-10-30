@@ -371,13 +371,14 @@ export function SettingsPage() {
 
           <section className="settings-section">
             <header><h2>起動と常駐</h2><p>ウィンドウを閉じた後の動作を設定します。</p></header>
+            {!settings.backgroundSupported && <div className="section-body"><p>Linux 版ではバックグラウンド動作とログイン時の起動は利用できません。ウィンドウを閉じるとアプリも終了します。</p></div>}
             <SettingRow label="バックグラウンドで動作" help="ウィンドウを閉じても、商品情報の受信・自動整理・リモートへの自動同期を続けます。">
-              <label className="switch-label"><input type="checkbox" checked={settings.backgroundMode} onChange={(e) => { const enabled = e.target.checked; changeSettings({ backgroundMode: enabled, launchAtLogin: enabled ? settings.launchAtLogin : false }); }} />有効にする</label>
+              <label className="switch-label"><input type="checkbox" checked={settings.backgroundSupported && settings.backgroundMode} disabled={!settings.backgroundSupported} onChange={(e) => { const enabled = e.target.checked; changeSettings({ backgroundMode: enabled, launchAtLogin: enabled ? settings.launchAtLogin : false }); }} />有効にする</label>
             </SettingRow>
             <SettingRow label="ログイン時に起動" help="バックグラウンド動作が有効な場合だけ使用できます。">
-              <label className="switch-label"><input type="checkbox" checked={settings.launchAtLogin} disabled={!settings.backgroundMode} onChange={(e) => changeSettings({ launchAtLogin: e.target.checked })} />有効にする</label>
+              <label className="switch-label"><input type="checkbox" checked={settings.backgroundSupported && settings.launchAtLogin} disabled={!settings.backgroundSupported || !settings.backgroundMode} onChange={(e) => changeSettings({ launchAtLogin: e.target.checked })} />有効にする</label>
             </SettingRow>
-            <details className="settings-details"><summary>起動と常駐について詳しく</summary><p>オフにすると、ウィンドウを閉じたときにアプリも終了します。オンにすると、トレイ（Windows）またはメニューバー（macOS）から再表示・終了できます。</p><p>「ログイン時に起動」を有効にすると、ウィンドウを表示せずに起動します。バックグラウンド動作をオフにすると、ログイン時の起動もオフになります。</p></details>
+            {settings.backgroundSupported && <details className="settings-details"><summary>起動と常駐について詳しく</summary><p>オフにすると、ウィンドウを閉じたときにアプリも終了します。オンにすると、トレイ（Windows）またはメニューバー（macOS）から再表示・終了できます。</p><p>「ログイン時に起動」を有効にすると、ウィンドウを表示せずに起動します。バックグラウンド動作をオフにすると、ログイン時の起動もオフになります。</p></details>}
           </section>
 
           <section className="settings-section">

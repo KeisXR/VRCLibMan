@@ -301,6 +301,36 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       },
     );
 
+    await t.test("unsupported background operation cannot be enabled or appear active", async () => {
+      const originalSettings = api.settings;
+      const presenceSwitch = (label) =>
+        [...document.querySelectorAll(".setting-row")]
+          .find((row) => row.querySelector("strong")?.textContent === label)
+          ?.querySelector('input[type="checkbox"]');
+      try {
+        api.settings = async () => ({
+          ...await originalSettings(),
+          backgroundSupported: false,
+          backgroundMode: true,
+          launchAtLogin: true,
+        });
+        await route("#/import");
+        await route("#/settings");
+        await wait(() => text().includes("Linux 版ではバックグラウンド動作とログイン時の起動は利用できません"));
+        for (const label of ["バックグラウンドで動作", "ログイン時に起動"]) {
+          assert.equal(presenceSwitch(label).disabled, true);
+          assert.equal(presenceSwitch(label).checked, false);
+        }
+        assert.ok(text().includes("ウィンドウを閉じるとアプリも終了します"));
+        assert.ok(!text().includes("トレイ（Windows）またはメニューバー（macOS）"));
+      } finally {
+        api.settings = originalSettings;
+        await route("#/import");
+        await route("#/settings");
+        await wait(() => presenceSwitch("バックグラウンドで動作")?.disabled === false);
+      }
+    });
+
     await t.test("debug export copies classification feedback without secrets", async () => {
       await route("#/settings");
       await wait(() => document.querySelector("details.debug-section"));

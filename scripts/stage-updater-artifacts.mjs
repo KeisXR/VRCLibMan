@@ -9,12 +9,12 @@ import { basename, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export function stageUpdaterArtifacts({ target, paths, destination, pubkey }) {
-  const extension =
-    target === "windows-x64"
-      ? "-setup.exe"
-      : target === "macos-aarch64"
-        ? ".app.tar.gz"
-        : null;
+  const extension = new Map([
+    ["windows-x64", "-setup.exe"],
+    ["macos-aarch64", ".app.tar.gz"],
+    ["linux-x64", "_amd64.AppImage"],
+    ["linux-aarch64", "_aarch64.AppImage"],
+  ]).get(target);
   if (!extension) throw new Error("更新ファイルの対象が正しくありません");
   const packages = paths.filter((path) => path.endsWith(extension));
   if (packages.length !== 1)

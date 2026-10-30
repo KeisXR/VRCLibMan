@@ -419,6 +419,10 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
         .and_then(|value| value.parse::<f64>().ok())
         .unwrap_or(0.6)
         .clamp(0.0, 1.0);
+    let (background_mode, launch_at_login) = crate::presence::normalize_presence(
+        setting(connection, "background_mode")?.as_deref() == Some("1"),
+        setting(connection, "launch_at_login")?.as_deref() == Some("1"),
+    );
     Ok(Settings {
         ollama_base_url: setting(connection, "ollama_base_url")?
             .unwrap_or_else(|| "http://127.0.0.1:11434".into()),
@@ -440,8 +444,9 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| crate::cloud::DEFAULT_BASE_URL.into()),
         cloud_model: setting(connection, "cloud_model")?.unwrap_or_default(),
-        background_mode: setting(connection, "background_mode")?.as_deref() == Some("1"),
-        launch_at_login: setting(connection, "launch_at_login")?.as_deref() == Some("1"),
+        background_supported: crate::presence::background_supported(),
+        background_mode,
+        launch_at_login,
         unload_ollama_after_classification: setting(connection, "unload_ollama_after_classification")?
             .as_deref()
             != Some("0"),
@@ -5998,7 +6003,9 @@ mod tests {
         .unwrap();
         assert_eq!(saved.ollama_model, "gemma4:12b");
         assert_eq!(saved.confidence_threshold, 0.75);
-        assert!(saved.builtin_browser && saved.background_mode && saved.launch_at_login);
+        assert!(saved.builtin_browser);
+        assert_eq!(saved.background_mode, crate::presence::background_supported());
+        assert_eq!(saved.launch_at_login, crate::presence::background_supported());
         let invalid = SettingsPatch {
             ollama_model: Some("invalid model!".into()),
             confidence_threshold: Some(0.1),
@@ -9113,13 +9120,42 @@ mod tests {
         )
         .unwrap();
         let saved = settings(&connection).unwrap();
-        assert!(saved.background_mode);
-        assert!(saved.launch_at_login);
-        assert!(crate::presence::autostart_should_enable(
-            saved.background_mode,
-            saved.launch_at_login
-        ));
+        assert_eq!(saved.background_mode, crate::presence::background_supported());
+        assert_eq!(saved.launch_at_login, crate::presence::background_supported());
+        assert_eq!(
+            crate::presence::autostart_should_enable(saved.background_mode, saved.launch_at_login),
+            crate::presence::background_supported()
+        );
         assert_eq!(saved.ollama_model, "gemma4:12b");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_settings_ignore_stored_background_flags_and_cannot_enable_them() {
+        let connection = open_memory().unwrap();
+        set_setting(&connection, "background_mode", "1").unwrap();
+        set_setting(&connection, "launch_at_login", "1").unwrap();
+        let saved = settings(&connection).unwrap();
+        assert!(!saved.background_supported);
+        assert!(!saved.background_mode && !saved.launch_at_login);
+        let saved = update_settings(
+            &connection,
+            &SettingsPatch {
+                background_mode: Some(true),
+                launch_at_login: Some(true),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(!saved.background_mode && !saved.launch_at_login);
+        assert_eq!(
+            setting(&connection, "background_mode").unwrap().as_deref(),
+            Some("0")
+        );
+        assert_eq!(
+            setting(&connection, "launch_at_login").unwrap().as_deref(),
+            Some("0")
+        );
     }
 
     #[test]

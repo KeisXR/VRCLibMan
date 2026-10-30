@@ -10,6 +10,7 @@ Node.js の LTS、Rust（rustup）、各 OS のビルドツールが必要です
 | --- | --- |
 | Windows x64 | Visual Studio 2022 Build Tools の C++ ワークロード |
 | Apple Silicon Mac | **macOS 27.2 SDK を含む Xcode**、`aarch64-apple-darwin` Rust ターゲット |
+| Linux x86_64 / aarch64 | Ubuntu 22.04 相当、GTK 3 / WebKitGTK 4.1 開発用パッケージ、CPU に合うネイティブ環境 |
 
 Mac のアプリ本体の動作条件は macOS 14 以降ですが、同梱する Apple モデル用ヘルパーをビルドするために SDK 27.2 が必要です。通常の Xcode Command Line Tools だけでは足りません。Release ワークフローは `xcode-27` ランナーで Xcode 27.2 を選びます。
 
@@ -34,6 +35,25 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
 Rust のコンパイル前に `npm run build` が必要です。Tauri がフロントエンドの成果物を参照します。CI の Mac ライブラリテストは `x86_64-apple-darwin` と Apple モデルを使わないスタブを使用しており、Apple Silicon 配布版の実行確認にはなりません。
+
+## Linux AppImage のビルド
+
+Linux は glibc 系デスクトップを対象に、Ubuntu 22.04 を基準にビルドします。より新しい OS 上でビルドすると、必要な glibc の版も上がる場合があります。x86_64 と aarch64 はそれぞれ同じ CPU の環境で作成します。AppImage のパッケージ化を含むクロスコンパイルは行いません。CI と Release は `ubuntu-22.04` / `ubuntu-22.04-arm` のネイティブランナーを使用します。
+
+Ubuntu のビルド環境には次を導入します。
+
+```sh
+sudo apt-get update
+sudo apt-get install -y build-essential curl wget file pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf xdg-utils desktop-file-utils
+npm ci
+npm run tauri build
+```
+
+Linux では `src-tauri/tauri.linux.conf.json` を自動で読み込み、AppImage を生成します。成果物は `src-tauri/target/release/bundle/appimage/`（`--target` 指定時はそのターゲット配下）です。更新用の署名設定は [配布とアプリ内更新](updater.md) を参照してください。CI では `APPIMAGE_EXTRACT_AND_RUN=1` を使ってビルドツールを展開実行します。これは配布先で FUSE が不要になる設定ではありません。
+
+Linux のアプリデータは `$XDG_DATA_HOME/app.vrclibman.desktop`（未設定時は `~/.local/share/app.vrclibman.desktop`）です。ダウンロード先は XDG ユーザーディレクトリの設定を読み、保存元の厳密なパス検査は維持します。Linux の常駐とログイン時起動はトレイ対応が整うまで無効です。URL 関連付けの登録に失敗してもアプリを起動でき、起動中のアプリには拡張から送信できます。
+
+Ubuntu / Mint、Fedora、Arch 系の GNOME / KDE、X11 / Wayland は実機確認の対象です。ビルド成功だけではこれらの環境での動作確認済みとはしません。aarch64 もデスクトップ Linux が対象であり、個別の GPU・ボードの動作は別途確認します。
 
 ## Windows ビルドの高速化
 

@@ -42,9 +42,19 @@ jobs:
         platform:
           - windows-latest
           - macos-latest
+          - ubuntu-22.04
+          - ubuntu-22.04-arm
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v7
+
+      - name: install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential curl wget file libwebkit2gtk-4.1-dev libxdo-dev \
+            libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf libfuse2 xvfb xauth
 
       - uses: actions/setup-node@v6
         with:
@@ -74,12 +84,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: "./src-tauri -> target"
-          key: ${{ runner.os == 'macOS' && 'x86_64-apple-darwin' || 'native' }}
+          key: ${{ runner.os == 'macOS' && 'x86_64-apple-darwin' || runner.arch }}
 
       - name: test Rust library
-        if: runner.os != 'macOS'
+        if: runner.os == 'Windows'
         working-directory: src-tauri
         run: cargo test --lib
+
+      - name: test Rust library
+        if: runner.os == 'Linux'
+        working-directory: src-tauri
+        run: xvfb-run -a cargo test --lib
 
       - name: test Rust library
         if: runner.os == 'macOS'
