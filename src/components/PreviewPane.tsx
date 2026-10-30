@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { api, isTauri, openExternal } from "../api";
+import { api, isTauri, openBoothLink } from "../api";
 import { useShell } from "../App";
 import { filePresence, mediaSrc } from "../media";
 import {
@@ -271,7 +271,7 @@ export function PreviewPane({
             </div>
           </dl>
           <div className="row-actions">
-            <button className="button" type="button" onClick={() => void openExternal(item.url)}>
+            <button className="button" type="button" onClick={() => void openBoothLink(item.url)}>
               BOOTH
             </button>
           </div>
