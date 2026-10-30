@@ -365,6 +365,8 @@ pub fn save_settings(
                 remote_auto_sync: settings.remote_auto_sync,
                 route_downloads: settings.route_downloads,
                 llm_backend: settings.llm_backend,
+                cloud_base_url: settings.cloud_base_url,
+                cloud_model: settings.cloud_model,
                 background_mode: settings.background_mode,
                 launch_at_login: settings.launch_at_login,
                 unload_ollama_after_classification: settings.unload_ollama_after_classification,
@@ -829,7 +831,24 @@ pub async fn extract_products(
         db::protected_names(&connection)?
     };
     let lists = wordlist_dir(&app);
-    let ollama_ready = if settings.llm_backend == "apple" {
+    let cloud = if settings.llm_backend == "cloud" {
+        if settings.cloud_model.trim().is_empty() {
+            return Err(crate::cloud::CloudError::MissingModel.message());
+        }
+        let key = crate::cloud::load_key(&key_store(&app))?;
+        Some(CloudContext {
+            client: crate::cloud::client()?,
+            key,
+        })
+    } else {
+        None
+    };
+    let any_restricted = cloud.is_some()
+        && jobs
+            .iter()
+            .any(|job| crate::cloud::age_restricted(job.is_adult, &job.title, &job.booth_tags));
+    let apple_ready = any_restricted && apple_fm::can_select(None);
+    let ollama_ready = if settings.llm_backend == "apple" || any_restricted {
         ollama::list_models(&client, &settings.ollama_base_url)
             .await
             .map(|models| model_ready(&models, &settings.ollama_model))
@@ -842,6 +861,7 @@ pub async fn extract_products(
     let mut failed = 0;
     let mut booth_settled = 0;
     let mut model_used = 0;
+    let mut cloud_withheld = 0;
     let mut errors = Vec::new();
     let mut cancelled = false;
     for (index, job) in jobs.iter().enumerate() {
@@ -897,7 +917,18 @@ pub async fn extract_products(
             );
         }
         model_used += 1;
-        let classified = classify_product(&client, &settings, job, &keep, &lists, ollama_ready).await;
+        let classified = classify_product(
+            &client,
+            &settings,
+            job,
+            &keep,
+            &lists,
+            ollama_ready,
+            apple_ready,
+            cloud.as_ref(),
+            &state.cancel_extract,
+        )
+        .await;
         {
             let connection = db(&state)?;
             if db::product_excluded(&connection, &job.booth_id)? {
@@ -923,6 +954,11 @@ pub async fn extract_products(
                 let connection = db(&state)?;
                 db::mark_guardrail_review(&connection, &job.booth_id)?;
                 processed += 1;
+            }
+            Ok(Classified::Withheld) => {
+                model_used -= 1;
+                cloud_withheld += 1;
+                crate::browser::browser_log(&app, &crate::cloud::withheld_line(&job.booth_id));
             }
             Err(err) => {
                 failed += 1;
@@ -959,7 +995,11 @@ pub async fn extract_products(
         if cancelled {
             "分類を中断しました".into()
         } else {
-            format!("{processed} 件分類、{failed} 件失敗（カテゴリとタグ {booth_settled}、モデル {model_used}）")
+            if cloud_withheld > 0 {
+                format!("{processed} 件分類、{failed} 件失敗（カテゴリとタグ {booth_settled}、モデル {model_used}）。年齢制限の {cloud_withheld} 件はクラウドに送らず未分類のままです")
+            } else {
+                format!("{processed} 件分類、{failed} 件失敗（カテゴリとタグ {booth_settled}、モデル {model_used}）")
+            }
         },
     );
     if settings.llm_backend == "ollama" && settings.unload_ollama_after_classification {
@@ -977,12 +1017,24 @@ pub async fn extract_products(
         errors,
         booth_settled,
         model_used,
+        cloud_withheld,
     })
 }
 
 enum Classified {
     Done(Extraction),
     Review,
+    /// Age-restricted product the cloud must not see, with no local model ready.
+    Withheld,
+}
+
+struct CloudContext {
+    client: reqwest::Client,
+    key: crate::cloud::ApiKey,
+}
+
+fn key_store(app: &AppHandle) -> crate::cloud::OsKeyStore {
+    crate::cloud::OsKeyStore::new(&app.config().identifier)
 }
 
 fn wordlist_dir(app: &AppHandle) -> std::path::PathBuf {
@@ -1002,13 +1054,37 @@ async fn classify_product(
     keep: &[String],
     lists: &std::path::Path,
     ollama_ready: bool,
+    apple_ready: bool,
+    cloud: Option<&CloudContext>,
+    cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<Classified, String> {
     let category_line = crate::booth_category::category_line(
         &job.booth_category_name,
         &job.booth_category_parent,
     );
     let tags_line = crate::booth_category::tags_line(&job.booth_tags);
-    if settings.llm_backend != "apple" {
+    let restricted = crate::cloud::age_restricted(job.is_adult, &job.title, &job.booth_tags);
+    let route = crate::cloud::route_for(&settings.llm_backend, restricted, ollama_ready, apple_ready);
+    if route == crate::cloud::Route::Withhold {
+        return Ok(Classified::Withheld);
+    }
+    if route == crate::cloud::Route::Cloud {
+        let cloud = cloud.ok_or_else(|| crate::cloud::CloudError::MissingKey.message())?;
+        let extraction = crate::cloud::extract_product(
+            &cloud.client,
+            &settings.cloud_base_url,
+            &settings.cloud_model,
+            &cloud.key,
+            &job.title,
+            &job.description,
+            &category_line,
+            &tags_line,
+            cancel,
+        )
+        .await?;
+        return Ok(Classified::Done(extraction));
+    }
+    if route == crate::cloud::Route::Ollama {
         let extraction = ollama::extract_product(
             client,
             &settings.ollama_base_url,
@@ -1106,6 +1182,52 @@ async fn run_apple(
     })
     .await
     .map_err(|_| "Apple のオンデバイスモデルを実行できません".to_string())
+}
+
+#[tauri::command]
+pub fn cloud_key_status(app: AppHandle) -> Result<bool, String> {
+    crate::cloud::key_saved(&key_store(&app))
+}
+
+/// The key goes straight to the OS credential store; the return value is only whether one is saved.
+#[tauri::command]
+pub fn save_cloud_api_key(app: AppHandle, key: String) -> Result<bool, String> {
+    let store = key_store(&app);
+    crate::cloud::save_key(&store, &key)?;
+    crate::cloud::key_saved(&store)
+}
+
+#[tauri::command]
+pub fn delete_cloud_api_key(app: AppHandle) -> Result<bool, String> {
+    let store = key_store(&app);
+    crate::cloud::SecretStore::remove(&store)?;
+    crate::cloud::key_saved(&store)
+}
+
+#[tauri::command]
+pub async fn test_cloud_classifier(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<crate::model::CloudTestResult, String> {
+    let settings = {
+        let connection = db(&state)?;
+        db::settings(&connection)?
+    };
+    let store = key_store(&app);
+    let key = match crate::cloud::SecretStore::read(&store) {
+        Ok(Some(key)) if !key.is_empty() => Some(crate::cloud::ApiKey::new(key)),
+        Ok(_) => None,
+        Err(message) => {
+            return Ok(crate::model::CloudTestResult {
+                ok: false,
+                kind: crate::cloud::CloudError::KeyStore.kind().into(),
+                message,
+                model_listed: None,
+            });
+        }
+    };
+    let client = crate::cloud::probe_client()?;
+    Ok(crate::cloud::test_connection(&client, &settings.cloud_base_url, &settings.cloud_model, key.as_ref()).await)
 }
 
 #[tauri::command]

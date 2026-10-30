@@ -13,6 +13,7 @@ import type {
   StagedDownload,
   IntegrationStatus,
   JobProgress,
+  LlmBackend,
 } from "../types";
 import { errorText } from "../ui";
 import { SettingRow } from "../components/SettingRow";
@@ -25,7 +26,8 @@ function extractNotice(result: ExtractReport): string {
     ? "分類を中断しました"
     : `${result.processed} 件を分類しました${result.failed > 0 ? `（${result.failed} 件失敗）` : ""}`;
   if (typeof result.boothSettled === "number" && typeof result.modelUsed === "number") {
-    return `${head}。カテゴリとタグで ${result.boothSettled} 件、モデルで ${result.modelUsed} 件`;
+    const withheld = result.cloudWithheld ? `。年齢制限の ${result.cloudWithheld} 件はクラウドに送らず未分類のままです` : "";
+    return `${head}。カテゴリとタグで ${result.boothSettled} 件、モデルで ${result.modelUsed} 件${withheld}`;
   }
   return head;
 }
@@ -67,7 +69,7 @@ export function ImportPage() {
   const [extractStats, setExtractStats] = useState<{ boothSettled: number; modelUsed: number } | null>(null);
   const [receiverStatus, setReceiverStatus] = useState("確認中");
   const [staged, setStaged] = useState<StagedDownload[]>([]);
-  const [llmBackend, setLlmBackend] = useState<"ollama" | "apple">("ollama");
+  const [llmBackend, setLlmBackend] = useState<LlmBackend>("ollama");
   const [ollamaModel, setOllamaModel] = useState("");
 
   useEffect(() => {

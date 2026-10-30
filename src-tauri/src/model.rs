@@ -290,6 +290,19 @@ pub struct ExtractReport {
     pub booth_settled: u32,
     /// Sent to Ollama or Apple because the category and tags did not decide it.
     pub model_used: u32,
+    /// Age-restricted products left unclassified because the cloud classifier was
+    /// selected and no local model was ready.
+    pub cloud_withheld: u32,
+}
+
+/// Result of the cloud classifier connection test. Never carries the key.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudTestResult {
+    pub ok: bool,
+    pub kind: String,
+    pub message: String,
+    pub model_listed: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -322,6 +335,9 @@ pub struct Settings {
     pub remote_auto_sync: bool,
     pub route_downloads: bool,
     pub llm_backend: String,
+    /// OpenAI-compatible base URL for the opt-in cloud classifier. The key is never here.
+    pub cloud_base_url: String,
+    pub cloud_model: String,
     pub background_mode: bool,
     pub launch_at_login: bool,
     pub classification_dismissed_version: i32,
@@ -353,6 +369,10 @@ pub struct SettingsInput {
     pub route_downloads: bool,
     #[serde(default = "default_llm_backend")]
     pub llm_backend: String,
+    #[serde(default = "default_cloud_base_url")]
+    pub cloud_base_url: String,
+    #[serde(default)]
+    pub cloud_model: String,
     #[serde(default)]
     pub background_mode: bool,
     #[serde(default)]
@@ -392,6 +412,8 @@ pub struct SettingsPatch {
     pub remote_auto_sync: Option<bool>,
     pub route_downloads: Option<bool>,
     pub llm_backend: Option<String>,
+    pub cloud_base_url: Option<String>,
+    pub cloud_model: Option<String>,
     pub background_mode: Option<bool>,
     pub launch_at_login: Option<bool>,
     pub classification_dismissed_version: Option<i32>,
@@ -432,6 +454,11 @@ impl SettingsPatch {
             remote_auto_sync: self.remote_auto_sync.unwrap_or(current.remote_auto_sync),
             route_downloads: self.route_downloads.unwrap_or(current.route_downloads),
             llm_backend: self.llm_backend.clone().unwrap_or(current.llm_backend),
+            cloud_base_url: self
+                .cloud_base_url
+                .clone()
+                .unwrap_or(current.cloud_base_url),
+            cloud_model: self.cloud_model.clone().unwrap_or(current.cloud_model),
             background_mode: self.background_mode.unwrap_or(current.background_mode),
             launch_at_login: self.launch_at_login.unwrap_or(current.launch_at_login),
             classification_dismissed_version: self
@@ -459,6 +486,10 @@ impl SettingsPatch {
 
 fn default_llm_backend() -> String {
     "ollama".into()
+}
+
+fn default_cloud_base_url() -> String {
+    crate::cloud::DEFAULT_BASE_URL.into()
 }
 
 fn default_booth_link_target() -> String {

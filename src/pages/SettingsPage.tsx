@@ -13,6 +13,7 @@ import { extensionVersionMessage } from "../versions";
 import { AppUpdater } from "../components/AppUpdater";
 import { ClassificationFeedback } from "../components/ClassificationFeedback";
 import { OllamaMemoryControls } from "../components/OllamaMemoryControls";
+import { CloudClassifierSettings } from "../components/CloudClassifierSettings";
 
 const emptyAvatar = {
   id: "",
@@ -293,13 +294,17 @@ export function SettingsPage() {
       {settings && (
         <div className="settings-sections">
           <section className="settings-section">
-            <header><h2>分類モデル</h2><p>商品説明を分類する、端末内のモデルを選びます。</p></header>
-            <SettingRow label="分類方法" help={settings.llmBackend === "apple" ? apple?.message : "この PC の Ollama を使います。"}>
-              <select value={settings.llmBackend} onChange={(e) => changeSettings({ llmBackend: e.target.value === "apple" ? "apple" : "ollama" })}>
+            <header><h2>分類モデル</h2><p>商品説明を分類するモデルを選びます。既定は端末内のモデルです。</p></header>
+            <SettingRow label="分類方法" help={settings.llmBackend === "apple" ? apple?.message : settings.llmBackend === "cloud" ? "OpenAI 互換の API に商品情報を送って分類します。キーと利用料金はご自身のものを使います。" : "この PC の Ollama を使います。"}>
+              <select value={settings.llmBackend} onChange={(e) => changeSettings({ llmBackend: e.target.value === "apple" ? "apple" : e.target.value === "cloud" ? "cloud" : "ollama" })}>
                 <option value="ollama">Ollama</option>
                 {(apple?.availability === "available" || settings.llmBackend === "apple") && <option value="apple" disabled={apple?.availability !== "available"}>Apple のオンデバイスモデル</option>}
+                <option value="cloud">クラウド(APIキー)</option>
               </select>
             </SettingRow>
+            {settings.llmBackend === "cloud" && (
+              <CloudClassifierSettings settings={settings} onChange={changeSettings} onBlur={flushSettings} beforeTest={flush} onNotify={notify} onFail={fail} />
+            )}
             {settings.llmBackend === "ollama" && (
                 <SettingRow label="モデル">
                   <ModelPicker onBlur={flushSettings} value={settings.ollamaModel} models={models} checked={modelsChecked} disabled={pulling} onChange={(value) => changeSettings({ ollamaModel: value }, MODEL_CHOICES.some((choice) => choice.name === value) ? 0 : 300)} />
@@ -422,7 +427,8 @@ export function SettingsPage() {
             <details className="settings-details privacy-notice">
               <summary>プライバシー</summary>
               <p>本アプリには、利用者の情報を開発者へ送信する機能はありません。</p>
-              <p>アカウント情報・購入情報・設定は端末内で扱います。分類には同じ端末の Ollama または Apple のオンデバイスモデルを使用します。</p>
+              <p>アカウント情報・購入情報・設定は端末内で扱います。分類には、既定では同じ端末の Ollama または Apple のオンデバイスモデルを使用します。</p>
+              <p>分類方法で「クラウド(APIキー)」を選んだときだけ、分類する商品のタイトル・BOOTH カテゴリ・タグ・説明文を、設定した接続先へ送ります。年齢制限の商品は送りません。APIキーは OS の資格情報に保存します。</p>
               <p>内蔵ブラウザでの閲覧やログインには、開いたサイトとの通信を行います。ログイン状態とブックマークは端末内に保存し、選択したファイルのダウンロード時には BOOTH の Cookie を利用します。</p>
               <p>各サイトのログイン状態と閲覧データは「内蔵ブラウザの閲覧データを削除」で削除できます。ライブラリ情報・設定・ブックマークは残ります。</p>
               <p>更新を確認・ダウンロードするときは GitHub と通信します。ライブラリや購入情報は送信しません。</p>

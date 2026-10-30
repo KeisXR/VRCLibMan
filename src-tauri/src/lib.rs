@@ -10,6 +10,7 @@ mod browser_surface;
 mod mask;
 mod catalog;
 mod classifier;
+mod cloud;
 mod commands;
 mod compat;
 mod genre;
@@ -213,6 +214,10 @@ pub fn run() {
             commands::extract_products,
             commands::cancel_extract,
             commands::test_ollama,
+            commands::cloud_key_status,
+            commands::save_cloud_api_key,
+            commands::delete_cloud_api_key,
+            commands::test_cloud_classifier,
             commands::ollama_loaded_models,
             commands::unload_ollama_model,
             commands::apple_fm_status,

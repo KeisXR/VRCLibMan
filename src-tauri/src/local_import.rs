@@ -288,6 +288,8 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
                         remote_auto_sync: settings.remote_auto_sync,
                         route_downloads: enabled,
                         llm_backend: settings.llm_backend,
+                        cloud_base_url: settings.cloud_base_url,
+                        cloud_model: settings.cloud_model,
                         background_mode: settings.background_mode,
                         launch_at_login: settings.launch_at_login,
                         unload_ollama_after_classification: settings.unload_ollama_after_classification,
