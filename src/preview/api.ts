@@ -1,5 +1,6 @@
 import { previewBrowserState, previewBrowserAction, previewSaveBookmark, previewDeleteBookmark, previewOpenBrowser, previewCloseBrowser } from "./browser";
 import extensionManifest from "../../extension/manifest.json";
+import { previewListDirectory, previewListZip } from "./files";
 import { filePresence } from "../media";
 import { GENRE_FREE, GENRE_UNSET, genresForKind } from "../types";
 import type { ClassificationSnapshot, OwnedAvatarRestore, RegisterOwnedBodyResult, SnapshotLink } from "../types";
@@ -2241,6 +2242,14 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       desktopOnly();
     case "list_staged_downloads":
       return [] as T;
+    case "list_directory":
+      return previewListDirectory(
+        String(args.path ?? ""),
+        store.settings.libraryFolder,
+        store.settings.remoteLibraryFolder,
+      ) as T;
+    case "list_zip_entries":
+      return previewListZip(String(args.path ?? "")) as T;
     default:
       throw new Error(`未対応の操作です: ${command}`);
   }

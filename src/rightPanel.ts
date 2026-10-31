@@ -1,7 +1,7 @@
 import { PREVIEW_PANE_WIDTH, clampStoredPreviewPaneWidth } from "./previewPane";
 
 /**
- * Right panel tab kinds. Later PRs add "files" and "browser" by flipping `available`
+ * Right panel tab kinds. Later PRs add "browser" by flipping `available`
  * and registering a renderer in `components/rightPanelRegistry.tsx`.
  * The same allow-list lives in `src-tauri/src/model.rs` (`RIGHT_PANEL_KINDS`).
  */
@@ -19,7 +19,7 @@ export interface RightPanelKindInfo {
 
 export const RIGHT_PANEL_KIND_INFO: Record<RightPanelKind, RightPanelKindInfo> = {
   preview: { kind: "preview", label: "プレビュー", singleton: true, available: true },
-  files: { kind: "files", label: "ファイル", singleton: true, available: false },
+  files: { kind: "files", label: "ファイル", singleton: true, available: true },
   browser: { kind: "browser", label: "ブラウザ", singleton: false, available: false },
 };
 

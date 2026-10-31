@@ -278,6 +278,42 @@ export interface RemoteSyncStatus {
   error: string | null;
 }
 
+/** 右パネル「ファイル」タブ。読み取り専用の一覧で、書き込み・削除・移動はしない。 */
+export type FileEntryKind = "dir" | "file" | "link";
+
+export interface FileEntry {
+  name: string;
+  kind: FileEntryKind;
+  /** バイト数。フォルダとリンクは null。 */
+  size: number | null;
+}
+
+export interface DirListing {
+  /** 解決済みのフォルダ（Windows の \\?\ は付けない）。 */
+  path: string;
+  parent: string | null;
+  /** 設定のライブラリフォルダ。存在するときだけ。 */
+  library: string | null;
+  /** 設定のリモートライブラリ。応答したときだけ。 */
+  remote: string | null;
+  insideLibrary: boolean;
+  entries: FileEntry[];
+  truncated: boolean;
+}
+
+export interface ZipEntry {
+  /** zip 内の / 区切りのパス。展開はしない。 */
+  path: string;
+  dir: boolean;
+  size: number;
+}
+
+export interface ZipListing {
+  path: string;
+  entries: ZipEntry[];
+  truncated: boolean;
+}
+
 export interface StagedDownload {
   path: string;
   boothId: string;

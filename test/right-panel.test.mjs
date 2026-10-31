@@ -31,9 +31,12 @@ test("right panel tabs keep only known kinds and never store free text", async (
 
     // Kinds that later changes implement stay stored but hidden in this build.
     assert.equal(panel.RIGHT_PANEL_KIND_INFO.preview.available, true);
-    assert.deepEqual(panel.visibleTabs(parsed).map((tab) => tab.kind), ["preview"]);
-    assert.equal(panel.activeTab(parsed).kind, "preview");
-    assert.equal(panel.canAddTab(parsed, "files"), panel.RIGHT_PANEL_KIND_INFO.files.available);
+    assert.equal(panel.RIGHT_PANEL_KIND_INFO.files.available, true);
+    assert.equal(panel.RIGHT_PANEL_KIND_INFO.browser.available, false);
+    assert.deepEqual(panel.visibleTabs(parsed).map((tab) => tab.kind), ["files", "preview"]);
+    assert.equal(panel.activeTab(parsed).kind, "files");
+    assert.equal(panel.canAddTab(parsed, "files"), true);
+    assert.equal(panel.canAddTab(parsed, "browser"), false);
 
     // The preview tab is single; opening it again focuses it.
     let state = panel.openTab(empty, "preview");
@@ -86,4 +89,5 @@ test("the preview lives in the app's right panel instead of a split inside the l
   assert.match(browser, /aria-controls="right-panel"/);
   const registry = readFileSync("src/components/rightPanelRegistry.tsx", "utf8");
   assert.match(registry, /preview: PreviewTab/);
+  assert.match(registry, /files: FilesTab/);
 });

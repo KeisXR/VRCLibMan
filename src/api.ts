@@ -37,6 +37,8 @@ import type {
   Settings,
   RemoteSyncStatus,
   StagedDownload,
+  DirListing,
+  ZipListing,
   ItemView,
   GenreKind,
   GenreProducts,
@@ -215,6 +217,10 @@ export const api = {
   cacheProductPreview: (boothId: string, download: boolean, reveal: boolean) =>
     call<string | null>("cache_product_preview", { boothId, download, reveal }),
   stagedDownloads: () => call<StagedDownload[]>("list_staged_downloads"),
+  /** 右パネルのファイルタブ。空のパスはライブラリフォルダ。読み取りのみ。 */
+  listDirectory: (path: string) => call<DirListing>("list_directory", { path }),
+  /** zip の中身を一覧だけ読む。展開しない。 */
+  listZipEntries: (path: string) => call<ZipListing>("list_zip_entries", { path }),
   routeStagedDownload: (path: string) => call<void>("route_staged_download", { path }),
   classificationFeedback: (scope: ClassificationFeedbackScope) =>
     call<string>("classification_feedback", { scope }),
