@@ -499,7 +499,9 @@ mod tests {
             .collect();
         assert_eq!(names, vec!["One.unitypackage", "evil.unitypackage", "One (2).unitypackage"]);
         for package in &prepared {
-            assert_eq!(Path::new(&package.path).parent().unwrap(), std::fs::canonicalize(&dest).unwrap());
+            // 返すパスは Windows の `\\?\` を外した表示用なので、両方を canonicalize して比べる。
+            let parent = std::fs::canonicalize(Path::new(&package.path).parent().unwrap()).unwrap();
+            assert_eq!(parent, std::fs::canonicalize(&dest).unwrap());
         }
         assert_eq!(std::fs::read(&prepared[2].path).unwrap(), big);
         assert!(!root.join("evil.unitypackage").exists());
