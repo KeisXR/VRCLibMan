@@ -471,6 +471,11 @@ if (typeof location !== "undefined") {
   if (mode === "fail" || mode === "timeout") previewRemoteProbeOutcome = mode;
 }
 
+/** テスト用。Rust の一覧と同じく、リモートを確認していない状態に戻す。 */
+export function resetPreviewRemoteCheck(): void {
+  store.remoteChecked = false;
+}
+
 export function previewRemoteProbeDownloads(boothId: string): DownloadView[] {
   return placedDownloads(boothId);
 }
@@ -2107,6 +2112,16 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       }
       row.state = "local";
       row.localPath = `${store.settings.libraryFolder}\\${boothId}\\${filename}`;
+      // Rust の再読み込みはリモートを確認しないので、画面は確認をやり直す。
+      store.remoteChecked = false;
+      return row.localPath as T;
+    }
+    case "open_local_path": {
+      const path = String(args.path ?? "");
+      const known =
+        store.downloads.some((item) => item.localPath === path) ||
+        store.files.some((item) => item.path === path);
+      if (!known) throw new Error("ライブラリに登録されていない場所は開けません");
       return undefined as T;
     }
     case "pull_remote_file": {

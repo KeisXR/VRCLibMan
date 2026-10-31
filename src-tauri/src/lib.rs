@@ -257,6 +257,7 @@ pub fn run() {
             commands::close_booth_browser,
             commands::booth_browser_log,
             commands::download_booth_file,
+            commands::open_local_path,
             commands::booth_account,
             commands::list_staged_downloads,
             commands::route_staged_download,

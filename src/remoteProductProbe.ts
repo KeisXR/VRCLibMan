@@ -34,13 +34,42 @@ export function clearRemoteProbeCache() {
   probeCache.clear();
 }
 
+const invalidationListeners = new Set<(boothId: string) => void>();
+
+/** ダウンロード完了などで手元の状態が変わった商品の、古いリモート確認結果を捨てる。 */
+export function invalidateRemoteProbe(boothId: string) {
+  probeCache.delete(boothId);
+  for (const listener of invalidationListeners) listener(boothId);
+}
+
+export function onRemoteProbeInvalidated(listener: (boothId: string) => void): () => void {
+  invalidationListeners.add(listener);
+  return () => {
+    invalidationListeners.delete(listener);
+  };
+}
+
+function fileKey(file: DownloadView): string {
+  return `${file.variation}\u0000${file.filename}`;
+}
+
+/**
+ * 手元にあるファイルは、新しく読み直した一覧の状態を正とする。
+ * リモートの確認結果は、手元に無い行の「リモートのみ／未ダウンロード」の判断だけに使う。
+ * 確認のあとで名前が変わった行や増えた行は、読み直した一覧のまま残す。
+ */
 export function applyRemoteProbe(item: ItemView, probe: RemoteProductProbe | null): ItemView {
   if (!probe) return item;
+  const probed = new Map(probe.downloads.map((file) => [fileKey(file), file]));
   return {
     ...item,
     remoteChecked: probe.remoteChecked,
     remoteReachable: probe.remoteReachable,
-    downloads: probe.downloads,
+    downloads: item.downloads.map((file) => {
+      if (file.state === "local") return file;
+      const hit = probed.get(fileKey(file));
+      return hit && hit.state !== "local" ? hit : file;
+    }),
   };
 }
 
@@ -92,6 +121,25 @@ export function useRemoteProductProbe(items: ItemView[]) {
     ids.sort();
     return ids.join(",");
   }, [items]);
+
+  useEffect(
+    () =>
+      onRemoteProbeInvalidated((boothId) => {
+        setProbes((prev) => {
+          if (!(boothId in prev)) return prev;
+          const next = { ...prev };
+          delete next[boothId];
+          return next;
+        });
+        setOverlays((prev) => {
+          if (!(boothId in prev)) return prev;
+          const next = { ...prev };
+          delete next[boothId];
+          return next;
+        });
+      }),
+    [],
+  );
 
   const runProbe = useCallback(async (boothIds: string[], runId: number) => {
     if (boothIds.length === 0) return;

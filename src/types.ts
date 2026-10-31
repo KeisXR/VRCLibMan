@@ -418,6 +418,8 @@ export interface BoothFileStatus {
   filename: string;
   phase: "receiving" | "error" | "done";
   message: string;
+  /** 完了時だけ、ライブラリへ移した先の絶対パス。 */
+  path?: string | null;
 }
 
 export interface ManagedProduct {
