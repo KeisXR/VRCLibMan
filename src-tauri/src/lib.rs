@@ -33,6 +33,7 @@ mod resolve;
 mod scan;
 mod thumb;
 mod view;
+mod unity;
 mod updater;
 
 use std::sync::atomic::AtomicBool;
@@ -200,6 +201,8 @@ pub fn run() {
             commands::update_settings,
             commands::get_booth_page_interval,
             commands::set_booth_page_interval,
+            commands::unity_editors,
+            commands::set_unity_editor,
             commands::update_product,
             commands::move_product_genre,
             commands::restore_product_classification,
