@@ -43,7 +43,7 @@ test("file tab helpers handle paths, kinds and zip folders", async () => {
     assert.equal(files.zipParent("Pack"), "");
     assert.equal(files.zipParent(""), null);
     assert.deepEqual(files.zipUnityPackages(entries).map((entry) => entry.path), ["Pack/A.unitypackage"]);
-    assert.equal(files.UNITY_OPEN_AVAILABLE, false);
+    assert.equal(files.UNITY_OPEN_AVAILABLE, true);
   } finally {
     await server.close();
   }

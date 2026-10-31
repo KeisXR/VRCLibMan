@@ -34,6 +34,7 @@ mod scan;
 mod thumb;
 mod view;
 mod unity;
+mod unity_import;
 mod updater;
 
 use std::sync::atomic::AtomicBool;
@@ -158,6 +159,16 @@ pub fn run() {
                 }
             }
             crate::remote_sync::start(app.handle());
+            if let Ok(cache) = app.path().app_cache_dir() {
+                // 「Unityで開く」で取り出した古いパッケージを消す。名前はログに出さない。
+                std::thread::spawn(move || {
+                    let _ = unity_import::clean_cache(
+                        &cache.join(unity_import::CACHE_DIR),
+                        unity_import::CACHE_MAX_AGE,
+                        std::time::SystemTime::now(),
+                    );
+                });
+            }
             let _ = presence::sync_login_item(
                 app.handle(),
                 presence::autostart_should_enable(background_mode, launch_at_login),
@@ -264,6 +275,9 @@ pub fn run() {
             commands::booth_account,
             commands::list_directory,
             commands::list_zip_entries,
+            commands::unity_packages,
+            commands::prepare_unity_packages,
+            commands::launch_unity_packages,
             commands::list_staged_downloads,
             commands::route_staged_download,
         ])

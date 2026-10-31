@@ -691,6 +691,23 @@ a.tab { display: inline-flex; align-items: center; gap: 6px; text-decoration: no
   background: color-mix(in srgb, var(--bg) 78%, transparent);
 }
 
+/* 「Unityで開く」: backdrop is the preview overlay, the box is a .panel with .file-list rows and .row-actions. */
+.unity-open-overlay { z-index: 40; }
+.panel.unity-open-dialog {
+  width: min(560px, 100%);
+  max-height: min(560px, calc(100dvh - 2 * var(--space-4)));
+  margin-bottom: 0;
+  overflow-y: auto;
+  box-shadow: var(--shadow);
+}
+.unity-open-dialog > .meta { margin: 0 0 var(--space-2); }
+.unity-open-list { margin: 0 0 var(--space-3); }
+.unity-open-list li { padding: 4px 0; }
+.unity-open-list .meta { flex: 0 0 auto; }
+.unity-open-choice { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.unity-open-choice .download-name { min-width: 0; }
+.unity-open-dialog .row-actions { margin-top: var(--space-3); }
+
 /* Right panel: one tab strip for preview and later tools, docked as the app grid's last column. */
 .main[hidden] { display: none; }
 .right-panel {

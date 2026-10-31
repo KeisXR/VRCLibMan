@@ -10,13 +10,23 @@ import {
   parentOf,
   zipChildren,
   zipParent,
+  zipUnityPackages,
 } from "../fileBrowser";
+import { useShell } from "../App";
+import { UnityOpenButton } from "./UnityOpenDialog";
+import { boothIdFromPath, isInsideRoot } from "../unityOpen";
 import type { FileKind } from "../fileBrowser";
 import { formatBytes } from "../media";
 import type { DirListing, ZipListing } from "../types";
 import { errorText } from "../ui";
 
 type Location = { kind: "dir"; path: string } | { kind: "zip"; path: string; inner: string };
+
+interface UnityHooks {
+  canUnity: (path: string) => boolean;
+  notify: (message: string) => void;
+  fail: (message: string) => void;
+}
 
 /** Where the tab was, for this session only. Paths are never written to settings. */
 let remembered: Location | null = null;
@@ -163,6 +173,12 @@ export function FilesTab() {
   const canGoUp = location?.kind === "zip" || Boolean(dir?.parent);
   const inZip = location?.kind === "zip" && zip != null;
   const insideLibrary = dir?.insideLibrary ?? false;
+  const { notify } = useShell();
+  const unityFail = useCallback((message: string) => setError(message), []);
+  /** Rust refuses files outside the library and the remote library, so the button is not offered there. */
+  const canUnity = (path: string) =>
+    UNITY_OPEN_AVAILABLE && (isInsideRoot(path, roots.library) || isInsideRoot(path, roots.remote));
+  const unity = { canUnity, notify, fail: unityFail };
 
   return (
     <div className="files-tab" aria-busy={busy}>
@@ -217,13 +233,13 @@ export function FilesTab() {
           remembered = next;
           setLocation(next);
           setError("");
-        }} onReveal={() => reveal(zip.path)} />
+        }} onReveal={() => reveal(zip.path)} unity={unity} />
       ) : dir ? (
         <>
           <p className="meta files-where">
             {insideLibrary ? "ライブラリの中" : "ライブラリの外"}・読み取りのみ
           </p>
-          <DirView listing={dir} busy={busy} onOpen={(target) => void load(target)} onReveal={reveal} />
+          <DirView listing={dir} busy={busy} onOpen={(target) => void load(target)} onReveal={reveal} unity={unity} />
         </>
       ) : !error && busy ? (
         <p className="meta">読み込み中…</p>
@@ -237,11 +253,13 @@ function DirView({
   busy,
   onOpen,
   onReveal,
+  unity,
 }: {
   listing: DirListing;
   busy: boolean;
   onOpen: (target: Location) => void;
   onReveal: (path: string) => void;
+  unity: UnityHooks;
 }) {
   if (listing.entries.length === 0) return <p className="meta">このフォルダは空です。</p>;
   return (
@@ -271,10 +289,12 @@ function DirView({
               )}
               {kind !== "dir" && kind !== "link" && (
                 <div className="row-actions">
-                  {kind === "unitypackage" && UNITY_OPEN_AVAILABLE && (
-                    <button type="button" disabled>
-                      Unityで開く
-                    </button>
+                  {(kind === "unitypackage" || kind === "zip") && unity.canUnity(path) && (
+                    <UnityOpenButton
+                      target={{ path, boothId: boothIdFromPath(path) }}
+                      notify={unity.notify}
+                      fail={unity.fail}
+                    />
                   )}
                   <button type="button" onClick={() => onReveal(path)}>
                     保存先を開く
@@ -295,13 +315,17 @@ function ZipView({
   inner,
   onOpen,
   onReveal,
+  unity,
 }: {
   zip: ZipListing;
   inner: string;
   onOpen: (inner: string) => void;
   onReveal: () => void;
+  unity: UnityHooks;
 }) {
   const children = zipChildren(zip.entries, inner);
+  const canUnity = unity.canUnity(zip.path) && zipUnityPackages(zip.entries).length > 0;
+  const boothId = boothIdFromPath(zip.path);
   return (
     <>
       <div className="files-zip-head">
@@ -310,6 +334,9 @@ function ZipView({
           {inner ? <p className="meta files-zip-inner">zip 内: {inner}</p> : null}
         </div>
         <div className="row-actions">
+          {canUnity && (
+            <UnityOpenButton className="button" target={{ path: zip.path, boothId }} notify={unity.notify} fail={unity.fail} />
+          )}
           <button className="button" type="button" onClick={onReveal}>
             zip の保存先を開く
           </button>
@@ -333,11 +360,13 @@ function ZipView({
                     <EntryLabel kind={kind} name={child.name} detail={detail} />
                   </div>
                 )}
-                {kind === "unitypackage" && UNITY_OPEN_AVAILABLE && (
+                {kind === "unitypackage" && canUnity && (
                   <div className="row-actions">
-                    <button type="button" disabled>
-                      Unityで開く
-                    </button>
+                    <UnityOpenButton
+                      target={{ path: zip.path, boothId, entry: child.path }}
+                      notify={unity.notify}
+                      fail={unity.fail}
+                    />
                   </div>
                 )}
               </li>

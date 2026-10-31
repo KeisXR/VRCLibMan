@@ -565,3 +565,35 @@ export interface UnityStatus {
   hubFound: boolean;
   searched: string[];
 }
+
+/** 「Unityで開く」: zip か .unitypackage の中の Unity パッケージ。展開せずに読んだ一覧。 */
+export interface UnityPackageEntry {
+  /** zip 内のパス（`/` 区切り）。単体の .unitypackage では空文字 */
+  entry: string;
+  name: string;
+  size: number;
+}
+
+export interface UnityPackageList {
+  path: string;
+  kind: "zip" | "package";
+  packages: UnityPackageEntry[];
+  truncated: boolean;
+}
+
+/** Unity に渡すファイル。zip 内のものはアプリのキャッシュ（unity-import/<商品ID>/）に取り出したもの */
+export interface PreparedUnityPackage {
+  name: string;
+  path: string;
+  size: number;
+}
+
+export interface UnityLaunchResult {
+  /** 先頭から渡し終えた件数 */
+  launched: number;
+  /** Unity の起動を待つため途中で止めた */
+  waiting: boolean;
+}
+
+/** "unity" は設定の既定 Unity で -openfile、"system" は OS の関連付け */
+export type UnityLaunchMode = "unity" | "system";

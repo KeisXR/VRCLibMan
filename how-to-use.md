@@ -284,6 +284,30 @@ BOOTH のカテゴリとタグで決まる商品は先に分類し、決まら�
 - ショートカットやシンボリックリンクは「リンク」として出し、中へはたどりません。
 - 1 つのフォルダに 2000 件、1 つの zip に 5000 件を超えると、先頭だけを出します。
 - 開いている場所はアプリを閉じるまで覚えておきます。設定には保存しません。
+- ライブラリ（またはリモートライブラリ）の中の `.unitypackage` と zip には「Unityで開く」が出ます。zip の中の `.unitypackage` にも出ます。下の「Unity で開く」を見てください。
+
+### Unity で開く
+
+`.unitypackage` を、設定で選んだ Unity に渡します。Unity の Import 画面が開くので、そこで中身を確かめてインポートします。プロジェクトへの書き込みは Unity の Import 画面で利用者が決めます。アプリはプロジェクトに書き込みません。
+
+「Unityで開く」は次の場所に出ます。
+
+- アバター詳細・アセットの商品カードで、「ローカル」の zip・`.unitypackage` の行
+- 商品カードの「手元のファイル」の zip・`.unitypackage`
+- 右パネルのファイルタブ（ライブラリかリモートライブラリの中だけ）
+
+zip は展開しません。中の `.unitypackage` だけを一覧し、選んだものだけをアプリのキャッシュ（`unity-import/<商品ID>/`）に取り出して渡します。取り出したファイルは、次にアプリを起動したとき、1 日より古いものから消します。
+
+- Unity パッケージが 1 つだけなら、確認なしでそのまま開きます。
+- 2 つ以上あるときは、ファイル名とサイズの一覧から選びます。「選んだものをインポート」か「すべてインポート」を押すと、一覧の順に 1 件ずつ Unity に渡します。
+
+![Unity パッケージを選ぶ画面。2 件のうち 1 件にチェックが入っている](docs/images/how-to-use/19-unity-open.png)
+
+- Unity が起動していないときは、1 件目で Unity が起動します。起動を待つあいだ残りは渡さず、「続きを Unity に渡す」が出ます。Unity が開いてから押すと、残りを渡します。
+- 既定の Unity を設定していないとき、または設定した Unity が見つからないときは、「設定を開く」で「設定 → Unity」へ移れます。今回だけ OS の関連付け（ダブルクリックと同じ）で開くこともできます。
+- 1 つの Unity パッケージは 8 GB まで取り出せます。
+
+Windows で動作を確認しています。Mac と Linux の「Unityで開く」は、実機ではまだ確認していません。
 
 ## 6. 分類結果を確認・修正する
 
@@ -451,6 +475,8 @@ Apple のオンデバイスモデルを選ぶと、Ollama 関連の欄は非表�
 | Windows | `%APPDATA%\UnityHub`                  | `C:\Program Files\Unity\Hub\Editor\<版>\Editor\Unity.exe`     |
 | Mac     | `~/Library/Application Support/UnityHub` | `/Applications/Unity/Hub/Editor/<版>/Unity.app`           |
 | Linux   | `~/.config/UnityHub`                  | `~/Unity/Hub/Editor/<版>/Editor/Unity`                     |
+
+ここで選んだ Unity は「Unityで開く」で使います（「5. アバター・アセット・ワールドを見る → Unity で開く」）。
 
 Hub で別のインストール先（`secondaryInstallPath.json`）を設定している場合は、その場所も調べます。Mac 版と Linux 版の検出は、実機ではまだ確認していません。
 
