@@ -127,6 +127,12 @@ Windows では、BOOTH の窓を同期コマンドの中で作らない。WebVie
 - 設定画面は変更した項目だけを `update_settings` へ送り、Rust が現在値とマージして検証し、トランザクションで保存する。フロントは保存を直列化し、保存中の新しい入力を古い応答で戻さない。テキストは短く待って保存し、フォーカスを外す・画面を移動するときも送る。対応表の編集には引き続き保存ボタンがある。
 - 商品ページのリンク先は `booth_link_target`（`external` 既定、`builtin`）。内蔵ブラウザが有効なときだけ設定に出し、アバター詳細、確認、プレビュー欄の商品リンクだけが従う。`builtin` でも取得中・無効・エラーは既定のブラウザに戻す。出典、利用規約、GitHub、拡張の「ライブラリを開く」は外部のまま。既に開いている内蔵ブラウザへタブを足すときは窓を前面にする。年齢確認は自動で通さない。
 
+### Unity の検出
+
+- `src-tauri/src/unity.rs` が、Unity Hub の `editors-v2.json`（`data[].location[]`）、旧形式の `editors.json`、`secondaryInstallPath.json`（JSON 文字列 1 つ）と、Hub の既定のインストール先を読む。Hub の CLI も Unity も起動しない。壊れた JSON は空として扱う。Mac の Hub が `Unity.app` を記録していれば `Contents/MacOS/Unity` にする。一覧には実在する本体だけを出し、パスで重複をまとめ（Windows は大文字小文字を区別しない）、新しい版から並べる。
+- 既定の Unity は settings の `unity_editor_path`（スキーマ変更なし）。`set_unity_editor` はメイン画面からだけ受け、ファイル名が Unity 本体（Windows は `Unity.exe`、Mac と Linux は `Unity`）で実在するときだけ保存する。空文字は未設定。保存したパスが検出に無くても実在すれば「手動」として一覧に足し、消えていれば `selectedMissing` にする。
+- Mac と Linux の検出は実機で未検証。
+
 ### 抽出と安全境界
 
 細かい分類規則は次節。ここは境界だけを書く。
@@ -264,7 +270,7 @@ Windows の配布は未署名の NSIS（`.exe`）である。実行ファイル�
 
 Mac の内蔵ブラウザは `data_directory` を使わない。固定の 16 バイト `data_store_identifier`（`vrclibman-booth!`）でメイン画面と分ける。ログアウトはフォルダ削除ではなく、そのデータストアの `clear_all_browsing_data` と `remove_data_store` である。`vrclibman://` は `.app` を `/Applications` に置いたときだけ動く。
 
-実ページの変化に合わせて拡張の解析を更新する。Unity 連携や自動ダウンロードは、この方針の外にある。
+実ページの変化に合わせて拡張の解析を更新する。自動ダウンロードは、この方針の外にある。Unity との連携は、利用者が選んだ unitypackage を既定の Unity で開くところまでに留め、プロジェクトへの自動転送はしない。
 
 ## 変更時に守ること
 
@@ -292,6 +298,7 @@ Mac の内蔵ブラウザは `data_directory` を使わない。固定の 16 バ
 | `src-tauri/src/booth_detail.rs` | 公開の商品 JSON。Cookie は付けない |
 | `src-tauri/src/preview_image.rs` | 選択中の大きいプレビュー。Cookie は付けない |
 | `src-tauri/src/view.rs` | 一覧、詳細、キューの形 |
+| `src-tauri/src/unity.rs` | Unity エディタの検出（Hub の記録と既定のインストール先） |
 | `src-tauri/src/commands.rs` | Tauri コマンド |
 | `src/pages` | 画面 |
 | `src/preview/api.ts` | ブラウザ見本 |

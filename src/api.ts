@@ -41,6 +41,7 @@ import type {
   GenreKind,
   GenreProducts,
   CloudTestResult,
+  UnityStatus,
 } from "./types";
 
 export type ClassificationFeedbackScope = "other" | "unclassified" | "both";
@@ -193,6 +194,9 @@ export const api = {
   saveCloudApiKey: (key: string) => call<boolean>("save_cloud_api_key", { key }),
   deleteCloudApiKey: () => call<boolean>("delete_cloud_api_key"),
   testCloudClassifier: () => call<CloudTestResult>("test_cloud_classifier"),
+  unityEditors: () => call<UnityStatus>("unity_editors"),
+  /** 空文字で未設定に戻す。Unity 本体でないファイルは Rust 側で拒否する。 */
+  setUnityEditor: (path: string) => call<UnityStatus>("set_unity_editor", { path }),
   catalogInfo: () => call<CatalogInfo>("catalog_info"),
   refreshAvatarCatalog: () => call<CatalogRefresh>("refresh_avatar_catalog"),
   setupStatus: () => call<SetupStatus>("setup_status"),
@@ -280,6 +284,22 @@ export async function chooseFolder(): Promise<string | null> {
     directory: true,
     multiple: false,
     title: "アセットのフォルダを選ぶ",
+  });
+  return typeof selected === "string" ? selected : null;
+}
+
+/** Unity 本体を選ぶ。Windows は Unity.exe、Mac は Unity.app、Linux は Unity。 */
+export async function chooseUnityEditor(): Promise<string | null> {
+  if (!isTauri()) {
+    throw new Error("Unity の選択はデスクトップアプリで使えます");
+  }
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const windows = navigator.userAgent.includes("Windows");
+  const selected = await open({
+    directory: false,
+    multiple: false,
+    title: "Unity 本体を選ぶ",
+    ...(windows ? { filters: [{ name: "Unity", extensions: ["exe"] }] } : {}),
   });
   return typeof selected === "string" ? selected : null;
 }

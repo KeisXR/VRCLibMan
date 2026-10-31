@@ -507,3 +507,23 @@ export interface AppUpdateStatus {
   error: string | null;
   message: string | null;
 }
+
+/** "hub"：Unity Hub の記録、"folder"：インストール先のフォルダ、"manual"：「参照…」で指定 */
+export type UnityEditorSource = "hub" | "folder" | "manual";
+
+export interface UnityEditor {
+  /** 例：2022.3.22f1。パスから読めないときは空文字 */
+  version: string;
+  path: string;
+  source: UnityEditorSource;
+}
+
+export interface UnityStatus {
+  editors: UnityEditor[];
+  /** 保存している既定の Unity。未設定なら空文字 */
+  selectedPath: string;
+  /** 保存したパスに Unity 本体が見つからない */
+  selectedMissing: boolean;
+  hubFound: boolean;
+  searched: string[];
+}

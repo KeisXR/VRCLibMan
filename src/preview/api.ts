@@ -2,7 +2,7 @@ import { previewBrowserState, previewBrowserAction, previewSaveBookmark, preview
 import extensionManifest from "../../extension/manifest.json";
 import { filePresence } from "../media";
 import { GENRE_FREE, GENRE_UNSET, genresForKind } from "../types";
-import type { ClassificationSnapshot, OwnedAvatarRestore, RegisterOwnedBodyResult, SnapshotLink } from "../types";
+import type { ClassificationSnapshot, OwnedAvatarRestore, RegisterOwnedBodyResult, SnapshotLink, UnityEditor, UnityStatus } from "../types";
 import type {
   AvatarCard,
   BrowserAction,
@@ -1726,6 +1726,24 @@ function previewCloudBaseUrl(value: string): string {
   return trimmed;
 }
 
+/** 見本の Unity 検出。Windows の既定インストール先と Unity Hub の記録を真似る。実在のファイルは見ない。 */
+const previewUnityEditors: UnityEditor[] = [
+  { version: "6000.0.33f1", path: "D:\\Unity\\Editors\\6000.0.33f1\\Editor\\Unity.exe", source: "hub" },
+  { version: "2022.3.22f1", path: "C:\\Program Files\\Unity\\Hub\\Editor\\2022.3.22f1\\Editor\\Unity.exe", source: "hub" },
+  { version: "2022.3.6f1", path: "C:\\Program Files\\Unity\\Hub\\Editor\\2022.3.6f1\\Editor\\Unity.exe", source: "folder" },
+];
+let previewUnitySelected = "";
+
+function previewUnityStatus(): UnityStatus {
+  return {
+    editors: previewUnityEditors.map((editor) => ({ ...editor })),
+    selectedPath: previewUnitySelected,
+    selectedMissing: false,
+    hubFound: true,
+    searched: ["C:\\Users\\you\\AppData\\Roaming\\UnityHub", "C:\\Program Files\\Unity\\Hub\\Editor", "D:\\Unity\\Editors"],
+  };
+}
+
 export async function dispatch<T>(command: string, args: Record<string, unknown>): Promise<T> {
   notePreviewCall(command);
   switch (command) {
@@ -2016,6 +2034,14 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
         defaultModel: "qwen3.5:9b",
         backend: store.settings.llmBackend,
       } as T;
+    case "unity_editors":
+      return previewUnityStatus() as T;
+    case "set_unity_editor": {
+      const path = String(args.path ?? "").trim();
+      if (path && !previewUnityEditors.some((editor) => editor.path === path)) throw new Error("Unity 本体（Unity.exe）を選んでください");
+      previewUnitySelected = path;
+      return previewUnityStatus() as T;
+    }
     case "cloud_key_status":
       return previewCloudKeySaved as T;
     case "save_cloud_api_key": {
