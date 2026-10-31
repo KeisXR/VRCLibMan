@@ -491,13 +491,29 @@ export interface AvatarInput {
 
 export interface BrowserBookmark { title: string; url: string; }
 export interface BrowserTab { id: string; url: string; title: string; loading: boolean; canGoBack: boolean; canGoForward: boolean; }
-export interface BrowserState { open: boolean; tabs: BrowserTab[]; activeId: string | null; bookmarks: BrowserBookmark[]; busy: boolean; }
+/** Where the browser pages are shown: their own window, the main window's right panel, or nowhere. */
+export type BrowserHostKind = "window" | "panel";
+export interface BrowserState {
+  open: boolean;
+  tabs: BrowserTab[];
+  activeId: string | null;
+  bookmarks: BrowserBookmark[];
+  busy: boolean;
+  host: BrowserHostKind | null;
+  /** The right panel can host the pages on this OS (Windows). Elsewhere the separate window is used. */
+  panelSupported: boolean;
+}
+/** A rectangle in the main window, in CSS pixels. */
+export interface BrowserPanelRect { left: number; top: number; width: number; height: number; }
 export type BrowserAction =
   | { kind: "newTab"; url?: string }
   | { kind: "navigate"; url: string }
   | { kind: "selectTab" | "closeTab"; tabId: string }
   | { kind: "back" | "forward" | "reload" | "stop" }
-  | { kind: "toolbarHeight"; height: number };
+  | { kind: "toolbarHeight"; height: number }
+  | { kind: "dock"; area: BrowserPanelRect | null }
+  | { kind: "undock" }
+  | { kind: "panelArea"; area: BrowserPanelRect | null; visible: boolean };
 
 export interface AppUpdateStatus {
   revision: number;

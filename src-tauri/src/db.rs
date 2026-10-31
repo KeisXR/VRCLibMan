@@ -7259,6 +7259,29 @@ mod tests {
             r#"{"tabs":["files","preview","browser"],"active":2}"#
         );
         assert!(!saved.right_panel_tabs.contains("booth.pm"));
+        let one_browser = update_settings(
+            &connection,
+            &crate::model::SettingsPatch {
+                right_panel_tabs: Some(
+                    r#"{"tabs":["browser","preview","browser"],"active":2}"#.into(),
+                ),
+                ..crate::model::SettingsPatch::default()
+            },
+        )
+        .unwrap();
+        // The browser is one session, so a second browser tab collapses into the first.
+        assert_eq!(
+            one_browser.right_panel_tabs,
+            r#"{"tabs":["browser","preview"],"active":0}"#
+        );
+        let saved = update_settings(
+            &connection,
+            &crate::model::SettingsPatch {
+                right_panel_tabs: Some(saved.right_panel_tabs.clone()),
+                ..crate::model::SettingsPatch::default()
+            },
+        )
+        .unwrap();
         let kept = update_settings(
             &connection,
             &crate::model::SettingsPatch {

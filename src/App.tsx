@@ -55,6 +55,9 @@ interface ShellValue {
 
 const ShellContext = createContext<ShellValue | null>(null);
 
+/** Lets a single screen part be rendered on its own (tests and previews). */
+export const ShellProvider = ShellContext.Provider;
+
 export function useShell(): ShellValue {
   const value = useContext(ShellContext);
   if (!value) throw new Error("shell missing");
@@ -258,7 +261,7 @@ export default function App() {
         : "";
   const browseKind = route.page === "assets" ? "asset" : route.page === "worlds" ? "world" : null;
   const browseBase = browseKind === "asset" ? "#/assets" : "#/worlds";
-  const rightPanel = useRightPanelState(fail);
+  const rightPanel = useRightPanelState(fail, { builtinBrowser });
   const layout = useAppLayout(browseKind !== null, rightPanel);
 
   const mainPane = (

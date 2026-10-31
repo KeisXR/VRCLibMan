@@ -539,7 +539,8 @@ pub(crate) fn clamp_preview_pane_width(value: u32) -> u32 {
 /// Tab kinds the right panel knows. Later kinds are added here and in `src/rightPanel.ts`.
 const RIGHT_PANEL_KINDS: &[&str] = &["preview", "files", "browser"];
 /// Kinds that may appear only once.
-const RIGHT_PANEL_SINGLETONS: &[&str] = &["preview"];
+/// One preview follows the selection, and the browser is a single session (one host).
+const RIGHT_PANEL_SINGLETONS: &[&str] = &["preview", "browser"];
 const RIGHT_PANEL_MAX_TABS: usize = 12;
 pub(crate) const DEFAULT_RIGHT_PANEL_TABS: &str = r#"{"tabs":["preview"],"active":0}"#;
 
@@ -567,8 +568,14 @@ pub(crate) fn normalize_right_panel_tabs(raw: &str) -> String {
         if !RIGHT_PANEL_KINDS.contains(&kind.as_str()) {
             continue;
         }
-        if RIGHT_PANEL_SINGLETONS.contains(&kind.as_str()) && tabs.iter().any(|tab| tab == kind) {
-            continue;
+        if RIGHT_PANEL_SINGLETONS.contains(&kind.as_str()) {
+            if let Some(existing) = tabs.iter().position(|tab| tab == kind) {
+                // An active duplicate keeps focus on the tab it collapsed into.
+                if index == parsed.active {
+                    active = existing;
+                }
+                continue;
+            }
         }
         if index <= parsed.active {
             active = tabs.len();
