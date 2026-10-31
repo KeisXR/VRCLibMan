@@ -138,7 +138,7 @@ Windows では、BOOTH の窓を同期コマンドの中で作らない。WebVie
 - クラウドへの同時送信は最大 2 件。429 は Retry-After（60 秒まで）か 2・4・8 秒で最大 3 回やり直す。400 は `response_format` と `temperature` を外して 1 回だけ再送する。接続テストは `GET {接続先}/models` で、商品情報は送らない。
 - 説明の補完もサムネイルも、ログインセッションと `adult` クッキーを送らない。アプリの受信口は `Cookie` を読まない。拡張からアプリへの POST は `credentials: "omit"`。
 - サムネイルは https かつ `pximg.net` / `booth.pm` だけ。`Referer: https://booth.pm/` を付け、pximg は `/c/150x150/` に書き換える。`360x360` と素の `300x300` は 403 になる。4MB まで。
-- アセットとワールドのプレビューは、選択が落ち着いてから 1 件だけ、保存済みサムネイル URL の `/c/` を外した画像を `previews` に置く。Cookie は送らない。失敗したら 150px のサムネイルに戻す。年齢制限の商品は「表示する」まで大きい画像を取らない。オンオフは `settings.preview_pane`（既定オフ）、幅は `settings.preview_pane_width`（既定 300、240〜1600。画面上の上限は窓幅の半分と一覧の余り）。スキーマ版は変えない。ログに商品名は出さない。
+- アセットとワールドのプレビューは、選択が落ち着いてから 1 件だけ、保存済みサムネイル URL の `/c/` を外した画像を `previews` に置く。Cookie は送らない。失敗したら 150px のサムネイルに戻す。年齢制限の商品は「表示する」まで大きい画像を取らない。プレビューはアプリ全体のグリッド右列にある右パネル（`src/components/RightPanel.tsx`）の「プレビュー」タブに出す。開閉は `settings.preview_pane`（既定オフ）、幅は `settings.preview_pane_width`（既定 300、240〜1600。画面上の上限は窓幅の半分と、左の列と一覧 360px の余り）で、どちらも右パネル全体の値として使う。タブの種類と並びと選択は `settings.right_panel_tabs`（`{"tabs":[...],"active":n}` の JSON。種類は `preview` `files` `browser` の許可リストだけで、URL やページの中身は保存しない）。タブの種類は `src/rightPanel.ts` と `src/components/rightPanelRegistry.tsx` に足す。いま動くのは「プレビュー」だけで、「ファイル」「ブラウザ」は種類だけ登録し、`available: false` の間は＋メニューにもタブにも出さない。アセット画面の「プレビュー」ボタンは右パネルを開いてプレビュータブを選ぶ。Ctrl+Shift+B（Mac は ⌘⇧B）で開閉、全面表示はその場限りで保存しない。窓幅 1000px 未満では右パネルを重ねて出し、Escape と背景で閉じる。スキーマ版は変えない。ログに商品名は出さない。
 - スキャンはドライブ直下、`Windows`、`Program Files` を拒否する。Mac では `/System`、`/Library`、`/Applications`、`/private` の木と、ホームフォルダそのもの、`/Volumes` そのものを拒否する。一時ディレクトリの中はテストのため許可する。深さ 8、2 万件、シンボリックリンクは追わない。上限で打ち切ったときは、見えていないパスを削除しない。
 
 ## 抽出と確認の契約

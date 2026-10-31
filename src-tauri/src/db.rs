@@ -381,6 +381,7 @@ fn ensure_ready(connection: &Connection) -> Result<(), String> {
         ("ui_genre_width", "200"),
         ("preview_pane", "0"),
         ("preview_pane_width", "300"),
+        ("right_panel_tabs", crate::model::DEFAULT_RIGHT_PANEL_TABS),
         ("check_update_on_startup", "0"),
         ("ui_update_dismissed_version", ""),
     ] {
@@ -468,6 +469,9 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
             setting(connection, "preview_pane_width")?
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(300),
+        ),
+        right_panel_tabs: crate::model::normalize_right_panel_tabs(
+            &setting(connection, "right_panel_tabs")?.unwrap_or_default(),
         ),
         check_update_on_startup: setting(connection, "check_update_on_startup")?.as_deref() == Some("1"),
         ui_update_dismissed_version: setting(connection, "ui_update_dismissed_version")?
@@ -636,6 +640,11 @@ fn save_settings_values(
         connection,
         "preview_pane_width",
         &crate::model::clamp_preview_pane_width(input.preview_pane_width).to_string(),
+    )?;
+    set_setting(
+        connection,
+        "right_panel_tabs",
+        &crate::model::normalize_right_panel_tabs(&input.right_panel_tabs),
     )?;
     set_setting(
         connection,
@@ -7128,6 +7137,7 @@ mod tests {
                 ui_genre_width: 200,
                 preview_pane: false,
                 preview_pane_width: 300,
+                right_panel_tabs: crate::model::DEFAULT_RIGHT_PANEL_TABS.into(),
                 check_update_on_startup: false,
                 ui_update_dismissed_version: String::new(),
             },
@@ -7227,6 +7237,62 @@ mod tests {
     }
 
     #[test]
+    fn right_panel_tabs_keep_only_known_kinds_without_a_schema_change() {
+        let connection = open_memory().unwrap();
+        assert_eq!(
+            settings(&connection).unwrap().right_panel_tabs,
+            r#"{"tabs":["preview"],"active":0}"#
+        );
+        let saved = update_settings(
+            &connection,
+            &crate::model::SettingsPatch {
+                right_panel_tabs: Some(
+                    r#"{"tabs":["files","https://booth.pm/ja/items/1","preview","preview","browser"],"active":4}"#
+                        .into(),
+                ),
+                ..crate::model::SettingsPatch::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            saved.right_panel_tabs,
+            r#"{"tabs":["files","preview","browser"],"active":2}"#
+        );
+        assert!(!saved.right_panel_tabs.contains("booth.pm"));
+        let kept = update_settings(
+            &connection,
+            &crate::model::SettingsPatch {
+                preview_pane: Some(true),
+                ..crate::model::SettingsPatch::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(kept.right_panel_tabs, saved.right_panel_tabs);
+        let broken = update_settings(
+            &connection,
+            &crate::model::SettingsPatch {
+                right_panel_tabs: Some("not json".into()),
+                ..crate::model::SettingsPatch::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(broken.right_panel_tabs, r#"{"tabs":["preview"],"active":0}"#);
+        let empty = update_settings(
+            &connection,
+            &crate::model::SettingsPatch {
+                right_panel_tabs: Some(r#"{"tabs":[],"active":3}"#.into()),
+                ..crate::model::SettingsPatch::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(empty.right_panel_tabs, r#"{"tabs":[],"active":0}"#);
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 7);
+    }
+
+    #[test]
     fn builtin_browser_stays_off_until_the_user_enables_it() {
         let connection = open_memory().unwrap();
         assert!(!settings(&connection).unwrap().builtin_browser);
@@ -7254,6 +7320,7 @@ mod tests {
                 ui_genre_width: 200,
                 preview_pane: false,
                 preview_pane_width: 300,
+                right_panel_tabs: crate::model::DEFAULT_RIGHT_PANEL_TABS.into(),
                 check_update_on_startup: false,
                 ui_update_dismissed_version: String::new(),
             },
@@ -8676,6 +8743,7 @@ mod tests {
                 ui_genre_width: 200,
                 preview_pane: false,
                 preview_pane_width: 300,
+                right_panel_tabs: crate::model::DEFAULT_RIGHT_PANEL_TABS.into(),
                 check_update_on_startup: false,
                 ui_update_dismissed_version: String::new(),
             },
@@ -8704,6 +8772,7 @@ mod tests {
                 ui_genre_width: 200,
                 preview_pane: false,
                 preview_pane_width: 300,
+                right_panel_tabs: crate::model::DEFAULT_RIGHT_PANEL_TABS.into(),
                 check_update_on_startup: false,
                 ui_update_dismissed_version: String::new(),
             },
@@ -8827,6 +8896,7 @@ mod tests {
                 ui_genre_width: 200,
                 preview_pane: false,
                 preview_pane_width: 300,
+                right_panel_tabs: crate::model::DEFAULT_RIGHT_PANEL_TABS.into(),
                 check_update_on_startup: false,
                 ui_update_dismissed_version: String::new(),
             },
@@ -9097,6 +9167,7 @@ mod tests {
             ui_genre_width: 200,
             preview_pane: false,
             preview_pane_width: 300,
+            right_panel_tabs: crate::model::DEFAULT_RIGHT_PANEL_TABS.into(),
             check_update_on_startup: false,
             ui_update_dismissed_version: String::new(),
         };
@@ -9296,6 +9367,7 @@ mod tests {
                 ui_genre_width: 200,
                 preview_pane: false,
                 preview_pane_width: 300,
+                right_panel_tabs: crate::model::DEFAULT_RIGHT_PANEL_TABS.into(),
                 check_update_on_startup: false,
                 ui_update_dismissed_version: String::new(),
             },

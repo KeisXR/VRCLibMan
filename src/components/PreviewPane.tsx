@@ -1,95 +1,12 @@
-import { useEffect, useRef, useState } from "react";
-import type { ReactNode } from "react";
-import { createPortal } from "react-dom";
+import { useEffect, useState } from "react";
 import { api, isTauri, openBoothLink } from "../api";
-import { useShell } from "../App";
 import { filePresence, mediaSrc } from "../media";
-import {
-  PREVIEW_PANE_WIDTH,
-  PREVIEW_SETTLE_MS,
-  clampStoredPreviewPaneWidth,
-  previewPaneMaxWidth,
-  rememberPreviewOpen,
-  rememberPreviewWidth,
-  rememberedPreviewOpen,
-  rememberedPreviewWidth,
-  shouldRequestLargePreview,
-} from "../previewPane";
+import { PREVIEW_SETTLE_MS, shouldRequestLargePreview } from "../previewPane";
 import { GENRE_LABEL } from "../types";
 import type { ItemView } from "../types";
-import { errorText, FileMark } from "../ui";
+import { FileMark } from "../ui";
 
 type Phase = "idle" | "adult" | "settling" | "loading" | "ready" | "fallback";
-
-export function usePreviewOpen(): [boolean, () => void] {
-  const { fail } = useShell();
-  const [open, setOpen] = useState(rememberedPreviewOpen);
-  const dirty = useRef(false);
-  useEffect(() => {
-    let alive = true;
-    void api.settings().then(
-      (settings) => {
-        if (!alive || dirty.current) return;
-        rememberPreviewOpen(settings.previewPane);
-        setOpen(settings.previewPane);
-      },
-      () => undefined,
-    );
-    return () => {
-      alive = false;
-    };
-  }, []);
-  const toggle = () => {
-    dirty.current = true;
-    setOpen((current) => {
-      const next = !current;
-      rememberPreviewOpen(next);
-      void api.updateSettings({ previewPane: next }).catch((err: unknown) => fail(errorText(err)));
-      return next;
-    });
-  };
-  return [open, toggle];
-}
-
-export function usePreviewPaneWidth(windowWidth: number, splitWidth: number | null) {
-  const { fail } = useShell();
-  const [preferred, setPreferred] = useState(rememberedPreviewWidth);
-  const dirty = useRef(false);
-  useEffect(() => {
-    let alive = true;
-    void api.settings().then(
-      (settings) => {
-        if (!alive || dirty.current) return;
-        const next = clampStoredPreviewPaneWidth(settings.previewPaneWidth);
-        rememberPreviewWidth(next);
-        setPreferred(next);
-      },
-      () => undefined,
-    );
-    return () => {
-      alive = false;
-    };
-  }, []);
-  const min = PREVIEW_PANE_WIDTH.min;
-  const max = previewPaneMaxWidth(windowWidth, splitWidth);
-  const width = Math.min(max, Math.max(min, preferred));
-  const publish = (next: number, persist: boolean) => {
-    const stored = clampStoredPreviewPaneWidth(next);
-    dirty.current = true;
-    rememberPreviewWidth(stored);
-    setPreferred(stored);
-    if (!persist) return;
-    void api.updateSettings({ previewPaneWidth: stored }).catch((err: unknown) => fail(errorText(err)));
-  };
-  return {
-    width,
-    min,
-    max,
-    resize: (next: number) => publish(next, false),
-    commit: (next: number) => publish(next, true),
-    reset: () => publish(PREVIEW_PANE_WIDTH.default, true),
-  };
-}
 
 export function useLargePreview(item: ItemView | null, enabled: boolean) {
   const boothId = item?.boothId ?? null;
@@ -209,25 +126,18 @@ export function PreviewPane({
   largePath,
   phase,
   onReveal,
-  onClose,
+  emptyText = "商品を選ぶと、ここに画像を表示します。",
 }: {
   item: ItemView | null;
   largePath: string | null;
   phase: Phase;
   onReveal: () => void;
-  onClose?: () => void;
+  emptyText?: string;
 }) {
   return (
-    <aside className="panel preview-pane" id="asset-preview" aria-label="プレビュー">
-      {onClose && (
-        <div className="preview-close">
-          <button className="button" type="button" onClick={onClose}>
-            閉じる
-          </button>
-        </div>
-      )}
+    <section className="panel preview-pane" id="asset-preview" aria-label="プレビュー">
       {item == null ? (
-        <p className="meta">商品を選ぶと、ここに画像を表示します。</p>
+        <p className="meta">{emptyText}</p>
       ) : (
         <>
           <PreviewVisual
@@ -277,43 +187,6 @@ export function PreviewPane({
           </div>
         </>
       )}
-    </aside>
-  );
-}
-
-export function PreviewOverlay({
-  children,
-  onClose,
-}: {
-  children: ReactNode;
-  onClose: () => void;
-}) {
-  useEffect(() => {
-    document.querySelector<HTMLButtonElement>(".preview-overlay .preview-close button")?.focus();
-  }, []);
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      if (document.querySelector(".product-actions-panel")) return;
-      event.preventDefault();
-      onClose();
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [onClose]);
-  if (typeof document === "undefined") return null;
-  return createPortal(
-    <div
-      className="preview-overlay"
-      role="dialog"
-      aria-modal="true"
-      aria-label="プレビュー"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      {children}
-    </div>,
-    document.body,
+    </section>
   );
 }

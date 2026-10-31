@@ -162,6 +162,7 @@ const store: Store = {
     uiGenreWidth: 200,
     previewPane: false,
     previewPaneWidth: 300,
+    rightPanelTabs: '{"tabs":["preview"],"active":0}',
     checkUpdateOnStartup: false,
     uiUpdateDismissedVersion: "",
   },
