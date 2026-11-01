@@ -71,7 +71,11 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     {
         builder = builder.on_web_content_process_terminate(|webview| {
-            browser::note_probe_process_terminated(webview.label());
+            browser::recover_web_content_process(webview.label(), || {
+                if let Err(error) = webview.reload() {
+                    eprintln!("WebView を再読み込みできません: {error}");
+                }
+            });
         });
     }
     builder

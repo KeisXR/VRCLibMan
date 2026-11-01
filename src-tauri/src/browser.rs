@@ -1008,9 +1008,13 @@ fn probe_process_is_dead() -> bool {
     PROBE_PROCESS_DEAD.load(Ordering::SeqCst)
 }
 
-pub fn note_probe_process_terminated(label: &str) {
+/// The global macOS termination hook replaces Tauri's default reload handler.
+/// Only the probe waits for the next account check; every other view must reload.
+pub fn recover_web_content_process(label: &str, reload: impl FnOnce()) {
     if label == PROBE_LABEL {
         PROBE_PROCESS_DEAD.store(true, Ordering::SeqCst);
+    } else {
+        reload();
     }
 }
 
@@ -2724,17 +2728,41 @@ mod tests {
         assert!(!close.contains("release_probe_for_displayed_browser"));
         let lib = include_str!("lib.rs");
         assert!(lib.contains("on_web_content_process_terminate"));
-        assert!(lib.contains("note_probe_process_terminated"));
+        assert!(lib.contains("recover_web_content_process"));
         let hook = lib.find("on_web_content_process_terminate").unwrap();
         let macos = lib[..hook].rfind("target_os = \"macos\"").unwrap();
         assert!(macos < hook);
+    }
 
-        note_probe_process_terminated("booth-tab-1");
-        assert!(!probe_process_is_dead());
-        note_probe_process_terminated(PROBE_LABEL);
+    #[test]
+    fn terminated_views_reload_but_the_probe_waits_for_an_account_check() {
+        let mut reloads = Vec::new();
+        for label in [
+            "main",
+            "booth-toolbar-1",
+            "booth-tab-1",
+            "booth-probe-other",
+        ] {
+            recover_web_content_process(label, || reloads.push(label));
+            assert!(!probe_process_is_dead());
+        }
+        assert_eq!(
+            reloads,
+            ["main", "booth-toolbar-1", "booth-tab-1", "booth-probe-other"]
+        );
+
+        recover_web_content_process(PROBE_LABEL, || {
+            panic!("the probe must be recreated, not reloaded")
+        });
+        assert!(probe_process_is_dead());
+        assert_eq!(
+            plan_account_probe(true, false, true, true, probe_process_is_dead()),
+            AccountProbePlan::Recreate
+        );
+        recover_web_content_process("main", || reloads.push("main"));
+        assert_eq!(reloads.last(), Some(&"main"));
         assert!(probe_process_is_dead());
         PROBE_PROCESS_DEAD.store(false, Ordering::SeqCst);
-        assert!(!probe_process_is_dead());
     }
 
     fn bounded_function<'a>(source: &'a str, name: &str) -> &'a str {
