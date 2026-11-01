@@ -329,6 +329,8 @@ pub struct Settings {
     pub confidence_threshold: f64,
     pub library_folder: String,
     pub builtin_browser: bool,
+    /// Invert light pages in the in-app browser. Images, video, and canvas stay original.
+    pub browser_force_dark: bool,
     /// `external` (system browser) or `builtin` (in-app browser tab).
     pub booth_link_target: String,
     pub remote_library_folder: String,
@@ -365,6 +367,8 @@ pub struct SettingsInput {
     pub library_folder: String,
     #[serde(default)]
     pub builtin_browser: bool,
+    #[serde(default)]
+    pub browser_force_dark: bool,
     #[serde(default = "default_booth_link_target")]
     pub booth_link_target: String,
     #[serde(default)]
@@ -421,6 +425,7 @@ pub struct SettingsPatch {
     pub confidence_threshold: Option<f64>,
     pub library_folder: Option<String>,
     pub builtin_browser: Option<bool>,
+    pub browser_force_dark: Option<bool>,
     pub booth_link_target: Option<String>,
     pub remote_library_folder: Option<String>,
     pub remote_auto_sync: Option<bool>,
@@ -459,6 +464,7 @@ impl SettingsPatch {
                 .clone()
                 .unwrap_or(current.library_folder),
             builtin_browser: self.builtin_browser.unwrap_or(current.builtin_browser),
+            browser_force_dark: self.browser_force_dark.unwrap_or(current.browser_force_dark),
             booth_link_target: self
                 .booth_link_target
                 .clone()

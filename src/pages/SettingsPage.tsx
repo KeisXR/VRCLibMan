@@ -347,6 +347,26 @@ export function SettingsPage() {
                 </select>
               </SettingRow>
             )}
+            {settings.builtinBrowser && (
+              <SettingRow label="強制ダークモード" help="ライトテーマのページの背景を暗くし、文字は明るくします。画像・動画・キャンバスは元の色のままです。右パネルと別ウィンドウの両方に、再起動なしで反映されます。">
+                <label className="switch-label">
+                  <input
+                    type="checkbox"
+                    checked={settings.browserForceDark}
+                    onChange={(e) => changeSettings({ browserForceDark: e.target.checked })}
+                  />
+                  有効にする
+                </label>
+              </SettingRow>
+            )}
+            {settings.builtinBrowser && (
+              <details className="settings-details">
+                <summary>強制ダークモードについて</summary>
+                <p>開いているページにはすぐに反映されます。設定を変えたあと別のページへ移ると、読み込みが終わるまで元の色が一瞬見えることがあります。そのときはそのページを再読み込みすると、すぐに暗い表示になります。再起動は要りません。</p>
+                <p>ログインや入力は操作できます。ログイン状態は変わりません。画像・動画・キャンバスは元の色のままです。色の付いた文字やボタンは明るさも色相も反転します。画像に白い背景が含まれているとその部分は明るく残ります。CSS で指定した背景画像は色が反転することがあります。</p>
+                <p>Windows・macOS・Linux で同じ方法を使います。Windows の WebView2 での見た目は実機未確認です。macOS と Linux も未検証です。</p>
+              </details>
+            )}
             {settings.builtinBrowser && <div className="section-actions"><button className="button danger" type="button" onClick={() => void (async () => { if (!window.confirm("ブラウザを閉じ、内蔵ブラウザで開いたすべてのサイトのログイン状態と閲覧データを消します。ブックマークは残ります。")) return; try { await api.clearBoothSession(); notify("閲覧データを削除しました"); } catch (err) { fail(errorText(err)); } })()}>内蔵ブラウザの閲覧データを削除</button></div>}
           </section>
 

@@ -366,6 +366,7 @@ fn ensure_ready(connection: &Connection) -> Result<u32, String> {
         ("confidence_threshold", "0.6"),
         ("library_folder", ""),
         ("builtin_browser", "0"),
+        ("browser_force_dark", "0"),
         ("booth_link_target", "external"),
         ("booth_page_interval_ms", "1000"),
         ("remote_library_folder", ""),
@@ -445,6 +446,7 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
         confidence_threshold: threshold,
         library_folder: setting(connection, "library_folder")?.unwrap_or_default(),
         builtin_browser: setting(connection, "builtin_browser")?.as_deref() == Some("1"),
+        browser_force_dark: setting(connection, "browser_force_dark")?.as_deref() == Some("1"),
         booth_link_target: normalize_booth_link_target(
             &setting(connection, "booth_link_target")?.unwrap_or_else(|| "external".into()),
         ),
@@ -601,6 +603,11 @@ fn save_settings_values(
         connection,
         "builtin_browser",
         if input.builtin_browser { "1" } else { "0" },
+    )?;
+    set_setting(
+        connection,
+        "browser_force_dark",
+        if input.browser_force_dark { "1" } else { "0" },
     )?;
     set_setting(
         connection,
@@ -7583,6 +7590,7 @@ mod tests {
                 confidence_threshold: 0.6,
                 library_folder: String::new(),
                 builtin_browser: false,
+                browser_force_dark: false,
                 booth_link_target: "external".into(),
                 remote_library_folder: String::new(),
                 remote_auto_sync: false,
@@ -7699,6 +7707,63 @@ mod tests {
     }
 
     #[test]
+    fn browser_force_dark_defaults_off_without_a_schema_change() {
+        let connection = open_memory().unwrap();
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 7);
+        assert!(!settings(&connection).unwrap().browser_force_dark);
+        connection
+            .execute("DELETE FROM settings WHERE key = 'browser_force_dark'", [])
+            .unwrap();
+        assert!(setting(&connection, "browser_force_dark").unwrap().is_none());
+        assert!(!settings(&connection).unwrap().browser_force_dark);
+        let saved = update_settings(
+            &connection,
+            &crate::model::SettingsPatch {
+                browser_force_dark: Some(true),
+                ..crate::model::SettingsPatch::default()
+            },
+        )
+        .unwrap();
+        assert!(saved.browser_force_dark);
+        assert!(!saved.builtin_browser);
+        assert_eq!(saved.ollama_model, "qwen3.5:9b");
+        assert_eq!(saved.booth_link_target, "external");
+        let kept = update_settings(
+            &connection,
+            &crate::model::SettingsPatch {
+                ollama_model: Some("qwen3.5:4b".into()),
+                ..crate::model::SettingsPatch::default()
+            },
+        )
+        .unwrap();
+        assert!(kept.browser_force_dark);
+        assert_eq!(kept.ollama_model, "qwen3.5:4b");
+        let cleared = update_settings(
+            &connection,
+            &crate::model::SettingsPatch {
+                browser_force_dark: Some(false),
+                ..crate::model::SettingsPatch::default()
+            },
+        )
+        .unwrap();
+        assert!(!cleared.browser_force_dark);
+        assert_eq!(cleared.ollama_model, "qwen3.5:4b");
+        assert!(serde_json::from_str::<crate::model::SettingsPatch>(r#"{}"#).is_ok());
+        let omitted =
+            serde_json::from_str::<crate::model::SettingsPatch>(r#"{"browserForceDark":true}"#)
+                .unwrap();
+        assert_eq!(omitted.browser_force_dark, Some(true));
+        assert!(omitted.builtin_browser.is_none());
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 7);
+    }
+
+    #[test]
     fn right_panel_tabs_keep_only_known_kinds_without_a_schema_change() {
         let connection = open_memory().unwrap();
         assert_eq!(
@@ -7791,6 +7856,7 @@ mod tests {
                 confidence_threshold: 0.6,
                 library_folder: String::new(),
                 builtin_browser: true,
+                browser_force_dark: false,
                 booth_link_target: "external".into(),
                 remote_library_folder: String::new(),
                 remote_auto_sync: false,
@@ -9260,6 +9326,7 @@ mod tests {
                 confidence_threshold: 0.6,
                 library_folder: String::new(),
                 builtin_browser: false,
+                browser_force_dark: false,
                 booth_link_target: "external".into(),
                 remote_library_folder: String::new(),
                 remote_auto_sync: false,
@@ -9290,6 +9357,7 @@ mod tests {
                 confidence_threshold: 0.6,
                 library_folder: library.display().to_string(),
                 builtin_browser: false,
+                browser_force_dark: false,
                 booth_link_target: "external".into(),
                 remote_library_folder: String::new(),
                 remote_auto_sync: false,
@@ -9415,6 +9483,7 @@ mod tests {
                 confidence_threshold: 0.6,
                 library_folder: library.display().to_string(),
                 builtin_browser: browser,
+                browser_force_dark: false,
                 booth_link_target: "external".into(),
                 remote_library_folder: String::new(),
                 remote_auto_sync: false,
@@ -9687,6 +9756,7 @@ mod tests {
             confidence_threshold: 0.6,
             library_folder: String::new(),
             builtin_browser: false,
+            browser_force_dark: false,
             booth_link_target: "external".into(),
             remote_library_folder: String::new(),
             remote_auto_sync: false,
@@ -9889,6 +9959,7 @@ mod tests {
                 confidence_threshold: 0.6,
                 library_folder: library.display().to_string(),
                 builtin_browser: false,
+                browser_force_dark: false,
                 booth_link_target: "external".into(),
                 remote_library_folder: String::new(),
                 remote_auto_sync: false,

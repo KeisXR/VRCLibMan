@@ -406,6 +406,7 @@ pub fn save_settings(
                 confidence_threshold: settings.confidence_threshold,
                 library_folder: settings.library_folder,
                 builtin_browser: settings.builtin_browser,
+                browser_force_dark: settings.browser_force_dark,
                 booth_link_target: settings.booth_link_target,
                 remote_library_folder: settings.remote_library_folder,
                 remote_auto_sync: settings.remote_auto_sync,
@@ -429,6 +430,7 @@ pub fn save_settings(
         )?;
         db::settings(&connection)?
     };
+    crate::browser_surface::sync_force_dark(&app, saved.browser_force_dark);
     crate::remote_sync::wake(&app);
     crate::presence::remember_background(&app, saved.background_mode);
     crate::presence::apply_presence(&app, saved.background_mode, saved.launch_at_login)?;
@@ -450,6 +452,9 @@ pub fn update_settings(
             db::update_settings(&connection, &patch)?,
         )
     };
+    if before.browser_force_dark != saved.browser_force_dark {
+        crate::browser_surface::sync_force_dark(&app, saved.browser_force_dark);
+    }
     if patch.remote_auto_sync.is_some() || patch.remote_library_folder.is_some() {
         crate::remote_sync::wake(&app);
     }
