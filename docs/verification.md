@@ -1,5 +1,16 @@
 # 検証記録
 
+## 髪を共通素体だけでは共有しない（2026-11-01）
+
+対象は main の `5529405f601c43b30c4cce967a92fe396cbe93eb` からの `fix/hair-explicit-avatar-links` の作業差分です。Debian 13 x86_64、Rust 1.99.1、Node.js 24.19.0 で確認しました。
+
+- 修正前に追加した Rust と見本 UI の回帰テストで、共通素体の別アバターに専用の髪が表示されることを再現しました。
+- 修正後の `cargo test --offline --locked --manifest-path src-tauri/Cargo.toml --lib` は316件成功、1件 ignore。直接対応、複数アバターへの直接対応、汎用の髪、カードの髪件数、衣装の共通素体表示を確認しました。
+- `npm test` は112件成功。見本 UI で、共通素体だけの髪は表示せず、「アイテムを追加」で直接結び付けると髪一覧と件数に出ることを確認しました。
+- `npm run build` 成功。Vite と headless Chromium でも、プラムの詳細にライム専用の髪が出ないこと、追加ボタンをクリックすると表示されること、ページエラーがないことを確認しました。
+
+BOOTH のアカウントや Cookie は使用していません。Tauri 実機での画面確認は未実施です。
+
 ## macOS の WebKit プロセス終了時の復旧（2026-11-01）
 
 対象は main の `e85cbadf5c3542901684028465de0f1d0f9946eb` からの `fix/macos-webview-process-recovery` の作業差分です。Debian 13 x86_64、Rust 1.99.1、Node.js 24.19.0 で確認しました。
