@@ -301,6 +301,26 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       },
     );
 
+    await t.test("design selection updates the current screen and survives page navigation", async () => {
+      const design = () => document.querySelector("#settings-design select");
+      const selectDesign = async (value) => {
+        const node = design();
+        await act(async () => {
+          const propsKey = Object.keys(node).find((name) => name.startsWith("__reactProps$"));
+          node[propsKey].onChange({ target: { value } });
+          await delay();
+        });
+        await wait(async () => (await api.settings()).appearance === value);
+        assert.equal(document.documentElement.classList.contains("theme-liquid"), value === "liquid");
+      };
+      await selectDesign("liquid");
+      await route("#/import");
+      assert.equal(document.documentElement.classList.contains("theme-liquid"), true);
+      await route("#/settings");
+      await wait(() => design()?.value === "liquid");
+      await selectDesign("classic");
+    });
+
     await t.test("unsupported background operation cannot be enabled or appear active", async () => {
       const originalSettings = api.settings;
       const presenceSwitch = (label) =>
