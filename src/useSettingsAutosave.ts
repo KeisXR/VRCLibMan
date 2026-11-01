@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { createSettingsAutosave } from "./settingsAutosave";
+import { clearRemoteProbeCache } from "./remoteProductProbe";
 import type { Settings } from "./types";
 
 export function useSettingsAutosave(
@@ -14,7 +15,12 @@ export function useSettingsAutosave(
   if (!controller.current)
     controller.current = createSettingsAutosave(
       (patch) => api.updateSettings(patch),
-      (settings, patch) => applied.current(settings, patch),
+      (settings, patch) => {
+        if (patch.remoteLibraryFolder !== undefined || patch.libraryFolder !== undefined) {
+          clearRemoteProbeCache();
+        }
+        applied.current(settings, patch);
+      },
     );
   const current = controller.current;
   const [state, setState] = useState(current.snapshot);

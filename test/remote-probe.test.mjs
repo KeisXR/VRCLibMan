@@ -182,3 +182,123 @@ test("a fresh local file wins over an older remote probe and can be invalidated"
     await server.close();
   }
 });
+
+test("saving library settings invalidates cached, mounted and in-flight remote probes", async (t) => {
+  const { parseHTML } = await import("linkedom");
+  const { window } = parseHTML('<html><body><div id="root"></div></body></html>');
+  window.location = new URL("http://localhost:1420/");
+  for (const name of ["window", "document", "location", "HTMLElement", "HTMLInputElement", "Element", "Event", "CustomEvent", "EventTarget"]) {
+    Object.defineProperty(globalThis, name, { configurable: true, writable: true, value: window[name] });
+  }
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: { userAgent: "test" } });
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const { act, createElement, useEffect } = await import("react");
+  const { createRoot } = await import("react-dom/client");
+  const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  try {
+    const { api } = await server.ssrLoadModule("/src/api.ts");
+    const { clearRemoteProbeCache, readProbeCache, useRemoteProductProbe } = await server.ssrLoadModule("/src/remoteProductProbe.ts");
+    const { useSettingsAutosave } = await server.ssrLoadModule("/src/useSettingsAutosave.ts");
+    const initial = { ...(await api.settings()), remoteLibraryFolder: "/remote-A" };
+    const base = {
+      boothId: "8800103", remoteConfigured: true, remoteChecked: false, remoteReachable: false,
+      downloads: [{ variation: "", filename: "sample.zip", sizeBytes: 5, state: "missing", localPath: null, remotePath: null }],
+    };
+    const items = [base];
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
+    const wait = async (check) => {
+      for (let n = 0; n < 100; n++) { if (check()) return; await act(tick); }
+      assert.fail(`Remote probe did not settle: ${document.body.textContent}`);
+    };
+
+    async function fixture(run) {
+      clearRemoteProbeCache();
+      let stored = { ...initial };
+      let controller;
+      let refuseSave = false;
+      const pending = [];
+      api.updateSettings = async (patch) => {
+        if (refuseSave) throw new Error("保存に失敗しました");
+        stored = { ...stored, ...patch };
+        return { ...stored };
+      };
+      api.probeRemoteProducts = () => new Promise((resolve) => pending.push({ root: stored.remoteLibraryFolder, resolve }));
+      function Saver() {
+        controller = useSettingsAutosave(() => {});
+        useEffect(() => controller.hydrate(initial, controller.ticket()), []);
+        return null;
+      }
+      function Probe() {
+        const result = useRemoteProductProbe(items);
+        return createElement("output", null, JSON.stringify(result.items[0]));
+      }
+      const root = createRoot(document.getElementById("root"));
+      const render = (showProbe) => act(async () => {
+        root.render(createElement("div", null, createElement(Saver, { key: "settings" }), showProbe ? createElement(Probe, { key: "probe" }) : null));
+        await tick();
+      });
+      const finish = (request) => act(async () => {
+        const remote = request.root === "/remote-A";
+        request.resolve([{
+          boothId: base.boothId, remoteChecked: true, remoteReachable: true,
+          downloads: [{ ...base.downloads[0], state: remote ? "remote" : "missing", remotePath: remote ? "/remote-A/8800103/sample.zip" : null }],
+        }]);
+        await tick();
+      });
+      const change = (patch) => act(async () => { controller.change(patch); await tick(); });
+      const displayed = () => JSON.parse(document.querySelector("output").textContent);
+      try {
+        await render(true);
+        await wait(() => pending.length === 1);
+        await run({ pending, render, finish, change, displayed, failSaves: () => { refuseSave = true; }, controller: () => controller });
+      } finally {
+        await act(async () => root.unmount());
+      }
+    }
+
+    await t.test("a remounted page probes the new remote, and failed saves keep valid cache", () => fixture(async (f) => {
+      await f.finish(f.pending[0]);
+      assert.equal(f.displayed().downloads[0].state, "remote");
+      await f.render(false);
+      await f.change({ remoteLibraryFolder: "/remote-B" });
+      assert.equal(readProbeCache(base.boothId), null);
+      await f.render(true);
+      await wait(() => f.pending.length === 2);
+      assert.equal(f.pending[1].root, "/remote-B");
+      await f.finish(f.pending[1]);
+      assert.equal(f.displayed().downloads[0].state, "missing");
+      await f.render(false);
+      await f.render(true);
+      assert.equal(f.pending.length, 2, "the new remote's cache can still be reused");
+      f.failSaves();
+      await f.change({ remoteLibraryFolder: "/remote-C" });
+      await wait(() => f.controller().phase === "error");
+      assert.equal(readProbeCache(base.boothId).downloads[0].state, "missing");
+      assert.equal(f.pending.length, 2);
+    }));
+
+    await t.test("saving a library folder clears results in a page that stays mounted", () => fixture(async (f) => {
+      await f.finish(f.pending[0]);
+      assert.equal(f.displayed().downloads[0].state, "remote");
+      await f.change({ libraryFolder: "/new-library", remoteLibraryFolder: "/remote-B" });
+      await wait(() => f.pending.length === 2);
+      assert.equal(f.displayed().downloads[0].remotePath, null);
+      await f.finish(f.pending[1]);
+      assert.equal(f.displayed().downloads[0].state, "missing");
+    }));
+
+    await t.test("an old request finishing after unmount cannot restore the previous remote", () => fixture(async (f) => {
+      const oldRequest = f.pending[0];
+      await f.render(false);
+      await f.change({ remoteLibraryFolder: "/remote-B" });
+      await f.render(true);
+      await wait(() => f.pending.length === 2);
+      await f.finish(f.pending[1]);
+      await f.finish(oldRequest);
+      assert.equal(f.displayed().downloads[0].state, "missing");
+      assert.equal(readProbeCache(base.boothId).downloads[0].remotePath, null);
+    }));
+  } finally {
+    await server.close();
+  }
+});

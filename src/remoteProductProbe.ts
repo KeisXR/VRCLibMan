@@ -9,6 +9,8 @@ export const REMOTE_PROBE_CLIENT_TIMEOUT_MS = 10_000;
 export type RemoteProbeStatus = "idle" | "probing" | "ok" | "failed";
 
 const probeCache = new Map<string, { probe: RemoteProductProbe; expires: number }>();
+let cacheGeneration = 0;
+const cacheResetListeners = new Set<() => void>();
 
 export function itemNeedsRemoteProbe(item: ItemView): boolean {
   return item.downloads.length > 0 && item.remoteConfigured && !item.remoteChecked;
@@ -31,7 +33,10 @@ export function writeProbeCache(probes: RemoteProductProbe[], now = Date.now()) 
 }
 
 export function clearRemoteProbeCache() {
+  // A result started for an older library must not refill the cleared cache.
+  cacheGeneration++;
   probeCache.clear();
+  for (const reset of cacheResetListeners) reset();
 }
 
 const invalidationListeners = new Set<(boothId: string) => void>();
@@ -115,6 +120,21 @@ export function useRemoteProductProbe(items: ItemView[]) {
   const [probes, setProbes] = useState<Record<string, RemoteProductProbe>>({});
   const [overlays, setOverlays] = useState<Record<string, RemoteProbeStatus>>({});
   const runRef = useRef(0);
+  const [resetGeneration, setResetGeneration] = useState(cacheGeneration);
+
+  useEffect(() => {
+    const reset = () => {
+      runRef.current++;
+      setProbes({});
+      setOverlays({});
+      setResetGeneration(cacheGeneration);
+    };
+    cacheResetListeners.add(reset);
+    return () => {
+      cacheResetListeners.delete(reset);
+      runRef.current++;
+    };
+  }, []);
 
   const probeKey = useMemo(() => {
     const ids = items.filter(itemNeedsRemoteProbe).map((item) => item.boothId);
@@ -143,12 +163,13 @@ export function useRemoteProductProbe(items: ItemView[]) {
 
   const runProbe = useCallback(async (boothIds: string[], runId: number) => {
     if (boothIds.length === 0) return;
+    const generation = cacheGeneration;
     try {
       const result = await withClientTimeout(
         api.probeRemoteProducts(boothIds),
         REMOTE_PROBE_CLIENT_TIMEOUT_MS,
       );
-      if (runRef.current !== runId) return;
+      if (runRef.current !== runId || generation !== cacheGeneration) return;
       writeProbeCache(result);
       setProbes((prev) => {
         const next = { ...prev };
@@ -161,7 +182,7 @@ export function useRemoteProductProbe(items: ItemView[]) {
         return next;
       });
     } catch {
-      if (runRef.current !== runId) return;
+      if (runRef.current !== runId || generation !== cacheGeneration) return;
       setOverlays((prev) => {
         const next = { ...prev };
         for (const id of boothIds) next[id] = "failed";
@@ -198,7 +219,7 @@ export function useRemoteProductProbe(items: ItemView[]) {
       return next;
     });
     void runProbe(toFetch, runId);
-  }, [probeKey, items, runProbe]);
+  }, [probeKey, items, runProbe, resetGeneration]);
 
   const mergedItems = useMemo(
     () =>
