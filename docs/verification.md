@@ -6,7 +6,7 @@
 
 - `npm run build` 成功、`npm test` 110件成功。
 - `npm run test:tab-click` は Chromium で7件成功。固定タブとページタブのクリック、6px未満の揺れ、閾値を超えた並べ替えのあとのクリック、Escape を確認しました。
-- `npm run test:browser-layout` は WebKitWebDriver と Xvfb で7件成功。右パネルの表示域、全面表示、窓のサイズ変更、タブ切替でページ領域を隠して戻すこと、別窓用の操作バーを確認しました。これは見本の画面であり、macOS の子 WebView ではありません。
+- `npm run test:browser-layout` は WebKitWebDriver と Xvfb で7件成功。右パネルの表示域、全面表示、窓のサイズ変更、タブ切替でページ領域を隠して戻すこと、別窓用の操作バーを確認しました。これは見本の画面であり、macOS の子 WebView ではありません。GitHub の ubuntu-22.04 では、アカウント状態を読む前の「ブラウザを開くか…」が残った最初のフレームを測って失敗したため、状態行が消えてから測るように試験を直して、同じ7件を再実行しました。
 - `cargo +stable test --manifest-path src-tauri/Cargo.toml --lib` は309件成功、1件 ignore。`panel_supported` が Linux では偽であること、論理ポイントの四捨五入、パネルを隠す操作が WebView を閉じないこと、タブを閉じる操作が破棄であること、移動が同じ WebView の `reparent` で倍率を掛け直すことを含みます。
 
 macOS の子 WebView の実配置、Retina、タイトルバーとの重なり、別窓との往復での履歴・ログイン・倍率、スリープ復帰は未確認です。Windows の WebView2 での既存の右パネル動作も、この環境では再確認していません。
