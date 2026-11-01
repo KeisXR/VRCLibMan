@@ -14,6 +14,7 @@ import { AppUpdater } from "../components/AppUpdater";
 import { ClassificationFeedback } from "../components/ClassificationFeedback";
 import { OllamaMemoryControls } from "../components/OllamaMemoryControls";
 import { CloudClassifierSettings } from "../components/CloudClassifierSettings";
+import { UnitySettings } from "../components/UnitySettings";
 
 const emptyAvatar = {
   id: "",
@@ -367,6 +368,11 @@ export function SettingsPage() {
               <label className="switch-label"><input type="checkbox" checked={settings.routeDownloads} onChange={(e) => void changeRouting(e.target.checked)} />有効にする</label>
             </SettingRow>
             <details className="settings-details"><summary>自動整理について詳しく</summary><p>有効にするには、移動先のライブラリフォルダが必要です。拡張機能や内蔵ブラウザでダウンロードしたファイルを、ダウンロードフォルダの VRCLibMan 以下から商品別に移動します。</p><p>ほかの場所にあるファイルは移動しません。内蔵ブラウザからのダウンロードも、選んだ1件ずつ行います。</p></details>
+          </section>
+
+          <section className="settings-section">
+            <header><h2>Unity</h2><p>unitypackage を開くときに使う Unity を選びます。</p></header>
+            <UnitySettings onNotify={notify} onFail={fail} />
           </section>
 
           <section className="settings-section">

@@ -711,6 +711,15 @@ pub(crate) fn set_booth_page_interval_ms(
     set_setting(connection, "booth_page_interval_ms", &interval_ms.to_string())
 }
 
+/// 既定の Unity 本体のパス。未設定なら空文字。
+pub(crate) fn unity_editor_path(connection: &Connection) -> Result<String, String> {
+    Ok(setting(connection, "unity_editor_path")?.unwrap_or_default())
+}
+
+pub(crate) fn set_unity_editor_path(connection: &Connection, path: &str) -> Result<(), String> {
+    set_setting(connection, "unity_editor_path", path)
+}
+
 pub(crate) fn import_export_json(
     connection: &mut Connection,
     json: &str,
