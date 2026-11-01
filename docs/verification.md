@@ -1,5 +1,17 @@
 # 検証記録
 
+## アカウント確認の失敗を未ログインと分けた（2026-11-01）
+
+対象は main の `8a53d08f35e177b4113d679b8c9a915b38c7ffb6`（v0.1.19）からの `b6c8539` と `22d53d8` です。実行環境は Ubuntu 24.04 x86_64 の Linux VM、Node.js 22.23.4、Rust 1.99.1 です。macOS と Windows の実機はなく、BOOTH のアカウントと Cookie には触れていません。
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib` は 309 件成功、1 件 ignore（既存の `classifier::tests::feedback_listing_match_counts`）。読み込み完了前に結果付きスクリプトを実行しないこと、pending・タイムアウト・読取エラーを未ログインにしないこと、ログインページは 2 回連続のときだけ未ログインにすることを含みます。
+- `npm test` は 111 件成功。確認失敗で直前の表示名を残すこと、一度も確定していなければ「状態不明」になること、古い世代の結果を捨てることを含みます。
+- `npm run dev` の見本を Chromium で操作し、ログイン済み、明示的な未ログイン、初回からの確認失敗（状態不明）、確認失敗でも表示名を残すこと、ログアウト後の未ログインを確認しました。これは見本の UI であり、ネイティブ WebView の読み込み待ちではありません。
+
+macOS の WKWebView で初回ナビゲーション前にコールバックが落ちる件、Windows の WebView2、実在の BOOTH ログイン、通信失敗や読み込み遅延の実ページ、確認連打とスリープ復帰は、この環境では確認していません。
+
+その後、GitHub の frontend がタブ並べ替えで失敗した。失敗した実行は main の #102（ドロップ位置をタブ左端にする）より前だった。#102 を取り込み、ドック表示のレイアウト試験も状態行が消えてから測るようにしたうえで、`npm run test:browser-layout` を WebKitWebDriver で再実行し 7 件成功した。アカウント確認の実装は変えていない。
+
 ## ブラウザの余白とページズーム（2026-11-01）
 
 対象は main の `d226827624cd0c9d9591fa76a02d5c6419d0e0e1` を基準にした `fix/browser-toolbar-zoom` の作業差分です。Codex Cloud の Debian x86_64、Node.js 24、Rust 1.99.1、GTK 3 / WebKitGTK 4.1、Xvfb で検証しました。新しい専用 XDG ディレクトリとローカル HTTP ページを使い、既存ライブラリとログイン情報は使っていません。

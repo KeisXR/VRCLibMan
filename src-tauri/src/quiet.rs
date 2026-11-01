@@ -34,62 +34,175 @@ pub(crate) enum Hop {
 }
 
 /// ヘッダの dataset だけを読む。クッキー文字列は読まない。
+/// `status` が `in` / `out` のときだけログイン状態が確定する。DOM 未準備と読取失敗は `pending` / `error`。
 pub fn account_script() -> &'static str {
     r##"(function () {
   try {
     var nav = document.querySelector("#js-navigation");
     var sign = document.querySelector("#sign_in");
     var signed = nav ? String(nav.getAttribute("data-signed-in") || "") : "";
+    var status = "pending";
+    if (signed === "true") status = "in";
+    else if (signed === "false") status = "out";
+    else if (!nav && sign) status = "out";
     var name = nav ? String(nav.getAttribute("data-user-name") || "") : "";
     var thumb = nav ? String(nav.getAttribute("data-user-thumbnail-url") || "") : "";
     var pixiv = "";
-    if (nav) {
+    if (nav && status === "in") {
       pixiv = nav.getAttribute("data-user-id")
         || nav.getAttribute("data-pixiv-id")
         || nav.getAttribute("data-user-pixiv-id")
         || "";
     }
     return {
-      ready: !!(nav || sign),
-      loggedIn: signed === "true",
-      displayName: name,
-      pixivId: String(pixiv || ""),
-      avatarUrl: String(thumb || "")
+      ready: status === "in" || status === "out",
+      status: status,
+      loggedIn: status === "in",
+      displayName: status === "in" ? name : "",
+      pixivId: status === "in" ? String(pixiv || "") : "",
+      avatarUrl: status === "in" ? String(thumb || "") : "",
+      href: String(location.href || "")
     };
   } catch (error) {
-    return { ready: false, loggedIn: false, displayName: "", pixivId: "", avatarUrl: "" };
+    return { ready: false, status: "error", loggedIn: false, displayName: "", pixivId: "", avatarUrl: "", href: "" };
   }
 })()"##
 }
 
+/// 1回の読み取り。`Account` だけがログイン済みか明示的な未ログイン。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AccountReading {
+    Account(BoothAccount),
+    /// ヘッダがまだ無い。未ログインとは別。
+    Pending,
+    /// ログインページに着地した。連続して見えたときだけ未ログインにする。
+    LoginPage,
+    /// 年齢確認。通過させず、未ログインにもしない。
+    Blocked,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AccountPoll {
+    Wait,
+    Ready(BoothAccount),
+    /// 年齢確認、または期限まで決まらなかった読み取り。ログイン済みにも未ログインにもしない。
+    Stop,
+}
+
 pub fn parse_account_eval(raw: &str) -> Result<BoothAccount, String> {
+    match classify_account_eval(raw)? {
+        AccountReading::Account(account) => Ok(account),
+        AccountReading::Pending | AccountReading::LoginPage | AccountReading::Blocked => {
+            Err("ログイン状態を確認できません".into())
+        }
+    }
+}
+
+pub(crate) fn classify_account_eval(raw: &str) -> Result<AccountReading, String> {
     let mut value: serde_json::Value =
         serde_json::from_str(raw).map_err(|_| "ページの結果を読めません".to_string())?;
     if let serde_json::Value::String(inner) = value {
         value = serde_json::from_str(&inner).map_err(|_| "ページの結果を読めません".to_string())?;
     }
-    let logged_in = value
-        .get("loggedIn")
-        .and_then(|item| item.as_bool())
-        .unwrap_or(false);
-    let display_name = value
-        .get("displayName")
+    if !value.is_object() {
+        return Err("ページの結果を読めません".into());
+    }
+    let href = value
+        .get("href")
         .and_then(|item| item.as_str())
         .unwrap_or("");
-    let pixiv_id = value
-        .get("pixivId")
+    if account_href_is_age_gate(href) {
+        return Ok(AccountReading::Blocked);
+    }
+    let status = value
+        .get("status")
         .and_then(|item| item.as_str())
         .unwrap_or("");
-    let avatar_url = value
-        .get("avatarUrl")
-        .and_then(|item| item.as_str())
-        .unwrap_or("");
-    Ok(finish_account(
-        logged_in,
-        display_name,
-        pixiv_id,
-        avatar_url,
-    ))
+    match status {
+        "in" => {
+            let display_name = value
+                .get("displayName")
+                .and_then(|item| item.as_str())
+                .unwrap_or("");
+            let pixiv_id = value
+                .get("pixivId")
+                .and_then(|item| item.as_str())
+                .unwrap_or("");
+            let avatar_url = value
+                .get("avatarUrl")
+                .and_then(|item| item.as_str())
+                .unwrap_or("");
+            Ok(AccountReading::Account(finish_account(
+                true,
+                display_name,
+                pixiv_id,
+                avatar_url,
+            )))
+        }
+        "out" => Ok(AccountReading::Account(finish_account(false, "", "", ""))),
+        "pending" if account_href_is_login(href) => Ok(AccountReading::LoginPage),
+        "pending" => Ok(AccountReading::Pending),
+        _ => Err("ログイン状態を確認できません".into()),
+    }
+}
+
+/// 読み取りを確定させる。ログインページは2回連続で見えたときだけ未ログイン。
+/// それ以外の未確定、期限切れ、失敗は `Stop` で、`logged_in: false` を作らない。
+pub(crate) fn advance_account_poll(
+    reading: Result<AccountReading, String>,
+    login_streak: &mut u8,
+    elapsed_ms: u64,
+    limit_ms: u64,
+) -> AccountPoll {
+    match reading {
+        Ok(AccountReading::Account(account)) => AccountPoll::Ready(account),
+        Ok(AccountReading::Blocked) => AccountPoll::Stop,
+        Err(_) => {
+            *login_streak = 0;
+            if elapsed_ms >= limit_ms {
+                AccountPoll::Stop
+            } else {
+                AccountPoll::Wait
+            }
+        }
+        Ok(AccountReading::LoginPage) => {
+            *login_streak = login_streak.saturating_add(1);
+            if *login_streak >= 2 {
+                AccountPoll::Ready(finish_account(false, "", "", ""))
+            } else if elapsed_ms >= limit_ms {
+                AccountPoll::Stop
+            } else {
+                AccountPoll::Wait
+            }
+        }
+        Ok(AccountReading::Pending) => {
+            *login_streak = 0;
+            if elapsed_ms >= limit_ms {
+                AccountPoll::Stop
+            } else {
+                AccountPoll::Wait
+            }
+        }
+    }
+}
+
+fn account_href_is_age_gate(href: &str) -> bool {
+    let Ok(url) = Url::parse(href) else {
+        return false;
+    };
+    if url.scheme() != "https" && url.scheme() != "http" {
+        return false;
+    }
+    let path = url.path().to_ascii_lowercase();
+    let query = url.query().unwrap_or("").to_ascii_lowercase();
+    let haystack = format!("{path}?{query}");
+    ["age_verification", "age-verification", "age_check"]
+        .iter()
+        .any(|token| haystack.contains(token))
+}
+
+fn account_href_is_login(href: &str) -> bool {
+    Url::parse(href).is_ok_and(|url| url_is_login(&url))
 }
 
 pub fn parse_account_html(html: &str) -> BoothAccount {
@@ -639,6 +752,134 @@ mod tests {
         assert!(script.contains("data-signed-in"));
         assert!(script.contains("data-user-name"));
         assert!(script.contains("data-user-thumbnail-url"));
+        assert!(script.contains("status = \"out\""));
+        assert!(script.contains("status: \"error\""));
+        assert!(!script.contains("document.cookie"));
+    }
+
+    fn reading(raw: &str) -> AccountReading {
+        classify_account_eval(raw).unwrap_or_else(|err| panic!("readable fixture failed: {err}"))
+    }
+
+    #[test]
+    fn account_eval_keeps_pending_timeouts_and_read_errors_out_of_logged_out() {
+        let pending = r#"{"ready":false,"status":"pending","loggedIn":false,"displayName":"","pixivId":"","avatarUrl":"","href":"https://accounts.booth.pm/library"}"#;
+        assert_eq!(reading(pending), AccountReading::Pending);
+        assert!(parse_account_eval(pending).is_err());
+
+        let missing = r#"{"loggedIn":false,"displayName":"","pixivId":"","avatarUrl":""}"#;
+        assert!(classify_account_eval(missing).is_err());
+        assert!(parse_account_eval(missing).is_err());
+
+        let broken = "{";
+        assert!(classify_account_eval(broken).is_err());
+        let script_error = r#"{"ready":false,"status":"error","loggedIn":false,"displayName":"","pixivId":"","avatarUrl":"","href":""}"#;
+        assert!(classify_account_eval(script_error).is_err());
+
+        let signed_out = r#"{"ready":true,"status":"out","loggedIn":false,"href":"https://accounts.booth.pm/library"}"#;
+        match reading(signed_out) {
+            AccountReading::Account(account) => assert!(!account.logged_in),
+            other => panic!("expected an explicit sign-out, got {other:?}"),
+        }
+
+        let signed_in = r#"{"ready":true,"status":"in","loggedIn":true,"displayName":"テスト利用者","pixivId":"424242","avatarUrl":"https://booth.pximg.net/users/424242/icon.jpg?token=secret","href":"https://accounts.booth.pm/library?token=secret"}"#;
+        match reading(signed_in) {
+            AccountReading::Account(account) => {
+                assert!(account.logged_in);
+                assert_eq!(account.display_name, "テスト利用者");
+                assert!(!account.avatar_url.contains("secret"));
+                let json = serde_json::to_string(&account).unwrap();
+                assert!(!json.contains("secret"));
+                assert!(!json.contains("token"));
+            }
+            other => panic!("expected a signed-in account, got {other:?}"),
+        }
+        let quoted = serde_json::to_string(&serde_json::json!(signed_in)).unwrap();
+        assert!(matches!(reading(&quoted), AccountReading::Account(account) if account.logged_in));
+
+        let gate = r#"{"ready":true,"status":"out","loggedIn":false,"href":"https://accounts.booth.pm/age_verification?next=/library&token=secret"}"#;
+        assert_eq!(reading(gate), AccountReading::Blocked);
+        let adult_item = r#"{"ready":true,"status":"in","loggedIn":true,"displayName":"テスト利用者","pixivId":"424242","avatarUrl":"","href":"https://booth.pm/ja/items/424242?r18=1"}"#;
+        assert!(
+            matches!(reading(adult_item), AccountReading::Account(account) if account.logged_in)
+        );
+
+        let login = r#"{"ready":false,"status":"pending","loggedIn":false,"href":"https://accounts.pixiv.net/login?return_to=secret"}"#;
+        assert_eq!(reading(login), AccountReading::LoginPage);
+        assert!(parse_account_eval(login).is_err());
+    }
+
+    #[test]
+    fn account_poll_stops_on_failure_and_requires_a_stable_login_page() {
+        let mut streak = 0;
+        assert_eq!(
+            advance_account_poll(Ok(AccountReading::Pending), &mut streak, 0, 12_000),
+            AccountPoll::Wait
+        );
+        assert_eq!(streak, 0);
+        assert_eq!(
+            advance_account_poll(Ok(AccountReading::Pending), &mut streak, 12_000, 12_000),
+            AccountPoll::Stop
+        );
+
+        let login = Ok(AccountReading::LoginPage);
+        assert_eq!(
+            advance_account_poll(login.clone(), &mut streak, 200, 12_000),
+            AccountPoll::Wait
+        );
+        assert_eq!(streak, 1);
+        match advance_account_poll(login, &mut streak, 400, 12_000) {
+            AccountPoll::Ready(account) => assert!(!account.logged_in),
+            other => panic!("a stable login page is signed out, got {other:?}"),
+        }
+
+        streak = 1;
+        assert_eq!(
+            advance_account_poll(Ok(AccountReading::Pending), &mut streak, 400, 12_000),
+            AccountPoll::Wait
+        );
+        assert_eq!(streak, 0);
+        streak = 0;
+        assert_eq!(
+            advance_account_poll(Ok(AccountReading::LoginPage), &mut streak, 12_000, 12_000),
+            AccountPoll::Stop,
+        );
+        assert_eq!(streak, 1);
+
+        assert_eq!(
+            advance_account_poll(Ok(AccountReading::Blocked), &mut streak, 0, 12_000),
+            AccountPoll::Stop
+        );
+        assert_eq!(
+            advance_account_poll(
+                Err("ページの結果を読めません".into()),
+                &mut streak,
+                0,
+                12_000
+            ),
+            AccountPoll::Wait
+        );
+        assert_eq!(streak, 0);
+        assert_eq!(
+            advance_account_poll(
+                Err("ページの結果を読めません".into()),
+                &mut streak,
+                12_000,
+                12_000
+            ),
+            AccountPoll::Stop
+        );
+
+        let signed_in = finish_account(true, "テスト利用者", "424242", "");
+        match advance_account_poll(
+            Ok(AccountReading::Account(signed_in.clone())),
+            &mut streak,
+            12_000,
+            12_000,
+        ) {
+            AccountPoll::Ready(account) => assert_eq!(account, signed_in),
+            other => panic!("a definitive reading wins even at the deadline, got {other:?}"),
+        }
     }
 
     #[test]

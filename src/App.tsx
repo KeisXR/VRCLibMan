@@ -16,7 +16,14 @@ import { useAppLayout } from "./useAppLayout";
 import { UI_GENRE_WIDTH, UI_RAIL_WIDTH } from "./uiLayout";
 import { AppUpdaterProvider, useStartupUpdateCheck } from "./useAppUpdater";
 import { SidebarUpdaterBadge } from "./components/SidebarUpdaterBadge";
-import type { BoothAccount, JobProgress, LibraryStats } from "./types";
+import type { JobProgress, LibraryStats } from "./types";
+import {
+  accountAfterLogout,
+  accountLabel,
+  applyAccountResult,
+  checkingAccount,
+  type AccountSnapshot,
+} from "./accountStatus";
 import { SidebarClassificationHint } from "./components/SidebarClassificationHint";
 import { RightPanelColumn, RightPanelProvider, useRightPanelState } from "./components/RightPanel";
 import { errorText } from "./ui";
@@ -104,8 +111,9 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const [builtinBrowser, setBuiltinBrowser] = useState(false);
-  const [account, setAccount] = useState<BoothAccount | null>(null);
+  const [accountView, setAccountView] = useState<AccountSnapshot>(checkingAccount());
   const accountReload = useRef<() => void>(() => {});
+  const accountGeneration = useRef(0);
   const [setupComplete, setSetupComplete] = useState<boolean | null>(null);
   const [checkUpdateOnStartup, setCheckUpdateOnStartup] = useState(false);
   const route = useMemo(() => parseRoute(hash), [hash]);
@@ -222,24 +230,24 @@ export default function App() {
   useEffect(() => {
     if (!builtinBrowser) {
       accountReload.current = () => {};
-      setAccount(null);
+      setAccountView(checkingAccount());
       return;
     }
     let alive = true;
-    let pending = true;
-    let generation = 0;
     const load = () => {
-      const ticket = ++generation;
-      if (pending) setAccount(null);
-      pending = false;
+      const ticket = ++accountGeneration.current;
       void api.boothAccount().then(
         (value) => {
-          if (alive && ticket === generation) setAccount(value);
+          if (!alive) return;
+          setAccountView((previous) =>
+            applyAccountResult(previous, accountGeneration.current, ticket, { ok: true, account: value }),
+          );
         },
         () => {
-          if (alive && ticket === generation) {
-            setAccount({ loggedIn: false, displayName: "", pixivId: "", avatarUrl: "" });
-          }
+          if (!alive) return;
+          setAccountView((previous) =>
+            applyAccountResult(previous, accountGeneration.current, ticket, { ok: false }),
+          );
         },
       );
     };
@@ -374,7 +382,7 @@ export default function App() {
             <span className="app-version">{version === "未確認" ? "バージョン未確認" : version ? `v${version}` : "バージョン確認中"}</span>
             {builtinBrowser && (
               <AccountPill
-                account={account}
+                view={accountView}
                 onLogin={() => {
                   void api.openBoothBrowser().then(
                     () => refreshAccount(),
@@ -383,7 +391,7 @@ export default function App() {
                 }}
                 onLogout={async () => {
                   await api.clearBoothSession();
-                  setAccount({ loggedIn: false, displayName: "", pixivId: "", avatarUrl: "" });
+                  setAccountView(accountAfterLogout());
                   refreshAccount();
                 }}
                 onFail={(message) => fail(message)}
@@ -454,14 +462,6 @@ function StartupUpdateCheck({ enabled }: { enabled: boolean }) {
   return null;
 }
 
-function accountLabel(account: BoothAccount | null): string {
-  if (!account) return "確認中";
-  if (!account.loggedIn) return "未ログイン";
-  if (account.displayName.trim()) return account.displayName.trim();
-  if (account.pixivId.trim()) return account.pixivId.trim();
-  return "ログイン中";
-}
-
 function safeAvatar(url: string): string {
   try {
     const parsed = new URL(url);
@@ -479,12 +479,12 @@ function safeAvatar(url: string): string {
 }
 
 function AccountPill({
-  account,
+  view,
   onLogin,
   onLogout,
   onFail,
 }: {
-  account: BoothAccount | null;
+  view: AccountSnapshot;
   onLogin: () => void;
   onLogout: () => Promise<void>;
   onFail: (message: string) => void;
@@ -494,8 +494,10 @@ function AccountPill({
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  const label = accountLabel(account);
-  const avatar = !broken && account?.loggedIn ? safeAvatar(account.avatarUrl) : "";
+  const label = accountLabel(view);
+  const signedIn = view.account?.loggedIn === true && view.phase !== "checking";
+  const avatar = !broken && signedIn ? safeAvatar(view.account?.avatarUrl ?? "") : "";
+  const unverified = view.phase === "unverified" ? " unverified" : "";
   const face = avatar ? (
     <img className="account-avatar" src={avatar} alt="" onError={() => setBroken(true)} />
   ) : (
@@ -524,17 +526,23 @@ function AccountPill({
     };
   }, [open]);
 
-  if (!account) {
+  if (!signedIn) {
+    if (view.phase === "checking") {
+      return (
+        <div className="account-pill neutral" title={label} data-account-phase={view.phase}>
+          {face}
+          <span className="account-name">{label}</span>
+        </div>
+      );
+    }
     return (
-      <div className="account-pill neutral" title={label}>
-        {face}
-        <span className="account-name">{label}</span>
-      </div>
-    );
-  }
-  if (!account.loggedIn) {
-    return (
-      <button className="account-pill neutral" type="button" onClick={onLogin} title={label}>
+      <button
+        className={`account-pill neutral${unverified}`}
+        type="button"
+        onClick={onLogin}
+        title={label}
+        data-account-phase={view.phase}
+      >
         {face}
         <span className="account-name">{label}</span>
       </button>
@@ -558,9 +566,10 @@ function AccountPill({
   return (
     <div className="account-menu" ref={rootRef}>
       <button
-        className="account-pill"
+        className={`account-pill${unverified}`}
         type="button"
         title={label}
+        data-account-phase={view.phase}
         aria-expanded={open}
         aria-haspopup="menu"
         onClick={() => {

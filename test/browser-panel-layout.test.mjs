@@ -62,6 +62,9 @@ test("page tabs fill the right panel in a real browser", { timeout: 60000 }, asy
       const box = element => { const r = element.getBoundingClientRect(); return { left:r.left, top:r.top, width:r.width, height:r.height, bottom:r.bottom }; };
       const rect = box(viewport);
       if (['left','top','width','height'].some(key => Math.abs(rect[key] - area.area[key]) > 1)) return null;
+      // Until browserState() lands, the docked controls show "ブラウザを開くか…".
+      // That first frame already matches the viewport, so wait until the status row is gone.
+      if (chrome.querySelector('.browser-status')) return null;
       return { viewport:rect, body:box(body), tabs:box(document.querySelector('.right-panel-tabs')), chrome:box(chrome), navigation:box(chrome.querySelector('.browser-navigation')), tools:box(chrome.querySelector('.browser-tools')), status:!!chrome.querySelector('.browser-status'), area:area.area };
     `), "measured browser viewport");
     assert.ok(metrics.viewport.height > 200, `Page viewport collapsed: ${JSON.stringify(metrics)}`);

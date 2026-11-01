@@ -584,9 +584,13 @@ if (typeof location !== "undefined" && new URLSearchParams(location.search).get(
   store.setupComplete = true;
 }
 
-let previewBoothLoggedIn = !(
-  typeof location !== "undefined" && new URLSearchParams(location.search).get("account") === "out"
-);
+const previewAccountQuery =
+  typeof location !== "undefined" ? (new URLSearchParams(location.search).get("account") ?? "") : "";
+let previewAccountUnknown = previewAccountQuery === "unknown";
+/** 見本で、最初の1回だけ成功し、その後の確認は失敗させる。 */
+let previewAccountFailAfter = previewAccountQuery === "keep" ? 1 : Number.POSITIVE_INFINITY;
+let previewAccountChecks = 0;
+let previewBoothLoggedIn = previewAccountQuery !== "out" && previewAccountQuery !== "unknown";
 
 if (stressPreview) {
   store.setupComplete = true;
@@ -2143,6 +2147,9 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       return boothId as T;
     }
     case "booth_account": {
+      previewAccountChecks += 1;
+      if (previewAccountChecks > previewAccountFailAfter) throw new Error("ログイン状態を確認できません");
+      if (previewAccountUnknown) throw new Error("ログイン状態を確認できません");
       if (!store.settings.builtinBrowser || !previewBoothLoggedIn) {
         return { loggedIn: false, displayName: "", pixivId: "", avatarUrl: "" } as T;
       }
@@ -2294,6 +2301,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       return undefined as T;
     case "clear_booth_session":
       previewBoothLoggedIn = false;
+      previewAccountUnknown = false;
       return undefined as T;
     case "cache_product_preview": {
       const boothId = String(args.boothId ?? "");

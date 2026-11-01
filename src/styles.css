@@ -304,6 +304,7 @@ a.drag-over {
 button.account-pill { font: inherit; }
 button.account-pill:hover { background: var(--hover); }
 .account-pill.neutral { color: var(--text-secondary); }
+.account-pill.unverified { color: var(--warn); }
 .account-avatar {
   position: absolute;
   left: -5px;
