@@ -10,6 +10,8 @@
 
 macOS の WKWebView で初回ナビゲーション前にコールバックが落ちる件、Windows の WebView2、実在の BOOTH ログイン、通信失敗や読み込み遅延の実ページ、確認連打とスリープ復帰は、この環境では確認していません。
 
+その後、GitHub の frontend がタブ並べ替えで失敗した。失敗した実行は main の #102（ドロップ位置をタブ左端にする）より前だった。#102 を取り込み、ドック表示のレイアウト試験も状態行が消えてから測るようにしたうえで、`npm run test:browser-layout` を WebKitWebDriver で再実行し 7 件成功した。アカウント確認の実装は変えていない。
+
 ## ブラウザの余白とページズーム（2026-11-01）
 
 対象は main の `d226827624cd0c9d9591fa76a02d5c6419d0e0e1` を基準にした `fix/browser-toolbar-zoom` の作業差分です。Codex Cloud の Debian x86_64、Node.js 24、Rust 1.99.1、GTK 3 / WebKitGTK 4.1、Xvfb で検証しました。新しい専用 XDG ディレクトリとローカル HTTP ページを使い、既存ライブラリとログイン情報は使っていません。
