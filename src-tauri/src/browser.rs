@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 use tauri::webview::DownloadEvent;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
@@ -527,10 +527,26 @@ fn destroy_session_windows(app: &AppHandle) -> bool {
     closed
 }
 
+struct SessionClearGuard;
+
+impl Drop for SessionClearGuard {
+    fn drop(&mut self) {
+        SESSION_CLEARING.store(false, Ordering::SeqCst);
+    }
+}
+
 /// 内蔵ブラウザ専用プロファイルの全サイトのセッションを消す。
 /// 同じユーザーデータに WebView2 が残ったまま次の窓を作ると固まるので、
-/// 先に UI スレッドで窓を壊してから、保存してあるプロファイルを消す。
+/// 先に確認を止めて UI スレッドで窓を壊してから、保存してあるプロファイルを消す。
+/// 消去中は確認用 WebView を作り直さない。
 pub async fn clear_session(app: &AppHandle) -> Result<(), String> {
+    if SESSION_CLEARING.swap(true, Ordering::SeqCst) {
+        return Err("ログアウト中です".into());
+    }
+    let _guard = SessionClearGuard;
+    let _turn = ProbeTurn::acquire().await.map_err(|_| {
+        "ログイン状態を消せません。しばらくしてからもう一度押してください".to_string()
+    })?;
     browser_log(app, "セッションを消します");
     let (existed, closed) = dispatch_ui(app.clone(), |handle| {
         let existed = crate::browser_surface::host_window(handle).is_some();
@@ -613,7 +629,20 @@ async fn clear_macos_data_store(app: &AppHandle) -> Result<(), String> {
     Err("ログイン状態を消せませんでした。ブラウザを閉じてからもう一度押してください".into())
 }
 
+static SESSION_CLEARING: AtomicBool = AtomicBool::new(false);
+static PROBE_PROCESS_DEAD: AtomicBool = AtomicBool::new(false);
+static PROBE_LOAD_GEN: AtomicU64 = AtomicU64::new(0);
+static PROBE_EPOCH: AtomicU64 = AtomicU64::new(0);
+static PROBE_FINISHED_EPOCH: AtomicU64 = AtomicU64::new(0);
 static PROBE_BUSY: AtomicBool = AtomicBool::new(false);
+
+struct ProbeLoadHub {
+    listeners: Vec<std::sync::mpsc::SyncSender<()>>,
+}
+
+static PROBE_LOADS: Mutex<ProbeLoadHub> = Mutex::new(ProbeLoadHub {
+    listeners: Vec::new(),
+});
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -915,14 +944,146 @@ impl Drop for ProbeTurn {
     }
 }
 
-/// 隠した窓。visible は false、タスクバーに出さない、フォーカスしない。
-fn open_profile_probe(app: &AppHandle, url: Url) -> Result<(), String> {
-    if crate::browser_surface::host_window(app).is_some() {
+/// アカウント確認の開き方。macOS だけ表示タブと別に確認用を残す。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AccountProbePlan {
+    /// 表示中のブラウザの BOOTH タブを読む。確認用は作らない。
+    Visible,
+    /// 確認用を新しく作る。
+    Create,
+    /// 残している確認用を、見ているページとは別に読み直す。
+    Reuse,
+    /// プロセス終了などで、同じデータストアの確認用を作り直す。
+    Recreate,
+    /// ログアウトの消去中。作らない。
+    Blocked,
+}
+
+/// macOS では確認用を最大1つ保持する。他の OS は表示中に二本目を作らない。
+fn account_probe_is_resident() -> bool {
+    cfg!(target_os = "macos")
+}
+
+fn plan_account_probe(
+    resident: bool,
+    clearing: bool,
+    host_open: bool,
+    probe_present: bool,
+    process_dead: bool,
+) -> AccountProbePlan {
+    if clearing {
+        return AccountProbePlan::Blocked;
+    }
+    if !resident {
+        return if host_open {
+            AccountProbePlan::Visible
+        } else if probe_present {
+            AccountProbePlan::Recreate
+        } else {
+            AccountProbePlan::Create
+        };
+    }
+    if process_dead && probe_present {
+        AccountProbePlan::Recreate
+    } else if probe_present {
+        AccountProbePlan::Reuse
+    } else {
+        AccountProbePlan::Create
+    }
+}
+
+fn account_probe_alongside_browser(resident: bool, host_open: bool) -> bool {
+    resident || !host_open
+}
+
+fn drop_probe_before_visible_browser(resident: bool) -> bool {
+    !resident
+}
+
+fn drop_probe_after_account_read(resident: bool) -> bool {
+    !resident
+}
+
+fn probe_process_is_dead() -> bool {
+    PROBE_PROCESS_DEAD.load(Ordering::SeqCst)
+}
+
+pub fn note_probe_process_terminated(label: &str) {
+    if label == PROBE_LABEL {
+        PROBE_PROCESS_DEAD.store(true, Ordering::SeqCst);
+    }
+}
+
+fn current_probe_load() -> u64 {
+    PROBE_LOAD_GEN.load(Ordering::SeqCst)
+}
+
+#[derive(Clone, Copy)]
+enum ProbeLoadWait {
+    /// いまの確認用を読み直したあと。世代がこの値より新しい完了を待つ。
+    NewerThan(u64),
+    /// 新しく作った確認用。その世代の完了だけを待つ。
+    Epoch(u64),
+}
+
+fn probe_load_arrived(wait: ProbeLoadWait) -> bool {
+    match wait {
+        ProbeLoadWait::NewerThan(after) => current_probe_load() > after,
+        ProbeLoadWait::Epoch(epoch) => PROBE_FINISHED_EPOCH.load(Ordering::SeqCst) == epoch,
+    }
+}
+
+fn publish_probe_load() {
+    PROBE_LOAD_GEN.fetch_add(1, Ordering::SeqCst);
+    let mut hub = PROBE_LOADS.lock().unwrap_or_else(|err| err.into_inner());
+    hub.listeners.retain(|sender| sender.try_send(()).is_ok());
+}
+
+fn subscribe_probe_load() -> std::sync::mpsc::Receiver<()> {
+    let (sender, receiver) = std::sync::mpsc::sync_channel(16);
+    let mut hub = PROBE_LOADS.lock().unwrap_or_else(|err| err.into_inner());
+    hub.listeners.push(sender);
+    receiver
+}
+
+/// 表示用の窓を開く直前。macOS の確認用は残し、それ以外はデータフォルダのロックを避けるため捨てる。
+pub fn release_probe_for_displayed_browser(app: &AppHandle) {
+    if !drop_probe_before_visible_browser(account_probe_is_resident()) {
+        return;
+    }
+    if let Some(probe) = app.get_webview_window(PROBE_LABEL) {
+        let _ = probe.destroy();
+    }
+}
+
+const PROBE_MARK_JS: &str = "(function(){var root=document.documentElement;if(!root){return false;}root.dataset.vrclibmanProbe='1';return true;})()";
+
+fn probe_reload_script() -> String {
+    format!(
+        "location.replace({})",
+        serde_json::to_string(LIBRARY_URL).unwrap_or_else(|_| "\"\"".to_string())
+    )
+}
+
+/// 隠した窓。visible は false、タスクバーに出さない、フォーカスしない。タブ一覧には入れない。
+/// macOS では既に生きている確認用を二本目として作り直さない。
+/// 新しく作ったときは、その世代の読み込み完了だけを区別する番号を返す。
+fn open_profile_probe(app: &AppHandle, url: Url) -> Result<Option<u64>, String> {
+    if SESSION_CLEARING.load(Ordering::SeqCst) {
+        return Err(ACCOUNT_UNCONFIRMED.into());
+    }
+    let host_open = crate::browser_surface::host_window(app).is_some();
+    if !account_probe_alongside_browser(account_probe_is_resident(), host_open) {
         return Err("表示中のブラウザがあるので、別の窓は作りません".into());
     }
     if let Some(window) = app.get_webview_window(PROBE_LABEL) {
+        let resident_live = account_probe_is_resident() && !probe_process_is_dead();
+        if resident_live {
+            return Ok(None);
+        }
         let _ = window.destroy();
     }
+    let epoch = PROBE_EPOCH.fetch_add(1, Ordering::SeqCst) + 1;
     let mut builder = WebviewWindowBuilder::new(app, PROBE_LABEL, WebviewUrl::External(url))
         .title("BOOTH")
         .inner_size(16.0, 16.0)
@@ -932,7 +1093,16 @@ fn open_profile_probe(app: &AppHandle, url: Url) -> Result<(), String> {
         .skip_taskbar(true)
         .decorations(false)
         .always_on_bottom(true)
-        .on_download(|_webview, event| handle_booth_download(event));
+        .on_download(|_webview, event| handle_booth_download(event))
+        .on_page_load(move |_window, payload| {
+            if PROBE_EPOCH.load(Ordering::SeqCst) != epoch {
+                return;
+            }
+            if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+                PROBE_FINISHED_EPOCH.store(epoch, Ordering::SeqCst);
+                publish_probe_load();
+            }
+        });
     #[cfg(not(target_os = "macos"))]
     {
         let root = local_data_dir(app)?;
@@ -945,15 +1115,20 @@ fn open_profile_probe(app: &AppHandle, url: Url) -> Result<(), String> {
     }
     #[cfg(target_os = "macos")]
     {
-        builder = builder.data_store_identifier(BOOTH_DATA_STORE_ID);
+        // 隠した WebView は既定だと停止まで進むことがある。確認用だけ処理を絞り、完全には止めない。
+        // https://developer.apple.com/documentation/webkit/wkpreferences/inactiveschedulingpolicy-swift.enum
+        builder = builder
+            .data_store_identifier(BOOTH_DATA_STORE_ID)
+            .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Throttle);
     }
     let window = builder
         .build()
         .map_err(|_| "ログイン状態を確認できません".to_string())?;
+    PROBE_PROCESS_DEAD.store(false, Ordering::SeqCst);
     #[cfg(target_os = "linux")]
     crate::browser_linux::remember_profile(window.as_ref())?;
     let _ = window.hide();
-    Ok(())
+    Ok(Some(epoch))
 }
 
 async fn destroy_probe(app: &AppHandle) {
@@ -970,8 +1145,15 @@ async fn destroy_probe(app: &AppHandle) {
         .await;
 }
 
-/// 見えている窓があればそれを使い、無ければ隠した窓を作ってすぐ捨てる。
-/// クッキーの読み取りは dispatch_ui の外、ワーカーで行う。
+#[derive(Clone, Copy)]
+enum ProbeCookieWindow {
+    Created,
+    Existing,
+    Visible,
+}
+
+/// 見えている窓があればそれを使い、無ければ隠した窓を作る。
+/// macOS の確認用は読み取り後も残す。クッキーの読み取りは dispatch_ui の外、ワーカーで行う。
 async fn booth_cookie_header(
     app: &AppHandle,
     url: Url,
@@ -979,28 +1161,44 @@ async fn booth_cookie_header(
     let _turn = ProbeTurn::acquire()
         .await
         .map_err(|_| crate::quiet::QuietError::Failed)?;
-    let created = dispatch_ui(app.clone(), move |handle| {
+    if SESSION_CLEARING.load(Ordering::SeqCst) {
+        return Err(crate::quiet::QuietError::Failed);
+    }
+    let kind = dispatch_ui(app.clone(), move |handle| {
+        if SESSION_CLEARING.load(Ordering::SeqCst) {
+            return Err(ACCOUNT_UNCONFIRMED.into());
+        }
         if crate::browser_surface::host_window(handle).is_some() {
-            return Ok(false);
+            return Ok(ProbeCookieWindow::Visible);
+        }
+        if account_probe_is_resident()
+            && handle.get_webview(PROBE_LABEL).is_some()
+            && !probe_process_is_dead()
+        {
+            return Ok(ProbeCookieWindow::Existing);
         }
         let blank =
             Url::parse("about:blank").map_err(|_| "ログイン状態を確認できません".to_string())?;
-        open_profile_probe(handle, blank)?;
-        Ok(true)
+        let _ = open_profile_probe(handle, blank)?;
+        Ok(ProbeCookieWindow::Created)
     })
     .await
     .map_err(|_| crate::quiet::QuietError::Failed)?;
     let app_for_cookies = app.clone();
     let url_for_cookies = url.clone();
     let header = tauri::async_runtime::spawn_blocking(move || {
-        let label = if created { PROBE_LABEL } else { WINDOW_LABEL };
-        let window = if created {
-            app_for_cookies.get_webview(label).ok_or_else(|| "ログイン状態を確認できません".to_string())?
-        } else { crate::browser_surface::active_view(&app_for_cookies)? };
+        let window = match kind {
+            ProbeCookieWindow::Created | ProbeCookieWindow::Existing => app_for_cookies
+                .get_webview(PROBE_LABEL)
+                .ok_or_else(|| "ログイン状態を確認できません".to_string())?,
+            ProbeCookieWindow::Visible => crate::browser_surface::active_view(&app_for_cookies)?,
+        };
         crate::quiet::session_header(&window, &url_for_cookies)
     })
     .await;
-    if created {
+    if matches!(kind, ProbeCookieWindow::Created)
+        && drop_probe_after_account_read(account_probe_is_resident())
+    {
         destroy_probe(app).await;
     }
     header
@@ -1332,12 +1530,25 @@ async fn eval_booth(app: &AppHandle, script: String) -> Result<String, String> {
 }
 
 async fn eval_label(app: &AppHandle, label: &str, script: String) -> Result<String, String> {
+    eval_label_within(app, label, script, Duration::from_secs(15)).await
+}
+
+async fn eval_label_within(
+    app: &AppHandle,
+    label: &str,
+    script: String,
+    timeout: Duration,
+) -> Result<String, String> {
     let label = label.to_string();
     let (sender, receiver) = std::sync::mpsc::channel();
     dispatch_ui(app.clone(), move |handle| {
         let window = if label == WINDOW_LABEL {
             crate::browser_surface::active_view(handle)?
-        } else { handle.get_webview(&label).ok_or("ブラウザが開いていません")? };
+        } else {
+            handle
+                .get_webview(&label)
+                .ok_or("ブラウザが開いていません")?
+        };
         window
             .eval_with_callback(script, move |result| {
                 let _ = sender.send(result);
@@ -1346,71 +1557,235 @@ async fn eval_label(app: &AppHandle, label: &str, script: String) -> Result<Stri
     })
     .await?;
     tauri::async_runtime::spawn_blocking(move || {
-        receiver
-            .recv_timeout(Duration::from_secs(15))
-            .map_err(|_| "ページの読み取りがタイムアウトしました。もう一度お試しください".to_string())
+        receiver.recv_timeout(timeout).map_err(|_| {
+            "ページの読み取りがタイムアウトしました。もう一度お試しください".to_string()
+        })
     })
     .await
     .map_err(|err| format!("ページを読めません: {err}"))?
 }
 
-/// 見えている窓があればその場で読み、無ければ隠した窓でライブラリを開いて読む。
-/// 読み終わったら隠した窓は捨てる。クッキーは読まない。
+const ACCOUNT_UNCONFIRMED: &str = "ログイン状態を確認できません";
+const ACCOUNT_READ_LIMIT: Duration = Duration::from_secs(12);
+
+fn account_budget(started: std::time::Instant) -> Duration {
+    ACCOUNT_READ_LIMIT.saturating_sub(started.elapsed())
+}
+
+/// 見えている BOOTH のタブがあれば、macOS 以外はその場で読む。
+/// macOS は表示タブと別の確認用でライブラリを読む。見ているページは動かさない。
+/// 新しく作った確認用は、読み込み完了のあとで DOM を見る。生成した直後の結果付きスクリプトは実行しない。
+/// Wry の macOS 実装は初回ナビゲーション確定前のスクリプトを結果コールバックなしで保留する。
+/// https://github.com/tauri-apps/wry/blob/wry-v0.57.0/src/wkwebview/mod.rs#L723
+/// macOS 以外は読み終わったら隠した窓を捨てる。クッキーは読まない。
 pub async fn read_booth_account(app: AppHandle) -> Result<crate::quiet::BoothAccount, String> {
     browser_enabled(&app)?;
     let _turn = ProbeTurn::acquire()
         .await
-        .map_err(|_| "ログイン状態を確認できません".to_string())?;
-    let library = Url::parse(LIBRARY_URL).map_err(|_| "ページのURLを読めません".to_string())?;
-    let created = dispatch_ui(app.clone(), move |handle| {
-        if crate::browser_surface::host_window(handle).is_some() {
-            return Ok(false);
-        }
-        open_profile_probe(handle, library)?;
-        Ok(true)
+        .map_err(|_| ACCOUNT_UNCONFIRMED.to_string())?;
+    if SESSION_CLEARING.load(Ordering::SeqCst) {
+        return Err(ACCOUNT_UNCONFIRMED.into());
+    }
+    let started = std::time::Instant::now();
+    let resident = account_probe_is_resident();
+    let plan = dispatch_ui(app.clone(), move |handle| {
+        Ok(plan_account_probe(
+            resident,
+            SESSION_CLEARING.load(Ordering::SeqCst),
+            crate::browser_surface::host_window(handle).is_some(),
+            handle.get_webview(PROBE_LABEL).is_some(),
+            probe_process_is_dead(),
+        ))
     })
     .await?;
-    let raw = if created {
-        wait_for_account_markup(&app).await
-    } else {
-        eval_label(
-            &app,
-            crate::browser_surface::booth_view(&app).ok_or("BOOTHのタブを開くとアカウントを確認できます")?.label(),
-            crate::quiet::account_script().to_string(),
-        )
-        .await
+    let result = match plan {
+        AccountProbePlan::Blocked => Err(ACCOUNT_UNCONFIRMED.into()),
+        AccountProbePlan::Visible => read_visible_account(&app, started).await,
+        AccountProbePlan::Create => read_created_probe(&app, started).await,
+        AccountProbePlan::Reuse => read_reused_probe(&app, started).await,
+        AccountProbePlan::Recreate => rebuild_probe_and_read(&app, started).await,
     };
-    if created {
+    if drop_probe_after_account_read(resident)
+        && matches!(plan, AccountProbePlan::Create | AccountProbePlan::Recreate)
+    {
         destroy_probe(&app).await;
     }
-    let raw = raw?;
-    let account = crate::quiet::parse_account_eval(&raw)?;
-    browser_log(&app, "アカウントを確認しました");
-    Ok(account)
+    match &result {
+        Ok(_) => browser_log(&app, "アカウントを確認しました"),
+        Err(_) => browser_log(&app, "アカウントを確認できません"),
+    }
+    result
 }
 
-async fn wait_for_account_markup(app: &AppHandle) -> Result<String, String> {
-    let started = std::time::Instant::now();
-    let script = crate::quiet::account_script().to_string();
-    loop {
-        let raw = eval_label(app, PROBE_LABEL, script.clone()).await?;
-        let ready = serde_json::from_str::<serde_json::Value>(&raw)
-            .ok()
-            .and_then(|value| {
-                let value = if let serde_json::Value::String(inner) = value {
-                    serde_json::from_str(&inner).unwrap_or(serde_json::Value::Null)
-                } else {
-                    value
-                };
-                value.get("ready").and_then(|item| item.as_bool())
-            })
-            .unwrap_or(false);
-        if ready || started.elapsed() > Duration::from_secs(12) {
-            return Ok(raw);
+async fn read_visible_account(
+    app: &AppHandle,
+    started: std::time::Instant,
+) -> Result<crate::quiet::BoothAccount, String> {
+    let label = dispatch_ui(app.clone(), |handle| {
+        crate::browser_surface::booth_view(handle)
+            .map(|view| view.label().to_string())
+            .ok_or_else(|| ACCOUNT_UNCONFIRMED.to_string())
+    })
+    .await?;
+    read_settled_account(app, &label, started, false).await
+}
+
+async fn read_created_probe(
+    app: &AppHandle,
+    started: std::time::Instant,
+) -> Result<crate::quiet::BoothAccount, String> {
+    let result = open_and_read_once(app, started).await;
+    if result.is_err() && account_probe_is_resident() && probe_process_is_dead() {
+        browser_log(app, "確認用のプロセスが終了したので作り直します");
+        return rebuild_probe_and_read(app, started).await;
+    }
+    result
+}
+
+async fn open_and_read_once(
+    app: &AppHandle,
+    started: std::time::Instant,
+) -> Result<crate::quiet::BoothAccount, String> {
+    if SESSION_CLEARING.load(Ordering::SeqCst) {
+        return Err(ACCOUNT_UNCONFIRMED.into());
+    }
+    let library = Url::parse(LIBRARY_URL).map_err(|_| "ページのURLを読めません".to_string())?;
+    let opened = dispatch_ui(app.clone(), move |handle| open_profile_probe(handle, library)).await?;
+    let Some(epoch) = opened else {
+        return Err(ACCOUNT_UNCONFIRMED.into());
+    };
+    wait_for_probe_load(ProbeLoadWait::Epoch(epoch), account_budget(started)).await?;
+    read_settled_account(app, PROBE_LABEL, started, false).await
+}
+
+async fn read_reused_probe(
+    app: &AppHandle,
+    started: std::time::Instant,
+) -> Result<crate::quiet::BoothAccount, String> {
+    let result = reload_resident_probe(app, started).await;
+    if result.is_err() && (probe_process_is_dead() || probe_window_is_gone(app).await) {
+        browser_log(app, "確認用のプロセスが終了したので作り直します");
+        return rebuild_probe_and_read(app, started).await;
+    }
+    result
+}
+
+async fn reload_resident_probe(
+    app: &AppHandle,
+    started: std::time::Instant,
+) -> Result<crate::quiet::BoothAccount, String> {
+    let budget = account_budget(started);
+    let marked = eval_label_within(app, PROBE_LABEL, PROBE_MARK_JS.to_string(), budget.min(Duration::from_secs(3))).await;
+    if !matches!(marked, Ok(ref value) if value.contains("true")) {
+        return Err(ACCOUNT_UNCONFIRMED.into());
+    }
+    let after = current_probe_load();
+    let script = probe_reload_script();
+    dispatch_ui(app.clone(), move |handle| {
+        let window = handle
+            .get_webview(PROBE_LABEL)
+            .ok_or_else(|| "ブラウザが開いていません".to_string())?;
+        window
+            .eval(script)
+            .map_err(|err| format!("ページを開けません: {err}"))
+    })
+    .await?;
+    wait_for_probe_load(ProbeLoadWait::NewerThan(after), account_budget(started)).await?;
+    read_settled_account(app, PROBE_LABEL, started, true).await
+}
+
+async fn rebuild_probe_and_read(
+    app: &AppHandle,
+    started: std::time::Instant,
+) -> Result<crate::quiet::BoothAccount, String> {
+    destroy_probe(app).await;
+    open_and_read_once(app, started).await
+}
+
+async fn probe_window_is_gone(app: &AppHandle) -> bool {
+    dispatch_ui(app.clone(), |handle| {
+        Ok(handle.get_webview(PROBE_LABEL).is_none())
+    })
+    .await
+    .unwrap_or(true)
+}
+
+/// 読み込み完了まで待つ。UI スレッドでは待たない。URL はログに残さない。
+/// 新しく作った窓は、その世代の完了だけを見る。古い窓の完了ではスクリプトを走らせない。
+async fn wait_for_probe_load(wait: ProbeLoadWait, timeout: Duration) -> Result<(), String> {
+    if timeout.is_zero() {
+        return Err(ACCOUNT_UNCONFIRMED.into());
+    }
+    if probe_load_arrived(wait) {
+        return Ok(());
+    }
+    let receiver = subscribe_probe_load();
+    if probe_load_arrived(wait) {
+        return Ok(());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let started = std::time::Instant::now();
+        loop {
+            if probe_load_arrived(wait) {
+                return Ok(());
+            }
+            let remaining = timeout.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                return Err(ACCOUNT_UNCONFIRMED.to_string());
+            }
+            match receiver.recv_timeout(remaining) {
+                Ok(()) => continue,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+                | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    if probe_load_arrived(wait) {
+                        return Ok(());
+                    }
+                    return Err(ACCOUNT_UNCONFIRMED.to_string());
+                }
+            }
         }
-        let _ =
-            tauri::async_runtime::spawn_blocking(|| std::thread::sleep(Duration::from_millis(250)))
-                .await;
+    })
+    .await
+    .map_err(|_| ACCOUNT_UNCONFIRMED.to_string())?
+}
+
+/// 読み込み後の DOM を、期限まで確認する。未準備と失敗は未ログインにしない。
+/// `require_fresh` のときは、読み直す前の印が残った文書を確定に使わない。
+async fn read_settled_account(
+    app: &AppHandle,
+    label: &str,
+    started: std::time::Instant,
+    require_fresh: bool,
+) -> Result<crate::quiet::BoothAccount, String> {
+    let script = crate::quiet::account_script().to_string();
+    let mut login_streak = 0u8;
+    loop {
+        let budget = account_budget(started);
+        if budget < Duration::from_millis(50) {
+            return Err(ACCOUNT_UNCONFIRMED.into());
+        }
+        let timeout = budget.min(Duration::from_secs(3));
+        let reading = match eval_label_within(app, label, script.clone(), timeout).await {
+            Ok(raw) if require_fresh && !crate::quiet::account_document_is_fresh(&raw) => {
+                Ok(crate::quiet::AccountReading::Pending)
+            }
+            Ok(raw) => crate::quiet::classify_account_eval(&raw),
+            Err(_) => Err(ACCOUNT_UNCONFIRMED.to_string()),
+        };
+        let elapsed = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let limit = u64::try_from(ACCOUNT_READ_LIMIT.as_millis()).unwrap_or(u64::MAX);
+        match crate::quiet::advance_account_poll(reading, &mut login_streak, elapsed, limit) {
+            crate::quiet::AccountPoll::Ready(account) => return Ok(account),
+            crate::quiet::AccountPoll::Stop => return Err(ACCOUNT_UNCONFIRMED.into()),
+            crate::quiet::AccountPoll::Wait => {
+                let pause = Duration::from_millis(200).min(account_budget(started));
+                if pause.is_zero() {
+                    return Err(ACCOUNT_UNCONFIRMED.into());
+                }
+                let _ =
+                    tauri::async_runtime::spawn_blocking(move || std::thread::sleep(pause)).await;
+            }
+        }
     }
 }
 
@@ -2224,6 +2599,166 @@ mod tests {
         assert!(command.contains("clear_session"));
         assert!(!command.contains(".build("));
         assert!(!command.contains(".cookies("));
+    }
+
+    #[test]
+    fn account_probe_waits_for_load_before_a_script_with_a_result() {
+        let production = include_str!("browser.rs")
+            .split("mod tests")
+            .next()
+            .unwrap();
+        let created = bounded_function(production, "fn open_and_read_once");
+        let wait = created.find("wait_for_probe_load").expect("load event");
+        let settled = created.find("read_settled_account").expect("dom read");
+        assert!(wait < settled, "DOM は読み込み完了のあとで見る");
+        assert!(created.contains("open_profile_probe"));
+        assert!(!created.contains("eval_with_callback"));
+        assert!(!created.contains("account_script"));
+        assert!(!created.contains("thread::sleep"));
+        let read = bounded_function(production, "fn read_booth_account");
+        assert!(read.contains("open_and_read_once") || read.contains("read_created_probe"));
+        assert!(!read.contains("wait_for_account_markup"));
+        assert!(!read.contains("thread::sleep"));
+        assert!(read.find("SESSION_CLEARING").unwrap() < read.find("plan_account_probe").unwrap());
+        let probe = bounded_function(production, "fn open_profile_probe");
+        assert!(probe.contains("PageLoadEvent::Finished"));
+        assert!(probe.contains("on_page_load"));
+        assert!(!probe.contains("eval_with_callback"));
+        assert!(!probe.contains("account_script"));
+        assert!(!probe.contains("thread::sleep"));
+        assert!(probe.contains("focused(false)"));
+        assert!(probe.contains("visible(false)"));
+        assert!(!probe.contains("set_focus"));
+        assert!(!probe.contains("session.add"));
+        assert!(probe.contains("SESSION_CLEARING"));
+        assert!(probe.contains("BackgroundThrottlingPolicy::Throttle"));
+        assert_eq!(probe.matches("background_throttling").count(), 1);
+        let settled_body = bounded_function(production, "fn read_settled_account");
+        assert!(settled_body.contains("advance_account_poll"));
+        assert!(settled_body.contains("account_document_is_fresh"));
+        assert!(settled_body.contains("spawn_blocking"));
+        assert!(!settled_body.contains("logged_in: false"));
+        let wait_body = bounded_function(production, "fn wait_for_probe_load");
+        assert!(wait_body.contains("spawn_blocking"));
+        assert!(wait_body.contains("recv_timeout"));
+        assert!(!wait_body.contains("eval_with_callback"));
+        assert!(!wait_body.contains("thread::sleep"));
+    }
+
+    #[test]
+    fn macos_reuses_one_hidden_probe_and_other_platforms_keep_the_old_window_rule() {
+        assert_eq!(account_probe_is_resident(), cfg!(target_os = "macos"));
+        assert_eq!(
+            plan_account_probe(true, false, true, false, false),
+            AccountProbePlan::Create
+        );
+        assert_eq!(
+            plan_account_probe(true, false, true, true, false),
+            AccountProbePlan::Reuse
+        );
+        assert_eq!(
+            plan_account_probe(true, false, false, true, true),
+            AccountProbePlan::Recreate
+        );
+        assert_eq!(
+            plan_account_probe(true, true, false, true, false),
+            AccountProbePlan::Blocked
+        );
+        assert_eq!(
+            plan_account_probe(false, true, false, false, false),
+            AccountProbePlan::Blocked
+        );
+        assert_eq!(
+            plan_account_probe(false, false, true, true, true),
+            AccountProbePlan::Visible
+        );
+        assert_eq!(
+            plan_account_probe(false, false, false, false, false),
+            AccountProbePlan::Create
+        );
+        assert_eq!(
+            plan_account_probe(false, false, false, true, false),
+            AccountProbePlan::Recreate
+        );
+        assert!(account_probe_alongside_browser(true, true));
+        assert!(!account_probe_alongside_browser(false, true));
+        assert!(account_probe_alongside_browser(false, false));
+        assert!(!drop_probe_before_visible_browser(true));
+        assert!(drop_probe_before_visible_browser(false));
+        assert!(!drop_probe_after_account_read(true));
+        assert!(drop_probe_after_account_read(false));
+
+        let production = include_str!("browser.rs").split("mod tests").next().unwrap();
+        let reused = bounded_function(production, "fn reload_resident_probe");
+        assert!(reused.contains("PROBE_LABEL"));
+        assert!(reused.contains("probe_reload_script"));
+        assert!(reused.contains("wait_for_probe_load"));
+        assert!(reused.contains("read_settled_account"));
+        let reload_at = reused.find("probe_reload_script").unwrap();
+        let wait_at = reused.find("wait_for_probe_load").unwrap();
+        let read_at = reused.find("read_settled_account").unwrap();
+        assert!(reload_at < wait_at && wait_at < read_at);
+        assert!(!reused.contains("booth_view"));
+        assert!(!reused.contains("active_view"));
+        assert!(!reused.contains("set_focus"));
+        assert!(!reused.contains(".show("));
+        assert_eq!(
+            probe_reload_script(),
+            "location.replace(\"https://accounts.booth.pm/library\")"
+        );
+
+        let release = bounded_function(production, "fn release_probe_for_displayed_browser");
+        assert!(release.find("return").unwrap() < release.find("destroy()").unwrap());
+        assert!(release.contains("drop_probe_before_visible_browser"));
+        let surface = include_str!("browser_surface.rs");
+        assert!(surface.contains("release_probe_for_displayed_browser"));
+        assert!(!surface.contains("background_throttling"));
+        let opened = bounded_function(surface, "fn build_browser_window");
+        assert!(opened.contains("release_probe_for_displayed_browser"));
+        assert!(!opened.contains("booth-probe"));
+        let panel = bounded_function(surface, "fn open_panel");
+        assert!(panel.contains("release_probe_for_displayed_browser"));
+        let close = bounded_function(surface, "pub fn close");
+        assert!(!close.contains("booth-probe"));
+        assert!(!close.contains("PROBE_LABEL"));
+        assert!(!close.contains("release_probe_for_displayed_browser"));
+        let lib = include_str!("lib.rs");
+        assert!(lib.contains("on_web_content_process_terminate"));
+        assert!(lib.contains("note_probe_process_terminated"));
+        let hook = lib.find("on_web_content_process_terminate").unwrap();
+        let macos = lib[..hook].rfind("target_os = \"macos\"").unwrap();
+        assert!(macos < hook);
+
+        note_probe_process_terminated("booth-tab-1");
+        assert!(!probe_process_is_dead());
+        note_probe_process_terminated(PROBE_LABEL);
+        assert!(probe_process_is_dead());
+        PROBE_PROCESS_DEAD.store(false, Ordering::SeqCst);
+        assert!(!probe_process_is_dead());
+    }
+
+    fn bounded_function<'a>(source: &'a str, name: &str) -> &'a str {
+        let start = source
+            .find(name)
+            .unwrap_or_else(|| panic!("missing {name}"));
+        let rest = &source[start..];
+        let after = rest.find('\n').unwrap() + 1;
+        let tail = &rest[after..];
+        let end = [
+            "\nfn ",
+            "\npub fn ",
+            "\npub(crate) fn ",
+            "\npub async fn ",
+            "\nasync fn ",
+            "\nstruct ",
+            "\nenum ",
+            "\nimpl ",
+        ]
+        .iter()
+        .filter_map(|marker| tail.find(marker))
+        .min()
+        .unwrap_or(tail.len());
+        &rest[..after + end]
     }
 
     fn function_body<'a>(source: &'a str, name: &str) -> &'a str {

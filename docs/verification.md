@@ -1,5 +1,26 @@
 # 検証記録
 
+## macOS の確認用 WebView を表示タブと分けて残す（2026-11-01）
+
+対象は `b3095363210abb011953c8e069eae619f1fbdc2c` です。前段は `e1a59d9f6f34457e678e9dfad72425af873a9449`。実行環境は Ubuntu 24.04 x86_64 の Linux VM、Rust 1.99.1 です。macOS と Windows の実機はなく、BOOTH のアカウントと Cookie には触れていません。apple 向けターゲットはこの環境に無く、`target_os = "macos"` の分岐（`background_throttling` と `on_web_content_process_terminate`）はコンパイルしていません。
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib` は 311 件成功、1 件 ignore（既存の `classifier::tests::feedback_listing_match_counts`）。macOS だけ確認用を再利用し、それ以外は表示中に二本目を作らない計画、読み込み完了前に結果付きスクリプトを実行しないこと、表示中のページを移動しないこと、確認用にだけスロットリングを書くこと、ログアウトが消去の前に窓を壊し、消去中は作り直さないことを含みます。
+- 画面の TypeScript は変えていないため、このコミットでは `npm test` をやり直していません。前段の 111 件は成功しています。
+
+macOS でログインしたあと全タブを閉じて開き直さずに確認できること、BOOTH 以外のタブだけの確認、Throttle のまま数分放置・スリープから復帰すること、WebKit プロセス終了後の再生成、明示ログアウト、Windows の WebView2 で従来どおり二本目を作らないことは、この環境では確認していません。
+
+## アカウント確認の失敗を未ログインと分けた（2026-11-01）
+
+対象は main の `8a53d08f35e177b4113d679b8c9a915b38c7ffb6`（v0.1.19）からの `b6c8539` と `22d53d8` です。実行環境は Ubuntu 24.04 x86_64 の Linux VM、Node.js 22.23.4、Rust 1.99.1 です。macOS と Windows の実機はなく、BOOTH のアカウントと Cookie には触れていません。
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib` は 309 件成功、1 件 ignore（既存の `classifier::tests::feedback_listing_match_counts`）。読み込み完了前に結果付きスクリプトを実行しないこと、pending・タイムアウト・読取エラーを未ログインにしないこと、ログインページは 2 回連続のときだけ未ログインにすることを含みます。
+- `npm test` は 111 件成功。確認失敗で直前の表示名を残すこと、一度も確定していなければ「状態不明」になること、古い世代の結果を捨てることを含みます。
+- `npm run dev` の見本を Chromium で操作し、ログイン済み、明示的な未ログイン、初回からの確認失敗（状態不明）、確認失敗でも表示名を残すこと、ログアウト後の未ログインを確認しました。これは見本の UI であり、ネイティブ WebView の読み込み待ちではありません。
+
+macOS の WKWebView で初回ナビゲーション前にコールバックが落ちる件、Windows の WebView2、実在の BOOTH ログイン、通信失敗や読み込み遅延の実ページ、確認連打とスリープ復帰は、この環境では確認していません。
+
+その後、GitHub の frontend がタブ並べ替えで失敗した。失敗した実行は main の #102（ドロップ位置をタブ左端にする）より前だった。#102 を取り込み、ドック表示のレイアウト試験も状態行が消えてから測るようにしたうえで、`npm run test:browser-layout` を WebKitWebDriver で再実行し 7 件成功した。アカウント確認の実装は変えていない。
+
 ## macOS の右パネル埋め込み（2026-11-01）
 
 対象は main の `8a53d08f35e177b4113d679b8c9a915b38c7ffb6`（v0.1.19）からの作業差分です。実行環境は Linux VM（Debian 系 x86_64）、Node.js 22.23.4、Rust 1.99.1（`cargo +stable`）です。macOS 実機も Windows 実機もなく、BOOTH のアカウントや Cookie には触れていません。
