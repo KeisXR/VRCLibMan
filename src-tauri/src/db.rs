@@ -385,6 +385,7 @@ fn ensure_ready(connection: &Connection) -> Result<u32, String> {
         ("right_panel_tabs", crate::model::DEFAULT_RIGHT_PANEL_TABS),
         ("check_update_on_startup", "0"),
         ("ui_update_dismissed_version", ""),
+        ("appearance", "classic"),
     ] {
         connection
             .execute(
@@ -463,6 +464,9 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
         unload_ollama_after_classification: setting(connection, "unload_ollama_after_classification")?
             .as_deref()
             != Some("0"),
+        appearance: normalize_appearance(
+            &setting(connection, "appearance")?.unwrap_or_else(|| "classic".into()),
+        ),
         classification_dismissed_version: setting(connection, "classification_dismissed_version")?
             .and_then(|value| value.parse::<i32>().ok())
             .unwrap_or(0),
@@ -496,6 +500,14 @@ fn normalize_backend(value: &str) -> String {
         "apple" => "apple".into(),
         "cloud" => "cloud".into(),
         _ => "ollama".into(),
+    }
+}
+
+fn normalize_appearance(value: &str) -> String {
+    if value.trim() == "liquid" {
+        "liquid".into()
+    } else {
+        "classic".into()
     }
 }
 
@@ -628,6 +640,7 @@ fn save_settings_values(
         "unload_ollama_after_classification",
         if input.unload_ollama_after_classification { "1" } else { "0" },
     )?;
+    set_setting(connection, "appearance", &normalize_appearance(&input.appearance))?;
     set_setting(
         connection,
         "classification_dismissed_version",
@@ -7542,6 +7555,8 @@ mod tests {
                 background_mode: false,
                 launch_at_login: false,
                 unload_ollama_after_classification: true,
+            appearance: "classic".into(),
+                appearance: "classic".into(),
                 classification_dismissed_version: 0,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
@@ -7749,6 +7764,8 @@ mod tests {
                 background_mode: false,
                 launch_at_login: false,
                 unload_ollama_after_classification: true,
+            appearance: "classic".into(),
+                appearance: "classic".into(),
                 classification_dismissed_version: 0,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
@@ -9217,6 +9234,8 @@ mod tests {
                 background_mode: false,
                 launch_at_login: false,
                 unload_ollama_after_classification: true,
+            appearance: "classic".into(),
+                appearance: "classic".into(),
                 classification_dismissed_version: 0,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
@@ -9246,6 +9265,8 @@ mod tests {
                 background_mode: false,
                 launch_at_login: false,
                 unload_ollama_after_classification: true,
+            appearance: "classic".into(),
+                appearance: "classic".into(),
                 classification_dismissed_version: 0,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
@@ -9370,6 +9391,8 @@ mod tests {
                 background_mode: false,
                 launch_at_login: false,
                 unload_ollama_after_classification: true,
+            appearance: "classic".into(),
+                appearance: "classic".into(),
                 classification_dismissed_version: 0,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
@@ -9641,6 +9664,8 @@ mod tests {
             background_mode: false,
             launch_at_login: true,
                 unload_ollama_after_classification: true,
+            appearance: "classic".into(),
+                appearance: "classic".into(),
                 classification_dismissed_version: 0,
             ui_rail_width: 232,
             ui_genre_width: 200,
@@ -9664,6 +9689,8 @@ mod tests {
                 background_mode: true,
                 launch_at_login: true,
                 unload_ollama_after_classification: true,
+            appearance: "classic".into(),
+                appearance: "classic".into(),
                 classification_dismissed_version: 0,
                 ..base
             },
@@ -9841,6 +9868,8 @@ mod tests {
                 background_mode: false,
                 launch_at_login: false,
                 unload_ollama_after_classification: true,
+            appearance: "classic".into(),
+                appearance: "classic".into(),
                 classification_dismissed_version: 0,
                 ui_rail_width: 232,
                 ui_genre_width: 200,

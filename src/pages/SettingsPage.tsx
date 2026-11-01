@@ -376,6 +376,16 @@ export function SettingsPage() {
           </section>
 
           <section className="settings-section">
+            <header><h2>デザイン</h2><p>画面の見た目を選びます。いつでも切り替えられます。</p></header>
+            <SettingRow label="デザイン" help="「従来」はこれまでの見た目、「Liquid」は角丸と浮いたパネルを強めた新しい見た目です。機能やデータは変わりません。">
+              <select value={settings.appearance === "liquid" ? "liquid" : "classic"} onChange={(e) => changeSettings({ appearance: e.target.value === "liquid" ? "liquid" : "classic" })}>
+                <option value="classic">従来</option>
+                <option value="liquid">Liquid（新しいデザイン）</option>
+              </select>
+            </SettingRow>
+          </section>
+
+          <section className="settings-section">
             <header><h2>起動と常駐</h2><p>ウィンドウを閉じた後の動作を設定します。</p></header>
             {!settings.backgroundSupported && <div className="section-body"><p>Linux 版ではバックグラウンド動作とログイン時の起動は利用できません。ウィンドウを閉じるとアプリも終了します。</p></div>}
             <SettingRow label="バックグラウンドで動作" help="ウィンドウを閉じても、商品情報の受信・自動整理・リモートへの自動同期を続けます。">

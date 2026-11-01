@@ -416,6 +416,7 @@ pub fn save_settings(
                 background_mode: settings.background_mode,
                 launch_at_login: settings.launch_at_login,
                 unload_ollama_after_classification: settings.unload_ollama_after_classification,
+                appearance: settings.appearance.clone(),
                 classification_dismissed_version: settings.classification_dismissed_version,
                 ui_rail_width: settings.ui_rail_width,
                 ui_genre_width: settings.ui_genre_width,

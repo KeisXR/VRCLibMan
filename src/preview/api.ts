@@ -148,6 +148,7 @@ const store: Store = {
     libraryFolder: "C:\\Assets",
     builtinBrowser: false,
     boothLinkTarget: "external",
+    appearance: "classic",
     remoteAutoSync: false,
     remoteLibraryFolder: "\\\\nas\\vrclibman",
     routeDownloads: false,
@@ -1899,11 +1900,12 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       const backgroundSupported = store.settings.backgroundSupported;
       const backgroundMode = backgroundSupported && Boolean(settings.backgroundMode);
       const boothLinkTarget = settings.boothLinkTarget === "builtin" ? "builtin" : "external";
+      const appearance = settings.appearance === "liquid" ? "liquid" : "classic";
       const cloudBaseUrl = previewCloudBaseUrl(settings.cloudBaseUrl ?? "https://api.openai.com/v1");
       const cloudModel = String(settings.cloudModel ?? "").trim();
       if (cloudModel.length > 200 || /[\u0000-\u001f]/.test(cloudModel)) throw new Error("クラウドAPIのモデル名に使えない文字があります");
       const llmBackend = settings.llmBackend === "apple" || settings.llmBackend === "cloud" ? settings.llmBackend : "ollama";
-      store.settings = { ...settings, llmBackend, cloudBaseUrl, cloudModel, ollamaModel: settings.ollamaModel.trim(), backgroundSupported, backgroundMode, launchAtLogin: backgroundMode && Boolean(settings.launchAtLogin), confidenceThreshold: Math.min(1, Math.max(0, settings.confidenceThreshold)), boothLinkTarget };
+      store.settings = { ...settings, llmBackend, cloudBaseUrl, cloudModel, ollamaModel: settings.ollamaModel.trim(), backgroundSupported, backgroundMode, launchAtLogin: backgroundMode && Boolean(settings.launchAtLogin), confidenceThreshold: Math.min(1, Math.max(0, settings.confidenceThreshold)), boothLinkTarget, appearance };
       return (command === "update_settings" ? { ...store.settings } : undefined) as T;
     }
     case "import_export":

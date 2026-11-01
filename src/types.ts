@@ -246,6 +246,8 @@ export interface Settings {
   libraryFolder: string;
   builtinBrowser: boolean;
   boothLinkTarget: "external" | "builtin";
+  /** 見た目のデザイン。classic = 従来、liquid = 新デザイン。 */
+  appearance: "classic" | "liquid";
   remoteLibraryFolder: string;
   remoteAutoSync: boolean;
   routeDownloads: boolean;
