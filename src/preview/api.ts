@@ -731,14 +731,15 @@ function classify(avatar: AvatarRecord): {
     if (item.category === "world") continue;
     const linked = new Set(linksOf(item.boothId));
     const inFamily = [...linked].some((id) => family.has(id));
+    const directlyLinked = linked.has(avatar.id);
     if (item.category === "avatar") {
-      if (linked.has(avatar.id)) owned.push(itemView(item, false));
+      if (directlyLinked) owned.push(itemView(item, false));
       continue;
     }
-    if (inFamily) {
+    if (directlyLinked || (inFamily && item.category !== "hair")) {
       specific.push({
         key: item.category ?? "uncategorized",
-        item: itemView(item, !linked.has(avatar.id)),
+        item: itemView(item, !directlyLinked),
       });
     } else if (item.isGeneric && linked.size === 0) {
       generic.push(itemView(item, false));

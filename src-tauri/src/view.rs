@@ -586,13 +586,15 @@ fn classify(snapshot: &Snapshot, avatar: &Avatar) -> Classified {
             .map(|link| link.avatar_id.as_str())
             .collect();
         let in_family = linked.iter().any(|id| family.contains(*id));
+        let directly_linked = linked.contains(avatar.id.as_str());
         if product.category == Some(Category::Avatar) {
-            if linked.contains(avatar.id.as_str()) {
+            if directly_linked {
                 owned.push(item_view(snapshot, product, false));
             }
             continue;
         }
-        if in_family {
+        // Sharing a body does not establish compatibility with another head.
+        if directly_linked || (in_family && product.category != Some(Category::Hair)) {
             let key = product
                 .category
                 .map(Category::as_str)
@@ -600,7 +602,7 @@ fn classify(snapshot: &Snapshot, avatar: &Avatar) -> Classified {
                 .to_string();
             specific.push((
                 key,
-                item_view(snapshot, product, !linked.contains(avatar.id.as_str())),
+                item_view(snapshot, product, !directly_linked),
             ));
         } else if product.is_generic && linked.is_empty() {
             generic.push(item_view(snapshot, product, false));
@@ -964,6 +966,54 @@ mod tests {
                 .any(|item| item.booth_id == "4" || item.booth_id == "6")
         );
         assert!(manuka.generic_items.iter().any(|item| item.booth_id == "5"));
+    }
+
+    #[test]
+    fn hair_requires_a_direct_avatar_link_even_with_a_shared_body() {
+        let mut snapshot = sample();
+        snapshot.products.extend([
+            product("20", "ライム専用ヘア", Some(Category::Hair), false),
+            product("21", "ライム・プラム対応ヘア", Some(Category::Hair), false),
+            product("22", "汎用ヘア", Some(Category::Hair), true),
+            product("23", "ライムに結び付いた汎用ヘア", Some(Category::Hair), true),
+        ]);
+        snapshot.links.extend([
+            link("20", "lime"),
+            link("21", "lime"),
+            link("21", "plum"),
+            link("23", "lime"),
+        ]);
+
+        for (id, expected) in [("lime", vec!["20", "21", "23"]), ("plum", vec!["21"])] {
+            let detail = avatar_detail(&snapshot, id).unwrap();
+            let hair = detail
+                .sections
+                .iter()
+                .find(|section| section.category == "hair")
+                .unwrap();
+            let mut ids: Vec<_> = hair
+                .items
+                .iter()
+                .map(|item| item.booth_id.as_str())
+                .collect();
+            ids.sort();
+            assert_eq!(ids, expected, "{id}");
+            assert!(hair.items.iter().all(|item| !item.via_base_body));
+            assert!(detail.generic_items.iter().any(|item| item.booth_id == "22"));
+            let cards = avatar_cards(&snapshot);
+            assert_eq!(
+                cards.iter().find(|card| card.id == id).unwrap().hair_count,
+                expected.len() as u32
+            );
+        }
+        // Clothes still follow the shared body.
+        let plum = avatar_detail(&snapshot, "plum").unwrap();
+        assert!(
+            plum.sections
+                .iter()
+                .flat_map(|section| &section.items)
+                .any(|item| item.booth_id == "4" && item.via_base_body)
+        );
     }
 
     #[test]
