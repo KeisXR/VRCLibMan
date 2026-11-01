@@ -419,6 +419,26 @@ Apple のオンデバイスモデルを選ぶと、Ollama 関連の欄は非表�
 
 同時に送るのは最大2件です。回数制限（429）のときは待ってから最大3回やり直し、それでも続くときはその商品を失敗にします。失敗の種別は `booth-browser.log` に、商品 ID の末尾4桁と一緒に残ります。キーや商品名は残りません。
 
+### Unity
+
+「設定 → Unity」で、unitypackage を開くときに使う Unity を選べます。Unity を複数入れている場合に、どのバージョンで開くかを決めておくための設定です。VRChat のプロジェクトで使っているバージョンを選んでください。
+
+- 「既定の Unity」：見つかった Unity から選びます。「未設定」に戻すこともできます。選んだ Unity 本体のパスが下に表示されます。
+- 「再検出」：Unity を入れ直したり追加したりしたあとに押します。
+- 「参照…」：一覧に無い Unity を、本体のファイルで指定します。Windows は `Unity.exe`、Mac は `Unity.app`、Linux は `Unity` を選びます。
+
+![Unity の設定。既定の Unity の選択、再検出、参照と、調べた場所が表示される](docs/images/how-to-use/17-settings-unity.png)
+
+検出では、Unity Hub が記録しているエディタの一覧（`editors-v2.json` と旧形式の `editors.json`）と、Hub のインストール先を読みます。Unity Hub や Unity は起動しません。
+
+| OS      | Unity Hub の記録                      | 既定のインストール先                                       |
+| ------- | ------------------------------------- | ---------------------------------------------------------- |
+| Windows | `%APPDATA%\UnityHub`                  | `C:\Program Files\Unity\Hub\Editor\<版>\Editor\Unity.exe`     |
+| Mac     | `~/Library/Application Support/UnityHub` | `/Applications/Unity/Hub/Editor/<版>/Unity.app`           |
+| Linux   | `~/.config/UnityHub`                  | `~/Unity/Hub/Editor/<版>/Editor/Unity`                     |
+
+Hub で別のインストール先（`secondaryInstallPath.json`）を設定している場合は、その場所も調べます。Mac 版と Linux 版の検出は、実機ではまだ確認していません。
+
 ### 対応表とバージョン
 
 | 場所・操作                               | 用途                                                               |
