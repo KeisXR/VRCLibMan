@@ -67,6 +67,9 @@ interface ShellValue {
 
 const ShellContext = createContext<ShellValue | null>(null);
 
+/** Lets a single screen part be rendered on its own (tests and previews). */
+export const ShellProvider = ShellContext.Provider;
+
 export function useShell(): ShellValue {
   const value = useContext(ShellContext);
   if (!value) throw new Error("shell missing");

@@ -476,6 +476,36 @@ pub fn update_settings(
     Ok(saved)
 }
 
+/// File tab: one folder, read only. An empty path opens the library folder.
+#[tauri::command]
+pub async fn list_directory(
+    app: AppHandle,
+    path: String,
+) -> Result<crate::file_browser::DirListing, String> {
+    let (library, remote) = library_roots(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::file_browser::list_directory(&path, &library, &remote)
+    })
+    .await
+    .map_err(|err| format!("フォルダを読めません: {err}"))?
+}
+
+/// File tab: a zip file's entries from its central directory. Nothing is extracted.
+#[tauri::command]
+pub async fn list_zip_entries(app: AppHandle, path: String) -> Result<crate::file_browser::ZipListing, String> {
+    let (library, remote) = library_roots(&app)?;
+    tauri::async_runtime::spawn_blocking(move || crate::file_browser::list_zip(&path, &library, &remote))
+        .await
+        .map_err(|err| format!("zip を読めません: {err}"))?
+}
+
+fn library_roots(app: &AppHandle) -> Result<(String, String), String> {
+    let state = app.state::<AppState>();
+    let connection = db(&state)?;
+    let settings = db::settings(&connection)?;
+    Ok((settings.library_folder, settings.remote_library_folder))
+}
+
 #[tauri::command]
 pub fn list_staged_downloads(state: State<'_, AppState>) -> Result<Vec<StagedLeftover>, String> {
     state
