@@ -238,11 +238,11 @@ Windows では、BOOTH の窓を同期コマンドの中で作らない。WebVie
 
 初期データは `src-tauri/knowledge/seed.json`。起動時に `settings.initialized` が無いときだけ入れる。ユーザーが消した行は、次回起動で戻さない。「初期データを追加」は `INSERT OR IGNORE` で欠けている行だけ戻す。
 
-既存 DB へは `seed.json` の `revision` で一度だけ足す。`settings.seed_revision` より新しい `revision` の素体だけを入れ、その素体を入れたときだけ、所属アバターの空の `base_body` を埋める。アバターは id、`boothId`、一意な名前の順で既存行に合わせ、新しく作るときは同梱カタログと同じ `mf-<boothId>` にする。別の商品に結ばれた同名のアバターには合わせない。名前が二つに当たるときは足さない。素体グループを足すときは `revision` を上げる。
+既存 DB へは `seed.json` の `revision` で一度だけ足す。`settings.seed_revision` より新しい `revision` の素体だけを入れ、その素体を入れたときだけ、所属アバターの空の `base_body` を埋める。アバターは id、`boothId`、一意な名前の順で既存行に合わせ、新しく作るときは同梱カタログと同じ `mf-<boothId>` にする。別の商品に結ばれた同名のアバターには合わせない。名前が二つに当たるときは足さない。素体グループを足すときは `revision` を上げる。既存の素体グループにアバターだけを足すときは、そのアバターに新しい `revision` を付ける。既存 DB へはそのアバターだけを一度足し、ユーザーがその素体グループを残している場合だけ素体を付ける（消してあれば素体なしで足す）。同名の既存アバターの空の `base_body` も、残っている素体グループで埋める。
 
 素体は、作者の商品説明で共通素体と書かれているものだけを結ぶ。`base_bodies.note` に引用と商品 URL を残す。
 
-- 素体 id `komado`、表示名「あまとうさぎ共通素体」: ライム（Lime）、プラム（Plum）、シフォン（Chiffon）、ショコラ（Chocolat）。同じショップのカリン、ラスク、ミルク Re、ミントは「素体あり」だけなので結ばない。
+- 素体 id `komado`、表示名「あまとうさぎ共通素体」: ライム（Lime）、プラム（Plum）、シフォン（Chiffon）、ショコラ（Chocolat）、ソルト（Salt、`mf-8962830`、revision 2 で追加）。同じショップのカリン、ラスク、ミルク Re、ミントは「素体あり」だけなので結ばない。
 - そのほかの組は `seed.json` の `baseBodies` を見る。
 
 別名だけで、素体は空のままにしているもの: マヌカ（Manuka / MANUKA / 마누카）、しなの（Shinano）、セレスティア（Celestia / Selestia）、ミルティナ（Milltina）、桔梗、ルルネ（rurune / Rurune）。

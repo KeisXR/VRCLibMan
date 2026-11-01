@@ -4069,8 +4069,10 @@ struct SeedMerge {
 }
 
 /// Adds seed rows that are missing. Only base bodies with a revision above
-/// `after` are considered, together with the avatars that belong to them
-/// (`after = 0` merges everything).
+/// `after` are considered, together with the avatars that belong to them,
+/// plus avatars whose own revision is above `after` (`after = 0` merges
+/// everything). Such an avatar joins its older group only when that group is
+/// still in the library.
 ///
 /// An avatar already in the library, found by id, by its catalog Booth id or
 /// by one unambiguous name, is not inserted again. It gets the seed base body
@@ -4100,21 +4102,30 @@ fn merge_seed(connection: &Connection, after: u32) -> Result<SeedMerge, String> 
         filled: 0,
     };
     for avatar in &seed.avatars {
-        let body = avatar.base_body.as_deref().filter(|body| !body.is_empty());
-        let in_scope = match body {
-            Some(body) => considered.contains(body),
-            None => after == 0,
+        let seed_body = avatar.base_body.as_deref().filter(|body| !body.is_empty());
+        let new_avatar = after > 0 && avatar.revision > after;
+        let in_scope = match seed_body {
+            Some(body) => considered.contains(body) || new_avatar,
+            None => after == 0 || new_avatar,
         };
         if !in_scope {
             continue;
         }
+        // A new avatar in an older group joins it only if the user kept that group.
+        let joins_kept_group = match seed_body {
+            Some(body) if !considered.contains(body) => base_body_exists(connection, body)?,
+            _ => false,
+        };
+        let body = seed_body.filter(|body| considered.contains(*body) || joins_kept_group);
         let existing = match existing_seed_avatar(connection, avatar)? {
             SeedMatch::Found(id) => Some(id),
             SeedMatch::Ambiguous => continue,
             SeedMatch::Missing => None,
         };
         if let Some(id) = existing {
-            if let Some(body) = body.filter(|body| inserted_bodies.contains(*body)) {
+            if let Some(body) =
+                body.filter(|body| inserted_bodies.contains(*body) || joins_kept_group)
+            {
                 let rows = connection
                     .execute(
                         "UPDATE avatars SET base_body = ?1
@@ -5758,6 +5769,14 @@ fn avatar_by_id(connection: &Connection, id: &str) -> Result<Option<Avatar>, Str
     Ok(avatars.into_iter().find(|avatar| avatar.id == id))
 }
 
+fn base_body_exists(connection: &Connection, id: &str) -> Result<bool, String> {
+    connection
+        .query_row("SELECT EXISTS(SELECT 1 FROM base_bodies WHERE id = ?1)", params![id], |row| {
+            row.get::<_, bool>(0)
+        })
+        .sql()
+}
+
 fn avatar_exists(connection: &Connection, id: &str) -> Result<bool, String> {
     let count: i64 = connection
         .query_row(
@@ -5928,6 +5947,10 @@ struct SeedAvatar {
     /// Booth item of the avatar, matching the bundled もちふぃった～ catalog.
     #[serde(default)]
     booth_id: Option<String>,
+    /// Seed revision that added this avatar. An avatar added to an older group
+    /// reaches existing libraries once, like a new group.
+    #[serde(default = "first_seed_revision")]
+    revision: u32,
 }
 
 #[cfg(test)]
@@ -10758,7 +10781,7 @@ mod tests {
             .filter(|avatar| avatar.base_body.as_deref() == Some("komado"))
             .map(|avatar| avatar.id.as_str())
             .collect();
-        assert_eq!(komado, vec!["lime", "plum", "chiffon", "chocolat"]);
+        assert_eq!(komado, vec!["lime", "plum", "chiffon", "chocolat", "mf-8962830"]);
         for id in ["manuka", "shinano"] {
             let avatar = seed.avatars.iter().find(|avatar| avatar.id == id).unwrap();
             assert_eq!(avatar.base_body, None);
@@ -10837,6 +10860,47 @@ mod tests {
         assert_eq!(base_body_of(&connection, "mf-4340548").as_deref(), Some("mamefriends"));
         assert_eq!(base_body_of(&connection, "chiffon"), None);
         assert_eq!(avatars_named(&connection, "まめひなた").len(), 1);
+    }
+
+    #[test]
+    fn existing_library_receives_an_avatar_added_to_an_older_group_once() {
+        let connection = open_memory().unwrap();
+        // v0.1.19 にはソルトが無い。こまどは以前からある素体。
+        let forget_salt = "DELETE FROM avatar_sources WHERE booth_id = '8962830';
+             DELETE FROM avatars WHERE id = 'mf-8962830';
+             UPDATE settings SET value = '1' WHERE key = 'seed_revision';";
+        connection.execute_batch(forget_salt).unwrap();
+        assert_eq!(ensure_ready(&connection).unwrap(), 1);
+        assert_eq!(base_body_of(&connection, "mf-8962830").as_deref(), Some("komado"));
+        assert_eq!(
+            avatar_id_for_booth(&connection, "8962830").unwrap().as_deref(),
+            Some("mf-8962830")
+        );
+        assert_eq!(avatars_named(&connection, "Salt"), vec!["mf-8962830".to_string()]);
+
+        // 二度目の起動では足さない。
+        assert_eq!(ensure_ready(&connection).unwrap(), 0);
+        assert_eq!(avatars_named(&connection, "ソルト"), vec!["mf-8962830".to_string()]);
+
+        // こまどを消してあれば、ソルトは素体なしで足す。
+        connection.execute_batch(forget_salt).unwrap();
+        delete_base_body(&connection, "komado").unwrap();
+        assert_eq!(ensure_ready(&connection).unwrap(), 1);
+        assert_eq!(base_body_of(&connection, "mf-8962830"), None);
+        assert_eq!(base_body_of(&connection, "lime"), None);
+
+        // 自分で作った同名のアバターには、残っているこまどを埋める。
+        let connection = open_memory().unwrap();
+        connection
+            .execute_batch(
+                "DELETE FROM avatar_sources WHERE booth_id = '8962830';
+                 UPDATE avatars SET id = 'my-salt', is_builtin = 0, base_body = NULL WHERE id = 'mf-8962830';
+                 UPDATE settings SET value = '1' WHERE key = 'seed_revision';",
+            )
+            .unwrap();
+        assert_eq!(ensure_ready(&connection).unwrap(), 0);
+        assert_eq!(base_body_of(&connection, "my-salt").as_deref(), Some("komado"));
+        assert_eq!(avatars_named(&connection, "ソルト"), vec!["my-salt".to_string()]);
     }
 
     #[test]
