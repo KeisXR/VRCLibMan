@@ -431,7 +431,9 @@ pub fn save_settings(
     };
     crate::remote_sync::wake(&app);
     crate::presence::remember_background(&app, saved.background_mode);
-    crate::presence::apply_presence(&app, saved.background_mode, saved.launch_at_login)
+    crate::presence::apply_presence(&app, saved.background_mode, saved.launch_at_login)?;
+    let _ = app.emit("appearance-changed", &saved.appearance);
+    Ok(())
 }
 
 #[tauri::command]
@@ -473,6 +475,9 @@ pub fn update_settings(
             return Err(error);
         }
         crate::presence::remember_background(&app, saved.background_mode);
+    }
+    if before.appearance != saved.appearance {
+        let _ = app.emit("appearance-changed", &saved.appearance);
     }
     Ok(saved)
 }

@@ -1,3 +1,4 @@
+import { normalizeAppearance } from "../appearance";
 import { previewBrowserState, previewBrowserAction, previewSaveBookmark, previewDeleteBookmark, previewOpenBrowser, previewCloseBrowser } from "./browser";
 import extensionManifest from "../../extension/manifest.json";
 import { previewListDirectory, previewListZip, previewPrepareUnityPackages, previewUnityPackages } from "./files";
@@ -1900,7 +1901,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       const backgroundSupported = store.settings.backgroundSupported;
       const backgroundMode = backgroundSupported && Boolean(settings.backgroundMode);
       const boothLinkTarget = settings.boothLinkTarget === "builtin" ? "builtin" : "external";
-      const appearance = settings.appearance === "liquid" ? "liquid" : "classic";
+      const appearance = normalizeAppearance(settings.appearance);
       const cloudBaseUrl = previewCloudBaseUrl(settings.cloudBaseUrl ?? "https://api.openai.com/v1");
       const cloudModel = String(settings.cloudModel ?? "").trim();
       if (cloudModel.length > 200 || /[\u0000-\u001f]/.test(cloudModel)) throw new Error("クラウドAPIのモデル名に使えない文字があります");

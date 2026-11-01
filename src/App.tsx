@@ -106,7 +106,6 @@ export default function App() {
   const accountGeneration = useRef(0);
   const [setupComplete, setSetupComplete] = useState<boolean | null>(null);
   const [checkUpdateOnStartup, setCheckUpdateOnStartup] = useState(false);
-  const [appearance, setAppearance] = useState<"classic" | "liquid">("classic");
   const route = useMemo(() => parseRoute(hash), [hash]);
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -125,11 +124,6 @@ export default function App() {
   }, [hash]);
 
   useEffect(() => onRefresh(refresh), [refresh]);
-
-  useEffect(() => {
-    document.documentElement.classList.toggle("theme-liquid", appearance === "liquid");
-    return () => document.documentElement.classList.remove("theme-liquid");
-  }, [appearance]);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -157,7 +151,6 @@ export default function App() {
         if (!cancelled) {
           setBuiltinBrowser(value.builtinBrowser);
           setCheckUpdateOnStartup(value.checkUpdateOnStartup);
-          setAppearance(value.appearance === "liquid" ? "liquid" : "classic");
         }
       },
       () => {
