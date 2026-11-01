@@ -102,7 +102,15 @@ export function useRightPanelState(fail: (message: string) => void, gates: Right
         if (!alive) return;
         if (!dirty.current.open) setOpen(settings.previewPane);
         if (!dirty.current.width) setWidth(clampStoredPreviewPaneWidth(settings.previewPaneWidth));
-        if (!dirty.current.tabs) setTabs(parseRightPanelTabs(settings.rightPanelTabs));
+        setTabs((current) => {
+          if (dirty.current.tabs) return current;
+          const pages = current.tabs.flatMap((tab) =>
+            tab.kind === "web" && tab.tabId ? [{ tabId: tab.tabId, title: tab.title ?? "ページ" }] : [],
+          );
+          const restored = mergePanelWebTabs(parseRightPanelTabs(settings.rightPanelTabs), pages);
+          const selected = current.tabs.find((tab) => tab.id === current.activeId && tab.kind === "web");
+          return selected ? selectTab(restored, selected.id) : restored;
+        });
       },
       () => undefined,
     );
@@ -165,8 +173,6 @@ export function useRightPanelState(fail: (message: string) => void, gates: Right
   openRef.current = open;
   const saveOpenRef = useRef(saveOpen);
   saveOpenRef.current = saveOpen;
-  const saveTabsRef = useRef(saveTabs);
-  saveTabsRef.current = saveTabs;
 
   const panelCanDock = useRef(true);
   const applyBrowser = useCallback((state: BrowserState) => {
@@ -176,12 +182,12 @@ export function useRightPanelState(fail: (message: string) => void, gates: Right
       tabId,
       title: state.tabs.find((tab) => tab.id === tabId)?.title || "ページ",
     }));
-    saveTabsRef.current((current) => mergePanelWebTabs(current, pages));
+    setTabs((current) => mergePanelWebTabs(current, pages));
   }, []);
 
   useEffect(() => {
     if (!builtinBrowser) {
-      saveTabs((current) => mergePanelWebTabs(current, []));
+      setTabs((current) => mergePanelWebTabs(current, []));
       return;
     }
     let alive = true;
@@ -208,7 +214,7 @@ export function useRightPanelState(fail: (message: string) => void, gates: Right
     // A page was opened in the panel. Show that tab without closing the others.
     void listenBrowserPanelRequested((tabId) => {
       if (!openRef.current) saveOpenRef.current(true);
-      if (tabId) saveTabsRef.current((current) => focusWebTab(current, tabId));
+      if (tabId) setTabs((current) => focusWebTab(current, tabId));
     }).then(
       (unlisten) => {
         if (alive) stopRequested = unlisten;
@@ -221,7 +227,7 @@ export function useRightPanelState(fail: (message: string) => void, gates: Right
       stopChanged();
       stopRequested();
     };
-  }, [applyBrowser, builtinBrowser, saveTabs]);
+  }, [applyBrowser, builtinBrowser]);
 
   const syncWebOrder = useCallback(
     (next: RightPanelTabs) => {

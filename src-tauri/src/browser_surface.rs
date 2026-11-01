@@ -121,6 +121,32 @@ fn mutable() -> Result<(), String> {
     Ok(())
 }
 
+fn new_tab_host(state: &Mutex<Surface>, requested: Option<String>) -> String {
+    requested.unwrap_or_else(|| {
+        let state = state.lock().unwrap_or_else(|error| error.into_inner());
+        state
+            .session
+            .focused_host()
+            .filter(|id| state.session.kind_of(id).is_some())
+            .or_else(|| state.session.primary_host().map(str::to_string))
+            .unwrap_or_else(|| PANEL_HOST_ID.to_string())
+    })
+}
+
+/// Native actions may read the surface again, so release its lock before calling them.
+fn with_active_tab<T>(
+    state: &Mutex<Surface>,
+    host_id: &str,
+    action: impl FnOnce(&str) -> Result<T, String>,
+) -> Result<T, String> {
+    let id = {
+        let state = state.lock().unwrap_or_else(|error| error.into_inner());
+        state.session.active_of(host_id)
+    }
+    .ok_or_else(|| "タブが見つかりません".to_string())?;
+    action(&id)
+}
+
 fn live_label(state: &Surface, host_id: &str) -> Option<String> {
     state
         .live
@@ -506,10 +532,11 @@ pub fn toolbar_height(app: &AppHandle, height: f64, host_id: Option<String>) -> 
     }
     let height = height.clamp(browser_tabs::DEFAULT_TOOLBAR_HEIGHT, 420.0);
     let host_id = host_id.or_else(|| {
-        surface()
+        let state = surface();
+        state
             .session
             .focused_host()
-            .filter(|id| surface().session.kind_of(id) == Some(HostKind::Window))
+            .filter(|id| state.session.kind_of(id) == Some(HostKind::Window))
     });
     if let Some(host_id) = host_id {
         if let Some(host) = surface().live.iter_mut().find(|host| host.id == host_id) {
@@ -817,11 +844,9 @@ fn dispatch_shortcut_on(app: &AppHandle, host_id: &str, action: &str) {
             surface().session.focus_host(&host_id);
             let result = match action.as_str() {
                 "browser-new-tab" => new_tab_on(handle, None, Some(host_id.clone())),
-                "browser-close-tab" => surface()
-                    .session
-                    .active_of(&host_id)
-                    .ok_or_else(|| "タブが見つかりません".to_string())
-                    .and_then(|id| close_tab(handle, &id)),
+                "browser-close-tab" => {
+                    with_active_tab(&SURFACE, &host_id, |id| close_tab(handle, id))
+                }
                 "browser-reload" => reload_host(handle, &host_id),
                 "browser-back" => history_host(handle, &host_id, false),
                 "browser-forward" => history_host(handle, &host_id, true),
@@ -829,12 +854,12 @@ fn dispatch_shortcut_on(app: &AppHandle, host_id: &str, action: &str) {
                 _ => Ok(()),
             };
             if action == "browser-address" || action == "browser-new-tab" {
-                if let Some(label) = surface()
+                let toolbar_label = surface()
                     .live
                     .iter()
                     .find(|host| host.id == host_id)
-                    .and_then(|host| host.toolbar_label.clone())
-                {
+                    .and_then(|host| host.toolbar_label.clone());
+                if let Some(label) = toolbar_label {
                     if let Some(view) = handle.get_webview(&label) {
                         let _ = view.set_focus();
                     }
@@ -1132,7 +1157,8 @@ fn move_ids(
 ) -> Result<Vec<MoveToken>, String> {
     let mut tokens = Vec::new();
     for id in tab_ids {
-        match surface().session.move_tab(id, to_host, usize::MAX) {
+        let moved = surface().session.move_tab(id, to_host, usize::MAX);
+        match moved {
             Ok(token) => tokens.push(token),
             Err(error) => {
                 restore_moves(tokens);
@@ -1367,14 +1393,7 @@ pub fn new_tab_on(app: &AppHandle, url: Option<&str>, host_id: Option<String>) -
         }
         return Ok(());
     }
-    let host = host_id.unwrap_or_else(|| {
-        surface()
-            .session
-            .focused_host()
-            .filter(|id| surface().session.kind_of(id).is_some())
-            .or_else(|| surface().session.primary_host().map(str::to_string))
-            .unwrap_or_else(|| PANEL_HOST_ID.to_string())
-    });
+    let host = new_tab_host(&SURFACE, host_id);
     if surface().session.kind_of(&host).is_none() {
         if host == PANEL_HOST_ID {
             if !panel_supported() {
@@ -1512,7 +1531,8 @@ pub fn detach_tab(app: &AppHandle, tab_id: &str, x: f64, y: f64) -> Result<(), S
         visible: true,
         toolbar_height: browser_tabs::DEFAULT_TOOLBAR_HEIGHT,
     });
-    let token = match surface().session.move_tab(tab_id, &host_id, 0) {
+    let moved = surface().session.move_tab(tab_id, &host_id, 0);
+    let token = match moved {
         Ok(token) => token,
         Err(error) => {
             discard_host(app, &host_id, Some(&window));
@@ -1686,6 +1706,62 @@ pub fn stop(app: &AppHandle) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::browser_tabs::HostKind;
+
+    fn test_surface() -> Surface {
+        Surface {
+            session: TabSession::new(),
+            live: Vec::new(),
+            next_generation: 1,
+        }
+    }
+
+    #[test]
+    fn new_tabs_resolve_their_host_without_relocking_the_surface() {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let state = Mutex::new(test_surface());
+            let first = state.lock().unwrap().session.add_window();
+            let second = state.lock().unwrap().session.add_window();
+            let url = Url::parse("https://example.com/").unwrap();
+            state.lock().unwrap().session.add(&first, &url).unwrap();
+            state.lock().unwrap().session.add(&second, &url).unwrap();
+
+            assert_eq!(new_tab_host(&state, None), second);
+            assert_eq!(new_tab_host(&state, Some(first.clone())), first);
+            assert!(state.try_lock().is_ok(), "host lookup must release the lock");
+
+            state.lock().unwrap().session.take_host(&second);
+            assert_eq!(new_tab_host(&state, None), first);
+            state.lock().unwrap().session.take_host(&first);
+            assert_eq!(new_tab_host(&state, None), PANEL_HOST_ID);
+            sender.send(()).unwrap();
+        });
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("new-tab host lookup must not deadlock");
+    }
+
+    #[test]
+    fn closing_a_host_tab_releases_the_surface_before_the_action() {
+        let state = Mutex::new(test_surface());
+        let host = state.lock().unwrap().session.add_window();
+        let other = state.lock().unwrap().session.add_window();
+        let url = Url::parse("https://example.com/").unwrap();
+        let first = state.lock().unwrap().session.add(&host, &url).unwrap();
+        let selected = state.lock().unwrap().session.add(&host, &url).unwrap();
+        let unrelated = state.lock().unwrap().session.add(&other, &url).unwrap();
+
+        with_active_tab(&state, &host, |id| {
+            assert_eq!(id, selected);
+            let mut state = state.try_lock().expect("close action must be able to read the surface");
+            state.session.remove(id)?;
+            Ok(())
+        })
+        .unwrap();
+        let session = &state.lock().unwrap().session;
+        assert_eq!(session.active_of(&host).as_deref(), Some(first.as_str()));
+        assert!(session.has(&unrelated));
+    }
 
     fn function_body<'a>(source: &'a str, name: &str) -> &'a str {
         let start = source.find(name).unwrap_or_else(|| panic!("missing {name}"));

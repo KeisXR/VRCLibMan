@@ -122,6 +122,76 @@ test("the preview lives in the app's right panel instead of a split inside the l
 });
 
 
+test("panel settings load independently of browser synchronization", async (t) => {
+  const { parseHTML } = await import("linkedom");
+  const { window } = parseHTML('<html><body><div id="root"></div></body></html>');
+  window.location = new URL("http://localhost:1420/");
+  for (const name of ["window", "document", "location", "HTMLElement", "HTMLInputElement", "Element", "Event", "CustomEvent", "EventTarget"]) {
+    Object.defineProperty(globalThis, name, { configurable: true, writable: true, value: window[name] });
+  }
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: { userAgent: "test" } });
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const { act, createElement, StrictMode } = await import("react");
+  const { createRoot } = await import("react-dom/client");
+  const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
+  try {
+    const { api } = await server.ssrLoadModule("/src/api.ts");
+    const preview = await server.ssrLoadModule("/src/preview/browser.ts");
+    const { useRightPanelState } = await server.ssrLoadModule("/src/components/RightPanel.tsx");
+    const settings = { ...(await api.settings()), previewPane: true, rightPanelTabs: '{"tabs":["files","preview"],"active":0}' };
+    const kinds = (panel) => panel.tabs.tabs.map((tab) => tab.kind);
+
+    for (const scenario of ["browser disabled", "page opened before settings", "user edits before settings"]) {
+      await t.test(scenario, async () => {
+        preview.resetPreviewBrowser();
+        let resolveSettings;
+        const pendingSettings = new Promise((resolve) => { resolveSettings = resolve; });
+        api.settings = () => pendingSettings;
+        api.browserState = async () => preview.previewBrowserState();
+        const writes = [];
+        api.updateSettings = async (patch) => { writes.push(patch); return { ...settings, ...patch }; };
+        const failures = [];
+        let panel;
+        function Harness() {
+          panel = useRightPanelState((message) => failures.push(message), { builtinBrowser: scenario === "page opened before settings" });
+          return null;
+        }
+        const root = createRoot(document.getElementById("root"));
+        try {
+          await act(async () => { root.render(createElement(StrictMode, null, createElement(Harness))); await tick(); });
+          let pageId;
+          if (scenario === "page opened before settings") {
+            await act(async () => {
+              pageId = preview.previewBrowserAction({ kind: "newTab", hostId: "panel", url: "https://example.com/" }).activeId;
+              await tick();
+            });
+            assert.equal(panel.active?.tabId, pageId);
+          } else if (scenario === "user edits before settings") {
+            await act(async () => { panel.openKind("files"); await tick(); });
+          }
+          await act(async () => { resolveSettings(settings); await tick(); });
+
+          if (scenario === "user edits before settings") {
+            assert.deepEqual(kinds(panel), ["preview", "files"], "late settings must not overwrite user edits");
+            assert.equal(panel.active?.kind, "files");
+          } else {
+            assert.deepEqual(kinds(panel).filter((kind) => kind !== "web"), ["files", "preview"]);
+            assert.equal(writes.some((patch) => "rightPanelTabs" in patch), false, "browser synchronization must not save tab settings");
+            if (pageId) assert.equal(panel.active?.tabId, pageId, "loading fixed tabs must keep the opened page selected");
+            else assert.equal(panel.active?.kind, "files");
+          }
+          assert.deepEqual(failures, []);
+        } finally {
+          await act(async () => root.unmount());
+        }
+      });
+    }
+  } finally {
+    await server.close();
+  }
+});
+
 test("narrow panels keep tab controls usable before a product is selected", async () => {
   const { parseHTML } = await import("linkedom");
   const { window } = parseHTML('<html><body><div id="root"></div></body></html>');
