@@ -548,6 +548,7 @@ export interface BrowserTab {
   loading: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
+  zoomFactor: number;
   /** Which panel or window currently shows this page. Omitted only by older callers. */
   hostId?: string;
 }
@@ -580,6 +581,7 @@ export type BrowserAction =
   | { kind: "navigate"; url: string; tabId?: string; hostId?: string }
   | { kind: "selectTab" | "closeTab"; tabId: string }
   | { kind: "back" | "forward" | "reload" | "stop"; tabId?: string; hostId?: string }
+  | { kind: "zoom"; action: "in" | "out" | "reset"; tabId?: string; hostId?: string }
   | { kind: "toolbarHeight"; height: number; hostId?: string }
   | { kind: "dock"; area: BrowserPanelRect | null; hostId?: string }
   | { kind: "undock" }

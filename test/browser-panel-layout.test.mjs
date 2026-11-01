@@ -62,12 +62,15 @@ test("page tabs fill the right panel in a real browser", { timeout: 60000 }, asy
       const box = element => { const r = element.getBoundingClientRect(); return { left:r.left, top:r.top, width:r.width, height:r.height, bottom:r.bottom }; };
       const rect = box(viewport);
       if (['left','top','width','height'].some(key => Math.abs(rect[key] - area.area[key]) > 1)) return null;
-      return { viewport:rect, body:box(body), chrome:box(chrome), gap:parseFloat(getComputedStyle(chrome).marginBottom), area:area.area };
+      return { viewport:rect, body:box(body), tabs:box(document.querySelector('.right-panel-tabs')), chrome:box(chrome), navigation:box(chrome.querySelector('.browser-navigation')), tools:box(chrome.querySelector('.browser-tools')), status:!!chrome.querySelector('.browser-status'), area:area.area };
     `), "measured browser viewport");
     assert.ok(metrics.viewport.height > 200, `Page viewport collapsed: ${JSON.stringify(metrics)}`);
     assert.ok(Math.abs(metrics.viewport.bottom - metrics.body.bottom) <= 2, `Page must fill the panel vertically: ${JSON.stringify(metrics)}`);
     assert.ok(Math.abs(metrics.viewport.width - metrics.body.width) <= 2, `Page must fill the panel horizontally: ${JSON.stringify(metrics)}`);
-    assert.ok(Math.abs(metrics.viewport.top - metrics.chrome.bottom - metrics.gap) <= 2, "Page must follow its controls without extra gaps");
+    assert.equal(metrics.status, false, "Idle controls must not reserve a status row");
+    assert.ok(metrics.navigation.top - metrics.tabs.bottom <= 5, `Tab strip must sit close to navigation: ${JSON.stringify(metrics)}`);
+    assert.ok(Math.abs(metrics.navigation.top - metrics.body.top) <= 2, `Controls must follow the tab strip without top padding: ${JSON.stringify(metrics)}`);
+    assert.ok(Math.abs(metrics.viewport.top - metrics.tools.bottom) <= 2, `Page must follow the last visible control without padding or margins: ${JSON.stringify(metrics)}`);
     return metrics;
   }
 
@@ -124,6 +127,27 @@ test("page tabs fill the right panel in a real browser", { timeout: 60000 }, asy
       const pageId = await evaluate("return window.layoutFixture.pageId");
       await click(`#right-panel-tab-web-${pageId}`);
       await checkViewport();
+    });
+    await t.test("roomy density also keeps controls flush with tabs and pages", async () => {
+      await evaluate("document.querySelector('.app-shell').classList.add('density-roomy')");
+      await checkViewport();
+    });
+    await t.test("standalone controls fit a small window with reachable zoom buttons", async () => {
+      await wd("POST", "/window/rect", { width: 640, height: 640 });
+      await wd("POST", "/url", { url: `${baseUrl}/test/fixtures/browser-panel-layout.html?standalone=1&browserPanel=0` });
+      await waitFor(() => evaluate("return window.layoutFixture?.ready && !!document.querySelector('.browser-zoom')"), "standalone controls");
+      const metrics = await evaluate(`
+        const box = selector => { const r = document.querySelector(selector).getBoundingClientRect(); return { top:r.top, bottom:r.bottom, left:r.left, right:r.right, height:r.height }; };
+        return { tabs:box('.browser-tabs-row'), navigation:box('.browser-navigation'), tools:box('.browser-tools'), chrome:box('.browser-chrome'), zoom:box('.browser-zoom'), width:innerWidth };
+      `);
+      assert.equal(metrics.navigation.top, metrics.tabs.bottom, "No gap between tabs and navigation");
+      assert.equal(metrics.chrome.bottom, metrics.tools.bottom, "No blank status row below controls");
+      assert.equal(metrics.chrome.height, 112);
+      assert.ok(metrics.zoom.left >= 0 && metrics.zoom.right <= metrics.width, "Zoom stays inside the narrow window");
+      await click('button[aria-label="ページを縮小"]');
+      await waitFor(() => evaluate("return document.querySelector('.browser-zoom-reset').textContent === '90%'"), "zoom out");
+      await click('button[aria-label="表示倍率を100%に戻す"]');
+      await waitFor(() => evaluate("return document.querySelector('.browser-zoom-reset').textContent === '100%'"), "zoom reset");
     });
   } catch (error) {
     if (session) {

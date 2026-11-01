@@ -74,6 +74,11 @@ export function BrowserChrome({
   const selectedId = host?.activeId ?? state.activeId;
   const active = pageTabs.find((tab) => tab.id === selectedId) ?? state.tabs.find((tab) => tab.id === selectedId);
   const disabled = working || state.busy;
+  const zoom = active?.zoomFactor ?? 1;
+  const statusMessage = error || message || (state.busy
+    ? "インポートまたはダウンロード中"
+    : active?.loading ? "読み込み中…"
+      : !state.open ? "ブラウザを開くか、URLを入力してください" : "");
   const bookmarked = state.bookmarks.find((item) => item.url === active?.url);
   const canImport = (() => {
     if (!active) return false;
@@ -155,8 +160,8 @@ export function BrowserChrome({
     )
       return;
     let previous = 0;
-    const observer = new ResizeObserver(([entry]) => {
-      const height = Math.max(136, Math.ceil(entry.contentRect.height));
+    const observer = new ResizeObserver(() => {
+      const height = Math.max(1, Math.ceil(controls.current!.getBoundingClientRect().height));
       if (height !== previous) {
         previous = height;
         void api
@@ -173,7 +178,7 @@ export function BrowserChrome({
     const tabId = active?.id;
     let targeted = command;
     if (command.kind === "newTab") targeted = { ...command, hostId: command.hostId ?? hostIdForCommand };
-    else if (command.kind === "navigate" || command.kind === "back" || command.kind === "forward" || command.kind === "reload" || command.kind === "stop")
+    else if (command.kind === "navigate" || command.kind === "back" || command.kind === "forward" || command.kind === "reload" || command.kind === "stop" || command.kind === "zoom")
       targeted = { ...command, hostId: command.hostId ?? hostIdForCommand, tabId: command.tabId ?? tabId };
     else if (command.kind === "toolbarHeight" || command.kind === "dock")
       targeted = { ...command, hostId: command.hostId ?? hostIdForCommand };
@@ -205,6 +210,10 @@ export function BrowserChrome({
       if (!(event.ctrlKey || event.metaKey) || event.altKey || disabled) return;
       // In the right panel the rest of the app keeps its keys; only focus in these controls counts.
       if (panel && !controls.current?.contains(document.activeElement)) return;
+      if (active && ["+", "=", "-", "0"].includes(event.key)) {
+        event.preventDefault();
+        void action({ kind: "zoom", action: event.key === "0" ? "reset" : event.key === "-" ? "out" : "in" });
+      }
       if (event.key.toLowerCase() === "l") {
         event.preventDefault();
         input.current?.focus();
@@ -478,47 +487,60 @@ export function BrowserChrome({
           </button>
         )}
       </div>
-      <div className="browser-bookmarks" aria-label="ブックマークバー">
-        {state.bookmarks.map((bookmark) => (
-          <span className="browser-bookmark" key={bookmark.url}>
-            <button
-              type="button"
-              title={bookmark.url}
-              disabled={disabled}
-              onClick={(event) =>
-                void action(
-                  event.ctrlKey || event.metaKey
-                    ? { kind: "newTab", url: bookmark.url }
-                    : { kind: "navigate", url: bookmark.url },
-                )
-              }
-              onAuxClick={(event) => {
-                if (event.button === 1) {
-                  event.preventDefault();
-                  void action({ kind: "newTab", url: bookmark.url });
+      <div className="browser-tools">
+        <div className="browser-bookmarks" aria-label="ブックマークバー">
+          {state.bookmarks.map((bookmark) => (
+            <span className="browser-bookmark" key={bookmark.url}>
+              <button
+                type="button"
+                title={bookmark.url}
+                disabled={disabled}
+                onClick={(event) =>
+                  void action(
+                    event.ctrlKey || event.metaKey
+                      ? { kind: "newTab", url: bookmark.url }
+                      : { kind: "navigate", url: bookmark.url },
+                  )
                 }
-              }}
-              onContextMenu={(event) => {
-                event.preventDefault();
-                editBookmark(bookmark);
-              }}
-            >
-              {bookmark.title}
-            </button>
-            <button
-              className="bookmark-edit"
-              type="button"
-              aria-label={`${bookmark.title}を編集`}
-              title="ブックマークを編集"
-              onClick={() => editBookmark(bookmark)}
-            >
-              ⋯
-            </button>
-          </span>
-        ))}
-        {state.bookmarks.length === 0 && (
-          <span className="meta">☆ からブックマークを追加できます</span>
-        )}
+                onAuxClick={(event) => {
+                  if (event.button === 1) {
+                    event.preventDefault();
+                    void action({ kind: "newTab", url: bookmark.url });
+                  }
+                }}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  editBookmark(bookmark);
+                }}
+              >
+                {bookmark.title}
+              </button>
+              <button
+                className="bookmark-edit"
+                type="button"
+                aria-label={`${bookmark.title}を編集`}
+                title="ブックマークを編集"
+                onClick={() => editBookmark(bookmark)}
+              >
+                ⋯
+              </button>
+            </span>
+          ))}
+          {state.bookmarks.length === 0 && (
+            <span className="meta">☆ からブックマークを追加できます</span>
+          )}
+        </div>
+        <div className="browser-zoom" role="group" aria-label="ページの表示倍率">
+          <button type="button" disabled={disabled || !active || zoom <= 0.25}
+            aria-label="ページを縮小" title="縮小 (Ctrl/Cmd −)"
+            onClick={() => void action({ kind: "zoom", action: "out" })}>−</button>
+          <button type="button" className="browser-zoom-reset" disabled={disabled || !active}
+            aria-label="表示倍率を100%に戻す" title="100%に戻す (Ctrl/Cmd 0)"
+            onClick={() => void action({ kind: "zoom", action: "reset" })}>{Math.round(zoom * 100)}%</button>
+          <button type="button" disabled={disabled || !active || zoom >= 5}
+            aria-label="ページを拡大" title="拡大 (Ctrl/Cmd ＋)"
+            onClick={() => void action({ kind: "zoom", action: "in" })}>+</button>
+        </div>
       </div>
       {edit && (
         <form
@@ -575,20 +597,12 @@ export function BrowserChrome({
           </div>
         </form>
       )}
-      <div
+      {statusMessage && <div
         className={error ? "browser-status warn-text" : "browser-status meta"}
         role={error ? "alert" : "status"}
       >
-        {error ||
-          message ||
-          (state.busy
-            ? "インポートまたはダウンロード中"
-            : active?.loading
-              ? "読み込み中…"
-              : !state.open
-                ? "ブラウザを開くか、URLを入力してください"
-                : "")}
-      </div>
+        {statusMessage}
+      </div>}
     </div>
   );
 }

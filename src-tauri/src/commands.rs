@@ -1848,6 +1848,13 @@ pub enum BrowserAction {
         #[serde(default)]
         host_id: Option<String>,
     },
+    Zoom {
+        action: crate::browser_tabs::ZoomChange,
+        #[serde(default)]
+        tab_id: Option<String>,
+        #[serde(default)]
+        host_id: Option<String>,
+    },
     ToolbarHeight {
         height: f64,
         #[serde(default)]
@@ -1953,6 +1960,10 @@ pub async fn browser_action(
                     let id = surface::tab_for_caller(&label, tab_id, host_id)?;
                     surface::stop_tab(handle, &id)?;
                 }
+            }
+            BrowserAction::Zoom { action, tab_id, host_id } => {
+                let id = surface::tab_for_caller(&label, tab_id, host_id)?;
+                surface::zoom_tab(handle, &id, action)?;
             }
             BrowserAction::ToolbarHeight { height, host_id } => {
                 let host = host_id.or_else(|| caller_host(&label));

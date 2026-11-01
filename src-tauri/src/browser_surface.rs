@@ -298,13 +298,16 @@ fn refresh_history(view: &Webview) {
     let app = view.app_handle().clone();
     let id = view.label().to_string();
     let _ = view.with_webview(move |native| {
+        let zoom = native_zoom(&native).ok().filter(|zoom| zoom.is_finite() && *zoom > 0.0);
         if let Ok((back, forward)) = native_history(&native, None) {
             let updated = {
                 let mut state = surface();
                 if let Some(tab) = state.session.tabs.iter_mut().find(|tab| tab.id == id) {
-                    let different = tab.can_go_back != back || tab.can_go_forward != forward;
+                    let different = tab.can_go_back != back || tab.can_go_forward != forward
+                        || zoom.is_some_and(|zoom| (tab.zoom_factor - zoom).abs() > 0.001);
                     tab.can_go_back = back;
                     tab.can_go_forward = forward;
+                    if let Some(zoom) = zoom { tab.zoom_factor = zoom; }
                     different
                 } else {
                     false
@@ -315,6 +318,25 @@ fn refresh_history(view: &Webview) {
             }
         }
     });
+}
+
+fn native_zoom(native: &tauri::webview::PlatformWebview) -> Result<f64, String> {
+    #[cfg(target_os = "linux")]
+    {
+        use webkit2gtk::WebViewExt;
+        Ok(native.inner().zoom_level())
+    }
+    #[cfg(windows)]
+    unsafe {
+        let mut zoom = 1.0;
+        native.controller().ZoomFactor(&mut zoom).map_err(|error| error.to_string())?;
+        Ok(zoom)
+    }
+    #[cfg(target_os = "macos")]
+    unsafe {
+        let view = native.inner().cast::<objc2::runtime::AnyObject>();
+        Ok(objc2::msg_send![view, pageZoom])
+    }
 }
 
 fn native_history(
@@ -526,11 +548,15 @@ fn place_tabs(
     Ok(())
 }
 
-pub fn toolbar_height(app: &AppHandle, height: f64, host_id: Option<String>) -> Result<(), String> {
+fn measured_toolbar_height(height: f64) -> Result<f64, String> {
     if !height.is_finite() {
         return Err("操作バーの高さが不正です".into());
     }
-    let height = height.clamp(browser_tabs::DEFAULT_TOOLBAR_HEIGHT, 420.0);
+    Ok(height.clamp(1.0, 420.0))
+}
+
+pub fn toolbar_height(app: &AppHandle, height: f64, host_id: Option<String>) -> Result<(), String> {
+    let height = measured_toolbar_height(height)?;
     let host_id = host_id.or_else(|| {
         let state = surface();
         state
@@ -741,6 +767,9 @@ fn shortcut_name(id: &str) -> Option<&str> {
         "browser-reload",
         "browser-back",
         "browser-forward",
+        "browser-zoom-in",
+        "browser-zoom-out",
+        "browser-zoom-reset",
     ];
     NAMES.iter().copied().find(|name| {
         id == *name
@@ -767,6 +796,10 @@ fn install_browser_menu(app: &AppHandle, window: &Window, host_id: &str, slot: u
     let keys = ("Alt+Left", "Alt+Right");
     let back = item("browser-back", "戻る", keys.0).map_err(|error| error.to_string())?;
     let forward = item("browser-forward", "進む", keys.1).map_err(|error| error.to_string())?;
+    let zoom_in = item("browser-zoom-in", "拡大", "CmdOrCtrl+Shift+Equal").map_err(|error| error.to_string())?;
+    let zoom_in_equal = item("browser-zoom-in-equal", "拡大", "CmdOrCtrl+Equal").map_err(|error| error.to_string())?;
+    let zoom_out = item("browser-zoom-out", "縮小", "CmdOrCtrl+Minus").map_err(|error| error.to_string())?;
+    let zoom_reset = item("browser-zoom-reset", "実際のサイズ", "CmdOrCtrl+0").map_err(|error| error.to_string())?;
     let menu = Menu::new(app).map_err(|error| error.to_string())?;
     #[cfg(target_os = "macos")]
     menu.append(
@@ -806,7 +839,8 @@ fn install_browser_menu(app: &AppHandle, window: &Window, host_id: &str, slot: u
         app,
         "ブラウザ",
         true,
-        &[&new_item, &close_item, &address, &reload_item, &back, &forward],
+        &[&new_item, &close_item, &address, &reload_item, &back, &forward,
+          &zoom_in, &zoom_in_equal, &zoom_out, &zoom_reset],
     )
     .map_err(|error| error.to_string())?;
     menu.append(&controls).map_err(|error| error.to_string())?;
@@ -850,6 +884,14 @@ fn dispatch_shortcut_on(app: &AppHandle, host_id: &str, action: &str) {
                 "browser-reload" => reload_host(handle, &host_id),
                 "browser-back" => history_host(handle, &host_id, false),
                 "browser-forward" => history_host(handle, &host_id, true),
+                "browser-zoom-in" | "browser-zoom-out" | "browser-zoom-reset" => {
+                    let change = match action.as_str() {
+                        "browser-zoom-in" => browser_tabs::ZoomChange::In,
+                        "browser-zoom-out" => browser_tabs::ZoomChange::Out,
+                        _ => browser_tabs::ZoomChange::Reset,
+                    };
+                    with_active_tab(&SURFACE, &host_id, |id| zoom_tab(handle, id, change))
+                }
                 "browser-address" => Ok(()),
                 _ => Ok(()),
             };
@@ -1661,6 +1703,18 @@ pub fn history(app: &AppHandle, forward: bool) -> Result<(), String> {
     history_on(app, active_view(app)?, forward)
 }
 
+pub fn zoom_tab(app: &AppHandle, tab_id: &str, change: browser_tabs::ZoomChange) -> Result<(), String> {
+    browser::browser_enabled(app)?;
+    mutable()?;
+    let current = surface().session.tabs.iter().find(|tab| tab.id == tab_id)
+        .map(|tab| tab.zoom_factor).ok_or("ブラウザのタブが見つかりません")?;
+    let zoom = browser_tabs::next_zoom(current, change);
+    view_for(app, tab_id)?.set_zoom(zoom).map_err(|error| format!("表示倍率を変更できません: {error}"))?;
+    surface().session.update(tab_id, |tab| tab.zoom_factor = zoom);
+    changed(app);
+    Ok(())
+}
+
 pub fn reload_tab(app: &AppHandle, tab_id: &str) -> Result<(), String> {
     browser::browser_enabled(app)?;
     mutable()?;
@@ -1706,6 +1760,16 @@ pub fn stop(app: &AppHandle) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::browser_tabs::HostKind;
+
+    #[test]
+    fn measured_toolbar_can_shrink_when_status_or_editors_disappear() {
+        assert_eq!(measured_toolbar_height(136.0).unwrap(), 136.0);
+        assert_eq!(measured_toolbar_height(112.0).unwrap(), 112.0);
+        assert_eq!(measured_toolbar_height(76.0).unwrap(), 76.0);
+        assert!(measured_toolbar_height(f64::NAN).is_err());
+        assert!(measured_toolbar_height(f64::INFINITY).is_err());
+        assert_eq!(measured_toolbar_height(1000.0).unwrap(), 420.0);
+    }
 
     fn test_surface() -> Surface {
         Surface {

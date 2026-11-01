@@ -143,12 +143,18 @@ fn shortcut(key: gtk::gdk::keys::Key, state: gtk::gdk::ModifierType) -> Option<&
             | M::SUPER_MASK
             | M::HYPER_MASK
             | M::META_MASK);
+    if state == (M::CONTROL_MASK | M::SHIFT_MASK) && key == constants::plus {
+        return Some("browser-zoom-in");
+    }
     if state == M::CONTROL_MASK {
         match key.to_lower() {
             constants::t => Some("browser-new-tab"),
             constants::w => Some("browser-close-tab"),
             constants::l => Some("browser-address"),
             constants::r => Some("browser-reload"),
+            constants::plus | constants::equal | constants::KP_Add => Some("browser-zoom-in"),
+            constants::minus | constants::KP_Subtract => Some("browser-zoom-out"),
+            constants::_0 | constants::KP_0 => Some("browser-zoom-reset"),
             _ => None,
         }
     } else if state == M::MOD1_MASK {
@@ -275,6 +281,11 @@ mod tests {
             assert_eq!(shortcut(K::t, state), None);
         }
         assert_eq!(shortcut(K::c, M::CONTROL_MASK), None);
+        assert_eq!(shortcut(K::equal, M::CONTROL_MASK), Some("browser-zoom-in"));
+        assert_eq!(shortcut(K::plus, M::CONTROL_MASK | M::SHIFT_MASK), Some("browser-zoom-in"));
+        assert_eq!(shortcut(K::KP_Subtract, M::CONTROL_MASK), Some("browser-zoom-out"));
+        assert_eq!(shortcut(K::_0, M::CONTROL_MASK), Some("browser-zoom-reset"));
+        assert_eq!(shortcut(K::minus, M::CONTROL_MASK | M::MOD1_MASK), None);
     }
     #[test]
     fn resize_hits_only_the_outer_edges_of_the_host() {

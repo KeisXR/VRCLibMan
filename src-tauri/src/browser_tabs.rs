@@ -4,9 +4,31 @@ use url::Url;
 pub const TOOLBAR_LABEL: &str = "booth-toolbar";
 /// The right panel is the only docked host. Window hosts are `window-N`.
 pub const PANEL_HOST_ID: &str = "panel";
-pub const DEFAULT_TOOLBAR_HEIGHT: f64 = 136.0;
+pub const DEFAULT_TOOLBAR_HEIGHT: f64 = 112.0;
 pub const MAX_TABS: usize = 20;
 pub const MAX_BOOKMARKS: usize = 200;
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ZoomChange {
+    In,
+    Out,
+    Reset,
+}
+
+/// Page zoom is kept on each native view, independently of its host window.
+pub fn next_zoom(current: f64, change: ZoomChange) -> f64 {
+    const LEVELS: &[f64] = &[
+        0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5,
+        3.0, 4.0, 5.0,
+    ];
+    let current = if current.is_finite() { current } else { 1.0 };
+    match change {
+        ZoomChange::In => LEVELS.iter().copied().find(|level| *level > current + 0.001).unwrap_or(5.0),
+        ZoomChange::Out => LEVELS.iter().rev().copied().find(|level| *level < current - 0.001).unwrap_or(0.25),
+        ZoomChange::Reset => 1.0,
+    }
+}
 
 /// App-made toolbars may call browser commands. Page webviews may not.
 pub fn is_toolbar_label(label: &str) -> bool {
@@ -165,6 +187,7 @@ pub struct BrowserTab {
     pub loading: bool,
     pub can_go_back: bool,
     pub can_go_forward: bool,
+    pub zoom_factor: f64,
     pub host_id: String,
 }
 
@@ -277,6 +300,7 @@ impl TabSession {
             loading: true,
             can_go_back: false,
             can_go_forward: false,
+            zoom_factor: 1.0,
             host_id: host_id.into(),
         });
         self.hosts[host].order.push(id.clone());
@@ -601,6 +625,34 @@ impl TabSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn page_zoom_steps_reset_and_clamp_at_both_limits() {
+        assert_eq!(next_zoom(1.0, ZoomChange::Out), 0.9);
+        assert_eq!(next_zoom(1.0, ZoomChange::In), 1.1);
+        assert_eq!(next_zoom(1.18, ZoomChange::In), 1.25);
+        assert_eq!(next_zoom(1.18, ZoomChange::Out), 1.1);
+        assert_eq!(next_zoom(1.10000001, ZoomChange::In), 1.25);
+        assert_eq!(next_zoom(5.0, ZoomChange::In), 5.0);
+        assert_eq!(next_zoom(0.25, ZoomChange::Out), 0.25);
+        assert_eq!(next_zoom(0.25, ZoomChange::Reset), 1.0);
+        assert_eq!(next_zoom(f64::NAN, ZoomChange::Reset), 1.0);
+    }
+
+    #[test]
+    fn page_zoom_belongs_to_the_tab_when_it_moves_or_rolls_back() {
+        let mut tabs = TabSession::new();
+        tabs.ensure_panel();
+        let page = navigation_url("zoom.example").unwrap();
+        let first = tabs.add(PANEL_HOST_ID, &page).unwrap();
+        let second = tabs.add(PANEL_HOST_ID, &page).unwrap();
+        tabs.update(&first, |tab| tab.zoom_factor = 0.75);
+        let window = tabs.add_window();
+        let moved = tabs.move_tab(&first, &window, 0).unwrap();
+        assert_eq!(tabs.tabs.iter().find(|tab| tab.id == first).unwrap().zoom_factor, 0.75);
+        assert_eq!(tabs.tabs.iter().find(|tab| tab.id == second).unwrap().zoom_factor, 1.0);
+        tabs.restore(moved).unwrap();
+        assert_eq!(tabs.tabs.iter().find(|tab| tab.id == first).unwrap().zoom_factor, 0.75);
+    }
     #[test]
     fn login_popups_use_the_source_tab_only_on_known_login_pages() {
         for value in [

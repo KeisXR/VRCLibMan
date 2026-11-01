@@ -177,6 +177,7 @@ function add(input = HOME, hostId?: string) {
     loading: false,
     canGoBack: false,
     canGoForward: false,
+    zoomFactor: 1,
     hostId: host.id,
     entries: [target],
     index: 0,
@@ -297,6 +298,14 @@ export function previewBrowserAction(action: BrowserAction): BrowserState {
     if (tab) {
       tab.index = Math.max(0, Math.min(tab.entries.length - 1, tab.index + (action.kind === "forward" ? 1 : -1)));
       update(tab);
+    }
+  } else if (action.kind === "zoom") {
+    const tab = targetTab(action);
+    if (tab) {
+      const levels = [0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5];
+      tab.zoomFactor = action.action === "reset" ? 1 : action.action === "in"
+        ? (levels.find((level) => level > tab.zoomFactor + 0.001) ?? 5)
+        : ([...levels].reverse().find((level) => level < tab.zoomFactor - 0.001) ?? 0.25);
     }
   } else if (action.kind === "reorderTabs") {
     const host = hostById(action.hostId);
