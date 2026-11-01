@@ -1469,7 +1469,7 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .right-panel-body.right-panel-body-web { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
 .right-panel.maximized .right-panel-body-web > .browser-panel { max-width: none; margin-inline: 0; }
 .browser-panel { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
-.browser-chrome.panel { margin: 0; padding: 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; flex-shrink: 0; }
+.browser-chrome.panel { margin: 0; padding: 0; box-shadow: none; border: 0; border-top: 1px solid var(--line); border-radius: 0; flex-shrink: 0; }
 .browser-chrome.panel .browser-address { min-width: 64px; }
 .browser-chrome.panel .browser-tabs-row { height: 40px; align-items: center; }
 .browser-panel-viewport { position: relative; flex: 1 1 auto; min-height: 0; display: grid; place-items: center; padding: var(--space-4); background: var(--surface); }
@@ -1558,161 +1558,11 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .tab.active { box-shadow: inset 0 -2px 0 var(--line-accent); }
 .choice-row:has(input:checked), .scope-choices label:has(input:checked) { border-color: var(--line-selection); }
 
-/* ===== Liquid テーマ（設定「デザイン」で選択したときだけ有効） ===== */
-html.theme-liquid { --bg: #e9edf2;
-  --surface: #ffffff;
-  --surface-secondary: #eef1f5;
-  --sunken: #eceff4;
-  --text: #1c1e24;
-  --text-secondary: #5f646e;
-  --faint: #878d97;
-  --button: #1c1e24;
-  --button-text: #ffffff;
-  --button-hover: #000000;
-  --accent: #0a6cff;
-  --accent-soft: rgba(10, 108, 255, 0.12);
-  --good: #237a45;
-  --warn: #856404;
-  --danger: #b3352b;
-  --line: rgba(23, 28, 38, 0.08);
-  --border: rgba(23, 28, 38, 0.08);
-  --hover: rgba(23, 28, 38, 0.07);
-  --line-accent: var(--accent);
-  --line-selection: rgba(10, 108, 255, 0.55);
-  --liquid-list: rgba(255, 255, 255, 0.88);
-  --liquid-list-border: rgba(255, 255, 255, 0.8);
-  --liquid-list-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 1px 2px rgba(18, 24, 38, 0.04), 0 10px 28px rgba(18, 24, 38, 0.06);
-  
-  --shadow: 0 1px 2px rgba(18, 24, 38, 0.05), 0 10px 32px rgba(18, 24, 38, 0.07);
-  --radius-sm: 10px;
-  --radius-control: 14px;
-  --radius: 22px;
-  --radius-lg: 28px;
-  --motion: 180ms; }
-html.theme-liquid body { background: var(--bg); }
-html.theme-liquid .app, html.theme-liquid .main, html.theme-liquid .genre-rail { background: transparent; }
-html.theme-liquid .rail { margin: 12px 0 12px 12px;
-  padding-top: 20px;
-  background: rgba(255, 255, 255, 0.55);
-  border: 1px solid rgba(255, 255, 255, 0.75);
-  border-radius: 26px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85), 0 1px 2px rgba(18, 24, 38, 0.05), 0 16px 40px rgba(18, 24, 38, 0.10); }
-html.theme-liquid .genre-rail { margin: 12px 0;
-  background: rgba(255, 255, 255, 0.38);
-  border-right: 0;
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  border-radius: 26px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8); }
-html.theme-liquid .toolbar { background: rgba(255, 255, 255, 0.62);
-  border: 1px solid rgba(255, 255, 255, 0.75);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85), 0 1px 2px rgba(18, 24, 38, 0.05), 0 12px 32px rgba(18, 24, 38, 0.09); }
-html.theme-liquid .account-pill { background: rgba(255, 255, 255, 0.66);
-  border-color: rgba(255, 255, 255, 0.75); }
-html.theme-liquid .card, html.theme-liquid .panel:not(.browser-chrome), html.theme-liquid .queue-card, html.theme-liquid .item, html.theme-liquid .empty, html.theme-liquid .note, html.theme-liquid .drop { background: rgba(255, 255, 255, 0.88);
-  border: 1px solid rgba(255, 255, 255, 0.8);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 1px 2px rgba(18, 24, 38, 0.04), 0 10px 28px rgba(18, 24, 38, 0.06); }
-html.theme-liquid .thumb { border-radius: 12px; }
-html.theme-liquid .thumb.small { border-radius: 10px; }
-html.theme-liquid .preview-frame, html.theme-liquid .preview-frame img { border-radius: 16px; }
-html.theme-liquid .nav-link.active, html.theme-liquid .genre-link.active, html.theme-liquid .tab.active, html.theme-liquid .right-panel-tab.active, html.theme-liquid .browser-tab.active { background: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 1px 2px rgba(18, 24, 38, 0.06), 0 6px 18px rgba(18, 24, 38, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.95);
-  color: var(--text); }
-html.theme-liquid .genre-link.active { background: rgba(255, 255, 255, 0.92); }
-html.theme-liquid .button.primary { background: var(--accent); }
-html.theme-liquid .button.primary:hover { background: #0a5fe0; }
-html.theme-liquid .choice-row:has(input:checked) { border-color: rgba(10, 108, 255, 0.55); background: var(--accent-soft); }
-html.theme-liquid .scope-choices label:has(input:checked) { border-color: rgba(10, 108, 255, 0.55); background: var(--accent-soft); }
-html.theme-liquid .item.selected { box-shadow: inset 0 0 0 2px var(--accent), 0 10px 28px rgba(18, 24, 38, 0.06); }
-html.theme-liquid .switch-label input, html.theme-liquid .choice-row input, html.theme-liquid .scope-choices input { accent-color: var(--accent); }
-html.theme-liquid .search, html.theme-liquid .field input, html.theme-liquid .field select, html.theme-liquid .field textarea, html.theme-liquid .setting-control > input, html.theme-liquid .setting-control > select, html.theme-liquid .inline-control > input, html.theme-liquid .inline-control > select { background: rgba(255, 255, 255, 0.9);
-  border: 1px solid rgba(23, 28, 38, 0.10); }
-html.theme-liquid .toolbar .search { background: transparent; border: 0; }
-html.theme-liquid .settings-section { border-radius: var(--radius-lg); border-color: rgba(255, 255, 255, 0.8); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 1px 2px rgba(18, 24, 38, 0.04), 0 10px 28px rgba(18, 24, 38, 0.06); }
-html.theme-liquid .setup-card { border-radius: 32px; }
-html.theme-liquid .banner { border: 1px solid rgba(255, 255, 255, 0.8); }
-html.theme-liquid .icon-button { border: 1px solid rgba(255, 255, 255, 0.75); background: rgba(255, 255, 255, 0.66); }
-html.theme-liquid .rail-foot { border-top-color: rgba(255, 255, 255, 0.65); }
-html.theme-liquid .cards { grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr)); }
-html.theme-liquid .cards .avatar-card { border-radius: 30px; padding: 0; gap: 14px; overflow: hidden; grid-template-columns: 118px 1fr; align-items: stretch; }
-html.theme-liquid .cards .avatar-card .thumb { width: 118px; height: 100%; min-height: 118px; border-radius: 0; font-size: 38px; }
-html.theme-liquid .cards .avatar-card > div { padding: 14px 14px 14px 0; align-self: center; }
-html.theme-liquid .stack:has(> .item), html.theme-liquid .stack:has(> .queue-card) { background: var(--liquid-list);
-  border: 1px solid var(--liquid-list-border);
-  border-radius: 28px;
-  box-shadow: var(--liquid-list-shadow);
-  gap: 0;
-  padding: 6px; }
-html.theme-liquid .stack:has(> .item) > .item, html.theme-liquid .stack:has(> .queue-card) > .queue-card { background: transparent;
-  border: 0;
-  box-shadow: none;
-  border-radius: 22px; }
-html.theme-liquid .stack:has(> .item) > .item + .item, html.theme-liquid .stack:has(> .queue-card) > .queue-card + .queue-card { border-top: 1px solid var(--line);
-  border-top-left-radius: 0;
-  border-top-right-radius: 0; }
-html.theme-liquid .stack:has(> .item) > .item.selected { box-shadow: inset 0 0 0 2px var(--accent); }
-html.theme-liquid .card { border-radius: 28px; }
-html.theme-liquid .card .thumb { border-radius: 16px; }
-@media (prefers-color-scheme: dark) {
-html.theme-liquid { color-scheme: dark;
-  --bg: #101216;
-  --surface: #1d1f24;
-  --surface-secondary: #26282f;
-  --sunken: #26282f;
-  --text: #f2f3f5;
-  --text-secondary: #a7abb3;
-  --faint: #7e838c;
-  --button: #f2f3f5;
-  --button-text: #141519;
-  --button-hover: #ffffff;
-  --accent: #4da3ff;
-  --accent-soft: rgba(77, 163, 255, 0.18);
-  --good: #8fceab;
-  --warn: #e2c36a;
-  --danger: #f0a8a2;
-  --line: rgba(255, 255, 255, 0.10);
-  --border: rgba(255, 255, 255, 0.10);
-  --hover: rgba(255, 255, 255, 0.08);
-  --line-selection: rgba(77, 163, 255, 0.65);
-  --liquid-list: rgba(33, 35, 41, 0.88);
-  --liquid-list-border: rgba(255, 255, 255, 0.10);
-  --liquid-list-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 1px 2px rgba(0, 0, 0, 0.30), 0 10px 28px rgba(0, 0, 0, 0.28);
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.40), 0 10px 32px rgba(0, 0, 0, 0.35); }
-html.theme-liquid body { background: var(--bg); }
-html.theme-liquid .rail, html.theme-liquid .toolbar, html.theme-liquid .account-pill, html.theme-liquid .icon-button { background: rgba(30, 32, 38, 0.55);
-  border-color: rgba(255, 255, 255, 0.14);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 1px 2px rgba(0, 0, 0, 0.35), 0 16px 40px rgba(0, 0, 0, 0.35); }
-html.theme-liquid .genre-rail { background: rgba(30, 32, 38, 0.38);
-  border-color: rgba(255, 255, 255, 0.12);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07); }
-html.theme-liquid .card, html.theme-liquid .panel:not(.browser-chrome), html.theme-liquid .queue-card, html.theme-liquid .item, html.theme-liquid .empty, html.theme-liquid .note, html.theme-liquid .drop { background: rgba(33, 35, 41, 0.88);
-  border-color: rgba(255, 255, 255, 0.10);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 1px 2px rgba(0, 0, 0, 0.30), 0 10px 28px rgba(0, 0, 0, 0.28); }
-html.theme-liquid .nav-link.active, html.theme-liquid .genre-link.active, html.theme-liquid .tab.active, html.theme-liquid .right-panel-tab.active, html.theme-liquid .browser-tab.active { background: rgba(255, 255, 255, 0.14);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.30), inset 0 1px 0 rgba(255, 255, 255, 0.10); }
-html.theme-liquid .search, html.theme-liquid .field input, html.theme-liquid .field select, html.theme-liquid .field textarea, html.theme-liquid .setting-control > input, html.theme-liquid .setting-control > select, html.theme-liquid .inline-control > input, html.theme-liquid .inline-control > select { background: rgba(20, 21, 25, 0.85);
-  border-color: rgba(255, 255, 255, 0.12); }
-html.theme-liquid .toolbar .search { background: transparent; border: 0; }
-html.theme-liquid .settings-section { border-color: rgba(255, 255, 255, 0.10);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 1px 2px rgba(0, 0, 0, 0.30), 0 10px 28px rgba(0, 0, 0, 0.28); }
-html.theme-liquid .banner { border-color: rgba(255, 255, 255, 0.10); }
-html.theme-liquid .rail-foot { border-top-color: rgba(255, 255, 255, 0.12); }
-html.theme-liquid .button.primary { background: var(--accent); color: #0b1526; }
-html.theme-liquid .button.primary:hover { background: #6cb3ff; }
-}
-
-/* キーボードのフォーカスは影だけに頼らず、両デザインで同じ太さにする。 */
+/* キーボードのフォーカスは影だけに頼らず、同じ太さにする。 */
 input:focus-visible, select:focus-visible, textarea:focus-visible {
   outline: 2px solid var(--line-accent);
   outline-offset: 2px;
 }
-html.theme-liquid .stack:has(> .item) > .item:hover,
-html.theme-liquid .stack:has(> .queue-card) > .queue-card:hover { background: var(--hover); }
-html.theme-liquid .avatar-card:hover,
-html.theme-liquid .icon-button:hover,
-html.theme-liquid button.account-pill:hover { background: var(--surface-secondary); }
-/* ネイティブページは操作バーの下へ隙間なく続く。カードの影や枠を付けない。 */
-html.theme-liquid .browser-chrome.panel { box-shadow: none; }
-/* 背面は単色なのでぼかしを使わず、GPUやbackdrop-filterの有無に依存しない。 */
 .settings-page { container-type: inline-size; }
 @container (max-width: 800px) {
   .settings-layout { grid-template-columns: 1fr; }

@@ -295,7 +295,7 @@ export function SettingsPage() {
       {settings && (
         <div className="settings-layout">
           <nav className="settings-nav" aria-label="設定の項目">
-            {[["settings-library", "ライブラリ"], ["settings-unity", "Unity"], ["settings-startup", "起動と常駐"], ["settings-booth", "BOOTH"], ["settings-classify", "分類モデル"], ["settings-data", "データ"], ["settings-design", "デザイン"]].map(([id, label]) => (
+            {[["settings-library", "ライブラリ"], ["settings-unity", "Unity"], ["settings-startup", "起動と常駐"], ["settings-booth", "BOOTH"], ["settings-classify", "分類モデル"], ["settings-data", "データ"]].map(([id, label]) => (
               <button key={id} type="button" onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" })}>{label}</button>
             ))}
           </nav>
@@ -466,15 +466,6 @@ export function SettingsPage() {
               <p>各サイトのログイン状態と閲覧データは「内蔵ブラウザの閲覧データを削除」で削除できます。ライブラリ情報・設定・ブックマークは残ります。</p>
               <p>更新を確認・ダウンロードするときは GitHub と通信します。ライブラリや購入情報は送信しません。</p>
             </details>
-          </section>
-          <section className="settings-section" id="settings-design">
-            <header><h2>デザイン</h2><p>画面の見た目を選びます。いつでも切り替えられます。</p></header>
-            <SettingRow label="デザイン" help="「従来」は線のアクセントを加えた標準デザイン、「Liquid」は角丸と浮いたパネルを強めたデザインです。サイドバーと設定の配置は共通です。切り替えは別ウィンドウの操作バーにも反映されます。">
-              <select value={settings.appearance === "liquid" ? "liquid" : "classic"} onChange={(e) => changeSettings({ appearance: e.target.value === "liquid" ? "liquid" : "classic" })}>
-                <option value="classic">従来</option>
-                <option value="liquid">Liquid（新しいデザイン）</option>
-              </select>
-            </SettingRow>
           </section>
 
           </div>

@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { applyAppearance } from "./appearance";
 import type {
   AppUpdateStatus,
   AvatarCard,
@@ -150,11 +149,9 @@ export const api = {
   regenerateExtensionToken: () => call<ExtensionLink>("regenerate_extension_token"),
   saveSettings: async (settings: Settings) => {
     await call<void>("save_settings", { settings });
-    applyAppearance(settings.appearance);
   },
   updateSettings: async (patch: Partial<Settings>) => {
     const saved = await call<Settings>("update_settings", { patch });
-    if (patch.appearance !== undefined) applyAppearance(saved.appearance);
     return saved;
   },
   boothPageInterval: () => call<number>("get_booth_page_interval"),

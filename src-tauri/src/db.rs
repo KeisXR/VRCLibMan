@@ -386,7 +386,6 @@ fn ensure_ready(connection: &Connection) -> Result<u32, String> {
         ("right_panel_tabs", crate::model::DEFAULT_RIGHT_PANEL_TABS),
         ("check_update_on_startup", "0"),
         ("ui_update_dismissed_version", ""),
-        ("appearance", "classic"),
     ] {
         connection
             .execute(
@@ -466,9 +465,6 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
         unload_ollama_after_classification: setting(connection, "unload_ollama_after_classification")?
             .as_deref()
             != Some("0"),
-        appearance: normalize_appearance(
-            &setting(connection, "appearance")?.unwrap_or_else(|| "classic".into()),
-        ),
         classification_dismissed_version: setting(connection, "classification_dismissed_version")?
             .and_then(|value| value.parse::<i32>().ok())
             .unwrap_or(0),
@@ -502,14 +498,6 @@ fn normalize_backend(value: &str) -> String {
         "apple" => "apple".into(),
         "cloud" => "cloud".into(),
         _ => "ollama".into(),
-    }
-}
-
-fn normalize_appearance(value: &str) -> String {
-    if value.trim() == "liquid" {
-        "liquid".into()
-    } else {
-        "classic".into()
     }
 }
 
@@ -647,7 +635,6 @@ fn save_settings_values(
         "unload_ollama_after_classification",
         if input.unload_ollama_after_classification { "1" } else { "0" },
     )?;
-    set_setting(connection, "appearance", &normalize_appearance(&input.appearance))?;
     set_setting(
         connection,
         "classification_dismissed_version",
@@ -6418,41 +6405,17 @@ mod tests {
     }
 
     #[test]
-    fn appearance_defaults_migrates_and_preserves_other_settings() {
+    fn retired_design_setting_does_not_affect_settings_updates() {
         let connection = open_memory().unwrap();
-        assert_eq!(settings(&connection).unwrap().appearance, "classic");
-        connection.execute("DELETE FROM settings WHERE key = 'appearance'", []).unwrap();
-        assert_eq!(settings(&connection).unwrap().appearance, "classic");
+        set_setting(&connection, "appearance", "liquid").unwrap();
         ensure_ready(&connection).unwrap();
-        assert_eq!(setting(&connection, "appearance").unwrap().as_deref(), Some("classic"));
-        let saved = update_settings(&connection, &SettingsPatch {
-            appearance: Some(" liquid ".into()),
-            ..Default::default()
-        }).unwrap();
-        assert_eq!(saved.appearance, "liquid");
-        assert_eq!(saved.ollama_model, "qwen3.5:9b");
-        ensure_ready(&connection).unwrap();
-        assert_eq!(settings(&connection).unwrap().appearance, "liquid");
         let saved = update_settings(&connection, &SettingsPatch {
             confidence_threshold: Some(0.75),
             ..Default::default()
         }).unwrap();
-        assert_eq!(saved.appearance, "liquid");
-        // Invalid patches are atomic, including a design change in the same request.
-        assert!(update_settings(&connection, &SettingsPatch {
-            appearance: Some("classic".into()),
-            ollama_model: Some("invalid model!".into()),
-            ..Default::default()
-        }).is_err());
-        assert_eq!(settings(&connection).unwrap().appearance, "liquid");
-        set_setting(&connection, "appearance", "future-design").unwrap();
-        assert_eq!(settings(&connection).unwrap().appearance, "classic");
-        let saved = update_settings(&connection, &SettingsPatch {
-            appearance: Some("unknown".into()),
-            ..Default::default()
-        }).unwrap();
-        assert_eq!(saved.appearance, "classic");
         assert_eq!(saved.confidence_threshold, 0.75);
+        assert_eq!(saved.ollama_model, "qwen3.5:9b");
+        assert!(serde_json::to_value(saved).unwrap().get("appearance").is_none());
     }
 
     #[test]
@@ -7601,7 +7564,6 @@ mod tests {
                 background_mode: false,
                 launch_at_login: false,
                 unload_ollama_after_classification: true,
-                appearance: "classic".into(),
                 classification_dismissed_version: 0,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
@@ -7867,7 +7829,6 @@ mod tests {
                 background_mode: false,
                 launch_at_login: false,
                 unload_ollama_after_classification: true,
-                appearance: "classic".into(),
                 classification_dismissed_version: 0,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
@@ -9337,7 +9298,6 @@ mod tests {
                 background_mode: false,
                 launch_at_login: false,
                 unload_ollama_after_classification: true,
-                appearance: "classic".into(),
                 classification_dismissed_version: 0,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
@@ -9368,7 +9328,6 @@ mod tests {
                 background_mode: false,
                 launch_at_login: false,
                 unload_ollama_after_classification: true,
-                appearance: "classic".into(),
                 classification_dismissed_version: 0,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
@@ -9494,7 +9453,6 @@ mod tests {
                 background_mode: false,
                 launch_at_login: false,
                 unload_ollama_after_classification: true,
-                appearance: "classic".into(),
                 classification_dismissed_version: 0,
                 ui_rail_width: 232,
                 ui_genre_width: 200,
@@ -9767,7 +9725,6 @@ mod tests {
             background_mode: false,
             launch_at_login: true,
                 unload_ollama_after_classification: true,
-                appearance: "classic".into(),
                 classification_dismissed_version: 0,
             ui_rail_width: 232,
             ui_genre_width: 200,
@@ -9791,7 +9748,6 @@ mod tests {
                 background_mode: true,
                 launch_at_login: true,
                 unload_ollama_after_classification: true,
-                appearance: "classic".into(),
                 classification_dismissed_version: 0,
                 ..base
             },
@@ -9970,7 +9926,6 @@ mod tests {
                 background_mode: false,
                 launch_at_login: false,
                 unload_ollama_after_classification: true,
-                appearance: "classic".into(),
                 classification_dismissed_version: 0,
                 ui_rail_width: 232,
                 ui_genre_width: 200,

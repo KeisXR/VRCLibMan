@@ -354,8 +354,6 @@ pub struct Settings {
     pub check_update_on_startup: bool,
     pub ui_update_dismissed_version: String,
     pub unload_ollama_after_classification: bool,
-    /// `classic` (従来のデザイン) or `liquid` (新しいデザイン). Unknown values read back as `classic`.
-    pub appearance: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -405,16 +403,10 @@ pub struct SettingsInput {
     pub ui_update_dismissed_version: String,
     #[serde(default = "default_unload_ollama_after_classification")]
     pub unload_ollama_after_classification: bool,
-    #[serde(default = "default_appearance")]
-    pub appearance: String,
 }
 
 fn default_unload_ollama_after_classification() -> bool {
     true
-}
-
-fn default_appearance() -> String {
-    "classic".into()
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -445,7 +437,6 @@ pub struct SettingsPatch {
     pub check_update_on_startup: Option<bool>,
     pub ui_update_dismissed_version: Option<String>,
     pub unload_ollama_after_classification: Option<bool>,
-    pub appearance: Option<String>,
 }
 
 impl SettingsPatch {
@@ -507,7 +498,6 @@ impl SettingsPatch {
             unload_ollama_after_classification: self
                 .unload_ollama_after_classification
                 .unwrap_or(current.unload_ollama_after_classification),
-            appearance: self.appearance.clone().unwrap_or(current.appearance),
         }
     }
 }

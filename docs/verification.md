@@ -1,5 +1,16 @@
 # 検証記録
 
+## Liquidとデザイン切替の廃止（2026-11-02）
+
+対象は main の `d809bbf` からの `remove/liquid-design-tab` の作業差分。Linux x86_64で確認した。
+
+- `npm test` は120件成功、`npm run build` 成功。
+- `cargo test --offline --locked --manifest-path src-tauri/Cargo.toml --lib` は337件成功、既存の1件ignore。旧DBに `appearance=liquid` が残っていても設定更新が成功し、設定応答に廃止項目を含めないことを確認した。
+- `npm run test:tab-click` は8件成功。標準デザインのライト／ダークで右パネルの表示域と操作を確認した。操作バーの影なし指定は共通側へ移した。
+- `npm run dev` とheadless Chromiumで設定画面を開き、デザイン目次・セクションがないこと、BOOTH目次への移動、再読み込み後も項目が復活しないことを確認した。
+
+Liquid用CSS、起動時の設定読み込み、設定保存・反映イベント、型とAPIの項目を削除した。旧DBのキーは参照せず残すため、スキーマの変更・既存データの削除は行わない。Mac/Windowsの実機確認は未実施。
+
 ## PR #114 の main 取り込みと競合解消（2026-11-02）
 
 対象は PR #114 の `9d145e0` に main の `e334a5d` を取り込んだ差分です。Debian 13 x86_64、Rust 1.99.1、Node.js 24.19.0、Chromium で確認しました。競合はこの検証記録への追記だけで、双方の記録を残しました。強制ダークモードの実装と、main の macOS WebView 描画範囲・操作部品の角丸修正を保持しています。CSS と表示域の計算・回帰テストは main と同一です。
