@@ -506,6 +506,127 @@ fn library_roots(app: &AppHandle) -> Result<(String, String), String> {
     Ok((settings.library_folder, settings.remote_library_folder))
 }
 
+fn unity_cache_root(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    app.path()
+        .app_cache_dir()
+        .map_err(|_| "アプリのキャッシュフォルダが見つかりません".to_string())
+}
+
+/// 「Unityで開く」: zip か .unitypackage の中の Unity パッケージを一覧する。展開しない。
+#[tauri::command]
+pub async fn unity_packages(
+    app: AppHandle,
+    path: String,
+) -> Result<crate::unity_import::UnityPackageList, String> {
+    let (library, remote) = library_roots(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let source = crate::unity_import::allowed_source(&path, &library, &remote)?;
+        crate::unity_import::list_packages(&source)
+    })
+    .await
+    .map_err(|err| format!("Unity パッケージを読めません: {err}"))?
+}
+
+/// 選んだ Unity パッケージを、アプリのキャッシュ `unity-import/<商品ID>/` に取り出す。
+/// 単体の .unitypackage は取り出さず、そのまま返す。メイン画面からだけ受け付ける。
+#[tauri::command]
+pub async fn prepare_unity_packages(
+    view: tauri::Webview,
+    app: AppHandle,
+    path: String,
+    entries: Vec<String>,
+    booth_id: Option<String>,
+) -> Result<Vec<crate::unity_import::PreparedPackage>, String> {
+    if view.label() != "main" {
+        return Err("この画面から Unity パッケージは開けません".into());
+    }
+    let (library, remote) = library_roots(&app)?;
+    let cache_root = unity_cache_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let source = crate::unity_import::allowed_source(&path, &library, &remote)?;
+        let list = crate::unity_import::list_packages(&source)?;
+        if list.kind == "package" {
+            return Ok(list
+                .packages
+                .into_iter()
+                .map(|package| crate::unity_import::PreparedPackage {
+                    name: package.name,
+                    path: list.path.clone(),
+                    size: package.size,
+                })
+                .collect());
+        }
+        let dest = crate::unity_import::cache_folder(&cache_root, booth_id.as_deref());
+        crate::unity_import::extract_packages(
+            &source,
+            &entries,
+            &dest,
+            crate::unity_import::MAX_PACKAGE_BYTES,
+        )
+    })
+    .await
+    .map_err(|err| format!("Unity パッケージを取り出せません: {err}"))?
+}
+
+/// 取り出した Unity パッケージを先頭から順に開く。`mode` は "unity"（設定の既定 Unity で
+/// `-openfile`）か "system"（OS の関連付け）。Unity の起動を待つときは途中で止まり、残りは呼び直す。
+#[tauri::command]
+pub async fn launch_unity_packages(
+    view: tauri::Webview,
+    app: AppHandle,
+    paths: Vec<String>,
+    mode: String,
+) -> Result<crate::unity_import::LaunchResult, String> {
+    if view.label() != "main" {
+        return Err("この画面から Unity パッケージは開けません".into());
+    }
+    let mode = crate::unity_import::LaunchMode::parse(&mode)?;
+    if paths.is_empty() {
+        return Err("開く Unity パッケージがありません".into());
+    }
+    let (library, remote) = library_roots(&app)?;
+    let selected = {
+        let state = app.state::<AppState>();
+        let connection = db(&state)?;
+        db::unity_editor_path(&connection)?
+    };
+    let cache_root = unity_cache_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let packages = paths
+            .iter()
+            .map(|path| crate::unity_import::allowed_launch_path(path, &cache_root, &library, &remote))
+            .collect::<Result<Vec<_>, _>>()?;
+        match mode {
+            crate::unity_import::LaunchMode::Unity => {
+                let editor = crate::unity_import::editor_from_setting(&selected)?;
+                crate::unity_import::launch_with_editor(
+                    &editor,
+                    &packages,
+                    crate::unity_import::HANDOFF_TIMEOUT,
+                    crate::unity_import::HANDOFF_GAP,
+                )
+            }
+            crate::unity_import::LaunchMode::System => {
+                use tauri_plugin_opener::OpenerExt;
+                for (index, package) in packages.iter().enumerate() {
+                    if index > 0 {
+                        std::thread::sleep(std::time::Duration::from_millis(1500));
+                    }
+                    app.opener()
+                        .open_path(package.display().to_string(), None::<&str>)
+                        .map_err(|_| {
+                            "関連付けで開けませんでした。Unity Hub で .unitypackage の関連付けを確かめてください"
+                                .to_string()
+                        })?;
+                }
+                Ok(crate::unity_import::LaunchResult { launched: packages.len(), waiting: false })
+            }
+        }
+    })
+    .await
+    .map_err(|err| format!("Unity パッケージを開けません: {err}"))?
+}
+
 #[tauri::command]
 pub fn list_staged_downloads(state: State<'_, AppState>) -> Result<Vec<StagedLeftover>, String> {
     state

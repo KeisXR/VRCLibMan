@@ -44,6 +44,10 @@ import type {
   GenreProducts,
   CloudTestResult,
   UnityStatus,
+  UnityPackageList,
+  PreparedUnityPackage,
+  UnityLaunchResult,
+  UnityLaunchMode,
 } from "./types";
 
 export type ClassificationFeedbackScope = "other" | "unclassified" | "both";
@@ -225,6 +229,14 @@ export const api = {
   listDirectory: (path: string) => call<DirListing>("list_directory", { path }),
   /** zip の中身を一覧だけ読む。展開しない。 */
   listZipEntries: (path: string) => call<ZipListing>("list_zip_entries", { path }),
+  /** zip か .unitypackage の中の Unity パッケージを一覧する。展開しない。ライブラリ内のファイルだけ。 */
+  unityPackages: (path: string) => call<UnityPackageList>("unity_packages", { path }),
+  /** 選んだものだけをアプリのキャッシュに取り出す。単体の .unitypackage はそのまま返す。 */
+  prepareUnityPackages: (path: string, entries: string[], boothId: string | null) =>
+    call<PreparedUnityPackage[]>("prepare_unity_packages", { path, entries, boothId }),
+  /** 先頭から順に Unity へ渡す。Unity の起動を待つときは途中で止まる。 */
+  launchUnityPackages: (paths: string[], mode: UnityLaunchMode) =>
+    call<UnityLaunchResult>("launch_unity_packages", { paths, mode }),
   routeStagedDownload: (path: string) => call<void>("route_staged_download", { path }),
   classificationFeedback: (scope: ClassificationFeedbackScope) =>
     call<string>("classification_feedback", { scope }),

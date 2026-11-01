@@ -13,7 +13,7 @@ VRCLibMan を変更するときは、このファイルを先に読む。実装�
 続けて作らないもの:
 
 - Booth 商品の購入、一括または無人の自動ダウンロード
-- Unity への転送
+- Unity プロジェクトへの自動転送（「Unityで開く」は選んだ unitypackage を Unity の Import 画面に渡すだけ）
 - クラウド同期
 - 複数の AI エージェントをアプリに組み込むこと
 - 対応表に無い素体関係の推測や、コミュニティの「似ている」という情報でのグループ化
@@ -135,6 +135,19 @@ Windows では、BOOTH の窓を同期コマンドの中で作らない。WebVie
 - 既定の Unity は settings の `unity_editor_path`（スキーマ変更なし）。`set_unity_editor` はメイン画面からだけ受け、ファイル名が Unity 本体（Windows は `Unity.exe`、Mac と Linux は `Unity`）で実在するときだけ保存する。空文字は未設定。保存したパスが検出に無くても実在すれば「手動」として一覧に足し、消えていれば `selectedMissing` にする。
 - Mac と Linux の検出は実機で未検証。
 
+### Unity で開く
+
+- `src-tauri/src/unity_import.rs` とコマンド `unity_packages` / `prepare_unity_packages` / `launch_unity_packages`。画面は `src/components/UnityOpenDialog.tsx`（`useUnityOpen` と `UnityOpenButton`）、純粋な判断は `src/unityOpen.ts`。導線はダウンロード行（`state === "local"`）、商品カードの手元のファイル、右パネルのファイルタブ。
+- 対象はライブラリかリモートライブラリの中の zip と `.unitypackage` だけ（`allowed_source`）。zip は `file_browser::read_zip` で目次を読み、5 秒で打ち切る。展開しない。
+- 取り出しは選んだ `.unitypackage` だけを `app_cache_dir/unity-import/<商品ID>/` へ。商品 ID は 1〜12 桁の数字、それ以外は `other`。ファイル名は zip 内の最後の名前だけを使い、Windows で使えない文字を置き換え、120 文字まで、同名は「 (2)」を付ける。書き出し先を `canonicalize` して親が取り出し先と同じか確かめる（zip slip）。宣言サイズ 8 GiB まで、`.part` に宣言サイズ + 1 バイトまで書き、宣言と一致したときだけ名前を戻す。zip の圧縮は Deflate だけ有効（`deflate-flate2-zlib-rs`）。
+- キャッシュは起動時に別スレッドで 24 時間より古いファイルと空フォルダを消す。リンクはたどらない。
+- 起動は `<Unity> -openfile <pkg>` を引数の配列で渡す（シェルを通さない、`-importPackage` は使わない、プロジェクトに書き込まない）。作業フォルダは Unity 本体のフォルダ、標準入出力は null。1 件ずつ順に渡す。起動中の Unity に渡す子プロセスはすぐ終わるので 1.2 秒空けて次へ。最後の 1 件も最大 20 秒まで起動状態を確認する。異常終了や状態確認の失敗はエラーにし、残りは渡さない。20 秒たっても終わらなければそれが Unity 本体なので止め、`waiting: true` を返す。画面は「続きを Unity に渡す」で残りを渡す。
+- 既定の Unity が無い・見つからないときは設定（`#settings-unity`）へ誘導し、`mode: "system"` で `tauri_plugin_opener` の `open_path`（OS の関連付け）でも開ける。渡せるのはキャッシュ・ライブラリ・リモートの中の `.unitypackage` だけ（`allowed_launch_path`）。取り出しと起動はメイン画面からだけ受ける。
+- R18 の商品も取り出し・起動するが、パスとファイル名はログに出さない。
+- ダウンロード完了の通知に操作ボタンを付けられるようになったら、`unityNoticeAction` を渡す。
+- プレビューモードは `src/preview/files.ts` の `previewUnityPackages` / `previewPrepareUnityPackages` と、`src/preview/api.ts` の起動（既定の Unity が無ければエラー、3 件以上は 1 件目で待つ）。
+- Windows を基準にし、Mac（`Contents/MacOS/Unity`）と Linux の起動は実機で未検証。
+
 ### 抽出と安全境界
 
 細かい分類規則は次節。ここは境界だけを書く。
@@ -147,7 +160,7 @@ Windows では、BOOTH の窓を同期コマンドの中で作らない。WebVie
 - 説明の補完もサムネイルも、ログインセッションと `adult` クッキーを送らない。アプリの受信口は `Cookie` を読まない。拡張からアプリへの POST は `credentials: "omit"`。
 - サムネイルは https かつ `pximg.net` / `booth.pm` だけ。`Referer: https://booth.pm/` を付け、pximg は `/c/150x150/` に書き換える。`360x360` と素の `300x300` は 403 になる。4MB まで。
 - アセットとワールドのプレビューは、選択が落ち着いてから 1 件だけ、保存済みサムネイル URL の `/c/` を外した画像を `previews` に置く。Cookie は送らない。失敗したら 150px のサムネイルに戻す。年齢制限の商品は「表示する」まで大きい画像を取らない。プレビューはアプリ全体のグリッド右列にある右パネル（`src/components/RightPanel.tsx`）の「プレビュー」タブに出す。開閉は `settings.preview_pane`（既定オフ）、幅は `settings.preview_pane_width`（既定 300、240〜1600。画面上の上限は窓幅の半分と、左の列と一覧 360px の余り）で、どちらも右パネル全体の値として使う。タブの種類と並びと選択は `settings.right_panel_tabs`（`{"tabs":[...],"active":n}` の JSON。種類は `preview` `files` `browser` の許可リストだけで、URL やページの中身は保存しない）。タブの種類は `src/rightPanel.ts` と `src/components/rightPanelRegistry.tsx` に足す。いま動くのは「プレビュー」と「ファイル」と「ブラウザ」（内蔵ブラウザが有効なときだけ。`requires: "builtinBrowser"`）。`available: false` の種類は＋メニューにもタブにも出さない。「プレビュー」と「ブラウザ」は単一（Rust の `RIGHT_PANEL_SINGLETONS` も同じ）で、保存値の重複は最初の 1 つにまとめ、重複側が選択中ならまとめた先を選ぶ。アセット画面の「プレビュー」ボタンは右パネルを開いてプレビュータブを選ぶ。Ctrl+Shift+B（Mac は ⌘⇧B）で開閉、全面表示はその場限りで保存しない。窓幅 1000px 未満では右パネルを重ねて出す。商品未選択のプレビューは背景を遮らない右上の小さいパネルにし、一覧の選択とタブ追加を両立する。Escape と背景は選択を外し、ヘッダーの閉じる操作はパネル全体を閉じる。スキーマ版は変えない。ログに商品名は出さない。
-- 右パネルの「ファイル」タブ（`src/components/FilesTab.tsx`、純粋な補助は `src/fileBrowser.ts`、Rust は `src-tauri/src/file_browser.rs` の `list_directory` / `list_zip_entries`）は読み取り専用。ファイルの書き込み・削除・移動・展開をしない。操作は「保存先を開く」（既存の `revealInFolder`）だけ。空のパスは `settings.library_folder` を開く。入力は前後の空白と引用符を外し、絶対パスだけ受け付け、`..` を含むパスは解決せず拒む。開く場所は `canonicalize` して表示し、Windows の `\\?\` は外す。一覧の中のシンボリックリンク・ジャンクションは `DirEntry::file_type` で「リンク」とし、たどらない。ライブラリの外も読み取りのみで開ける。ネットワークの停止で固まらないよう、解決と読み取りは `library_files::wait_for` で 5 秒まで。フォルダは 2000 件、zip は 5000 件で打ち切り `truncated` を返す。フォルダと zip の一覧は現在のライブラリ／リモートのルートも返し、zip を再表示したときもショートカットと操作の対象判定を更新する。zip は `zip` クレート（`default-features = false`、展開機能なし）で目次だけ読み、UTF-8 フラグのない名前は UTF-8 として正しければ UTF-8、それ以外は `encoding_rs` の Shift_JIS で読む。名前とサイズ以外（中身・サムネイル）は読まない。ログにファイル名やパスを出さない。開いている場所はモジュール変数に持つだけで設定に保存しない。`.unitypackage` の「Unityで開く」は `UNITY_OPEN_AVAILABLE`（いまは false で枠を描かない）で後の変更が有効にする。プレビューモードは `src/preview/files.ts` の架空のツリーと zip を返す。
+- 右パネルの「ファイル」タブ（`src/components/FilesTab.tsx`、純粋な補助は `src/fileBrowser.ts`、Rust は `src-tauri/src/file_browser.rs` の `list_directory` / `list_zip_entries`）は読み取り専用。ファイルの書き込み・削除・移動・展開をしない。操作は「保存先を開く」（既存の `revealInFolder`）だけ。空のパスは `settings.library_folder` を開く。入力は前後の空白と引用符を外し、絶対パスだけ受け付け、`..` を含むパスは解決せず拒む。開く場所は `canonicalize` して表示し、Windows の `\\?\` は外す。一覧の中のシンボリックリンク・ジャンクションは `DirEntry::file_type` で「リンク」とし、たどらない。ライブラリの外も読み取りのみで開ける。ネットワークの停止で固まらないよう、解決と読み取りは `library_files::wait_for` で 5 秒まで。フォルダは 2000 件、zip は 5000 件で打ち切り `truncated` を返す。フォルダと zip の一覧は現在のライブラリ／リモートのルートも返し、zip を再表示したときもショートカットと操作の対象判定を更新する。zip は `zip` クレート（`default-features = false`、展開機能なし）で目次だけ読み、UTF-8 フラグのない名前は UTF-8 として正しければ UTF-8、それ以外は `encoding_rs` の Shift_JIS で読む。名前とサイズ以外（中身・サムネイル）は読まない。ログにファイル名やパスを出さない。開いている場所はモジュール変数に持つだけで設定に保存しない。「Unityで開く」は `UNITY_OPEN_AVAILABLE`（true）で、ライブラリかリモートの中の `.unitypackage` と zip、zip の中の `.unitypackage` に出す（次節）。プレビューモードは `src/preview/files.ts` の架空のツリーと zip を返す。
 - スキャンはドライブ直下、`Windows`、`Program Files` を拒否する。Mac では `/System`、`/Library`、`/Applications`、`/private` の木と、ホームフォルダそのもの、`/Volumes` そのものを拒否する。一時ディレクトリの中はテストのため許可する。深さ 8、2 万件、シンボリックリンクは追わない。上限で打ち切ったときは、見えていないパスを削除しない。
 
 ## 抽出と確認の契約
@@ -304,6 +317,7 @@ Mac の内蔵ブラウザは `data_directory` を使わない。固定の 16 バ
 | `src-tauri/src/preview_image.rs` | 選択中の大きいプレビュー。Cookie は付けない |
 | `src-tauri/src/view.rs` | 一覧、詳細、キューの形 |
 | `src-tauri/src/unity.rs` | Unity エディタの検出（Hub の記録と既定のインストール先） |
+| `src-tauri/src/unity_import.rs` | 「Unityで開く」の一覧、取り出し、キャッシュ、`-openfile` での起動 |
 | `src-tauri/src/commands.rs` | Tauri コマンド |
 | `src-tauri/src/browser_surface.rs` | 内蔵ブラウザのホスト（別窓・右パネル）と配置 |
 | `src/components/BrowserPanel.tsx` | 右パネルの「ブラウザ」タブ。表示域を測って渡す |

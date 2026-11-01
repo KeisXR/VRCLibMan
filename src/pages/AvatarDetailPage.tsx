@@ -6,6 +6,8 @@ import { CATEGORY_LABEL } from "../types";
 import type { AvatarDetail, BoothFileStatus, DownloadView, ItemView, Knowledge, ProductOption } from "../types";
 import { FileMark, Thumb, errorText } from "../ui";
 import { ExcludeProductButton } from "../components/ProductExclusions";
+import { UnityOpenButton } from "../components/UnityOpenDialog";
+import { isUnityOpenableName } from "../unityOpen";
 import {
   type RemoteProbeStatus,
   invalidateRemoteProbe,
@@ -502,7 +504,12 @@ export function ItemCard({
                   <button type="button" onClick={() => void openLocal(file.path).catch((err: unknown) => fail(errorText(err)))}>
                     {file.isDir ? "フォルダ" : "ファイル"} {file.filename}
                   </button>
-                  <span>{formatBytes(file.size)}</span>
+                  <span className="row-actions">
+                    {!file.isDir && isUnityOpenableName(file.filename) && (
+                      <UnityOpenButton target={{ path: file.path, boothId: item.boothId }} notify={notify} fail={fail} />
+                    )}
+                    <span>{formatBytes(file.size)}</span>
+                  </span>
                 </li>
               ))}
               {item.localFileCount > item.localFiles.length && (
@@ -683,6 +690,7 @@ function DownloadRow({
   receive: (file: DownloadView) => void;
   reveal: (path: string) => void;
 }) {
+  const { notify, fail } = useShell();
   const key = `${file.variation}:${file.filename}`;
   const status =
     live &&
@@ -732,6 +740,9 @@ function DownloadRow({
           >
             保存先を開く
           </button>
+        )}
+        {file.state === "local" && file.localPath && isUnityOpenableName(file.localPath) && (
+          <UnityOpenButton target={{ path: file.localPath, boothId: item.boothId }} notify={notify} fail={fail} />
         )}
         {file.state === "local" && item.remoteConfigured && item.remoteReachable && (
           <button type="button" disabled={busy === file.filename} onClick={() => push(file)}>

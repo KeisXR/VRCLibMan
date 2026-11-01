@@ -1,6 +1,6 @@
 import { previewBrowserState, previewBrowserAction, previewSaveBookmark, previewDeleteBookmark, previewOpenBrowser, previewCloseBrowser } from "./browser";
 import extensionManifest from "../../extension/manifest.json";
-import { previewListDirectory, previewListZip } from "./files";
+import { previewListDirectory, previewListZip, previewPrepareUnityPackages, previewUnityPackages } from "./files";
 import { filePresence } from "../media";
 import { GENRE_FREE, GENRE_UNSET, genresForKind } from "../types";
 import type { ClassificationSnapshot, OwnedAvatarRestore, RegisterOwnedBodyResult, SnapshotLink, UnityEditor, UnityStatus } from "../types";
@@ -1740,6 +1740,16 @@ const previewUnityEditors: UnityEditor[] = [
   { version: "2022.3.6f1", path: "C:\\Program Files\\Unity\\Hub\\Editor\\2022.3.6f1\\Editor\\Unity.exe", source: "folder" },
 ];
 let previewUnitySelected = "";
+/** 見本: Unity がまだ起動していない状態から始める。 */
+let previewUnityWarm = false;
+
+function previewFileSize(path: string): number | null {
+  const lower = path.toLowerCase();
+  const row = store.downloads.find((item) => item.localPath?.toLowerCase() === lower);
+  if (row?.sizeBytes) return row.sizeBytes;
+  const file = store.files.find((item) => item.path.toLowerCase() === lower);
+  return file ? file.size : null;
+}
 
 function previewUnityStatus(): UnityStatus {
   return {
@@ -2043,6 +2053,27 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       } as T;
     case "unity_editors":
       return previewUnityStatus() as T;
+    case "unity_packages":
+      return previewUnityPackages(String(args.path ?? ""), store.settings.libraryFolder, store.settings.remoteLibraryFolder, previewFileSize) as T;
+    case "prepare_unity_packages": {
+      const list = previewUnityPackages(String(args.path ?? ""), store.settings.libraryFolder, store.settings.remoteLibraryFolder, previewFileSize);
+      const entries = Array.isArray(args.entries) ? args.entries.map(String) : [];
+      return previewPrepareUnityPackages(list, entries, args.boothId == null ? null : String(args.boothId)) as T;
+    }
+    case "launch_unity_packages": {
+      const paths = Array.isArray(args.paths) ? args.paths.map(String) : [];
+      if (paths.length === 0) throw new Error("開く Unity パッケージがありません");
+      if (args.mode === "unity") {
+        if (!previewUnitySelected) throw new Error("既定の Unity が設定されていません。設定の「Unity」で選ぶか、関連付けで開いてください");
+        // 見本: 3 件以上を渡すと、Unity の起動待ちで 1 件目のあとに止まる様子を見せる。
+        if (paths.length >= 3 && !previewUnityWarm) {
+          previewUnityWarm = true;
+          return { launched: 1, waiting: true } as T;
+        }
+      }
+      previewUnityWarm = true;
+      return { launched: paths.length, waiting: false } as T;
+    }
     case "set_unity_editor": {
       const path = String(args.path ?? "").trim();
       if (path && !previewUnityEditors.some((editor) => editor.path === path)) throw new Error("Unity 本体（Unity.exe）を選んでください");
