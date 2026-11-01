@@ -1,4 +1,4 @@
-import type { DirListing, FileEntry, PreparedUnityPackage, UnityPackageList, ZipListing } from "../types";
+import type { DirListing, FileEntry, FileLabel, PreparedUnityPackage, UnityPackageList, ZipListing } from "../types";
 
 /**
  * Preview-mode stand-in for the file tab. Dummy names only; no real product names.
@@ -21,6 +21,12 @@ const FOLDERS: Record<string, FileEntry[]> = {
   "C:\\Assets\\_未整理": [link("ショートカット"), file("memo.txt", 320)],
   "\\\\nas\\vrclibman": [dir("1000001")],
   "\\\\nas\\vrclibman\\1000001": [file("Sample_Outfit_v1.2.zip", 48 * MB)],
+};
+
+/** Dummy titles for the sample product folders. 1000003 has none, to show the plain name. */
+const LABELS: Record<string, FileLabel> = {
+  "1000001": { title: "サンプル衣装（架空）", adult: false },
+  "1000002": { title: "サンプルヘア（架空）", adult: true },
 };
 
 const ZIPS: Record<string, ZipListing["entries"]> = {
@@ -87,14 +93,24 @@ export function previewListDirectory(raw: string, library: string, remote: strin
   }
   const libraryKey = library.trim() ? lookup(FOLDERS, clean(library)) : null;
   const remoteKey = remote.trim() ? lookup(FOLDERS, clean(remote)) : null;
+  const within = (root: string | null) => root != null && (key === root || key.startsWith(`${root}\\`));
+  // Same rule as `file_browser::label_plan`: product IDs are read from folder names only inside the roots.
+  const inRoots = within(libraryKey) || within(remoteKey);
+  const own = key.slice(key.lastIndexOf("\\") + 1);
+  const isRoot = key === libraryKey || key === remoteKey;
+  const folderLabel = inRoots && !isRoot ? LABELS[own] : undefined;
   return {
     path: key,
     parent: parent(key),
     library: libraryKey,
     remote: remoteKey,
-    insideLibrary: libraryKey != null && (key === libraryKey || key.startsWith(`${libraryKey}\\`)),
-    entries: FOLDERS[key]!.map((entry) => ({ ...entry })),
+    insideLibrary: within(libraryKey),
+    entries: FOLDERS[key]!.map((entry) => {
+      const label = inRoots && entry.kind === "dir" ? LABELS[entry.name] : undefined;
+      return label ? { ...entry, label: { ...label } } : { ...entry };
+    }),
     truncated: false,
+    ...(folderLabel ? { label: { ...folderLabel } } : {}),
   };
 }
 

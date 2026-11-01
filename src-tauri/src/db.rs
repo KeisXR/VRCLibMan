@@ -3621,6 +3621,60 @@ pub(crate) fn is_known_local_path(connection: &Connection, path: &str) -> Result
     Ok(found != 0)
 }
 
+/// File tab: titles for folder labels. Only what is already in the local DB; nothing is fetched.
+/// Empty titles are left out, so those folders show their plain name.
+pub(crate) fn product_labels(
+    connection: &Connection,
+    booth_ids: &[String],
+) -> Result<HashMap<String, crate::file_browser::EntryLabel>, String> {
+    let mut labels = HashMap::new();
+    if booth_ids.is_empty() {
+        return Ok(labels);
+    }
+    let mut statement = connection
+        .prepare("SELECT title, IFNULL(is_adult, 0) FROM products WHERE booth_id = ?1")
+        .sql()?;
+    for booth_id in booth_ids {
+        if labels.contains_key(booth_id) {
+            continue;
+        }
+        let found = statement
+            .query_row([booth_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? != 0))
+            })
+            .optional()
+            .sql()?;
+        if let Some((title, adult)) = found {
+            let title = title.trim();
+            if !title.is_empty() {
+                labels.insert(
+                    booth_id.clone(),
+                    crate::file_browser::EntryLabel { title: title.to_string(), adult },
+                );
+            }
+        }
+    }
+    Ok(labels)
+}
+
+/// File tab: files whose product is known, as `(path, booth_id)`. Scan links
+/// (`local_files.linked_product_id`) and recorded downloads (`product_files.local_path`).
+pub(crate) fn linked_file_products(connection: &Connection) -> Result<Vec<(String, String)>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT path, linked_product_id FROM local_files
+              WHERE linked_product_id IS NOT NULL AND is_dir = 0
+             UNION ALL
+             SELECT local_path, booth_id FROM product_files
+              WHERE local_path IS NOT NULL AND local_path <> ''",
+        )
+        .sql()?;
+    let rows = statement
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .sql()?;
+    rows.collect::<Result<Vec<_>, _>>().sql()
+}
+
 pub(crate) struct SweepReport {
     pub moved: u32,
     pub left: Vec<crate::model::StagedLeftover>,
@@ -5760,6 +5814,37 @@ mod tests {
         assert!(!is_known_local_path(&connection, "/etc/passwd").unwrap());
         assert!(!is_known_local_path(&connection, "").unwrap());
         assert!(!is_known_local_path(&connection, "  ").unwrap());
+    }
+
+    #[test]
+    fn file_tab_labels_come_from_titles_and_registered_paths() {
+        let connection = open_memory().unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO products (booth_id, title, imported_at, updated_at) VALUES ('9000001', '架空の服', 't', 't');
+                 INSERT INTO products (booth_id, title, is_adult, imported_at, updated_at) VALUES ('9000002', '架空の髪', 1, 't', 't');
+                 INSERT INTO products (booth_id, title, imported_at, updated_at) VALUES ('9000003', '  ', 't', 't');
+                 INSERT INTO product_files (booth_id, filename, local_path) VALUES ('9000001', 'pack.zip', '/lib/9000001/pack.zip');
+                 INSERT INTO product_files (booth_id, filename) VALUES ('9000002', 'missing.zip');
+                 INSERT INTO local_files (path, filename, linked_product_id, scanned_at) VALUES ('/lib/loose.zip', 'loose.zip', '9000002', 't');
+                 INSERT INTO local_files (path, filename, scanned_at) VALUES ('/lib/unlinked.zip', 'unlinked.zip', 't');",
+            )
+            .unwrap();
+        let ids: Vec<String> = ["9000001", "9000002", "9000003", "9999999"].map(String::from).to_vec();
+        let labels = product_labels(&connection, &ids).unwrap();
+        assert_eq!(labels.len(), 2, "blank titles and unknown IDs get no label");
+        assert_eq!(labels["9000001"].title, "架空の服");
+        assert!(!labels["9000001"].adult);
+        assert!(labels["9000002"].adult);
+        let mut linked = linked_file_products(&connection).unwrap();
+        linked.sort();
+        assert_eq!(
+            linked,
+            vec![
+                ("/lib/9000001/pack.zip".to_string(), "9000001".to_string()),
+                ("/lib/loose.zip".to_string(), "9000002".to_string()),
+            ]
+        );
     }
 
     #[test]

@@ -286,6 +286,15 @@ export interface FileEntry {
   kind: FileEntryKind;
   /** バイト数。フォルダとリンクは null。 */
   size: number | null;
+  /** 表示だけの補足。`名前（商品名）` のように添える。ディスク上の名前は変えない。 */
+  label?: FileLabel;
+}
+
+/** ローカル DB の商品名。外部へ送らない。 */
+export interface FileLabel {
+  title: string;
+  /** BOOTH の年齢制限。ライブラリ一覧と同じ「R-18」バッジを出す。 */
+  adult: boolean;
 }
 
 export interface DirListing {
@@ -299,6 +308,8 @@ export interface DirListing {
   insideLibrary: boolean;
   entries: FileEntry[];
   truncated: boolean;
+  /** 開いているフォルダ自体が商品フォルダのときの補足。 */
+  label?: FileLabel;
 }
 
 export interface ZipEntry {

@@ -483,11 +483,32 @@ pub async fn list_directory(
     path: String,
 ) -> Result<crate::file_browser::DirListing, String> {
     let (library, remote) = library_roots(&app)?;
-    tauri::async_runtime::spawn_blocking(move || {
+    let mut listing = tauri::async_runtime::spawn_blocking(move || {
         crate::file_browser::list_directory(&path, &library, &remote)
     })
     .await
-    .map_err(|err| format!("フォルダを読めません: {err}"))?
+    .map_err(|err| format!("フォルダを読めません: {err}"))??;
+    // Labels are a nicety. A DB problem leaves the plain names instead of failing the listing.
+    let _ = add_folder_labels(&app, &mut listing);
+    Ok(listing)
+}
+
+/// `name（title）` for product folders and registered files. Titles come from the local DB only.
+fn add_folder_labels(app: &AppHandle, listing: &mut crate::file_browser::DirListing) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let connection = db(&state)?;
+    let has_files = listing
+        .entries
+        .iter()
+        .any(|entry| entry.kind == crate::file_browser::EntryKind::File);
+    let linked = if has_files { db::linked_file_products(&connection)? } else { Vec::new() };
+    let ids = crate::file_browser::label_ids(listing, &linked);
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let titles = db::product_labels(&connection, &ids)?;
+    crate::file_browser::apply_labels(listing, &linked, &titles);
+    Ok(())
 }
 
 /// File tab: a zip file's entries from its central directory. Nothing is extracted.

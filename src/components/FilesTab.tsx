@@ -4,6 +4,7 @@ import { api, revealInFolder } from "../api";
 import {
   FILE_KIND_LABEL,
   UNITY_OPEN_AVAILABLE,
+  baseName,
   fileKind,
   isZipPath,
   joinPath,
@@ -17,7 +18,7 @@ import { UnityOpenButton } from "./UnityOpenDialog";
 import { boothIdFromPath, isInsideRoot } from "../unityOpen";
 import type { FileKind } from "../fileBrowser";
 import { formatBytes } from "../media";
-import type { DirListing, ZipListing } from "../types";
+import type { DirListing, FileLabel, ZipListing } from "../types";
 import { errorText } from "../ui";
 
 type Location = { kind: "dir"; path: string } | { kind: "zip"; path: string; inner: string };
@@ -74,14 +75,30 @@ function UpGlyph() {
   );
 }
 
-function EntryLabel({ kind, name, detail }: { kind: FileKind; name: string; detail: string }) {
+/** `（商品名）` after a folder or file name. Display only; the name on disk is unchanged. */
+function NameNote({ label }: { label?: FileLabel }) {
+  if (!label) return null;
+  return (
+    <>
+      <span className="meta files-note" title={label.title}>
+        （{label.title}）
+      </span>
+      {label.adult && <span className="badge adult">R-18</span>}
+    </>
+  );
+}
+
+function EntryLabel({ kind, name, detail, label }: { kind: FileKind; name: string; detail: string; label?: FileLabel }) {
   return (
     <>
       <span className={`files-icon files-icon-${kind}`}>
         <KindGlyph kind={kind} />
       </span>
       <span className="files-text">
-        <span className="files-name">{name}</span>
+        <span className="files-name-line">
+          <span className="files-name">{name}</span>
+          <NameNote label={label} />
+        </span>
         <span className="meta files-detail">{detail}</span>
       </span>
     </>
@@ -240,6 +257,12 @@ export function FilesTab() {
           <p className="meta files-where">
             {insideLibrary ? "ライブラリの中" : "ライブラリの外"}・読み取りのみ
           </p>
+          {dir.label && (
+            <p className="files-where files-name-line">
+              <span className="files-name">{baseName(dir.path)}</span>
+              <NameNote label={dir.label} />
+            </p>
+          )}
           <DirView listing={dir} busy={busy} onOpen={(target) => void load(target)} onReveal={reveal} unity={unity} />
         </>
       ) : !error && busy ? (
@@ -281,11 +304,11 @@ function DirView({
                   title={kind === "zip" ? "zip の中身を見る（展開しません）" : "開く"}
                   onClick={() => onOpen(kind === "zip" ? { kind: "zip", path, inner: "" } : { kind: "dir", path })}
                 >
-                  <EntryLabel kind={kind} name={entry.name} detail={detail} />
+                  <EntryLabel kind={kind} name={entry.name} detail={detail} label={entry.label} />
                 </button>
               ) : (
                 <div className="files-entry">
-                  <EntryLabel kind={kind} name={entry.name} detail={detail} />
+                  <EntryLabel kind={kind} name={entry.name} detail={detail} label={entry.label} />
                 </div>
               )}
               {kind !== "dir" && kind !== "link" && (

@@ -137,3 +137,83 @@ test("reopening a zip restores library actions and follows newly reported roots"
     await server.close();
   }
 });
+
+// Dummy IDs and titles only.
+test("preview product folders carry a display label and keep their real names", async () => {
+  const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  try {
+    const fake = await server.ssrLoadModule("/src/preview/files.ts");
+    const home = fake.previewListDirectory("", "C:\\Assets", "");
+    const byName = Object.fromEntries(home.entries.map((entry) => [entry.name, entry]));
+    assert.equal(byName["1000001"].label.title, "サンプル衣装（架空）");
+    assert.equal(byName["1000002"].label.adult, true);
+    assert.equal(byName["1000003"].label, undefined, "folders without a known title keep the plain name");
+    assert.equal(byName["_未整理"].label, undefined);
+    assert.equal(home.label, undefined);
+    const inside = fake.previewListDirectory("C:\\Assets\\1000001", "C:\\Assets", "");
+    assert.equal(inside.path, "C:\\Assets\\1000001");
+    assert.equal(inside.label.title, "サンプル衣装（架空）");
+    const outside = fake.previewListDirectory("\\\\nas\\vrclibman", "C:\\Assets", "");
+    assert.equal(outside.entries[0].label, undefined, "numbered folders outside the roots are not read as products");
+    const remote = fake.previewListDirectory("\\\\nas\\vrclibman", "C:\\Assets", "\\\\nas\\vrclibman");
+    assert.equal(remote.entries[0].label.title, "サンプル衣装（架空）");
+  } finally {
+    await server.close();
+  }
+});
+
+test("the file tab shows labels in brackets without changing names or paths", async () => {
+  const { parseHTML } = await import("linkedom");
+  const { window } = parseHTML('<html><body><div id="root"></div></body></html>');
+  window.location = new URL("http://localhost:1420/");
+  for (const name of ["window", "document", "location", "HTMLElement", "HTMLInputElement", "Element", "Event", "CustomEvent", "EventTarget"]) {
+    Object.defineProperty(globalThis, name, { configurable: true, writable: true, value: window[name] });
+  }
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: { userAgent: "test" } });
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const { act, createElement } = await import("react");
+  const { createRoot } = await import("react-dom/client");
+  const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  let root;
+  try {
+    const { api } = await server.ssrLoadModule("/src/api.ts");
+    const { ShellProvider } = await server.ssrLoadModule("/src/App.tsx");
+    const { FilesTab } = await server.ssrLoadModule("/src/components/FilesTab.tsx");
+    const requested = [];
+    api.listDirectory = async (path) => {
+      requested.push(path);
+      return {
+        path: "C:\\Lib",
+        parent: "C:\\",
+        library: "C:\\Lib",
+        remote: null,
+        insideLibrary: true,
+        truncated: false,
+        entries: [
+          { name: "9000001", kind: "dir", size: null, label: { title: "架空の服", adult: false } },
+          { name: "9000002", kind: "dir", size: null, label: { title: "架空の髪", adult: true } },
+          { name: "9000003", kind: "dir", size: null },
+        ],
+      };
+    };
+    const shell = { notify() {}, fail() {} };
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
+    root = createRoot(document.getElementById("root"));
+    await act(async () => { root.render(createElement(ShellProvider, { value: shell }, createElement(FilesTab))); await tick(); });
+    const rows = [...document.querySelectorAll("li.files-row")];
+    assert.equal(rows.length, 3);
+    const names = rows.map((row) => row.querySelector(".files-name").textContent);
+    assert.deepEqual(names, ["9000001", "9000002", "9000003"], "names on disk are shown as they are");
+    const notes = rows.map((row) => row.querySelector(".files-note")?.textContent ?? null);
+    assert.deepEqual(notes, ["（架空の服）", "（架空の髪）", null]);
+    assert.equal(rows[0].querySelector(".files-note").getAttribute("title"), "架空の服");
+    assert.equal(rows[0].querySelector(".badge.adult"), null);
+    assert.equal(rows[1].querySelector(".badge.adult").textContent, "R-18");
+    assert.equal(document.querySelector(".files-path input").value, "C:\\Lib");
+    await act(async () => { rows[0].querySelector("button.files-entry").dispatchEvent(new window.Event("click", { bubbles: true })); await tick(); });
+    assert.equal(requested.at(-1), "C:\\Lib\\9000001", "opening a folder uses its real path, not the label");
+  } finally {
+    if (root) await act(async () => root.unmount());
+    await server.close();
+  }
+});
