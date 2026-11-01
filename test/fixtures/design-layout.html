@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ja">
+  <head><meta charset="UTF-8" /><title>Design layout regression</title></head>
+  <body>
+    <div id="root"></div>
+    <script type="module">
+      import React from "react";
+      import ReactDOM from "react-dom/client";
+      import App from "/src/App.tsx";
+      import { api } from "/src/api.ts";
+      import "/src/styles.css";
+
+      const fixture = window.designFixture = { ready: false, error: null };
+      try {
+        await api.completeSetup();
+        const [card] = await api.avatars();
+        const image = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="80" height="120"><rect width="80" height="120" fill="#5679a6"/></svg>')}`;
+        api.avatars = async () => [
+          { ...card, id: "image", displayName: "画像あり", thumbnailPath: null, thumbnailUrl: image },
+          { ...card, id: "placeholder", displayName: "代替画像", thumbnailPath: null, thumbnailUrl: null },
+          { ...card, id: "long", displayName: "長い日本語のアバター名と追加情報".repeat(4), thumbnailPath: null, thumbnailUrl: null },
+        ];
+        fixture.api = api;
+        ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
+        fixture.ready = true;
+      } catch (error) { fixture.error = String(error); }
+    </script>
+  </body>
+</html>

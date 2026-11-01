@@ -119,7 +119,7 @@ function AvatarGroups({
             {group.cards.map((card) => (
               <a className="card avatar-card" key={card.id} href={`#/avatar/${encodeURIComponent(card.id)}`}>
                 <Thumb path={card.thumbnailPath} url={card.thumbnailUrl} name={card.displayName} />
-                <div>
+                <div className="avatar-card-content">
                   <h2 className="card-title">{card.displayName}</h2>
                   <div className="pills">
                     <span className="pill">{CATEGORY_LABEL.outfit} {card.outfitCount}</span>
