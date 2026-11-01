@@ -1346,7 +1346,11 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .browser-address input { width: 100%; min-width: 0; height: 32px; box-sizing: border-box; border: 1px solid var(--line); border-radius: 8px; background: var(--sunken); padding: 0 10px; }
 .browser-address button { height: 30px; padding: 0 10px; }
 .browser-import { height: 32px; padding: 0 10px; }
-.browser-bookmarks { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 8px; overflow-x: auto; scrollbar-width: thin; background: var(--surface); border-bottom: 1px solid var(--line); box-sizing: border-box; }
+.browser-tools { display: flex; align-items: center; height: 32px; background: var(--surface); border-bottom: 1px solid var(--line); box-sizing: border-box; }
+.browser-bookmarks { display: flex; align-items: center; flex: 1; min-width: 0; gap: 6px; height: 100%; padding: 0 8px; overflow-x: auto; scrollbar-width: thin; box-sizing: border-box; }
+.browser-zoom { display: flex; align-items: center; flex: 0 0 auto; padding: 0 4px; border-left: 1px solid var(--line); }
+.browser-zoom button { height: 26px; min-width: 26px; padding: 0 4px; font-size: 14px; }
+.browser-zoom .browser-zoom-reset { min-width: 48px; font-size: 12px; font-variant-numeric: tabular-nums; }
 .browser-bookmark { display: inline-flex; align-items: center; flex-shrink: 0; }
 .browser-bookmark button { height: 25px; background: none; padding: 0 6px; font-size: 12px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
 .browser-bookmark .bookmark-edit { width: 22px; padding: 0; }
@@ -1361,10 +1365,11 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 }
 @container (max-width: 360px) { .browser-address > button { display: none; } }
 /* Right panel browser tab: the controls, then the area the docked pages are placed over. */
+.right-panel:has(> .right-panel-body-web) > .right-panel-head { padding-top: 4px; padding-bottom: 4px; }
 .right-panel-body.right-panel-body-web { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
 .right-panel.maximized .right-panel-body-web > .browser-panel { max-width: none; margin-inline: 0; }
 .browser-panel { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
-.browser-chrome.panel { margin-top: 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; flex-shrink: 0; }
+.browser-chrome.panel { margin: 0; padding: 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; flex-shrink: 0; }
 .browser-chrome.panel .browser-address { min-width: 64px; }
 .browser-chrome.panel .browser-tabs-row { height: 40px; align-items: center; }
 .browser-panel-viewport { position: relative; flex: 1 1 auto; min-height: 0; display: grid; place-items: center; padding: var(--space-4); background: var(--surface); }

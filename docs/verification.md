@@ -1,5 +1,17 @@
 # 検証記録
 
+## ブラウザの余白とページズーム（2026-11-01）
+
+対象は main の `d226827624cd0c9d9591fa76a02d5c6419d0e0e1` を基準にした `fix/browser-toolbar-zoom` の作業差分です。Codex Cloud の Debian x86_64、Node.js 24、Rust 1.99.1、GTK 3 / WebKitGTK 4.1、Xvfb で検証しました。新しい専用 XDG ディレクトリとローカル HTTP ページを使い、既存ライブラリとログイン情報は使っていません。
+
+- `npm run build` 成功、`npm test` 110件成功。
+- `npm run test:tab-click` は Chromium で7件成功。固定タブとページタブのクリック、閾値未満の移動、並べ替え後のクリック、Escape を確認しました。
+- `npm run test:browser-layout` は WebKitWebDriver で7件成功。タブ直下の操作バー、操作バー直下のページ領域、全面表示、サイズ変更、タブ切替、ゆったり密度、640px幅の別窓用操作バーを確認しました。1908×1044の窓ではページ領域が719×886となり、状態表示の空行はありません。
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib` は306件成功・1件ignore。倍率の段階と上下限、リセット、タブの移動・取消時の倍率保持、実測した操作バーの高さを縮められることを含みます。`cargo build --manifest-path src-tauri/Cargo.toml --features tauri/custom-protocol` も成功しました。
+- Tauri 本体を tauri-driver / WebKitWebDriver で操作し、ネイティブ経路の7項目を確認しました。操作バーの通常高112px、縮小・100%・拡大、物理 Ctrl− / Ctrl= / Ctrl＋ / Ctrl0、640×640への変更、ブックマーク編集後の高さ復元、タブ単位の倍率とナビゲーション・別窓移動での保持を含みます。実ページ幅1200pxで90%にすると CSS の `innerWidth` が1333、110%では1090となり、操作バーの高さは112pxのままでした。入力値と JavaScript の状態も縮小で失われませんでした。
+
+Windows の WebView2 と macOS の実行確認、および実サイトでのログイン確認はこの環境では行っていません。Linux のパネル埋込みは引き続き無効で、パネルの確認は実ブラウザ上のUI検証、ネイティブ確認は別窓を対象としています。
+
 ## Linux AppImage 対応の実装確認（2026-10-30）
 
 対象は `2099ef5c0ecc3b849b2a5ff110229555f5e76c6e`（v0.1.14）を基準にした Linux 対応の作業差分です。実行環境は Debian 13 x86_64、Rust 1.99.1、Node.js 24.19.0、GTK 3.24.49、WebKitGTK 2.54.0 です。配布基準の Ubuntu 22.04 とは異なります。既存ライブラリには触れず、新しい一時データで検証しました。

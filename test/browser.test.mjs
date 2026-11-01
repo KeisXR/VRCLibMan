@@ -91,6 +91,29 @@ test("browser controls preserve per-tab history, saved bookmarks, and navigation
     await wait(() => document.querySelectorAll('[role="tab"]').length === 1);
     const first = (await api.browserState()).activeId;
 
+    await t.test("page zoom controls reset and keep a separate scale on each tab", async () => {
+      const percent = () => byLabel("表示倍率を100%に戻す").textContent;
+      assert.equal(document.querySelector(".browser-status"), null, "idle controls reserve no status row");
+      assert.equal(percent(), "100%");
+      await click(byLabel("ページを縮小"));
+      assert.equal(percent(), "90%");
+      await click(byLabel("新しいタブ"));
+      const second = (await api.browserState()).activeId;
+      assert.equal(percent(), "100%");
+      await click(byLabel("ページを拡大"));
+      assert.equal(percent(), "110%");
+      await click(document.querySelectorAll('[role="tab"]')[0]);
+      assert.equal(percent(), "90%");
+      await navigate("https://zoom.example/");
+      assert.equal(percent(), "90%", "navigation keeps the page scale");
+      await click(byLabel("表示倍率を100%に戻す"));
+      assert.equal(percent(), "100%");
+      await act(async () => {
+        await api.browserAction({ kind: "closeTab", tabId: second });
+        await tick();
+      });
+    });
+
     await t.test(
       "embedded controls do not expose host window buttons or drag regions",
       async () => {
