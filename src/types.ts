@@ -463,7 +463,7 @@ export interface JobProgress {
   message: string;
 }
 
-/** 「無料ファイルを確認」の結果。保存後の商品のファイル行の数。 */
+/** 「ファイルを取得」の結果。保存後の商品のファイル行の数。 */
 export interface FreeFilesReport {
   files: number;
 }

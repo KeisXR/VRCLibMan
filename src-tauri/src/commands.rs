@@ -867,7 +867,7 @@ pub struct FreeFilesReport {
     pub files: usize,
 }
 
-/// 「無料ファイルを確認」: one cookie-less public read for one product the user clicked.
+/// 「ファイルを取得」: one cookie-less public read for one product the user clicked.
 /// Stores only free-download file rows. It does not download, buy, or add anything to BOOTH.
 #[tauri::command]
 pub async fn fetch_free_files(

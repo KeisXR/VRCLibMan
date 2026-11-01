@@ -3258,7 +3258,7 @@ pub(crate) fn free_files_target(connection: &Connection, booth_id: &str) -> Resu
     Ok(())
 }
 
-/// Rows from「無料ファイルを確認」. Title, shop, description, category, and tags stay as they are.
+/// Rows from「ファイルを取得」. Title, shop, description, category, and tags stay as they are.
 /// Returns how many rows the product has after the merge.
 pub(crate) fn store_free_files(
     connection: &mut Connection,

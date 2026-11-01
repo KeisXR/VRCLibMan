@@ -6,7 +6,7 @@ import { createServer } from "vite";
 // Dummy data only.
 const file = { boothId: "1234567", variation: "", filename: "dummy.zip", sizeBytes: null, state: "missing" };
 
-test("無料ファイルを確認: shown only for an item with no file info while the built-in browser is on", async () => {
+test("ファイルを取得: shown only for an item with no file info while the built-in browser is on", async () => {
   const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
   try {
     const free = await server.ssrLoadModule("/src/freeFiles.ts");
@@ -15,8 +15,9 @@ test("無料ファイルを確認: shown only for an item with no file info whil
     assert.equal(free.offerFreeFileCheck({ downloads: [file], localFileCount: 0 }, true), false);
     assert.equal(free.offerFreeFileCheck({ downloads: [], localFileCount: 2 }, true), false);
     assert.equal(free.offerFreeFileCheck({ downloads: [], localFileCount: 0, unpublished: true }, true), false);
-    assert.match(free.FREE_FILE_CHECK_HINT, /購入や追加はしません/);
-    assert.ok(free.FREE_FILE_CHECK_HINT.length <= 40, "ボタン横の説明は一行に収まる短さにする");
+    assert.equal(free.FREE_FILE_CHECK_LABEL, "ファイルを取得");
+    assert.equal(free.FREE_FILE_CHECK_BUSY_LABEL, "取得中…");
+    assert.equal(free.FREE_FILE_CHECK_HINT, undefined);
     assert.match(free.freeFilesFoundMessage(2), /2 件.*ログイン/);
     assert.match(free.freeFilesFoundMessage(0), /ありません/);
   } finally {
@@ -24,7 +25,7 @@ test("無料ファイルを確認: shown only for an item with no file info whil
   }
 });
 
-test("無料ファイルを確認: the card calls only the check command and never starts a download by itself", () => {
+test("ファイルを取得: the card calls only the check command and never starts a download by itself", () => {
   const page = readFileSync(new URL("../src/pages/AvatarDetailPage.tsx", import.meta.url), "utf8");
   const start = page.indexOf("async function checkFreeFiles");
   assert.ok(start > 0);

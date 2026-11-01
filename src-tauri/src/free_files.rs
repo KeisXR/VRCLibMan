@@ -1,4 +1,4 @@
-//! 「無料ファイルを確認」: one public `items/{id}.json` read, started by a click on one product.
+//! 「ファイルを取得」: one public `items/{id}.json` read, started by a click on one product.
 //! Only variations BOOTH marks `free_download` become download rows. No session is sent here;
 //! the later download of one row uses the existing built-in browser path.
 //! Nothing but file names, sizes, downloadable numbers, and the free / adult flags is kept.

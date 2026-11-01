@@ -8,7 +8,7 @@ import { FileMark, Thumb, errorText } from "../ui";
 import { ExcludeProductButton } from "../components/ProductExclusions";
 import { UnityOpenButton } from "../components/UnityOpenDialog";
 import { isUnityOpenableName } from "../unityOpen";
-import { FREE_FILE_CHECK_HINT, FREE_FILE_CHECK_LABEL, freeFilesFoundMessage, offerFreeFileCheck } from "../freeFiles";
+import { FREE_FILE_CHECK_BUSY_LABEL, FREE_FILE_CHECK_LABEL, freeFilesFoundMessage, offerFreeFileCheck } from "../freeFiles";
 import {
   type RemoteProbeStatus,
   invalidateRemoteProbe,
@@ -497,9 +497,8 @@ export function ItemCard({
           {offerFreeFileCheck(item, builtinBrowser) && (
             <div className="free-file-check">
               <button className="button" type="button" disabled={checkingFree} onClick={() => void checkFreeFiles()}>
-                {checkingFree ? "確認中…" : FREE_FILE_CHECK_LABEL}
+                {checkingFree ? FREE_FILE_CHECK_BUSY_LABEL : FREE_FILE_CHECK_LABEL}
               </button>
-              <span className="meta"> {FREE_FILE_CHECK_HINT}</span>
             </div>
           )}
           {item.downloads.length > 0 &&
