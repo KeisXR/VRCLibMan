@@ -3573,6 +3573,24 @@ pub(crate) fn commit_browser_download(
     Ok(placed)
 }
 
+/// 画面から「開く」を頼まれたパスが、スキャン済みのファイルか、
+/// 商品ファイルとして記録した手元の保存先とちょうど一致するときだけ真。
+/// 画面から任意のパスを開けないようにするための境界である。
+pub(crate) fn is_known_local_path(connection: &Connection, path: &str) -> Result<bool, String> {
+    if path.trim().is_empty() {
+        return Ok(false);
+    }
+    let found: i64 = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM local_files WHERE path = ?1)
+                 OR EXISTS(SELECT 1 FROM product_files WHERE local_path = ?1)",
+            [path],
+            |row| row.get(0),
+        )
+        .sql()?;
+    Ok(found != 0)
+}
+
 pub(crate) struct SweepReport {
     pub moved: u32,
     pub left: Vec<crate::model::StagedLeftover>,
@@ -5694,6 +5712,25 @@ mod tests {
     use super::*;
     use crate::import_data::parse_export;
     use crate::view::{avatar_cards, avatar_detail, products_by_ids, queue_page};
+
+    #[test]
+    fn only_registered_local_paths_may_be_opened() {
+        let connection = open_memory().unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO products (booth_id, title, imported_at, updated_at) VALUES ('4242', '架空の服', 't', 't');
+                 INSERT INTO product_files (booth_id, filename, local_path) VALUES ('4242', 'pack.zip', '/lib/4242/pack.zip');
+                 INSERT INTO local_files (path, filename, scanned_at) VALUES ('/lib/scan/other.unitypackage', 'other.unitypackage', 't');",
+            )
+            .unwrap();
+        assert!(is_known_local_path(&connection, "/lib/4242/pack.zip").unwrap());
+        assert!(is_known_local_path(&connection, "/lib/scan/other.unitypackage").unwrap());
+        assert!(!is_known_local_path(&connection, "/lib/4242").unwrap());
+        assert!(!is_known_local_path(&connection, "/lib/4242/../4242/pack.zip").unwrap());
+        assert!(!is_known_local_path(&connection, "/etc/passwd").unwrap());
+        assert!(!is_known_local_path(&connection, "").unwrap());
+        assert!(!is_known_local_path(&connection, "  ").unwrap());
+    }
 
     #[test]
     fn bookmarks_persist_edits_and_intentionally_empty_lists() {
