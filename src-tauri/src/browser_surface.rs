@@ -1,7 +1,7 @@
 //! Native browser surface. Each page tab belongs to one host: the right panel or its own window.
 //! Several hosts can be open at once. Moving a tab reparents that webview, so history and sign-in stay.
 use crate::{
-    browser,
+    browser, browser_dark,
     browser_tabs::{self, BrowserState, HostKind, MoveToken, TabSession, PANEL_HOST_ID},
 };
 use std::sync::{
@@ -670,6 +670,25 @@ fn retire_if_empty(app: &AppHandle, host_id: &str) {
     }
 }
 
+/// Applies the saved force-dark setting to page tabs that are already open.
+/// New tabs read the same flag when they are created. The account probe is not a page tab.
+pub fn sync_force_dark(app: &AppHandle, enabled: bool) {
+    browser_dark::set_enabled(enabled);
+    let ids: Vec<String> = surface()
+        .session
+        .tabs
+        .iter()
+        .map(|tab| tab.id.clone())
+        .filter(|id| browser_dark::is_page_webview(id))
+        .collect();
+    let script = browser_dark::force_dark_script(enabled);
+    for id in ids {
+        if let Some(view) = app.get_webview(&id) {
+            let _ = view.eval(&script);
+        }
+    }
+}
+
 fn close_webviews(app: &AppHandle, ids: &[String]) {
     for id in ids {
         if let Some(view) = app.get_webview(id) {
@@ -685,6 +704,9 @@ fn mount_tab(app: &AppHandle, host_id: &str, window: &Window, url: Url) -> Resul
     let popup_app = app.clone();
     let popup_source = id.clone();
     let mut builder = WebviewBuilder::new(&id, WebviewUrl::External(url.clone()))
+        .initialization_script_for_all_frames(browser_dark::force_dark_script(
+            browser_dark::enabled(),
+        ))
         .on_navigation(move |url| {
             if url.as_str() == "about:blank" {
                 return true;
@@ -716,6 +738,7 @@ fn mount_tab(app: &AppHandle, host_id: &str, window: &Window, url: Url) -> Resul
                 ),
             );
             if !loading {
+                let _ = view.eval(browser_dark::force_dark_script(browser_dark::enabled()));
                 refresh_history(&view);
                 if !browser::library_walk_running()
                     && payload

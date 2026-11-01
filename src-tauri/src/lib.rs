@@ -2,6 +2,7 @@ mod apple_fm;
 mod booth_category;
 mod booth_detail;
 mod browser;
+mod browser_dark;
 mod browser_url;
 #[cfg(target_os = "linux")]
 mod browser_linux;
@@ -157,6 +158,7 @@ pub fn run() {
                     .map_err(|err| std::io::Error::other(err.to_string()))?;
                 let settings =
                     db::settings(&connection).map_err(|err| std::io::Error::other(err))?;
+                browser_dark::set_enabled(settings.browser_force_dark);
                 let report = db::sweep_staged_downloads(&mut connection);
                 (
                     settings.background_mode,

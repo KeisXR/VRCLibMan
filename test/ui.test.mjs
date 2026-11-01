@@ -321,6 +321,57 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       await selectDesign("classic");
     });
 
+    await t.test("force dark mode is off until the built-in browser is enabled", async () => {
+      const settingRow = (label) =>
+        [...document.querySelectorAll(".setting-row")].find(
+          (row) => row.querySelector("strong")?.textContent === label,
+        );
+      await route("#/settings");
+      await wait(() => text().includes("BOOTH の読み込み方"));
+      assert.equal(settingRow("強制ダークモード"), undefined);
+      assert.equal((await api.settings()).browserForceDark, false);
+      window.confirm = () => true;
+      await click(radio("アプリの内蔵ブラウザ"));
+      await wait(() => settingRow("強制ダークモード"));
+      const row = () => settingRow("強制ダークモード");
+      const box = () => row().querySelector('input[type="checkbox"]');
+      assert.equal(box().checked, false);
+      assert.match(row().textContent, /画像・動画・キャンバスは元の色のまま/);
+      assert.match(row().textContent, /右パネルと別ウィンドウ/);
+      assert.match(row().textContent, /再起動なし/);
+      const details = row().parentElement.querySelector("details.settings-details");
+      assert.match(details.querySelector("summary").textContent, /強制ダークモードについて/);
+      details.open = true;
+      assert.match(details.textContent, /再起動は要りません/);
+      assert.match(details.textContent, /未検証/);
+      const setChecked = async (node, value) => {
+        await act(async () => {
+          node.checked = value;
+          const propsKey = Object.keys(node).find((name) => name.startsWith("__reactProps$"));
+          const onChange = propsKey ? node[propsKey].onChange : null;
+          assert.ok(onChange, "checkbox change handler");
+          onChange({ target: node, currentTarget: node });
+          await delay();
+        });
+      };
+      await setChecked(box(), true);
+      await wait(async () => (await api.settings()).browserForceDark === true);
+      assert.equal(box().checked, true);
+      assert.equal((await api.settings()).builtinBrowser, true);
+      assert.equal((await api.settings()).ollamaModel, "qwen3.5:9b");
+      await route("#/import");
+      await route("#/settings");
+      await wait(() => settingRow("強制ダークモード")?.querySelector('input[type="checkbox"]')?.checked === true);
+      assert.equal((await api.settings()).browserForceDark, true);
+      await setChecked(box(), false);
+      await wait(async () => (await api.settings()).browserForceDark === false);
+      assert.equal(box().checked, false);
+      await click(radio("Chrome / Edge の拡張機能"));
+      await wait(() => settingRow("強制ダークモード") === undefined);
+      assert.equal((await api.settings()).browserForceDark, false);
+      assert.equal((await api.settings()).builtinBrowser, false);
+    });
+
     await t.test("unsupported background operation cannot be enabled or appear active", async () => {
       const originalSettings = api.settings;
       const presenceSwitch = (label) =>
