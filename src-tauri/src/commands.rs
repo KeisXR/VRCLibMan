@@ -861,6 +861,59 @@ pub async fn download_booth_file(
     crate::browser::download_one_file(app, booth_id, variation, filename).await
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FreeFilesReport {
+    pub files: usize,
+}
+
+/// 「無料ファイルを確認」: one cookie-less public read for one product the user clicked.
+/// Stores only free-download file rows. It does not download, buy, or add anything to BOOTH.
+#[tauri::command]
+pub async fn fetch_free_files(
+    app: tauri::AppHandle,
+    booth_id: String,
+) -> Result<FreeFilesReport, String> {
+    if !crate::library_files::valid_booth_id(&booth_id) {
+        return Err("商品のIDを読めません".into());
+    }
+    let app_for_check = app.clone();
+    let id_for_check = booth_id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_for_check.state::<AppState>();
+        let connection = db(&state)?;
+        db::free_files_target(&connection, &id_for_check)
+    })
+    .await
+    .map_err(|_| "商品を確認できません".to_string())??;
+    let report = crate::free_files::fetch(&booth_id).await?;
+    crate::browser::browser_log(
+        &app,
+        &crate::free_files::log_line(&booth_id, report.http_status, &report.outcome),
+    );
+    if let Some(message) = crate::free_files::refusal(&report.outcome) {
+        return Err(message.to_string());
+    }
+    let crate::free_files::FreeFilesOutcome::Free {
+        files,
+        is_free,
+        is_adult,
+    } = report.outcome
+    else {
+        return Err("商品情報を確認できません".into());
+    };
+    let app_for_store = app.clone();
+    let count = tauri::async_runtime::spawn_blocking(move || {
+        let state = app_for_store.state::<AppState>();
+        let mut connection = db(&state)?;
+        db::store_free_files(&mut connection, &booth_id, &files, is_free, is_adult)
+    })
+    .await
+    .map_err(|_| "ファイル情報を保存できません".to_string())??;
+    let _ = app.emit("library-changed", ());
+    Ok(FreeFilesReport { files: count })
+}
+
 /// スキャン済みファイルと、記録済みの商品ファイルだけを既定のアプリで開く。
 /// JS 側の opener に open-path 権限を足さず、Rust で登録済みのパスか確かめてから開く。
 #[tauri::command]

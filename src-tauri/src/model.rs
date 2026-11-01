@@ -132,7 +132,7 @@ pub struct IncomingVariation {
     pub owned: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IncomingDownload {
     pub filename: String,

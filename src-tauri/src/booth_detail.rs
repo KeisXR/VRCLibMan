@@ -83,36 +83,47 @@ pub fn is_item_json_url(url: &Url) -> bool {
 }
 
 pub fn classify_http(status: u16, final_url: &str, content_type: &str, body: &str) -> DetailOutcome {
+    gate_http(status, final_url, content_type, body).unwrap_or_else(|| interpret_json(body))
+}
+
+/// Everything except the JSON body itself: age gates, login walls, 404, rate limits, HTML.
+/// `None` means the body is an item document and may be read.
+pub(crate) fn gate_http(
+    status: u16,
+    final_url: &str,
+    content_type: &str,
+    body: &str,
+) -> Option<DetailOutcome> {
     let url = Url::parse(final_url).ok();
     if url.as_ref().is_none_or(age_gate_url) {
-        return DetailOutcome::AgeGate;
+        return Some(DetailOutcome::AgeGate);
     }
     if status == 404 {
-        return DetailOutcome::Missing;
+        return Some(DetailOutcome::Missing);
     }
     if status == 401 || status == 403 {
-        return DetailOutcome::AgeGate;
+        return Some(DetailOutcome::AgeGate);
     }
     if status == 429 || status == 503 || !(200..300).contains(&status) {
-        return if status == 429 || status == 503 {
+        return Some(if status == 429 || status == 503 {
             DetailOutcome::RetryLater
         } else {
             DetailOutcome::Again
-        };
+        });
     }
     let url = url.expect("url");
     if !is_item_json_url(&url) {
-        return DetailOutcome::Again;
+        return Some(DetailOutcome::Again);
     }
     let ctype = content_type.to_ascii_lowercase();
     let trimmed = body.trim_start();
     if ctype.contains("html") || trimmed.starts_with('<') {
-        return DetailOutcome::AgeGate;
+        return Some(DetailOutcome::AgeGate);
     }
     if body.len() > BODY_LIMIT {
-        return DetailOutcome::Again;
+        return Some(DetailOutcome::Again);
     }
-    interpret_json(body)
+    None
 }
 
 pub fn interpret_json(body: &str) -> DetailOutcome {
@@ -157,7 +168,19 @@ pub struct FetchReport {
     pub outcome: DetailOutcome,
 }
 
-pub async fn fetch_public_item(booth_id: &str) -> Result<FetchReport, String> {
+/// One public item document, without a session. The redirect walk refuses age gates.
+pub(crate) enum ItemDocument {
+    Body {
+        status: u16,
+        final_url: String,
+        content_type: String,
+        body: String,
+    },
+    AgeGate,
+    Again,
+}
+
+pub(crate) async fn fetch_item_document(booth_id: &str) -> Result<(Option<u16>, ItemDocument), String> {
     let mut current = item_json_url(booth_id)?;
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -168,10 +191,7 @@ pub async fn fetch_public_item(booth_id: &str) -> Result<FetchReport, String> {
     let mut last_status = None;
     for _ in 0..3 {
         if age_gate_url(&current) || !is_item_json_url(&current) {
-            return Ok(FetchReport {
-                http_status: last_status,
-                outcome: DetailOutcome::AgeGate,
-            });
+            return Ok((last_status, ItemDocument::AgeGate));
         }
         let response = client
             .get(current.clone())
@@ -192,16 +212,10 @@ pub async fn fetch_public_item(booth_id: &str) -> Result<FetchReport, String> {
                 .join(location)
                 .map_err(|_| "商品情報を確認できません".to_string())?;
             if age_gate_url(&joined) {
-                return Ok(FetchReport {
-                    http_status: last_status,
-                    outcome: DetailOutcome::AgeGate,
-                });
+                return Ok((last_status, ItemDocument::AgeGate));
             }
             if !is_item_json_url(&joined) {
-                return Ok(FetchReport {
-                    http_status: last_status,
-                    outcome: DetailOutcome::Again,
-                });
+                return Ok((last_status, ItemDocument::Again));
             }
             current = joined;
             continue;
@@ -217,14 +231,34 @@ pub async fn fetch_public_item(booth_id: &str) -> Result<FetchReport, String> {
             .text()
             .await
             .map_err(|_| "商品情報を確認できません".to_string())?;
-        return Ok(FetchReport {
-            http_status: last_status,
-            outcome: classify_http(status.as_u16(), &final_url, &content_type, &body),
-        });
+        return Ok((
+            last_status,
+            ItemDocument::Body {
+                status: status.as_u16(),
+                final_url,
+                content_type,
+                body,
+            },
+        ));
     }
+    Ok((last_status, ItemDocument::Again))
+}
+
+pub async fn fetch_public_item(booth_id: &str) -> Result<FetchReport, String> {
+    let (http_status, document) = fetch_item_document(booth_id).await?;
+    let outcome = match document {
+        ItemDocument::Body {
+            status,
+            final_url,
+            content_type,
+            body,
+        } => classify_http(status, &final_url, &content_type, &body),
+        ItemDocument::AgeGate => DetailOutcome::AgeGate,
+        ItemDocument::Again => DetailOutcome::Again,
+    };
     Ok(FetchReport {
-        http_status: last_status,
-        outcome: DetailOutcome::Again,
+        http_status,
+        outcome,
     })
 }
 
@@ -297,7 +331,7 @@ fn tag_names(value: Option<&Value>) -> Vec<String> {
     tags
 }
 
-fn flag(map: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<bool> {
+pub(crate) fn flag(map: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<bool> {
     for key in keys {
         if let Some(value) = map.get(*key) {
             return match value {
@@ -310,7 +344,7 @@ fn flag(map: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<bool> {
     None
 }
 
-fn price_is_free(value: Option<&Value>) -> Option<bool> {
+pub(crate) fn price_is_free(value: Option<&Value>) -> Option<bool> {
     match value {
         Some(Value::Number(number)) => number.as_f64().map(|price| price == 0.0),
         Some(Value::String(text)) if text.contains("無料") => Some(true),

@@ -983,6 +983,7 @@ a.presence:hover, button.presence:hover { background: var(--hover); text-decorat
 .presence-remote { color: var(--muted); }
 .presence-missing, .presence-unknown { color: var(--faint); }
 .adult-note { margin-top: var(--space-2); font-size: 13px; }
+.free-file-check { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: var(--space-2); }
 .download-row .row-actions { margin: 0 0 0 auto; flex: 0 0 auto; }
 details.generic { margin-top: var(--space-2); }
 details.generic summary { cursor: pointer; color: var(--text-secondary); }
