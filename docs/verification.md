@@ -1,5 +1,17 @@
 # 検証記録
 
+## Mac右パネルのページ描画範囲（2026-11-01）
+
+対象は main の `98121e38fcaebc1e40ed78f8d373923ebcb4011d` からの `fix/macos-browser-bookmark-overlap` の作業差分。Linux x86_64、Rust 1.99.1、Node.jsで確認した。
+
+- `npm test` は118件成功。端数を持つ表示域でもページの上端が操作バー側へ出ず、全辺が表示域の内側に収まる回帰テストを追加した。
+- `npm run build` 成功。
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib browser_surface::tests` は14件成功。LinuxではmacOS固有コードはコンパイル・実行されない。
+- `npm run dev` とheadless Chromiumの実画面で、1440×900、1100×700、1908×1044の表示域と送信矩形を比較し、内側に収まることを確認。ブックマークのクリックによる移動と編集の開閉も確認した。
+- WebKitGTKのレイアウトテストは環境内のMiniBrowserとの接続がタイムアウトし、完了していない。
+
+報告されたMacの重なり自体はこの環境では再現できていない。macOSの `clipsToBounds` の効果と、ブックマークバー・ページ移動・サイズ変更・別窓から戻した後の表示はMac実機で確認が必要。上記を不具合解消の実機検証として扱わない。
+
 ## Liquid と従来デザインの PR レビュー（2026-11-01）
 
 対象は PR #113 の `3df206d9dfc824f9351700fac929471e17c57f73` に対する修正差分です。Debian 13 x86_64、Rust 1.99.1、Node.js 24.19.0、Chromium、WebKitGTK 2.54 の環境で確認しました。

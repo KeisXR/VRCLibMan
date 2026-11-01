@@ -30,14 +30,16 @@ export interface RectLike {
   height: number;
 }
 
-/** Rounded to whole CSS pixels, or null when there is nothing to draw into. */
+/** Whole CSS pixels contained inside the viewport, or null when nothing fits. */
 export function panelRect(rect: RectLike): BrowserPanelRect | null {
   const values = [rect.left, rect.top, rect.width, rect.height];
   if (!values.every(Number.isFinite)) return null;
-  const left = Math.round(rect.left);
-  const top = Math.round(rect.top);
-  const width = Math.round(rect.left + rect.width) - left;
-  const height = Math.round(rect.top + rect.height) - top;
+  // Native views draw above HTML. Rounding the top down can cover the last row of
+  // browser controls; keep every edge inside the measured viewport instead.
+  const left = Math.ceil(rect.left);
+  const top = Math.ceil(rect.top);
+  const width = Math.floor(rect.left + rect.width) - left;
+  const height = Math.floor(rect.top + rect.height) - top;
   if (width < BROWSER_PANEL_MIN_EDGE || height < BROWSER_PANEL_MIN_EDGE) return null;
   return { left, top, width, height };
 }

@@ -10,7 +10,18 @@ test("browser panel geometry: rounded rectangles, covers, drags and the narrow o
   const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
   try {
     const panel = await server.ssrLoadModule("/src/browserPanel.ts");
-    assert.deepEqual(panel.panelRect(rect(820.4, 95.6, 419.8, 600.2)), rect(820, 96, 420, 600));
+    assert.deepEqual(panel.panelRect(rect(820.4, 95.6, 419.8, 600.2)), rect(821, 96, 419, 599));
+    // The native page must never extend into the controls, even by a fraction
+    // of a logical point (macOS truncates native child bounds to whole points).
+    for (const top of [95, 95.01, 95.25, 95.49, 95.5, 95.99]) {
+      const viewport = rect(820.25, top, 419.5, 600.5);
+      const area = panel.panelRect(viewport);
+      assert.ok(area.top >= viewport.top, "page starts below the controls");
+      assert.ok(area.left >= viewport.left);
+      assert.ok(area.left + area.width <= viewport.left + viewport.width);
+      assert.ok(area.top + area.height <= viewport.top + viewport.height);
+    }
+    assert.equal(panel.panelRect(rect(0.1, 0.1, 2, 2)), null, "hide when fewer than two whole pixels fit");
     assert.equal(panel.panelRect(rect(0, 0, 1, 400)), null);
     assert.equal(panel.panelRect(rect(Number.NaN, 0, 400, 400)), null);
 
