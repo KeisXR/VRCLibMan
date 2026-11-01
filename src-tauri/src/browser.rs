@@ -916,7 +916,11 @@ impl Drop for ProbeTurn {
 }
 
 /// 隠した窓。visible は false、タスクバーに出さない、フォーカスしない。
-fn open_profile_probe(app: &AppHandle, url: Url) -> Result<(), String> {
+fn open_profile_probe(
+    app: &AppHandle,
+    url: Url,
+    load_finished: Option<std::sync::mpsc::SyncSender<String>>,
+) -> Result<(), String> {
     if crate::browser_surface::host_window(app).is_some() {
         return Err("表示中のブラウザがあるので、別の窓は作りません".into());
     }
@@ -933,6 +937,13 @@ fn open_profile_probe(app: &AppHandle, url: Url) -> Result<(), String> {
         .decorations(false)
         .always_on_bottom(true)
         .on_download(|_webview, event| handle_booth_download(event));
+    if let Some(sender) = load_finished {
+        builder = builder.on_page_load(move |_window, payload| {
+            if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+                let _ = sender.try_send(payload.url().to_string());
+            }
+        });
+    }
     #[cfg(not(target_os = "macos"))]
     {
         let root = local_data_dir(app)?;
@@ -985,7 +996,7 @@ async fn booth_cookie_header(
         }
         let blank =
             Url::parse("about:blank").map_err(|_| "ログイン状態を確認できません".to_string())?;
-        open_profile_probe(handle, blank)?;
+        open_profile_probe(handle, blank, None)?;
         Ok(true)
     })
     .await
@@ -1332,12 +1343,25 @@ async fn eval_booth(app: &AppHandle, script: String) -> Result<String, String> {
 }
 
 async fn eval_label(app: &AppHandle, label: &str, script: String) -> Result<String, String> {
+    eval_label_within(app, label, script, Duration::from_secs(15)).await
+}
+
+async fn eval_label_within(
+    app: &AppHandle,
+    label: &str,
+    script: String,
+    timeout: Duration,
+) -> Result<String, String> {
     let label = label.to_string();
     let (sender, receiver) = std::sync::mpsc::channel();
     dispatch_ui(app.clone(), move |handle| {
         let window = if label == WINDOW_LABEL {
             crate::browser_surface::active_view(handle)?
-        } else { handle.get_webview(&label).ok_or("ブラウザが開いていません")? };
+        } else {
+            handle
+                .get_webview(&label)
+                .ok_or("ブラウザが開いていません")?
+        };
         window
             .eval_with_callback(script, move |result| {
                 let _ = sender.send(result);
@@ -1346,71 +1370,116 @@ async fn eval_label(app: &AppHandle, label: &str, script: String) -> Result<Stri
     })
     .await?;
     tauri::async_runtime::spawn_blocking(move || {
-        receiver
-            .recv_timeout(Duration::from_secs(15))
-            .map_err(|_| "ページの読み取りがタイムアウトしました。もう一度お試しください".to_string())
+        receiver.recv_timeout(timeout).map_err(|_| {
+            "ページの読み取りがタイムアウトしました。もう一度お試しください".to_string()
+        })
     })
     .await
     .map_err(|err| format!("ページを読めません: {err}"))?
 }
 
-/// 見えている窓があればその場で読み、無ければ隠した窓でライブラリを開いて読む。
+const ACCOUNT_UNCONFIRMED: &str = "ログイン状態を確認できません";
+const ACCOUNT_READ_LIMIT: Duration = Duration::from_secs(12);
+
+fn account_budget(started: std::time::Instant) -> Duration {
+    ACCOUNT_READ_LIMIT.saturating_sub(started.elapsed())
+}
+
+/// 見えている BOOTH のタブがあればその場で読む。無ければ隠した窓でライブラリを開く。
+/// 隠した窓は、読み込み完了のあとで DOM を見る。生成した直後の結果付きスクリプトは実行しない。
+/// Wry の macOS 実装は初回ナビゲーション確定前のスクリプトを結果コールバックなしで保留する。
+/// https://github.com/tauri-apps/wry/blob/wry-v0.57.0/src/wkwebview/mod.rs#L723
 /// 読み終わったら隠した窓は捨てる。クッキーは読まない。
 pub async fn read_booth_account(app: AppHandle) -> Result<crate::quiet::BoothAccount, String> {
     browser_enabled(&app)?;
     let _turn = ProbeTurn::acquire()
         .await
-        .map_err(|_| "ログイン状態を確認できません".to_string())?;
+        .map_err(|_| ACCOUNT_UNCONFIRMED.to_string())?;
+    let started = std::time::Instant::now();
     let library = Url::parse(LIBRARY_URL).map_err(|_| "ページのURLを読めません".to_string())?;
+    let (sender, receiver) = std::sync::mpsc::sync_channel(8);
     let created = dispatch_ui(app.clone(), move |handle| {
         if crate::browser_surface::host_window(handle).is_some() {
             return Ok(false);
         }
-        open_profile_probe(handle, library)?;
+        open_profile_probe(handle, library, Some(sender))?;
         Ok(true)
     })
     .await?;
-    let raw = if created {
-        wait_for_account_markup(&app).await
+    let result = if created {
+        match wait_for_probe_load(receiver, account_budget(started)).await {
+            Ok(_) => read_settled_account(&app, PROBE_LABEL, started).await,
+            Err(error) => Err(error),
+        }
     } else {
-        eval_label(
-            &app,
-            crate::browser_surface::booth_view(&app).ok_or("BOOTHのタブを開くとアカウントを確認できます")?.label(),
-            crate::quiet::account_script().to_string(),
-        )
-        .await
+        drop(receiver);
+        let label = dispatch_ui(app.clone(), |handle| {
+            crate::browser_surface::booth_view(handle)
+                .map(|view| view.label().to_string())
+                .ok_or_else(|| ACCOUNT_UNCONFIRMED.to_string())
+        })
+        .await?;
+        read_settled_account(&app, &label, started).await
     };
     if created {
         destroy_probe(&app).await;
     }
-    let raw = raw?;
-    let account = crate::quiet::parse_account_eval(&raw)?;
-    browser_log(&app, "アカウントを確認しました");
-    Ok(account)
+    match &result {
+        Ok(_) => browser_log(&app, "アカウントを確認しました"),
+        Err(_) => browser_log(&app, "アカウントを確認できません"),
+    }
+    result
 }
 
-async fn wait_for_account_markup(app: &AppHandle) -> Result<String, String> {
-    let started = std::time::Instant::now();
+/// 読み込み完了まで待つ。UI スレッドでは待たない。URL はログに残さない。
+async fn wait_for_probe_load(
+    receiver: std::sync::mpsc::Receiver<String>,
+    timeout: Duration,
+) -> Result<String, String> {
+    if timeout.is_zero() {
+        return Err(ACCOUNT_UNCONFIRMED.into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        receiver
+            .recv_timeout(timeout)
+            .map_err(|_| ACCOUNT_UNCONFIRMED.to_string())
+    })
+    .await
+    .map_err(|_| ACCOUNT_UNCONFIRMED.to_string())?
+}
+
+/// 読み込み後の DOM を、期限まで確認する。未準備と失敗は未ログインにしない。
+async fn read_settled_account(
+    app: &AppHandle,
+    label: &str,
+    started: std::time::Instant,
+) -> Result<crate::quiet::BoothAccount, String> {
     let script = crate::quiet::account_script().to_string();
+    let mut login_streak = 0u8;
     loop {
-        let raw = eval_label(app, PROBE_LABEL, script.clone()).await?;
-        let ready = serde_json::from_str::<serde_json::Value>(&raw)
-            .ok()
-            .and_then(|value| {
-                let value = if let serde_json::Value::String(inner) = value {
-                    serde_json::from_str(&inner).unwrap_or(serde_json::Value::Null)
-                } else {
-                    value
-                };
-                value.get("ready").and_then(|item| item.as_bool())
-            })
-            .unwrap_or(false);
-        if ready || started.elapsed() > Duration::from_secs(12) {
-            return Ok(raw);
+        let budget = account_budget(started);
+        if budget < Duration::from_millis(50) {
+            return Err(ACCOUNT_UNCONFIRMED.into());
         }
-        let _ =
-            tauri::async_runtime::spawn_blocking(|| std::thread::sleep(Duration::from_millis(250)))
-                .await;
+        let timeout = budget.min(Duration::from_secs(3));
+        let reading = match eval_label_within(app, label, script.clone(), timeout).await {
+            Ok(raw) => crate::quiet::classify_account_eval(&raw),
+            Err(_) => Err(ACCOUNT_UNCONFIRMED.to_string()),
+        };
+        let elapsed = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let limit = u64::try_from(ACCOUNT_READ_LIMIT.as_millis()).unwrap_or(u64::MAX);
+        match crate::quiet::advance_account_poll(reading, &mut login_streak, elapsed, limit) {
+            crate::quiet::AccountPoll::Ready(account) => return Ok(account),
+            crate::quiet::AccountPoll::Stop => return Err(ACCOUNT_UNCONFIRMED.into()),
+            crate::quiet::AccountPoll::Wait => {
+                let pause = Duration::from_millis(200).min(account_budget(started));
+                if pause.is_zero() {
+                    return Err(ACCOUNT_UNCONFIRMED.into());
+                }
+                let _ =
+                    tauri::async_runtime::spawn_blocking(move || std::thread::sleep(pause)).await;
+            }
+        }
     }
 }
 
@@ -2224,6 +2293,60 @@ mod tests {
         assert!(command.contains("clear_session"));
         assert!(!command.contains(".build("));
         assert!(!command.contains(".cookies("));
+    }
+
+    #[test]
+    fn account_probe_waits_for_load_before_a_script_with_a_result() {
+        let production = include_str!("browser.rs")
+            .split("mod tests")
+            .next()
+            .unwrap();
+        let read = bounded_function(production, "fn read_booth_account");
+        let wait = read.find("wait_for_probe_load").expect("load event");
+        let settled = read.find("read_settled_account").expect("dom read");
+        assert!(wait < settled, "DOM は読み込み完了のあとで見る");
+        assert!(read.contains("open_profile_probe"));
+        assert!(!read.contains("wait_for_account_markup"));
+        assert!(!read.contains("thread::sleep"));
+        let probe = bounded_function(production, "fn open_profile_probe");
+        assert!(probe.contains("PageLoadEvent::Finished"));
+        assert!(probe.contains("on_page_load"));
+        assert!(!probe.contains("eval_with_callback"));
+        assert!(!probe.contains("account_script"));
+        assert!(!probe.contains("thread::sleep"));
+        let settled_body = bounded_function(production, "fn read_settled_account");
+        assert!(settled_body.contains("advance_account_poll"));
+        assert!(settled_body.contains("spawn_blocking"));
+        assert!(!settled_body.contains("logged_in: false"));
+        let wait_body = bounded_function(production, "fn wait_for_probe_load");
+        assert!(wait_body.contains("spawn_blocking"));
+        assert!(wait_body.contains("recv_timeout"));
+        assert!(!wait_body.contains("eval_with_callback"));
+        assert!(!wait_body.contains("thread::sleep"));
+    }
+
+    fn bounded_function<'a>(source: &'a str, name: &str) -> &'a str {
+        let start = source
+            .find(name)
+            .unwrap_or_else(|| panic!("missing {name}"));
+        let rest = &source[start..];
+        let after = rest.find('\n').unwrap() + 1;
+        let tail = &rest[after..];
+        let end = [
+            "\nfn ",
+            "\npub fn ",
+            "\npub(crate) fn ",
+            "\npub async fn ",
+            "\nasync fn ",
+            "\nstruct ",
+            "\nenum ",
+            "\nimpl ",
+        ]
+        .iter()
+        .filter_map(|marker| tail.find(marker))
+        .min()
+        .unwrap_or(tail.len());
+        &rest[..after + end]
     }
 
     fn function_body<'a>(source: &'a str, name: &str) -> &'a str {
