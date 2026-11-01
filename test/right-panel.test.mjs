@@ -31,9 +31,12 @@ test("right panel tabs keep only known kinds and never store free text", async (
 
     // Kinds that later changes implement stay stored but hidden in this build.
     assert.equal(panel.RIGHT_PANEL_KIND_INFO.preview.available, true);
-    assert.deepEqual(panel.visibleTabs(parsed).map((tab) => tab.kind), ["preview"]);
-    assert.equal(panel.activeTab(parsed).kind, "preview");
-    assert.equal(panel.canAddTab(parsed, "files"), panel.RIGHT_PANEL_KIND_INFO.files.available);
+    assert.equal(panel.RIGHT_PANEL_KIND_INFO.files.available, true);
+    assert.equal(panel.RIGHT_PANEL_KIND_INFO.browser.available, false);
+    assert.deepEqual(panel.visibleTabs(parsed).map((tab) => tab.kind), ["files", "preview"]);
+    assert.equal(panel.activeTab(parsed).kind, "files");
+    assert.equal(panel.canAddTab(parsed, "files"), true);
+    assert.equal(panel.canAddTab(parsed, "browser"), false);
 
     // The preview tab is single; opening it again focuses it.
     let state = panel.openTab(empty, "preview");
@@ -86,4 +89,62 @@ test("the preview lives in the app's right panel instead of a split inside the l
   assert.match(browser, /aria-controls="right-panel"/);
   const registry = readFileSync("src/components/rightPanelRegistry.tsx", "utf8");
   assert.match(registry, /preview: PreviewTab/);
+  assert.match(registry, /files: FilesTab/);
+});
+
+
+test("narrow panels keep tab controls usable before a product is selected", async () => {
+  const { parseHTML } = await import("linkedom");
+  const { window } = parseHTML('<html><body><div id="root"></div></body></html>');
+  window.location = new URL("http://localhost:1420/");
+  for (const name of ["window", "document", "location", "HTMLElement", "HTMLInputElement", "Element", "Event", "CustomEvent", "EventTarget"]) {
+    Object.defineProperty(globalThis, name, { configurable: true, writable: true, value: window[name] });
+  }
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: { userAgent: "test" } });
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const { act, createElement } = await import("react");
+  const { createRoot } = await import("react-dom/client");
+  const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  let root;
+  try {
+    const { api } = await server.ssrLoadModule("/src/api.ts");
+    const { ShellProvider } = await server.ssrLoadModule("/src/App.tsx");
+    const { RightPanelColumn, useRightPanelState } = await server.ssrLoadModule("/src/components/RightPanel.tsx");
+    const { RIGHT_PANEL_KIND_INFO } = await server.ssrLoadModule("/src/rightPanel.ts");
+    const settings = { ...(await api.settings()), previewPane: true, rightPanelTabs: '{"tabs":["preview"],"active":0}' };
+    api.settings = async () => settings;
+    api.updateSettings = async (patch) => Object.assign(settings, patch);
+    api.listDirectory = async () => ({ path: "C:\\Lib", parent: "C:\\", library: "C:\\Lib", remote: null, insideLibrary: true, entries: [], truncated: false });
+    const failures = [];
+    const shell = { revision: 0, refresh() {}, notify() {}, fail: (message) => failures.push(message), builtinBrowser: true, refreshAccount() {}, workInProgress: false };
+    function Harness() {
+      const panel = useRightPanelState(shell.fail, { builtinBrowser: true });
+      return createElement(ShellProvider, { value: shell }, createElement(RightPanelColumn, { panel, docked: false, width: 0, maxWidth: 240 }));
+    }
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
+    const wait = async (check) => {
+      for (let n = 0; n < 100; n++) { if (check()) return; await act(tick); }
+      assert.fail(`Panel did not settle: ${document.body.textContent}`);
+    };
+    const click = (node) => act(async () => { assert.ok(node && !node.disabled); node.dispatchEvent(new window.Event("click", { bubbles: true })); await tick(); });
+    root = createRoot(document.getElementById("root"));
+    await act(async () => { root.render(createElement(Harness)); await tick(); });
+    await wait(() => document.querySelector('[aria-label="タブを追加"]'));
+    assert.ok(document.querySelector(".right-panel-overlay.modeless"));
+    assert.equal(document.querySelector('[aria-modal="true"]'), null, "the product list stays available");
+    await click(document.querySelector('[aria-label="タブを追加"]'));
+    const kind = RIGHT_PANEL_KIND_INFO.files.available ? "files" : "browser";
+    const label = RIGHT_PANEL_KIND_INFO[kind].label;
+    const menuItem = [...document.querySelectorAll('[role="menuitem"]')].find((node) => node.textContent === label);
+    await click(menuItem);
+    await wait(() => document.querySelector('[role="tab"][aria-selected="true"]')?.textContent === label);
+    assert.ok(document.querySelector('[role="dialog"][aria-modal="true"]'));
+    await click(document.querySelector('[aria-label="右パネルを閉じる"]'));
+    assert.equal(document.querySelector("#right-panel"), null);
+    assert.equal(settings.previewPane, false);
+    assert.deepEqual(failures, []);
+  } finally {
+    if (root) await act(async () => root.unmount());
+    await server.close();
+  }
 });

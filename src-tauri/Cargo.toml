@@ -43,6 +43,11 @@ url = "2.5.8"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 # Already in the tree through tauri and reqwest. Used for the cloud classifier semaphore and 429 backoff.
 tokio = { version = "1", features = ["sync", "time"] }
+# File tab: list zip entries from the central directory only. No compression features, so
+# nothing is decompressed and no new crates come in (the updater already uses zip 4).
+zip = { version = "4.6", default-features = false }
+# Zip entry names without the UTF-8 flag are usually Shift_JIS on Japanese Windows.
+encoding_rs = "0.8"
 
 # Tray support links platform indicator libraries. Linux tests and builds stay on the
 # base tauri features; Windows and macOS enable the tray API.
