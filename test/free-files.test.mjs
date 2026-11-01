@@ -15,7 +15,8 @@ test("無料ファイルを確認: shown only for an item with no file info whil
     assert.equal(free.offerFreeFileCheck({ downloads: [file], localFileCount: 0 }, true), false);
     assert.equal(free.offerFreeFileCheck({ downloads: [], localFileCount: 2 }, true), false);
     assert.equal(free.offerFreeFileCheck({ downloads: [], localFileCount: 0, unpublished: true }, true), false);
-    assert.match(free.FREE_FILE_CHECK_HINT, /ダウンロード・購入・ライブラリへの追加はしません/);
+    assert.match(free.FREE_FILE_CHECK_HINT, /購入や追加はしません/);
+    assert.ok(free.FREE_FILE_CHECK_HINT.length <= 40, "ボタン横の説明は一行に収まる短さにする");
     assert.match(free.freeFilesFoundMessage(2), /2 件.*ログイン/);
     assert.match(free.freeFilesFoundMessage(0), /ありません/);
   } finally {

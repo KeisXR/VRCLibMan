@@ -16,8 +16,8 @@ export function offerFreeFileCheck(
 
 export const FREE_FILE_CHECK_LABEL = "無料ファイルを確認";
 
-export const FREE_FILE_CHECK_HINT =
-  "BOOTH の公開情報から無料配布のファイルを調べます。確認だけでは、ダウンロード・購入・ライブラリへの追加はしません。";
+/** ボタン横の一行。長くしない（ほとんど読まれないため）。 */
+export const FREE_FILE_CHECK_HINT = "BOOTHの公開情報から無料ファイルを探します。購入や追加はしません。";
 
 export function freeFilesFoundMessage(count: number): string {
   return count > 0
