@@ -1361,7 +1361,8 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 }
 @container (max-width: 360px) { .browser-address > button { display: none; } }
 /* Right panel browser tab: the controls, then the area the docked pages are placed over. */
-.right-panel-body.right-panel-body-browser { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.right-panel-body.right-panel-body-web { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.right-panel.maximized .right-panel-body-web > .browser-panel { max-width: none; margin-inline: 0; }
 .browser-panel { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .browser-chrome.panel { margin-top: 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; flex-shrink: 0; }
 .browser-chrome.panel .browser-address { min-width: 64px; }
@@ -1369,7 +1370,7 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .browser-panel-viewport { position: relative; flex: 1 1 auto; min-height: 0; display: grid; place-items: center; padding: var(--space-4); background: var(--surface); }
 .browser-panel-viewport .meta { margin: 0; max-width: 28em; text-align: center; font-size: 13px; }
 .browser-panel-message .row-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; }
-.right-panel-body-browser > .browser-panel-message { padding: var(--space-4) var(--space-3); }
+.right-panel-body-web > .browser-panel-message { padding: var(--space-4) var(--space-3); }
 .app-updater { width: 100%; }
 .setting-control .app-updater {
   display: flex;
