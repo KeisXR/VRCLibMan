@@ -452,6 +452,11 @@ function PanelHeader({ panel, overlay, onDismiss }: { panel: RightPanelValue; ov
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || !drag.current) return;
+      // A press that has not become a drag yet leaves Escape to the rest of the app.
+      if (!drag.current.moved) {
+        drag.current = null;
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
       drag.current.cancelled = true;
@@ -496,13 +501,37 @@ function PanelHeader({ panel, overlay, onDismiss }: { panel: RightPanelValue; ov
       pointerId: event.pointerId,
       insertAt: null,
     };
-    listRef.current?.setPointerCapture?.(event.pointerId);
+    // Capture only once the press becomes a drag. Chromium (WebView2) sends the click of a
+    // captured press to the capturing tab list instead of the tab button, so capturing here
+    // would stop plain clicks from selecting tabs.
+  }
+
+  function capture(pointerId: number) {
+    try {
+      listRef.current?.setPointerCapture?.(pointerId);
+    } catch {
+      // The pointer is already released; pointerup clears the drag.
+    }
+  }
+
+  function onPointerLeave(event: ReactPointerEvent<HTMLDivElement>) {
+    const current = drag.current;
+    if (!current || current.moved || event.pointerId !== current.pointerId) return;
+    // Leaving the strip while pressed is a drag even below the threshold; keep following it.
+    if (event.buttons & 1) {
+      current.moved = true;
+      document.body.classList.add("tab-dragging");
+      capture(event.pointerId);
+    } else {
+      clearDrag();
+    }
   }
 
   function onPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
     const current = drag.current;
     if (!current || event.pointerId !== current.pointerId) return;
     if (!current.moved && Math.hypot(event.clientX - current.startX, event.clientY - current.startY) < TAB_DRAG_THRESHOLD_PX) return;
+    if (!current.moved) capture(event.pointerId);
     current.moved = true;
     document.body.classList.add("tab-dragging");
     const inside = pointerInsideWindow(event.clientX, event.clientY, window.innerWidth, window.innerHeight);
@@ -552,6 +581,8 @@ function PanelHeader({ panel, overlay, onDismiss }: { panel: RightPanelValue; ov
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onPointerLeave={onPointerLeave}
+        onPointerCancel={clearDrag}
         onLostPointerCapture={() => {
           if (!drag.current?.moved) return;
           clearDrag();
