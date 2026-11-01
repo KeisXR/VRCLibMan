@@ -796,6 +796,13 @@ a.tab { display: inline-flex; align-items: center; gap: 6px; text-decoration: no
   padding: var(--space-4);
 }
 .right-panel-empty .meta { margin: 0; }
+.right-panel-overlay.modeless {
+  align-items: flex-start;
+  justify-content: flex-end;
+  background: transparent;
+  pointer-events: none;
+}
+.right-panel-overlay.modeless > .right-panel { pointer-events: auto; }
 .right-panel.overlay {
   width: min(420px, 100%);
   max-height: min(720px, 100%);

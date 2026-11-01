@@ -427,10 +427,10 @@ function PanelSurface({ panel, overlay, onDismiss }: { panel: RightPanelValue; o
   );
 }
 
-function PanelOverlay({ children, onDismiss }: { children: ReactNode; onDismiss: () => void }) {
+function PanelOverlay({ children, onDismiss, modeless = false }: { children: ReactNode; onDismiss: () => void; modeless?: boolean }) {
   useEffect(() => {
     document.querySelector<HTMLButtonElement>(".preview-overlay .right-panel-close")?.focus();
-  }, []);
+  }, [modeless]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
@@ -444,10 +444,10 @@ function PanelOverlay({ children, onDismiss }: { children: ReactNode; onDismiss:
   if (typeof document === "undefined") return null;
   return createPortal(
     <div
-      className="preview-overlay right-panel-overlay"
-      role="dialog"
-      aria-modal="true"
-      aria-label="右パネル"
+      className={`preview-overlay right-panel-overlay${modeless ? " modeless" : ""}`}
+      role={modeless ? undefined : "dialog"}
+      aria-modal={modeless ? undefined : true}
+      aria-label={modeless ? undefined : "右パネル"}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onDismiss();
       }}
@@ -460,7 +460,7 @@ function PanelOverlay({ children, onDismiss }: { children: ReactNode; onDismiss:
 
 /**
  * Right column of the app grid. Wide windows dock it with a resize handle; narrow windows show
- * it over the page like the earlier preview overlay, only once there is something to show.
+ * it over the page. An empty preview leaves the list usable while keeping the tab controls visible.
  */
 export function RightPanelColumn({
   panel,
@@ -477,14 +477,13 @@ export function RightPanelColumn({
   if (!docked) {
     const selection = panel.preview;
     const waitingForSelection = panel.active?.kind === "preview" && !selection?.item;
-    if (waitingForSelection) return null;
     const dismiss = () => {
       if (panel.active?.kind === "preview" && selection?.item) selection.clear();
       else panel.close();
     };
     return (
-      <PanelOverlay onDismiss={dismiss}>
-        <PanelSurface panel={panel} overlay onDismiss={dismiss} />
+      <PanelOverlay onDismiss={dismiss} modeless={waitingForSelection}>
+        <PanelSurface panel={panel} overlay onDismiss={panel.close} />
       </PanelOverlay>
     );
   }
