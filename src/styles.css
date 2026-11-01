@@ -835,6 +835,13 @@ a.tab { display: inline-flex; align-items: center; gap: 6px; text-decoration: no
 .files-detail { font-size: 12px; }
 .files-list .row-actions { margin-left: auto; flex: 0 0 auto; }
 
+.right-panel-overlay.modeless {
+  align-items: flex-start;
+  justify-content: flex-end;
+  background: transparent;
+  pointer-events: none;
+}
+.right-panel-overlay.modeless > .right-panel { pointer-events: auto; }
 .right-panel.overlay {
   width: min(420px, 100%);
   max-height: min(720px, 100%);

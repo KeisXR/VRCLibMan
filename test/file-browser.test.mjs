@@ -65,7 +65,9 @@ test("preview fake lists folders and zips with the app's wording", async () => {
     assert.throws(() => fake.previewListDirectory("C:\\Assets\\..\\Users", library, ""), /「..」/);
     const zipName = home.entries.length && fake.previewListDirectory("C:\\Assets\\1000001", library, "").entries.find((e) => /\.zip$/i.test(e.name));
     assert.ok(zipName);
-    const zip = fake.previewListZip(`C:\\Assets\\1000001\\${zipName.name}`);
+    const zip = fake.previewListZip(`C:\\Assets\\1000001\\${zipName.name}`, library, "\\\\nas\\vrclibman");
+    assert.equal(zip.library, library);
+    assert.equal(zip.remote, "\\\\nas\\vrclibman");
     assert.ok(zip.entries.some((entry) => entry.path.endsWith(".unitypackage")));
     assert.throws(() => fake.previewListZip("C:\\Assets\\readme.txt"), /zip ファイルではありません/);
   } finally {
@@ -80,4 +82,58 @@ test("the file tab stays read-only and keeps the Unity slot behind a flag", () =
   assert.match(tab, /revealInFolder/);
   assert.doesNotMatch(tab, /deleteFile|removeFile|renameFile|writeFile/);
   assert.doesNotMatch(rust.split("#[cfg(test)]")[0], /fs::(remove|rename|write|create_dir|copy)/);
+});
+
+
+test("reopening a zip restores library actions and follows newly reported roots", async () => {
+  const { parseHTML } = await import("linkedom");
+  const { window } = parseHTML('<html><body><div id="root"></div></body></html>');
+  window.location = new URL("http://localhost:1420/");
+  for (const name of ["window", "document", "location", "HTMLElement", "HTMLInputElement", "Element", "Event", "CustomEvent", "EventTarget"]) {
+    Object.defineProperty(globalThis, name, { configurable: true, writable: true, value: window[name] });
+  }
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: { userAgent: "test" } });
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const { act, createElement } = await import("react");
+  const { createRoot } = await import("react-dom/client");
+  const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  let root;
+  try {
+    const { api } = await server.ssrLoadModule("/src/api.ts");
+    const { ShellProvider } = await server.ssrLoadModule("/src/App.tsx");
+    const { FilesTab } = await server.ssrLoadModule("/src/components/FilesTab.tsx");
+    const { UNITY_OPEN_AVAILABLE } = await server.ssrLoadModule("/src/fileBrowser.ts");
+    let roots = { library: "C:\\Lib", remote: "\\\\nas\\lib" };
+    let directoryReads = 0;
+    api.listDirectory = async () => {
+      directoryReads++;
+      return { path: "C:\\Lib\\1000001", parent: "C:\\Lib", ...roots, insideLibrary: true, truncated: false, entries: [{ name: "pack.zip", kind: "file", size: 20 }] };
+    };
+    api.listZipEntries = async () => ({ path: "C:\\Lib\\1000001\\pack.zip", ...roots, truncated: false, entries: [{ path: "A.unitypackage", dir: false, size: 10 }] });
+    const shell = { notify() {}, fail() {} };
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
+    const render = () => act(async () => { root.render(createElement(ShellProvider, { value: shell }, createElement(FilesTab))); await tick(); });
+    const unityButtons = () => [...document.querySelectorAll("button")].filter((node) => node.textContent === "Unityで開く").length;
+    const remoteButton = () => [...document.querySelectorAll("button")].find((node) => node.textContent === "リモート");
+    root = createRoot(document.getElementById("root"));
+    await render();
+    await act(async () => { document.querySelector("button.files-entry").dispatchEvent(new window.Event("click", { bubbles: true })); await tick(); });
+    assert.equal(unityButtons(), UNITY_OPEN_AVAILABLE ? 2 : 0);
+    assert.ok(remoteButton());
+    await act(async () => root.render(null));
+    await render();
+    assert.ok(document.body.textContent.includes("A.unitypackage"));
+    assert.equal(unityButtons(), UNITY_OPEN_AVAILABLE ? 2 : 0);
+    assert.ok(remoteButton());
+    assert.equal(directoryReads, 1, "zip restoration does not need to read a directory first");
+
+    roots = { library: "C:\\Other", remote: null };
+    await act(async () => root.render(null));
+    await render();
+    assert.equal(unityButtons(), 0, "the old library stops offering Unity actions");
+    assert.equal(remoteButton(), undefined);
+  } finally {
+    if (root) await act(async () => root.unmount());
+    await server.close();
+  }
 });

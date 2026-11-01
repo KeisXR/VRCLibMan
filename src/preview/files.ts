@@ -92,10 +92,16 @@ export function previewListDirectory(raw: string, library: string, remote: strin
   };
 }
 
-export function previewListZip(raw: string): ZipListing {
+export function previewListZip(raw: string, library = "", remote = ""): ZipListing {
   const path = requested(raw, "");
   if (!/\.zip$/i.test(path)) throw new Error("zip ファイルではありません");
   const key = lookup(ZIPS, path);
   if (!key) throw new Error("このパスは見つかりません");
-  return { path: key, entries: ZIPS[key]!.map((entry) => ({ ...entry })), truncated: false };
+  return {
+    path: key,
+    library: library.trim() ? lookup(FOLDERS, clean(library)) : null,
+    remote: remote.trim() ? lookup(FOLDERS, clean(remote)) : null,
+    entries: ZIPS[key]!.map((entry) => ({ ...entry })),
+    truncated: false,
+  };
 }

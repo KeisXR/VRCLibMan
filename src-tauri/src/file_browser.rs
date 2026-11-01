@@ -68,6 +68,8 @@ pub(crate) struct ZipEntryView {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ZipListing {
     pub path: String,
+    pub library: Option<String>,
+    pub remote: Option<String>,
     pub entries: Vec<ZipEntryView>,
     pub truncated: bool,
 }
@@ -249,7 +251,7 @@ fn read_zip(path: PathBuf) -> Result<(Vec<ZipEntryView>, bool), String> {
 }
 
 /// Lists a zip file's entries without extracting anything.
-pub(crate) fn list_zip(raw: &str) -> Result<ZipListing, String> {
+pub(crate) fn list_zip(raw: &str, library: &str, remote: &str) -> Result<ZipListing, String> {
     let requested = requested_path(raw, "")?;
     let is_zip = requested
         .extension()
@@ -268,6 +270,8 @@ pub(crate) fn list_zip(raw: &str) -> Result<ZipListing, String> {
     };
     Ok(ZipListing {
         path: display(&resolved),
+        library: optional_root(library).as_deref().map(display),
+        remote: optional_root(remote).as_deref().map(display),
         entries,
         truncated,
     })
@@ -458,7 +462,9 @@ mod tests {
             ],
         );
         let before = snapshot(&root);
-        let listing = list_zip(&archive.display().to_string()).unwrap();
+        let listing = list_zip(&archive.display().to_string(), &root.display().to_string(), "").unwrap();
+        assert_eq!(listing.library.as_deref(), Some(root.to_str().unwrap()));
+        assert!(listing.remote.is_none());
         assert_eq!(
             listing.entries,
             vec![
@@ -473,10 +479,10 @@ mod tests {
         assert_eq!(snapshot(&root), before, "listing a zip must not extract anything");
 
         std::fs::write(root.join("broken.zip"), b"not a zip").unwrap();
-        assert!(list_zip(&root.join("broken.zip").display().to_string()).is_err());
+        assert!(list_zip(&root.join("broken.zip").display().to_string(), "", "").is_err());
         std::fs::write(root.join("plain.txt"), b"x").unwrap();
-        assert!(list_zip(&root.join("plain.txt").display().to_string()).is_err());
-        assert!(list_zip(&root.join("missing.zip").display().to_string()).is_err());
+        assert!(list_zip(&root.join("plain.txt").display().to_string(), "", "").is_err());
+        assert!(list_zip(&root.join("missing.zip").display().to_string(), "", "").is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
 
