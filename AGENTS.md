@@ -115,7 +115,7 @@ VRCLibMan を変更するときは、このファイルを先に読む。実装�
 
 「ライブラリ全取得」は、内蔵ブラウザが有効なときだけブラウザ画面に出る。拡張の「ライブラリをすべて送る」と同じく、`https://accounts.booth.pm/library` を `?page=` で 1 ページずつ読み、続いて `https://accounts.booth.pm/library/gifts`、そのあと `https://accounts.booth.pm/library/free_downloads` を同じ読み方で読む。間隔は SQLite の `booth_page_interval_ms` で指定した1000 / 500 / 250ミリ秒（初期値1000）で、並列にしない。250msはUIで高リスク確認を行う。各ページは `extractPage` で読み、まとめて `import_export_json` に渡す。ファイルのダウンロードはしない。中止は次のページへ移動する前に効く。ログイン切れ（ライブラリ、ギフト、無料ダウンロード以外のページ、ログインへの移動）か年齢確認の URL では止まり、年齢確認の URL へは自分からは移動しない。終わりに商品数、ファイル数、名前のあるファイル数、名前の無いファイル数を出す。記録と進捗に商品名やクエリは残さない。無料ダウンロードで `isFree` が無い商品は無料として保存する。ライブラリの「非公開」は `products.unpublished`（DB版5）に残し、説明が「公開終了（取得できず）」の商品とは別に扱う。非公開だけではカテゴリをその他にしない。全取得のあと、`booth_detail_at` が空で年齢制限でない商品だけ、公開の `https://booth.pm/ja/items/{id}.json` を 1 件ずつ読む。間隔はページ間隔と 3 秒の長い方で、並列にしない。Cookie は送らない。年齢制限の応答と年齢確認の URL からは本文、カテゴリ、タグを保存しない。429 / 503 では印を付けず、次回の続きから読む。中止は次の取得の前に効く。保存先は `booth_category_id`、`booth_category_name`、`booth_category_parent`、`booth_tags`、`booth_detail_at`（DB版7）。省略されたカテゴリとタグは既存の値を消さない。
 
-内蔵ブラウザが有効で、自動整理がオン、ライブラリフォルダがあるとき、未ダウンロードの行か「ダウンロード」を押すと、その1件だけを `https://booth.pm/downloadables/{番号}` から Rust の HTTP クライアントで取得する。WebView のセッションを使い、通常の取得でブラウザを移動・前面表示しない。番号は保存済みの `downloadable_id`、無いときは番号だけのファイル名。署名付きの別ホストへ移ったダウンロードも、押した1件だけ保存先を `ダウンロード/VRCLibMan/{商品ID}/{ファイル名}` にする。パス検査は拡張の自動整理と同じで、別の場所、別の商品ID、サブフォルダ、`..`、シンボリックリンクは拒否する。ダウンロードした中身が HTML のときは消し、窓を前面にしてログインを案内する。年齢確認の URL は開かず、通過もしない。ブラウザがオフのときはボタンを出さず、拡張の自動整理のままにする。一括や自動のダウンロードはしない。記録に商品名、ファイル名、クエリは残さない。
+内蔵ブラウザが有効で、自動整理がオン、ライブラリフォルダがあるとき、未ダウンロードの行か「ダウンロード」を押すと、その1件だけを `https://booth.pm/downloadables/{番号}` から Rust の HTTP クライアントで取得する。WebView のセッションを使い、通常の取得でブラウザを移動・前面表示しない。番号は保存済みの `downloadable_id`、無いときは番号だけのファイル名。署名付きの別ホストへ移ったダウンロードも、押した1件だけ保存先を `ダウンロード/VRCLibMan/{商品ID}/{ファイル名}` にする。パス検査は拡張の自動整理と同じで、別の場所、別の商品ID、サブフォルダ、`..`、シンボリックリンクは拒否する。ダウンロードした中身が HTML のときは消し、窓を前面にしてログインを案内する。年齢確認の URL は開かず、通過もしない。ブラウザがオフのときはボタンを出さず、拡張の自動整理のままにする。一括や自動のダウンロードはしない。記録に商品名、ファイル名、クエリは残さない。`download_booth_file` は移した先の絶対パスを返し、完了の `booth-file-download`（phase `done`）にも `path` を載せる。画面は完了の通知とその行に「保存先を開く」を出す。完了した商品は、画面のリモート確認結果（`remoteProductProbe.ts` の60秒キャッシュ）を捨てて確認し直す。リモート確認結果を一覧へ重ねるときも、手元にある行は読み直した一覧の状態を正とする。
 
 Windows では、BOOTH の窓を同期コマンドの中で作らない。WebView2 は再入できず、IPC のコールバックから `WebviewWindowBuilder::build` すると新しい窓だけが応答しなくなる（メインの窓は動いたままに見える）。開く・ライブラリへ移動する・戻る進む・閉じるは async コマンドにし、コールバックが返ったあとメインスレッドで行う。データベースのロックを持ったまま窓を作らない。ページ読み取りの待ちも UI スレッドに載せない。`booth-browser` をメイン画面の `EBWebView` と同じ data_directory にしない。操作とページの移動先はアプリデータの `booth-browser.log` に残す。一般サイトのページ読み込みは origin だけを記録し、パス・クエリ・断片は残さない。BOOTH のインポートや巡回の記録は検証済みライブラリのパスまでとする。BOOTH / pixiv のログイン用別窓要求は元のタブで開き、ほかの http / https の別窓要求は新しいタブで開く。年齢確認を自動通過しない。
 
@@ -126,6 +126,12 @@ Windows では、BOOTH の窓を同期コマンドの中で作らない。WebVie
 - ジャンルの手動移動、自動分類に戻す、その取り消しは `classification_moves`（DB版6）に残す。過去の移動は復元しない。いまカテゴリとジャンルの両方がロックされている商品は、現在の手動固定として同じ JSON に出す。除外した商品は出さない。
 - 設定画面は変更した項目だけを `update_settings` へ送り、Rust が現在値とマージして検証し、トランザクションで保存する。フロントは保存を直列化し、保存中の新しい入力を古い応答で戻さない。テキストは短く待って保存し、フォーカスを外す・画面を移動するときも送る。対応表の編集には引き続き保存ボタンがある。
 - 商品ページのリンク先は `booth_link_target`（`external` 既定、`builtin`）。内蔵ブラウザが有効なときだけ設定に出し、アバター詳細、確認、プレビュー欄の商品リンクだけが従う。`builtin` でも取得中・無効・エラーは既定のブラウザに戻す。出典、利用規約、GitHub、拡張の「ライブラリを開く」は外部のまま。既に開いている内蔵ブラウザへタブを足すときは窓を前面にする。年齢確認は自動で通さない。
+
+### Unity の検出
+
+- `src-tauri/src/unity.rs` が、Unity Hub の `editors-v2.json`（`data[].location[]`）、旧形式の `editors.json`、`secondaryInstallPath.json`（JSON 文字列 1 つ）と、Hub の既定のインストール先を読む。Hub の CLI も Unity も起動しない。壊れた JSON は空として扱う。Mac の Hub が `Unity.app` を記録していれば `Contents/MacOS/Unity` にする。一覧には実在する本体だけを出し、パスで重複をまとめ（Windows は大文字小文字を区別しない）、新しい版から並べる。
+- 既定の Unity は settings の `unity_editor_path`（スキーマ変更なし）。`set_unity_editor` はメイン画面からだけ受け、ファイル名が Unity 本体（Windows は `Unity.exe`、Mac と Linux は `Unity`）で実在するときだけ保存する。空文字は未設定。保存したパスが検出に無くても実在すれば「手動」として一覧に足し、消えていれば `selectedMissing` にする。
+- Mac と Linux の検出は実機で未検証。
 
 ### 抽出と安全境界
 
@@ -265,7 +271,7 @@ Windows の配布は未署名の NSIS（`.exe`）である。実行ファイル�
 
 Mac の内蔵ブラウザは `data_directory` を使わない。固定の 16 バイト `data_store_identifier`（`vrclibman-booth!`）でメイン画面と分ける。ログアウトはフォルダ削除ではなく、そのデータストアの `clear_all_browsing_data` と `remove_data_store` である。`vrclibman://` は `.app` を `/Applications` に置いたときだけ動く。
 
-実ページの変化に合わせて拡張の解析を更新する。Unity 連携や自動ダウンロードは、この方針の外にある。
+実ページの変化に合わせて拡張の解析を更新する。自動ダウンロードは、この方針の外にある。Unity との連携は、利用者が選んだ unitypackage を既定の Unity で開くところまでに留め、プロジェクトへの自動転送はしない。
 
 ## 変更時に守ること
 
@@ -273,6 +279,8 @@ Mac の内蔵ブラウザは `data_directory` を使わない。固定の 16 バ
 - コマンドを足すときは `src-tauri/src/commands.rs` と `src/api.ts` の引数名を一致させる。見本も同じコマンド名を受ける。
 - エラー文字列は日本語のまま返す。
 - 画面のスタイルは `src/styles.css` を使う。
+- 通知欄（`.banner.notice`）の操作ボタンは `notify(message, { label, run })` で1つだけ付ける。関数だけを渡したときは「元に戻す」になる。
+- 手元のファイルを既定のアプリで開くのは Rust の `open_local_path` だけにする。スキャン済みの `local_files.path` か、記録済みの `product_files.local_path` とちょうど一致するパスだけを開く。JS の opener に `open-path` 権限は足さない。フォルダの表示は opener 既定の `reveal-item-in-dir` を使う。失敗は通知欄のエラーに出す。
 - テスト用に Booth の商品ページ全文をリポジトリへ置かない。
 - `.env` や認証情報をコミットしない。
 - Git のユーザー設定は変えない。コミットは依頼されたときだけ作る。
@@ -293,6 +301,7 @@ Mac の内蔵ブラウザは `data_directory` を使わない。固定の 16 バ
 | `src-tauri/src/booth_detail.rs` | 公開の商品 JSON。Cookie は付けない |
 | `src-tauri/src/preview_image.rs` | 選択中の大きいプレビュー。Cookie は付けない |
 | `src-tauri/src/view.rs` | 一覧、詳細、キューの形 |
+| `src-tauri/src/unity.rs` | Unity エディタの検出（Hub の記録と既定のインストール先） |
 | `src-tauri/src/commands.rs` | Tauri コマンド |
 | `src/pages` | 画面 |
 | `src/preview/api.ts` | ブラウザ見本 |

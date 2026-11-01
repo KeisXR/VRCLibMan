@@ -298,6 +298,52 @@ pub fn set_booth_page_interval(
     db::set_booth_page_interval_ms(&connection, interval_ms)
 }
 
+fn unity_status_blocking(app: &AppHandle) -> Result<crate::unity::UnityStatus, String> {
+    let selected = {
+        let state = app.state::<AppState>();
+        let connection = db(&state)?;
+        db::unity_editor_path(&connection)?
+    };
+    let os = crate::unity::Os::current();
+    Ok(crate::unity::status(&selected, &crate::unity::Sources::for_current_os(), os))
+}
+
+/// インストール済みの Unity を検出する。Unity Hub の記録ファイルと既定のフォルダを読むだけ。
+#[tauri::command]
+pub async fn unity_editors(app: AppHandle) -> Result<crate::unity::UnityStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || unity_status_blocking(&app))
+        .await
+        .map_err(|err| format!("Unity を検出できません: {err}"))?
+}
+
+/// 既定の Unity を保存する。空文字で未設定に戻す。メイン画面からだけ受け付ける。
+#[tauri::command]
+pub async fn set_unity_editor(
+    view: tauri::Webview,
+    app: AppHandle,
+    path: String,
+) -> Result<crate::unity::UnityStatus, String> {
+    if view.label() != "main" {
+        return Err("この画面から Unity の設定は変更できません".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let os = crate::unity::Os::current();
+        let value = if path.trim().is_empty() {
+            String::new()
+        } else {
+            crate::unity::validate_manual(&path, os)?.display().to_string()
+        };
+        {
+            let state = app.state::<AppState>();
+            let connection = db(&state)?;
+            db::set_unity_editor_path(&connection, &value)?;
+        }
+        unity_status_blocking(&app)
+    })
+    .await
+    .map_err(|err| format!("Unity の設定を保存できません: {err}"))?
+}
+
 #[tauri::command]
 pub fn list_queue(
     state: State<'_, AppState>,
@@ -662,8 +708,34 @@ pub async fn download_booth_file(
     booth_id: String,
     variation: String,
     filename: String,
-) -> Result<(), String> {
+) -> Result<String, String> {
     crate::browser::download_one_file(app, booth_id, variation, filename).await
+}
+
+/// スキャン済みファイルと、記録済みの商品ファイルだけを既定のアプリで開く。
+/// JS 側の opener に open-path 権限を足さず、Rust で登録済みのパスか確かめてから開く。
+#[tauri::command]
+pub async fn open_local_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let known = {
+            let state = app.state::<AppState>();
+            let connection = state
+                .db
+                .lock()
+                .map_err(|_| "データベースをロックできません".to_string())?;
+            db::is_known_local_path(&connection, &path)?
+        };
+        if !known {
+            return Err("ライブラリに登録されていない場所は開けません".to_string());
+        }
+        if std::fs::symlink_metadata(&path).is_err() {
+            return Err("ファイルが見つかりません。フォルダを調べ直してください".to_string());
+        }
+        tauri_plugin_opener::open_path(&path, None::<&str>)
+            .map_err(|_| "ファイルを開けませんでした".to_string())
+    })
+    .await
+    .map_err(|err| format!("ファイルを開けません: {err}"))?
 }
 
 #[tauri::command]
