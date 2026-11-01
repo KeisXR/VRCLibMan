@@ -38,20 +38,47 @@ pub fn strong_category_override(title: &str) -> Option<Category> {
 }
 
 /// Title phrases used only after BOOTH category and tags decline to settle.
-/// A settled BOOTH category stays as it is. Locks are handled by the caller.
-pub fn title_fill_category(title: &str, model: Category) -> Option<Category> {
+/// A settled outfit, hair, or other specific BOOTH category stays as it is.
+/// Locks are handled by the caller. Description is consulted for placement,
+/// clothing, and editor-tool phrases that the title does not carry.
+pub fn title_fill_category(title: &str, description: &str, model: Category) -> Option<Category> {
     let folded = nfkc(title).to_lowercase();
     if avatar_package(&folded) {
         return Some(Category::Avatar);
     }
-    if has_world_prop(&folded) {
+    if has_world_prop(&folded) || world_placement(&folded) || gpu_particle(&folded) {
         return Some(Category::World);
     }
-    let keyword = category_for_listed_product(title, "");
+    if !avatar_gimmick_title(title)
+        && (world_placement(description) || gpu_particle(description))
+        && !matches!(model, Category::Avatar | Category::Outfit | Category::Hair)
+    {
+        return Some(Category::World);
+    }
+    if editor_tool_title(title)
+        && !avatar_gimmick_title(title)
+        && !world_side_title(&folded)
+        && matches!(
+            model,
+            Category::Other
+                | Category::Gimmick
+                | Category::Texture
+                | Category::Hair
+                | Category::Accessory
+        )
+    {
+        return Some(Category::Other);
+    }
+    let keyword = category_for_listed_product(title, description);
     if model == Category::Other && keyword != Category::Other {
         return Some(keyword);
     }
-    if model == Category::Gimmick && keyword == Category::Accessory {
+    if model == Category::Gimmick
+        && matches!(
+            keyword,
+            Category::Accessory | Category::Outfit | Category::World
+        )
+    {
         return Some(keyword);
     }
     None
@@ -145,6 +172,167 @@ fn has_world_prop(lower: &str) -> bool {
     WORDS.iter().any(|word| lower.contains(word))
 }
 
+fn world_side_title(lower: &str) -> bool {
+    world_strength(lower) >= 1
+        || has_world_prop(lower)
+        || world_placement(lower)
+        || gpu_particle(lower)
+}
+
+/// The title names an avatar gimmick. World placement in the same title stays a world.
+pub fn avatar_gimmick_title(title: &str) -> bool {
+    let lower = nfkc(title).to_lowercase();
+    if lower.is_empty() || world_side_title(&lower) {
+        return false;
+    }
+    const WORDS: &[&str] = &["ギミック", "gimmick", "なでなで", "kisssystem", "すりすり"];
+    WORDS.iter().any(|word| lower.contains(word))
+}
+
+/// The product is put into a world. A sample-world link or 「お試しワールド」 is not this.
+pub fn world_placement(text: &str) -> bool {
+    let lower = nfkc(text).to_lowercase();
+    const PHRASES: &[&str] = &[
+        "ワールド設置",
+        "ワールドに配置",
+        "ワールドに置く",
+        "ワールドへ配置",
+        "ワールドへ置く",
+        "ワールドギミック",
+        "world gimmick",
+        "worldに置",
+        "worldに配置",
+        "をワールドに",
+    ];
+    PHRASES.iter().any(|phrase| lower.contains(phrase))
+}
+
+/// World-side GPU particle volumes, not an avatar particle gimmick.
+pub fn gpu_particle(text: &str) -> bool {
+    let lower = nfkc(text).to_lowercase();
+    const PHRASES: &[&str] = &[
+        "gpu particle",
+        "particle volume",
+        "gpuパーティクル",
+        "gpu パーティクル",
+        "パーティクルボリューム",
+    ];
+    PHRASES.iter().any(|phrase| lower.contains(phrase))
+}
+
+pub fn mochifitter_title(title: &str) -> bool {
+    let lower = nfkc(title).to_lowercase();
+    lower.contains("もちふぃった") || lower.contains("mochifitter")
+}
+
+pub fn conversion_profile_title(title: &str) -> bool {
+    let lower = nfkc(title).to_lowercase();
+    lower.contains("変換プロファイル")
+        || (lower.contains("プロファイル") && mochifitter_title(&lower))
+}
+
+pub fn editor_tool_title(title: &str) -> bool {
+    let lower = nfkc(title).to_lowercase();
+    lower.contains("ツール")
+        || lower.contains("エディタ拡張")
+        || lower.contains("editor extension")
+        || lower.contains("editor拡張")
+}
+
+/// The opening of the description says this product is an editor or conversion tool.
+pub fn editor_tool_lead(description: &str) -> bool {
+    let head: String = nfkc(description).to_lowercase().chars().take(180).collect();
+    if head.contains("ツールは同梱")
+        || head.contains("ツールを同梱")
+        || head.contains("ツールは同梱しません")
+    {
+        return false;
+    }
+    head.contains("ツールです")
+        || head.contains("ツールは")
+        || head.contains("するツール")
+        || head.contains("向けのツール")
+        || head.contains("用のツール")
+        || head.contains("unityツール")
+        || head.contains("エディタ拡張")
+        || head.contains("editor extension")
+}
+
+pub fn clothing_title(title: &str) -> bool {
+    let lower = nfkc(title).to_lowercase();
+    const WORDS: &[&str] = &[
+        "衣装",
+        "服",
+        "部屋着",
+        "ルームウェア",
+        "パーカー",
+        "スカート",
+        "シャツ",
+        "ドレス",
+        "ワンピース",
+        "techwear",
+        "tech wear",
+        "ずぼん",
+        "ズボン",
+        "fullpack",
+        "full pack",
+    ];
+    WORDS.iter().any(|word| lower.contains(word))
+}
+
+pub fn shoe_title(title: &str) -> bool {
+    mentions_shoe(&nfkc(title).to_lowercase())
+}
+
+pub fn sticker_title(title: &str) -> bool {
+    let lower = nfkc(title).to_lowercase();
+    lower.contains("ステッカー") || lower.contains("絵文字")
+}
+
+/// Animation on a nameplate or accessory is a feature of that accessory.
+pub fn nameplate_accessory(title: &str, description: &str) -> bool {
+    let title_l = nfkc(title).to_lowercase();
+    let text = format!("{title_l}\n{}", nfkc(description).to_lowercase());
+    let feature = title_l.contains("アニメーション付き") || title_l.contains("名札");
+    let accessory = text.contains("アクセサリ") || text.contains("名札");
+    feature && accessory && !title_l.contains("表情")
+}
+
+/// Clothing as the product. A disclaimer that clothing is not included does not count.
+pub fn outfit_description(description: &str) -> bool {
+    let head: String = nfkc(description).to_lowercase().chars().take(240).collect();
+    if head.contains("同梱しません")
+        || head.contains("は同梱しない")
+        || head.contains("衣装とツール")
+        || head.contains("衣装/ツール")
+        || head.contains("衣装を非対応")
+        || head.contains("衣装は同梱")
+    {
+        return false;
+    }
+    if head.contains("衣装です") || head.contains("想定の衣装") || head.contains("用の衣装")
+    {
+        return true;
+    }
+    let colors = head.contains("カラバリ") || head.contains("カラーバリエーション");
+    let spec = head.contains("ポリゴン") || head.contains("マテリアル");
+    colors && spec
+}
+
+/// Shoe words that name the product. Shape-key identifiers such as `kisekae_Shoes` do not.
+pub fn mentions_shoe(text: &str) -> bool {
+    let stripped = nfkc(text)
+        .to_lowercase()
+        .replace("kisekae_shoes", "")
+        .replace("kisekae_shoe", "");
+    stripped.contains("靴")
+        || stripped.contains("シューズ")
+        || stripped.contains("靴下")
+        || stripped.contains("ソックス")
+        || crate::normalize::contains_ascii_word(&stripped, "shoe")
+        || crate::normalize::contains_ascii_word(&stripped, "shoes")
+}
+
 /// World assets beat a weak model guess. `ギミック` alone stays an avatar gimmick.
 /// A world gimmick needs a world signal: ワールド, world, Udon, UdonSharp,
 /// ワールド用, ワールドギミック, a shader for a world, or a world prefab.
@@ -154,6 +342,10 @@ pub fn world_hint_overrides(
     model: Category,
     confidence: f64,
 ) -> bool {
+    // 「お試しワールド」やワールドURLだけでは、アバターギミックをワールドにしない。
+    if avatar_gimmick_title(title) && !world_placement(title) && !world_placement(description) {
+        return false;
+    }
     let title_strength = world_strength(title);
     let body_strength = world_strength(description);
     if title_strength == 0 && body_strength == 0 {
@@ -238,9 +430,44 @@ fn has_world_word(lower: &str) -> bool {
 }
 
 pub fn category_for_listed_product(title: &str, description: &str) -> Category {
+    if conversion_profile_title(title) {
+        return Category::Other;
+    }
+    let title_l = nfkc(title).to_lowercase();
+    if world_side_title(&title_l) {
+        return Category::World;
+    }
+    if avatar_gimmick_title(title) {
+        if world_placement(description) {
+            return Category::World;
+        }
+        return Category::Gimmick;
+    }
+    // 「アイテクスチャを使えるようにするツール」はテクスチャ商品ではない。
+    if (editor_tool_title(title) || mochifitter_title(title)) && !clothing_title(title) {
+        return Category::Other;
+    }
     let from_title = classify_text(title, true);
+    // A shape-key pack or texture utility whose description says it is a tool
+    // is not an avatar gimmick. The title still wins when it names a gimmick.
+    if from_title == Category::Gimmick
+        && editor_tool_lead(description)
+        && !avatar_gimmick_title(title)
+    {
+        return Category::Other;
+    }
     if from_title != Category::Other {
         return from_title;
+    }
+    // 「衣装変換ツール」のように題がツールなら、説明の衣装語では衣装にしない。
+    if editor_tool_title(title) || mochifitter_title(title) {
+        return Category::Other;
+    }
+    if gpu_particle(description) || world_placement(description) {
+        return Category::World;
+    }
+    if outfit_description(description) {
+        return Category::Outfit;
     }
     let head: String = description.chars().take(160).collect();
     let folded = nfkc(&head).to_lowercase();
@@ -845,16 +1072,7 @@ fn classify_text(text: &str, allow_broad: bool) -> Category {
     ]) {
         return Category::Texture;
     }
-    if has(&[
-        "ヘア",
-        "髪",
-        "ウィッグ",
-        "ポニーテール",
-        "お団子",
-        "前髪",
-        "みつあみ",
-        "hair",
-    ]) {
+    if has_hair_product(&lower) {
         return Category::Hair;
     }
     if has(&[
@@ -881,7 +1099,11 @@ fn classify_text(text: &str, allow_broad: bool) -> Category {
     if has(&["オリジナル3dモデル"]) || avatar_package(&lower) {
         return Category::Avatar;
     }
-    if world_strength(text) >= 2 || has_world_prop(&lower) {
+    if world_strength(text) >= 2
+        || has_world_prop(&lower)
+        || world_placement(&lower)
+        || gpu_particle(&lower)
+    {
         return Category::World;
     }
     if has(&[
@@ -905,7 +1127,13 @@ fn classify_text(text: &str, allow_broad: bool) -> Category {
     {
         return Category::Gimmick;
     }
-    if has(&["ギミック", "シェーダー", "shader", "ツール"]) {
+    if has(&["ギミック", "gimmick"]) {
+        return Category::Gimmick;
+    }
+    if has(&["ツール", "エディタ拡張", "editor extension"]) {
+        return Category::Other;
+    }
+    if has(&["シェーダー", "shader"]) {
         return Category::Gimmick;
     }
     if has(&[
@@ -934,6 +1162,23 @@ fn classify_text(text: &str, allow_broad: bool) -> Category {
         return Category::World;
     }
     Category::Other
+}
+
+/// 「髪色」 is a color edit, not a hair product. 「前髪」 still counts.
+fn has_hair_product(lower: &str) -> bool {
+    let stripped = lower.replace("髪の色", "").replace("髪色", "");
+    [
+        "ヘア",
+        "髪",
+        "ウィッグ",
+        "ポニーテール",
+        "お団子",
+        "前髪",
+        "みつあみ",
+        "hair",
+    ]
+    .iter()
+    .any(|word| stripped.contains(word))
 }
 
 fn has_body_word(lower: &str) -> bool {
@@ -1220,8 +1465,28 @@ Avatar
             0.95
         ));
         assert_eq!(
-            title_fill_category("サンプルこたつ", Category::Gimmick),
+            title_fill_category("サンプルこたつ", "", Category::Gimmick),
             Some(Category::World)
+        );
+        assert!(!world_hint_overrides(
+            "撫で音ギミック",
+            "お試しワールドで展示しています。 https://vrchat.com/home/world/wrld_example",
+            Category::Gimmick,
+            0.95
+        ));
+        assert_eq!(
+            category_for_listed_product(
+                "撫で音ギミック",
+                "影シェーダーを同梱しています。お試しワールドがあります。"
+            ),
+            Category::Gimmick
+        );
+        assert_eq!(
+            category_for_listed_product(
+                "40アバター対応",
+                "VRChat想定の衣装です。カラバリとポリゴン数。"
+            ),
+            Category::Outfit
         );
         assert!(!world_hint_overrides(
             "サンプルペンライト",
@@ -1234,7 +1499,7 @@ Avatar
             None
         );
         assert_eq!(
-            title_fill_category("【VRChat / 3D model】サンプル子", Category::Other),
+            title_fill_category("【VRChat / 3D model】サンプル子", "", Category::Other),
             Some(Category::Avatar)
         );
         assert_eq!(

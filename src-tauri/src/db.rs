@@ -1433,6 +1433,11 @@ fn apply_extraction_inner(
             // tag must not turn a tool into an outfit.
             let from_tags = crate::genre::genre_from_tags(category, &tags)
                 .filter(|genre| crate::genre::fits(category, genre));
+            let preferred = crate::genre::prefer_listing(
+                category,
+                &existing.title,
+                &existing.description_snippet,
+            );
             let from_title = if title_fill {
                 crate::genre::classify_title_gap(
                     category,
@@ -1453,11 +1458,17 @@ fn apply_extraction_inner(
                     &existing.description_snippet,
                 )
             };
-            // Tags win. A BOOTH settlement then keeps its genre. Title phrases fill the rest.
+            // A product-type phrase wins over tags. Tags then win when the genre fits.
+            // A BOOTH settlement keeps its genre when neither applies. Title phrases fill the rest.
             let selected = if title_fill {
-                from_tags.or(from_title).or_else(|| extraction.genre.clone())
+                preferred
+                    .clone()
+                    .or(from_tags)
+                    .or(from_title)
+                    .or_else(|| extraction.genre.clone())
             } else {
-                from_tags
+                preferred
+                    .or(from_tags)
                     .or_else(|| extraction.genre.clone())
                     .or(from_title)
             };
@@ -2770,9 +2781,20 @@ pub(crate) fn apply_booth_settlement(
         return Ok(false);
     }
     let meta = booth_meta(connection, booth_id)?;
-    let Some(settlement) = crate::booth_category::settle(meta.id, &meta.name, &meta.tags) else {
+    let Some(mut settlement) = crate::booth_category::settle(meta.id, &meta.name, &meta.tags)
+    else {
         return Ok(false);
     };
+    // 201 / 215 are a coarse tool bucket. Placement and avatar-gimmick text
+    // move the row. A specific category such as outfit still ignores the title.
+    if crate::booth_category::is_coarse_tool(meta.id, &meta.name) {
+        if let Some((category, genre)) =
+            crate::classifier::coarse_tool_override(&existing.title, &existing.description_snippet)
+        {
+            settlement.category = category;
+            settlement.genre = Some(genre);
+        }
+    }
     if existing.category_locked && existing.category != Some(settlement.category) {
         return Ok(false);
     }
@@ -5466,7 +5488,11 @@ fn decide_category(
         ) {
             return Some(Category::World);
         }
-        if let Some(category) = crate::compat::title_fill_category(&existing.title, llm) {
+        if let Some(category) = crate::compat::title_fill_category(
+            &existing.title,
+            &existing.description_snippet,
+            llm,
+        ) {
             return Some(category);
         }
     }
@@ -6977,6 +7003,83 @@ mod tests {
         let pinned = require_product(&connection, "7702101").unwrap();
         assert_eq!(pinned.category, Some(Category::Gimmick));
         assert_eq!(pinned.genre.as_deref(), Some("gimmick"));
+    }
+
+    #[test]
+    fn coarse_tool_text_overrides_software_and_tool_categories_only() {
+        let mut connection = open_memory().unwrap();
+        import_export_json(
+            &mut connection,
+            r#"{
+                "products": [
+                    {
+                        "boothId": "7702301",
+                        "title": "架空の共有ボード",
+                        "description": "prefabをワールドに配置する。",
+                        "category": {"id": 215, "name": "3Dツール・システム", "parent": {"name": "3Dモデル"}},
+                        "tags": ["VRChat", "シェーダー"]
+                    },
+                    {
+                        "boothId": "7702302",
+                        "title": "架空 CPU Affinity",
+                        "description": "PC用の割り当てアプリです。",
+                        "category": {"id": 201, "name": "ソフトウェア"},
+                        "tags": ["VRChat"]
+                    },
+                    {
+                        "boothId": "7702303",
+                        "title": "架空の撫で音ギミック",
+                        "description": "影シェーダーを同梱しています。お試しワールドがあります。",
+                        "category": {"id": 215, "name": "3Dツール・システム"},
+                        "tags": ["シェーダー", "ギミック"]
+                    },
+                    {
+                        "boothId": "7702304",
+                        "title": "架空の追加シェイプキー",
+                        "description": "シェイプキーを配布するデータです。",
+                        "category": {"id": 215, "name": "3Dツール・システム"},
+                        "tags": ["シェイプキー"]
+                    },
+                    {
+                        "boothId": "7702305",
+                        "title": "架空Udonスイッチ",
+                        "description": "衣装です。",
+                        "category": {"id": 209, "name": "3D衣装"},
+                        "tags": ["VRChat"]
+                    },
+                    {
+                        "boothId": "7702306",
+                        "title": "架空の設置ギミック",
+                        "description": "ワールドに配置するギミックです。",
+                        "category": {"id": 215, "name": "3Dツール・システム"},
+                        "tags": ["Udon"]
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+        let expect = |connection: &Connection, id: &str, category: Category, genre: &str| {
+            let product = require_product(connection, id).unwrap();
+            assert_eq!(product.category, Some(category), "{id}");
+            assert_eq!(product.genre.as_deref(), Some(genre), "{id}");
+        };
+        assert!(apply_booth_settlement(&mut connection, "7702301").unwrap());
+        expect(&connection, "7702301", Category::World, "world_gimmick");
+        assert!(apply_booth_settlement(&mut connection, "7702302").unwrap());
+        expect(&connection, "7702302", Category::World, "tool_other");
+        assert!(apply_booth_settlement(&mut connection, "7702303").unwrap());
+        expect(&connection, "7702303", Category::Gimmick, "gimmick");
+        assert!(apply_booth_settlement(&mut connection, "7702304").unwrap());
+        expect(&connection, "7702304", Category::Other, "tool_editor");
+        assert!(apply_booth_settlement(&mut connection, "7702305").unwrap());
+        expect(&connection, "7702305", Category::Outfit, "outfit");
+
+        move_product_genre(&mut connection, "7702306", "asset", "tool_editor").unwrap();
+        assert!(!apply_booth_settlement(&mut connection, "7702306").unwrap());
+        let pinned = require_product(&connection, "7702306").unwrap();
+        assert_eq!(pinned.category, Some(Category::Other));
+        assert_eq!(pinned.genre.as_deref(), Some("tool_editor"));
+        assert!(pinned.category_locked && pinned.genre_locked);
     }
 
     fn classifier_version_of(connection: &Connection, booth_id: &str) -> i64 {

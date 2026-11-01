@@ -90,6 +90,81 @@ pub fn validate(category: Category, genre: Option<&str>) -> String {
         .to_string()
 }
 
+/// Product-type phrases that beat an incidental word in the description or tags.
+/// `None` leaves tag and keyword order unchanged.
+pub fn prefer_listing(category: Category, title: &str, description: &str) -> Option<String> {
+    let title_l = crate::normalize::nfkc(title).to_lowercase();
+    let body_l = crate::normalize::nfkc(description).to_lowercase();
+    let text = format!("{title_l}\n{body_l}");
+    if crate::compat::conversion_profile_title(&title_l)
+        || crate::compat::mochifitter_title(&title_l)
+    {
+        return Some(validate(category, Some("tool_editor")));
+    }
+    if crate::compat::sticker_title(&title_l) {
+        return Some(validate(category, Some("other")));
+    }
+    if category == Category::World && crate::compat::gpu_particle(&text) {
+        return Some("tool_other".into());
+    }
+    if category == Category::Other
+        && (crate::compat::editor_tool_title(&title_l) || crate::compat::editor_tool_lead(&body_l))
+    {
+        return Some("tool_editor".into());
+    }
+    if category == Category::Gimmick && crate::compat::avatar_gimmick_title(&title_l) {
+        if title_expression(&title_l) {
+            return Some("expression_animation".into());
+        }
+        return Some("gimmick".into());
+    }
+    if category == Category::Gimmick && crate::compat::nameplate_accessory(&title_l, &body_l) {
+        return Some("accessory".into());
+    }
+    if category == Category::Outfit
+        && !crate::compat::shoe_title(&title_l)
+        && (crate::compat::clothing_title(&title_l) || crate::compat::outfit_description(&body_l))
+    {
+        return Some("outfit".into());
+    }
+    if category == Category::World
+        && (crate::compat::world_placement(&text)
+            || text.contains("udon")
+            || text.contains("ギミック")
+            || text.contains("gimmick")
+            || text.contains("asmr")
+            || text.contains("ワールドギミック"))
+    {
+        return Some("world_gimmick".into());
+    }
+    None
+}
+
+fn title_expression(title: &str) -> bool {
+    const WORDS: &[&str] = &[
+        "表情",
+        "シェイプキー",
+        "shapekey",
+        "shape key",
+        "face tracking",
+        "facetracking",
+        "フェイストラッキング",
+    ];
+    WORDS.iter().any(|word| title.contains(word))
+}
+
+fn has_hair_word(text: &str) -> bool {
+    let stripped = text.replace("髪色", "").replace("髪の色", "");
+    stripped.contains("髪型")
+        || stripped.contains("髪")
+        || stripped.contains("ヘア")
+        || stripped.contains("hair")
+}
+
+fn has_shoe_word(text: &str) -> bool {
+    crate::compat::mentions_shoe(text)
+}
+
 /// Title phrases for products whose BOOTH category and tags did not choose a genre.
 /// Tag settlement keeps using `classify_text`, so these words do not change that path.
 pub fn classify_title_gap(category: Category, title: &str, description: &str) -> Option<String> {
@@ -131,9 +206,9 @@ pub fn classify_title_gap(category: Category, title: &str, description: &str) ->
         }
     } else if has(&["アイテクスチャ", "瞳", "eye texture", "eyetexture"]) {
         "eye_texture"
-    } else if has(&["靴", "シューズ", "shoe", "靴下", "ソックス"]) {
+    } else if has_shoe_word(&text) {
         "shoes_socks"
-    } else if has(&["髪型", "髪", "ヘア", "hair"]) {
+    } else if has_hair_word(&text) {
         "hair"
     } else if has(&["メイク", "肌テクスチャ", "skin texture"]) || title_has(&["ニップル", "nipple"])
     {
@@ -232,9 +307,9 @@ pub fn classify_text(category: Category, title: &str, description: &str) -> Opti
         }
     } else if has(&["アイテクスチャ", "瞳", "eye texture", "eyetexture"]) {
         "eye_texture"
-    } else if has(&["靴", "シューズ", "shoe", "靴下", "ソックス"]) {
+    } else if has_shoe_word(&text) {
         "shoes_socks"
-    } else if has(&["髪型", "髪", "ヘア", "hair"]) {
+    } else if has_hair_word(&text) {
         "hair"
     } else if has(&["メイク", "肌テクスチャ", "skin texture"]) {
         "makeup_skin"
@@ -265,7 +340,14 @@ pub fn classify_text(category: Category, title: &str, description: &str) -> Opti
 /// Tags that do not say what kind of item this is.
 pub fn generic_tag(tag: &str) -> bool {
     const STOP: &[&str] = &[
-        "vrchat", "vrc", "unity", "3dモデル", "3d model", "3dmodel", "booth", "vr",
+        "vrchat",
+        "vrc",
+        "unity",
+        "3dモデル",
+        "3d model",
+        "3dmodel",
+        "booth",
+        "vr",
     ];
     let key = crate::normalize::nfkc(tag).trim().to_lowercase();
     STOP.contains(&key.as_str())
