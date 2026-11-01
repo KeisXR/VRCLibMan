@@ -297,7 +297,7 @@ Mac の内蔵ブラウザは `data_directory` を使わない。固定の 16 バ
 - エラー文字列は日本語のまま返す。
 - 画面のスタイルは `src/styles.css` を使う。
 - 通知欄（`.banner.notice`）の操作ボタンは `notify(message, { label, run })` で1つだけ付ける。関数だけを渡したときは「元に戻す」になる。
-- 通知欄は時間で消える（`src/notice.ts` の `noticeDuration`。ボタンなし約6秒、ボタン付き約12秒、長い文は加算）。マウスが上にある間、通知内にフォーカスがある間、ウィンドウが非アクティブな間は止める。失敗件数や途中打ち切りを含む結果は `notify(message, undefined, { persist: true })` で残し、失敗は `fail` の帯に出す。どちらも「×」（閉じる）で閉じられる。
+- 通知欄は時間で消える（`src/notice.ts` の `noticeDuration`。ボタンなし約6秒、ボタン付き約12秒、長い文は加算）。マウスが上にある間、通知内にフォーカスがある間、画面が隠れている間（`visibilitychange`）は止める。ウィンドウのフォーカスが外れただけでは止めない。失敗件数や途中打ち切りを含む結果は `notify(message, undefined, { persist: true })` で残し、失敗は `fail` の帯に出す。どちらも「×」（閉じる）で閉じられる。
 - 手元のファイルを既定のアプリで開くのは Rust の `open_local_path` だけにする。スキャン済みの `local_files.path` か、記録済みの `product_files.local_path` とちょうど一致するパスだけを開く。JS の opener に `open-path` 権限は足さない。フォルダの表示は opener 既定の `reveal-item-in-dir` を使う。失敗は通知欄のエラーに出す。
 - テスト用に Booth の商品ページ全文をリポジトリへ置かない。
 - `.env` や認証情報をコミットしない。

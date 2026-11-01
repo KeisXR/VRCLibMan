@@ -165,15 +165,29 @@ test("banners: notices auto-dismiss, errors stay until closed", async () => {
     await advance(12_000);
     assert.equal(noticeEl(), null);
 
-    // ウィンドウが非アクティブな間は数えない。
-    await act(async () => { shell.notify("非アクティブの確認"); });
+    // ウィンドウのフォーカスが外れただけ（内蔵ブラウザの操作中など）では止めない。
+    await act(async () => { shell.notify("フォーカス外れの確認"); });
     focused = false;
     await act(async () => { window.dispatchEvent(new window.Event("blur")); });
-    await advance(60_000);
-    assert.ok(noticeEl(), "inactive window keeps the notice");
+    await advance(6000);
+    assert.equal(noticeEl(), null, "a blurred window still dismisses the notice");
+    await act(async () => { shell.notify("フォーカス外れのまま出た通知"); });
+    await advance(6000);
+    assert.equal(noticeEl(), null, "a notice shown while blurred also dismisses");
     focused = true;
     await act(async () => { window.dispatchEvent(new window.Event("focus")); });
-    await advance(6000);
+    // 画面が隠れている間は数えない。
+    await act(async () => { shell.notify("隠れる確認"); });
+    await advance(1000);
+    visibility = "hidden";
+    await act(async () => { document.dispatchEvent(new window.Event("visibilitychange")); });
+    await advance(60_000);
+    assert.ok(noticeEl(), "a hidden window keeps the notice");
+    visibility = "visible";
+    await act(async () => { document.dispatchEvent(new window.Event("visibilitychange")); });
+    await advance(4999);
+    assert.ok(noticeEl(), "resumes with the remaining time");
+    await advance(1);
     assert.equal(noticeEl(), null);
     visibility = "hidden";
     await act(async () => { shell.notify("非表示の確認"); });

@@ -12,9 +12,9 @@ import {
   type NoticeHold,
 } from "../notice";
 
+/** 画面が隠れている（最小化や別タブなど）ときだけ止める。フォーカスが外れただけでは止めない。 */
 function windowInactive(): boolean {
-  if (document.visibilityState === "hidden") return true;
-  return typeof document.hasFocus === "function" && !document.hasFocus();
+  return document.visibilityState === "hidden";
 }
 
 function CloseButton({ onClick }: { onClick: () => void }) {
@@ -27,7 +27,7 @@ function CloseButton({ onClick }: { onClick: () => void }) {
 
 /**
  * 情報通知。`persist` でなければ一定時間で消える。
- * マウスが上にある間、通知内のボタンにフォーカスがある間、ウィンドウが非アクティブな間は止まる。
+ * マウスが上にある間、通知内のボタンにフォーカスがある間、画面が隠れている間は止まる。
  */
 export function NoticeBanner({
   notice,
@@ -75,12 +75,8 @@ export function NoticeBanner({
     schedule();
     const onActivity = () => change("inactive", windowInactive());
     document.addEventListener("visibilitychange", onActivity);
-    window.addEventListener("focus", onActivity);
-    window.addEventListener("blur", onActivity);
     return () => {
       document.removeEventListener("visibilitychange", onActivity);
-      window.removeEventListener("focus", onActivity);
-      window.removeEventListener("blur", onActivity);
       if (timer.current !== null) window.clearTimeout(timer.current);
       timer.current = null;
       clock.current = null;
