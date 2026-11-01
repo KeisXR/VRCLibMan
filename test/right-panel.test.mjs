@@ -18,28 +18,52 @@ test("right panel tabs keep only known kinds and never store free text", async (
     const parsed = panel.parseRightPanelTabs(
       JSON.stringify({ tabs: ["files", "https://booth.pm/ja/items/1", "preview", "preview", "browser"], active: 4 }),
     );
-    assert.deepEqual(kinds(parsed), ["files", "preview", "browser"]);
-    assert.equal(active(parsed), "browser");
+    assert.deepEqual(kinds(parsed), ["files", "preview"]);
+    assert.equal(active(parsed), "preview");
     const stored = panel.serializeRightPanelTabs(parsed);
-    assert.equal(stored, '{"tabs":["files","preview","browser"],"active":2}');
-    assert.doesNotMatch(stored, /booth\.pm|https?:/);
+    assert.equal(stored, '{"tabs":["files","preview"],"active":1}');
+    assert.doesNotMatch(stored, /booth\.pm|https?:|browser/);
 
     const empty = panel.parseRightPanelTabs('{"tabs":[],"active":3}');
     assert.deepEqual(kinds(empty), []);
     assert.equal(empty.activeId, null);
     assert.equal(panel.serializeRightPanelTabs(empty), '{"tabs":[],"active":0}');
 
-    // Kinds that later changes implement stay stored but hidden in this build. The browser tab
-    // shows only while the built-in browser is turned on.
     assert.equal(panel.RIGHT_PANEL_KIND_INFO.preview.available, true);
     assert.equal(panel.RIGHT_PANEL_KIND_INFO.files.available, true);
+    assert.equal(panel.pageTabsAllowed({}), false);
+    assert.equal(panel.pageTabsAllowed({ builtinBrowser: true }), true);
     assert.deepEqual(panel.visibleTabs(parsed).map((tab) => tab.kind), ["files", "preview"]);
-    assert.equal(panel.activeTab(parsed).kind, "files");
-    assert.deepEqual(panel.visibleTabs(parsed, { builtinBrowser: true }).map((tab) => tab.kind), ["files", "preview", "browser"]);
-    assert.equal(panel.activeTab(parsed, { builtinBrowser: true }).kind, "browser");
+    assert.equal(panel.activeTab(parsed).kind, "preview");
     assert.equal(panel.canAddTab(parsed, "files"), true);
-    assert.equal(panel.canAddTab(parsed, "browser"), false);
-    assert.equal(panel.canAddTab(parsed, "browser", { builtinBrowser: true }), true);
+
+    const withPages = panel.focusWebTab(parsed, "booth-tab-1", "one.example");
+    const placed = panel.placeTab(withPages, "web-booth-tab-1", 1);
+    assert.deepEqual(kinds(placed), ["files", "web", "preview"]);
+    const pageStored = panel.serializeRightPanelTabs(placed);
+    assert.equal(pageStored, '{"tabs":["files","preview"],"active":0}');
+    assert.doesNotMatch(pageStored, /booth-tab|example/);
+    const merged = panel.mergePanelWebTabs(placed, [
+      { tabId: "booth-tab-1", title: "one.example" },
+      { tabId: "booth-tab-2", title: "two.example" },
+    ]);
+    assert.deepEqual(panel.webTabIds(merged), ["booth-tab-1", "booth-tab-2"]);
+    assert.equal(panel.visibleTabs(merged, { builtinBrowser: true }).some((tab) => tab.kind === "web"), true);
+    assert.equal(panel.visibleTabs(merged).some((tab) => tab.kind === "web"), false);
+    assert.deepEqual(panel.webTabIds(panel.mergePanelWebTabs(merged, [])), []);
+
+    const strip = await server.ssrLoadModule("/src/tabStrip.ts");
+    assert.equal(strip.dragOutcome({ moved: false, cancelled: false, insideWindow: false, detachable: true }), "click");
+    assert.equal(strip.dragOutcome({ moved: true, cancelled: true, insideWindow: false, detachable: true }), "cancel");
+    assert.equal(strip.dragOutcome({ moved: true, cancelled: false, insideWindow: true, detachable: true }), "reorder");
+    assert.equal(strip.dragOutcome({ moved: true, cancelled: false, insideWindow: false, detachable: false }), "cancel");
+    assert.equal(strip.dragOutcome({ moved: true, cancelled: false, insideWindow: false, detachable: true }), "detach");
+    assert.equal(strip.dragOutcome({ moved: true, cancelled: false, insideWindow: false, detachable: true, dragEndOnly: true }), "cancel");
+    assert.equal(strip.pointerInsideWindow(-20, 10, 800, 600), false);
+    assert.equal(strip.pointerInsideWindow(20, 10, 800, 600), true);
+    assert.equal(strip.insertionIndex(5, [{ left: 0, width: 20 }, { left: 24, width: 20 }]), 0);
+    assert.equal(strip.insertionIndex(30, [{ left: 0, width: 20 }, { left: 24, width: 20 }]), 1);
+    assert.equal(strip.insertionIndex(40, [{ left: 0, width: 20 }, { left: 24, width: 20 }]), 2);
 
     // The preview tab is single; opening it again focuses it.
     let state = panel.openTab(empty, "preview");
@@ -48,15 +72,15 @@ test("right panel tabs keep only known kinds and never store free text", async (
     assert.deepEqual(kinds(again), ["preview"]);
     assert.equal(again.activeId, state.activeId);
 
-    state = { tabs: [...parsed.tabs], activeId: parsed.tabs[1].id };
+    state = panel.focusWebTab({ tabs: [...parsed.tabs], activeId: parsed.tabs[1].id }, "booth-tab-9", "nine.example");
     const moved = panel.moveTab(state, state.tabs[1].id, 1);
-    assert.deepEqual(kinds(moved), ["files", "browser", "preview"]);
+    assert.deepEqual(kinds(moved), ["files", "web", "preview"]);
     assert.equal(panel.moveTab(moved, moved.tabs[2].id, 1), moved);
-    const closed = panel.closeTab(moved, moved.tabs[2].id);
-    assert.deepEqual(kinds(closed), ["files", "browser"]);
-    assert.equal(active(closed), "browser");
+    const closed = panel.closeTab(moved, moved.tabs[1].id);
+    assert.deepEqual(kinds(closed), ["files", "preview"]);
+    assert.equal(active(closed), "preview");
     const closedMiddle = panel.closeTab(state, state.tabs[1].id);
-    assert.equal(active(closedMiddle), "browser");
+    assert.equal(active(closedMiddle), "web");
     assert.equal(panel.selectTab(state, "missing"), state);
 
     const key = (over) => ({ key: "B", code: "KeyB", ctrlKey: true, metaKey: false, shiftKey: true, altKey: false, ...over });
@@ -92,8 +116,9 @@ test("the preview lives in the app's right panel instead of a split inside the l
   assert.match(browser, /aria-controls="right-panel"/);
   const registry = readFileSync("src/components/rightPanelRegistry.tsx", "utf8");
   assert.match(registry, /preview: PreviewTab/);
-  assert.match(registry, /browser: BrowserPanelTab/);
   assert.match(registry, /files: FilesTab/);
+  assert.doesNotMatch(registry, /browser: BrowserPanelTab/);
+  assert.match(readFileSync("src/components/RightPanel.tsx", "utf8"), /unified/);
 });
 
 

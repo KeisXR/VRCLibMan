@@ -2,9 +2,39 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 pub const TOOLBAR_LABEL: &str = "booth-toolbar";
+/// The right panel is the only docked host. Window hosts are `window-N`.
+pub const PANEL_HOST_ID: &str = "panel";
 pub const DEFAULT_TOOLBAR_HEIGHT: f64 = 136.0;
 pub const MAX_TABS: usize = 20;
 pub const MAX_BOOKMARKS: usize = 200;
+
+/// App-made toolbars may call browser commands. Page webviews may not.
+pub fn is_toolbar_label(label: &str) -> bool {
+    label == TOOLBAR_LABEL || label.starts_with("booth-toolbar-")
+}
+
+pub fn window_label_for(slot: u64) -> String {
+    format!("booth-win-{slot}")
+}
+
+pub fn toolbar_label_for(slot: u64) -> String {
+    format!("booth-toolbar-{slot}")
+}
+
+/// Logical screen position for a detached window, near the pointer.
+/// Negative coordinates are other monitors. Non-finite values are rejected.
+pub fn detach_position(x: f64, y: f64) -> Result<(f64, f64), String> {
+    if !x.is_finite() || !y.is_finite() {
+        return Err("分離先の位置が不正です".into());
+    }
+    const LIMIT: f64 = 100_000.0;
+    Ok((x.clamp(-LIMIT, LIMIT), (y - 28.0).clamp(-LIMIT, LIMIT)))
+}
+
+/// A late Destroyed event matches only the generation still registered for that window.
+pub fn destroy_matches(live_generation: Option<u64>, event_generation: u64) -> bool {
+    live_generation == Some(event_generation)
+}
 
 /// Preserve BOOTH / pixiv's existing same-tab login flow; normal links get a tab.
 pub fn login_popup_in_same_tab(url: &Url) -> bool {
@@ -110,6 +140,22 @@ pub fn save_bookmark(
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HostKind {
+    Panel,
+    Window,
+}
+
+impl HostKind {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Panel => "panel",
+            Self::Window => "window",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowserTab {
@@ -119,6 +165,16 @@ pub struct BrowserTab {
     pub loading: bool,
     pub can_go_back: bool,
     pub can_go_forward: bool,
+    pub host_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostState {
+    pub id: String,
+    pub kind: HostKind,
+    pub tab_ids: Vec<String>,
+    pub active_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -126,35 +182,92 @@ pub struct BrowserTab {
 pub struct BrowserState {
     pub open: bool,
     pub tabs: Vec<BrowserTab>,
+    /// Active tab of the focused host. Each host also has its own `hosts[].activeId`.
     pub active_id: Option<String>,
+    pub hosts: Vec<HostState>,
     pub bookmarks: Vec<Bookmark>,
     pub busy: bool,
-    /// Where the tabs are shown: "window" (separate window), "panel" (main window's right panel), or none.
+    /// "panel" when the panel has pages, otherwise "window" when a separate window does.
     pub host: Option<&'static str>,
-    /// This build can place the tabs in the main window's right panel.
+    /// This build can place pages in the main window's right panel.
     pub panel_supported: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionHost {
+    pub id: String,
+    pub kind: HostKind,
+    pub order: Vec<String>,
+    pub active_id: Option<String>,
+    pub slot: u64,
+}
+
+/// Enough to put a tab back where it was when a move fails.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MoveToken {
+    pub tab_id: String,
+    pub from_host: String,
+    pub from_index: usize,
+    pub from_active: Option<String>,
+    pub to_host: String,
+    pub to_active: Option<String>,
 }
 
 pub struct TabSession {
     pub tabs: Vec<BrowserTab>,
-    pub active_id: Option<String>,
-    pub toolbar_height: f64,
+    pub hosts: Vec<SessionHost>,
     next_id: u64,
+    next_window: u64,
+    focused: Option<String>,
 }
 
 impl TabSession {
     pub const fn new() -> Self {
         Self {
             tabs: Vec::new(),
-            active_id: None,
-            toolbar_height: DEFAULT_TOOLBAR_HEIGHT,
+            hosts: Vec::new(),
             next_id: 1,
+            next_window: 1,
+            focused: None,
         }
     }
-    pub fn add(&mut self, url: &Url) -> Result<String, String> {
+
+    pub fn ensure_panel(&mut self) {
+        if self.hosts.iter().any(|host| host.id == PANEL_HOST_ID) {
+            return;
+        }
+        self.hosts.push(SessionHost {
+            id: PANEL_HOST_ID.into(),
+            kind: HostKind::Panel,
+            order: Vec::new(),
+            active_id: None,
+            slot: 0,
+        });
+    }
+
+    pub fn add_window(&mut self) -> String {
+        let slot = self.next_window;
+        self.next_window += 1;
+        let id = format!("window-{slot}");
+        self.hosts.push(SessionHost {
+            id: id.clone(),
+            kind: HostKind::Window,
+            order: Vec::new(),
+            active_id: None,
+            slot,
+        });
+        id
+    }
+
+    pub fn add(&mut self, host_id: &str, url: &Url) -> Result<String, String> {
         if self.tabs.len() >= MAX_TABS {
             return Err(format!("タブは{MAX_TABS}個まで開けます"));
         }
+        let host = self
+            .hosts
+            .iter()
+            .position(|host| host.id == host_id)
+            .ok_or("表示先が見つかりません")?;
         let id = format!("booth-tab-{}", self.next_id);
         self.next_id += 1;
         self.tabs.push(BrowserTab {
@@ -164,37 +277,206 @@ impl TabSession {
             loading: true,
             can_go_back: false,
             can_go_forward: false,
+            host_id: host_id.into(),
         });
-        self.active_id = Some(id.clone());
+        self.hosts[host].order.push(id.clone());
+        self.hosts[host].active_id = Some(id.clone());
+        self.focused = Some(host_id.into());
         Ok(id)
     }
+
     pub fn select(&mut self, id: &str) -> Result<(), String> {
-        if !self.tabs.iter().any(|tab| tab.id == id) {
-            return Err("タブが見つかりません".into());
-        }
-        self.active_id = Some(id.into());
-        Ok(())
-    }
-    pub fn remove(&mut self, id: &str) -> Result<(), String> {
-        let index = self
+        let host_id = self
             .tabs
             .iter()
-            .position(|tab| tab.id == id)
+            .find(|tab| tab.id == id)
+            .map(|tab| tab.host_id.clone())
             .ok_or("タブが見つかりません")?;
-        self.tabs.remove(index);
-        if self.active_id.as_deref() == Some(id) {
-            self.active_id = self
-                .tabs
-                .get(index.min(self.tabs.len().saturating_sub(1)))
-                .map(|tab| tab.id.clone());
+        let host = self
+            .hosts
+            .iter_mut()
+            .find(|host| host.id == host_id)
+            .ok_or("表示先が見つかりません")?;
+        if !host.order.iter().any(|tab| tab == id) {
+            return Err("タブが見つかりません".into());
+        }
+        host.active_id = Some(id.into());
+        self.focused = Some(host_id);
+        Ok(())
+    }
+
+    /// Removes one tab. `Some(host)` means that host no longer has tabs.
+    pub fn remove(&mut self, id: &str) -> Result<Option<String>, String> {
+        let host_id = self
+            .tabs
+            .iter()
+            .find(|tab| tab.id == id)
+            .map(|tab| tab.host_id.clone())
+            .ok_or("タブが見つかりません")?;
+        let host = self
+            .hosts
+            .iter_mut()
+            .find(|host| host.id == host_id)
+            .ok_or("タブが見つかりません")?;
+        let index = host
+            .order
+            .iter()
+            .position(|tab| tab == id)
+            .ok_or("タブが見つかりません")?;
+        host.order.remove(index);
+        if host.active_id.as_deref() == Some(id) {
+            let len = host.order.len();
+            host.active_id = if len == 0 {
+                None
+            } else {
+                host.order.get(index.min(len - 1)).cloned()
+            };
+        }
+        let empty = host.order.is_empty();
+        self.tabs.retain(|tab| tab.id != id);
+        if empty {
+            self.hosts.retain(|host| host.id != host_id);
+            if self.focused.as_deref() == Some(host_id.as_str()) {
+                self.focused = self.primary_host().map(str::to_string);
+            }
+            Ok(Some(host_id))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn reorder(&mut self, host_id: &str, ids: &[String]) -> Result<(), String> {
+        let host = self
+            .hosts
+            .iter_mut()
+            .find(|host| host.id == host_id)
+            .ok_or("表示先が見つかりません")?;
+        if ids.len() != host.order.len() || !host.order.iter().all(|id| ids.contains(id)) {
+            return Err("タブの並びが一致しません".into());
+        }
+        host.order = ids.to_vec();
+        Ok(())
+    }
+
+    /// Moves one tab onto another host. An emptied source host stays until `drop_host_if_empty`.
+    pub fn move_tab(&mut self, tab_id: &str, to_host: &str, index: usize) -> Result<MoveToken, String> {
+        let from_host = self
+            .tabs
+            .iter()
+            .find(|tab| tab.id == tab_id)
+            .map(|tab| tab.host_id.clone())
+            .ok_or("タブが見つかりません")?;
+        if from_host == to_host {
+            return Err("タブはすでにその表示先にあります".into());
+        }
+        let from = self
+            .hosts
+            .iter()
+            .position(|host| host.id == from_host)
+            .ok_or("表示先が見つかりません")?;
+        let to = self
+            .hosts
+            .iter()
+            .position(|host| host.id == to_host)
+            .ok_or("表示先が見つかりません")?;
+        let from_pos = self.hosts[from]
+            .order
+            .iter()
+            .position(|id| id == tab_id)
+            .ok_or("タブが見つかりません")?;
+        let from_active = self.hosts[from].active_id.clone();
+        let to_active = self.hosts[to].active_id.clone();
+        self.hosts[from].order.remove(from_pos);
+        if self.hosts[from].active_id.as_deref() == Some(tab_id) {
+            let len = self.hosts[from].order.len();
+            self.hosts[from].active_id = if len == 0 {
+                None
+            } else {
+                self.hosts[from].order.get(from_pos.min(len - 1)).cloned()
+            };
+        }
+        let insert = index.min(self.hosts[to].order.len());
+        self.hosts[to].order.insert(insert, tab_id.to_string());
+        self.hosts[to].active_id = Some(tab_id.to_string());
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) {
+            tab.host_id = to_host.to_string();
+        }
+        self.focused = Some(to_host.to_string());
+        Ok(MoveToken {
+            tab_id: tab_id.into(),
+            from_host,
+            from_index: from_pos,
+            from_active,
+            to_host: to_host.into(),
+            to_active,
+        })
+    }
+
+    pub fn restore(&mut self, token: MoveToken) -> Result<(), String> {
+        self.ensure_known_host(&token.from_host);
+        if let Some(host) = self.hosts.iter_mut().find(|host| host.id == token.to_host) {
+            host.order.retain(|id| id != &token.tab_id);
+            host.active_id = token.to_active.clone();
+        }
+        let host = self
+            .hosts
+            .iter_mut()
+            .find(|host| host.id == token.from_host)
+            .ok_or("表示先が見つかりません")?;
+        if !host.order.iter().any(|id| id == &token.tab_id) {
+            let insert = token.from_index.min(host.order.len());
+            host.order.insert(insert, token.tab_id.clone());
+        }
+        host.active_id = token.from_active.clone();
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == token.tab_id) {
+            tab.host_id = token.from_host.clone();
+        }
+        self.focused = Some(token.from_host.clone());
+        self.hosts.retain(|host| !host.order.is_empty() || host.id == token.from_host);
+        if self
+            .hosts
+            .iter()
+            .any(|host| host.id == token.from_host && host.order.is_empty())
+        {
+            self.hosts.retain(|host| host.id != token.from_host || !host.order.is_empty());
         }
         Ok(())
     }
+
+    pub fn drop_host_if_empty(&mut self, host_id: &str) -> bool {
+        let empty = self
+            .hosts
+            .iter()
+            .any(|host| host.id == host_id && host.order.is_empty());
+        if !empty {
+            return false;
+        }
+        self.hosts.retain(|host| host.id != host_id);
+        if self.focused.as_deref() == Some(host_id) {
+            self.focused = self.primary_host().map(str::to_string);
+        }
+        true
+    }
+
+    /// Forgets one host and the tabs that still belong to it. Other hosts stay.
+    pub fn take_host(&mut self, host_id: &str) -> Vec<String> {
+        let Some(index) = self.hosts.iter().position(|host| host.id == host_id) else {
+            return Vec::new();
+        };
+        let ids = self.hosts.remove(index).order;
+        self.tabs.retain(|tab| !ids.iter().any(|id| id == &tab.id));
+        if self.focused.as_deref() == Some(host_id) {
+            self.focused = self.primary_host().map(str::to_string);
+        }
+        ids
+    }
+
     pub fn clear(&mut self) {
         self.tabs.clear();
-        self.active_id = None;
-        self.toolbar_height = DEFAULT_TOOLBAR_HEIGHT;
+        self.hosts.clear();
+        self.focused = None;
     }
+
     pub fn update(&mut self, id: &str, work: impl FnOnce(&mut BrowserTab)) -> bool {
         if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == id) {
             work(tab);
@@ -202,6 +484,117 @@ impl TabSession {
         } else {
             false
         }
+    }
+
+    pub fn has(&self, id: &str) -> bool {
+        self.tabs.iter().any(|tab| tab.id == id)
+    }
+
+    pub fn active_of(&self, host_id: &str) -> Option<String> {
+        self.hosts
+            .iter()
+            .find(|host| host.id == host_id)
+            .and_then(|host| host.active_id.clone())
+    }
+
+    pub fn host_of(&self, tab_id: &str) -> Option<String> {
+        self.tabs
+            .iter()
+            .find(|tab| tab.id == tab_id)
+            .map(|tab| tab.host_id.clone())
+    }
+
+    pub fn kind_of(&self, host_id: &str) -> Option<HostKind> {
+        self.hosts
+            .iter()
+            .find(|host| host.id == host_id)
+            .map(|host| host.kind)
+    }
+
+    pub fn slot_of(&self, host_id: &str) -> Option<u64> {
+        self.hosts
+            .iter()
+            .find(|host| host.id == host_id)
+            .map(|host| host.slot)
+    }
+
+    pub fn focus_host(&mut self, host_id: &str) {
+        if self.hosts.iter().any(|host| host.id == host_id) {
+            self.focused = Some(host_id.to_string());
+        }
+    }
+
+    pub fn focused_host(&self) -> Option<String> {
+        self.focused.clone()
+    }
+
+    pub fn focused_tab(&self) -> Option<String> {
+        if let Some(host) = &self.focused {
+            if let Some(tab) = self.active_of(host) {
+                return Some(tab);
+            }
+        }
+        self.primary_host().and_then(|host| self.active_of(host))
+    }
+
+    pub fn primary_host(&self) -> Option<&str> {
+        self.hosts
+            .iter()
+            .find(|host| host.kind == HostKind::Panel && !host.order.is_empty())
+            .or_else(|| self.hosts.iter().find(|host| !host.order.is_empty()))
+            .map(|host| host.id.as_str())
+    }
+
+    pub fn coarse_host(&self) -> Option<&'static str> {
+        if self
+            .hosts
+            .iter()
+            .any(|host| host.kind == HostKind::Panel && !host.order.is_empty())
+        {
+            Some("panel")
+        } else if self
+            .hosts
+            .iter()
+            .any(|host| host.kind == HostKind::Window && !host.order.is_empty())
+        {
+            Some("window")
+        } else {
+            None
+        }
+    }
+
+    pub fn host_states(&self) -> Vec<HostState> {
+        self.hosts
+            .iter()
+            .filter(|host| !host.order.is_empty())
+            .map(|host| HostState {
+                id: host.id.clone(),
+                kind: host.kind,
+                tab_ids: host.order.clone(),
+                active_id: host.active_id.clone(),
+            })
+            .collect()
+    }
+
+    fn ensure_known_host(&mut self, host_id: &str) {
+        if self.hosts.iter().any(|host| host.id == host_id) {
+            return;
+        }
+        if host_id == PANEL_HOST_ID {
+            self.ensure_panel();
+            return;
+        }
+        let slot = host_id
+            .strip_prefix("window-")
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0);
+        self.hosts.push(SessionHost {
+            id: host_id.into(),
+            kind: HostKind::Window,
+            order: Vec::new(),
+            active_id: None,
+            slot,
+        });
     }
 }
 
@@ -270,27 +663,37 @@ mod tests {
             assert!(navigation_url(value).is_err(), "{value}");
         }
     }
+    fn session() -> TabSession {
+        let mut tabs = TabSession::new();
+        tabs.ensure_panel();
+        tabs
+    }
     #[test]
     fn tabs_keep_independent_metadata_and_select_a_neighbor_on_close() {
-        let mut tabs = TabSession::new();
-        let a = tabs.add(&navigation_url("one.example").unwrap()).unwrap();
-        let b = tabs.add(&navigation_url("two.example").unwrap()).unwrap();
+        let mut tabs = session();
+        let a = tabs
+            .add(PANEL_HOST_ID, &navigation_url("one.example").unwrap())
+            .unwrap();
+        let b = tabs
+            .add(PANEL_HOST_ID, &navigation_url("two.example").unwrap())
+            .unwrap();
         tabs.select(&a).unwrap();
         tabs.update(&b, |tab| {
             tab.title = "Second".into();
             tab.can_go_back = true;
         });
-        assert_eq!(tabs.active_id.as_deref(), Some(a.as_str()));
+        assert_eq!(tabs.focused_tab().as_deref(), Some(a.as_str()));
         assert!(!tabs.tabs[0].can_go_back);
         assert!(tabs.tabs[1].can_go_back);
-        tabs.remove(&a).unwrap();
-        assert_eq!(tabs.active_id.as_deref(), Some(b.as_str()));
-        tabs.remove(&b).unwrap();
-        assert!(tabs.active_id.is_none());
+        assert!(tabs.remove(&a).unwrap().is_none());
+        assert_eq!(tabs.focused_tab().as_deref(), Some(b.as_str()));
+        assert_eq!(tabs.remove(&b).unwrap().as_deref(), Some(PANEL_HOST_ID));
+        assert!(tabs.focused_tab().is_none());
         assert!(!tabs.update(&b, |_| panic!("closed tab must ignore late events")));
-        tabs.clear();
+        tabs.ensure_panel();
         assert_ne!(
-            tabs.add(&navigation_url("three.example").unwrap()).unwrap(),
+            tabs.add(PANEL_HOST_ID, &navigation_url("three.example").unwrap())
+                .unwrap(),
             a
         );
     }
@@ -314,13 +717,77 @@ mod tests {
     }
     #[test]
     fn tab_limit_keeps_existing_tabs_intact() {
-        let mut tabs = TabSession::new();
+        let mut tabs = session();
         for _ in 0..MAX_TABS {
-            tabs.add(&navigation_url("example.com").unwrap()).unwrap();
+            tabs.add(PANEL_HOST_ID, &navigation_url("example.com").unwrap())
+                .unwrap();
         }
-        let before = tabs.active_id.clone();
-        assert!(tabs.add(&navigation_url("other.example").unwrap()).is_err());
-        assert_eq!(tabs.active_id, before);
+        let before = tabs.focused_tab();
+        assert!(tabs
+            .add(PANEL_HOST_ID, &navigation_url("other.example").unwrap())
+            .is_err());
+        assert_eq!(tabs.focused_tab(), before);
         assert_eq!(tabs.tabs.len(), MAX_TABS);
+    }
+    #[test]
+    fn hosts_keep_their_own_order_and_selection() {
+        let mut tabs = session();
+        let panel_a = tabs
+            .add(PANEL_HOST_ID, &navigation_url("panel.example/a").unwrap())
+            .unwrap();
+        let panel_b = tabs
+            .add(PANEL_HOST_ID, &navigation_url("panel.example/b").unwrap())
+            .unwrap();
+        let window = tabs.add_window();
+        let popped = tabs
+            .add(&window, &navigation_url("window.example").unwrap())
+            .unwrap();
+        tabs.select(&panel_a).unwrap();
+        assert_eq!(tabs.active_of(PANEL_HOST_ID).as_deref(), Some(panel_a.as_str()));
+        assert_eq!(tabs.active_of(&window).as_deref(), Some(popped.as_str()));
+        assert_eq!(tabs.coarse_host(), Some("panel"));
+        tabs.reorder(PANEL_HOST_ID, &[panel_b.clone(), panel_a.clone()])
+            .unwrap();
+        assert_eq!(
+            tabs.hosts.iter().find(|host| host.id == PANEL_HOST_ID).unwrap().order,
+            vec![panel_b.clone(), panel_a.clone()]
+        );
+        assert!(tabs.reorder(PANEL_HOST_ID, &[panel_a.clone()]).is_err());
+        let token = tabs.move_tab(&panel_b, &window, 0).unwrap();
+        assert_eq!(tabs.host_of(&panel_b).as_deref(), Some(window.as_str()));
+        assert_eq!(tabs.active_of(PANEL_HOST_ID).as_deref(), Some(panel_a.as_str()));
+        assert_eq!(tabs.active_of(&window).as_deref(), Some(panel_b.as_str()));
+        tabs.restore(token).unwrap();
+        assert_eq!(tabs.host_of(&panel_b).as_deref(), Some(PANEL_HOST_ID));
+        assert_eq!(
+            tabs.hosts
+                .iter()
+                .find(|host| host.id == PANEL_HOST_ID)
+                .unwrap()
+                .order,
+            vec![panel_b.clone(), panel_a.clone()]
+        );
+        assert_eq!(tabs.active_of(PANEL_HOST_ID).as_deref(), Some(panel_a.as_str()));
+        assert_eq!(tabs.active_of(&window).as_deref(), Some(popped.as_str()));
+        let gone = tabs.take_host(&window);
+        assert_eq!(gone, vec![popped.clone()]);
+        assert!(tabs.host_of(&panel_a).is_some());
+        assert!(tabs.host_of(&popped).is_none());
+        assert_eq!(tabs.remove(&panel_a).unwrap(), None);
+        assert!(tabs.has(&panel_b));
+    }
+    #[test]
+    fn detach_position_keeps_other_monitors_and_rejects_non_finite_values() {
+        assert_eq!(detach_position(-1920.0, 40.0).unwrap(), (-1920.0, 12.0));
+        assert_eq!(detach_position(10.0, 10.0).unwrap(), (10.0, -18.0));
+        assert!(detach_position(f64::NAN, 0.0).is_err());
+        assert!(detach_position(0.0, f64::INFINITY).is_err());
+        assert!(!destroy_matches(None, 3));
+        assert!(!destroy_matches(Some(2), 3));
+        assert!(destroy_matches(Some(3), 3));
+        assert!(is_toolbar_label("booth-toolbar"));
+        assert!(is_toolbar_label("booth-toolbar-1"));
+        assert!(!is_toolbar_label("booth-tab-1"));
+        assert!(!is_toolbar_label("main"));
     }
 }

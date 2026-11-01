@@ -4,8 +4,13 @@ import App from "./App";
 import { BrowserChrome } from "./components/BrowserChrome";
 import "./styles.css";
 
+const browserParams = new URLSearchParams(location.search);
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    {new URLSearchParams(location.search).get("browserToolbar") === "1" ? <BrowserChrome /> : <App />}
+    {browserParams.get("browserToolbar") === "1" ? (
+      <BrowserChrome hostId={browserParams.get("browserHost") ?? undefined} />
+    ) : (
+      <App />
+    )}
   </React.StrictMode>,
 );
