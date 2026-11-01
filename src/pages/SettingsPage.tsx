@@ -293,8 +293,64 @@ export function SettingsPage() {
       </div>
 
       {settings && (
-        <div className="settings-sections">
-          <section className="settings-section">
+        <div className="settings-layout">
+          <nav className="settings-nav" aria-label="設定の項目">
+            {[["settings-library", "ライブラリ"], ["settings-unity", "Unity"], ["settings-startup", "起動と常駐"], ["settings-booth", "BOOTH"], ["settings-classify", "分類モデル"], ["settings-data", "データ"], ["settings-design", "デザイン"]].map(([id, label]) => (
+              <button key={id} type="button" onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" })}>{label}</button>
+            ))}
+          </nav>
+          <div className="settings-sections">
+          <section className="settings-section" id="settings-library">
+            <header><h2>ライブラリとダウンロード</h2><p>ファイルの保存先と自動整理を設定します。</p></header>
+            <SettingRow label="ライブラリのフォルダ" help="ファイルの保存先を選ぶと、自動でスキャンします。">
+              <div className="inline-control"><input value={settings.libraryFolder} placeholder="ダウンロードしたファイルの移動先" onChange={(e) => changeSettings({ libraryFolder: e.target.value, ...(!e.target.value.trim() ? { routeDownloads: false } : {}) }, 300)} onBlur={flushSettings} /><button className="button" type="button" onClick={() => void chooseLibrary()}>選ぶ</button></div>
+            </SettingRow>
+            <SettingRow label="リモートライブラリ" help="ネットワークドライブやマウント済みのフォルダを指定します。">
+              <div className="inline-control"><input value={settings.remoteLibraryFolder} placeholder="リモートのフォルダ" onChange={(e) => changeSettings({ remoteLibraryFolder: e.target.value, remoteAutoSync: false }, 300)} onBlur={flushSettings} /><button className="button" type="button" onClick={() => void chooseFolder().then((path) => { if (path) changeSettings({ remoteLibraryFolder: path, remoteAutoSync: false }); }, (err: unknown) => fail(errorText(err)))}>選ぶ</button></div>
+            </SettingRow>
+            <SettingRow label="リモートへ自動同期" help="アプリ起動中、登録済みの手元のファイルを約1分ごとにリモートへコピーします。">
+              <label className="switch-label"><input type="checkbox" checked={settings.remoteAutoSync} disabled={!settings.remoteLibraryFolder.trim()} onChange={(e) => changeSettings({ remoteAutoSync: e.target.checked })} />有効にする</label>
+            </SettingRow>
+            {settings.remoteAutoSync && <div className="section-body"><p className="meta" role="status">{remoteSync?.running ? `同期中（${remoteSync.copied} 件コピー済み）` : remoteSync?.error ? `同期を再試行します: ${remoteSync.error}` : remoteSync?.lastCompletedAt ? `最終確認: ${new Date(remoteSync.lastCompletedAt).toLocaleString("ja-JP")}（${remoteSync.copied} 件コピー、${remoteSync.skipped} 件は同名ファイルあり）` : "同期を待っています"}</p></div>}
+            <details className="settings-details"><summary>リモートライブラリについて</summary><p>自動同期は既定でオフです。オンにすると、登録済みのファイルをリモートの商品IDフォルダへコピーします。保存先を変更すると自動同期はオフになります。除外した商品と未登録のファイルは対象外です。同名ファイルは上書きせず、ローカルとリモートのファイルを削除しません。</p><p>接続できないときは後で再試行します。オフにしても、処理中の1件は完了する場合があります。リモートから取得する場合は「ローカルへコピー」を使ってください。</p></details>
+            <SettingRow label="ダウンロードを自動整理" help="自分でダウンロードしたファイルだけを商品別にライブラリへ移動します。">
+              <label className="switch-label"><input type="checkbox" checked={settings.routeDownloads} onChange={(e) => void changeRouting(e.target.checked)} />有効にする</label>
+            </SettingRow>
+            <details className="settings-details"><summary>自動整理について詳しく</summary><p>有効にするには、移動先のライブラリフォルダが必要です。拡張機能や内蔵ブラウザでダウンロードしたファイルを、ダウンロードフォルダの VRCLibMan 以下から商品別に移動します。</p><p>ほかの場所にあるファイルは移動しません。内蔵ブラウザからのダウンロードも、選んだ1件ずつ行います。</p></details>
+          </section>
+
+          <section className="settings-section" id="settings-unity">
+            <header><h2>Unity</h2><p>unitypackage を開くときに使う Unity を選びます。</p></header>
+            <UnitySettings onNotify={notify} onFail={fail} />
+          </section>
+
+          <section className="settings-section" id="settings-startup">
+            <header><h2>起動と常駐</h2><p>ウィンドウを閉じた後の動作を設定します。</p></header>
+            {!settings.backgroundSupported && <div className="section-body"><p>Linux 版ではバックグラウンド動作とログイン時の起動は利用できません。ウィンドウを閉じるとアプリも終了します。</p></div>}
+            <SettingRow label="バックグラウンドで動作" help="ウィンドウを閉じても、商品情報の受信・自動整理・リモートへの自動同期を続けます。">
+              <label className="switch-label"><input type="checkbox" checked={settings.backgroundSupported && settings.backgroundMode} disabled={!settings.backgroundSupported} onChange={(e) => { const enabled = e.target.checked; changeSettings({ backgroundMode: enabled, launchAtLogin: enabled ? settings.launchAtLogin : false }); }} />有効にする</label>
+            </SettingRow>
+            <SettingRow label="ログイン時に起動" help="バックグラウンド動作が有効な場合だけ使用できます。">
+              <label className="switch-label"><input type="checkbox" checked={settings.backgroundSupported && settings.launchAtLogin} disabled={!settings.backgroundSupported || !settings.backgroundMode} onChange={(e) => changeSettings({ launchAtLogin: e.target.checked })} />有効にする</label>
+            </SettingRow>
+            {settings.backgroundSupported && <details className="settings-details"><summary>起動と常駐について詳しく</summary><p>オフにすると、ウィンドウを閉じたときにアプリも終了します。オンにすると、トレイ（Windows）またはメニューバー（macOS）から再表示・終了できます。</p><p>「ログイン時に起動」を有効にすると、ウィンドウを表示せずに起動します。バックグラウンド動作をオフにすると、ログイン時の起動もオフになります。</p></details>}
+          </section>
+
+          <section className="settings-section" id="settings-booth">
+            <header><h2>BOOTH の読み込み方</h2><p>拡張機能・内蔵ブラウザ・併用を選びます。</p></header>
+            <div className="section-body"><BoothImportSettings onFail={fail} onChange={() => refresh()} /></div>
+            {settings.builtinBrowser && (
+              <SettingRow label="商品ページを開くブラウザ" help="アバター詳細と確認の商品リンクに使います。取得中やエラーのときは既定のブラウザで開きます。">
+                <select value={settings.boothLinkTarget === "builtin" ? "builtin" : "external"} onChange={(e) => changeSettings({ boothLinkTarget: e.target.value === "builtin" ? "builtin" : "external" })}>
+                  <option value="external">既定のブラウザ</option>
+                  <option value="builtin">内蔵ブラウザ</option>
+                </select>
+              </SettingRow>
+            )}
+            {settings.builtinBrowser && <div className="section-actions"><button className="button danger" type="button" onClick={() => void (async () => { if (!window.confirm("ブラウザを閉じ、内蔵ブラウザで開いたすべてのサイトのログイン状態と閲覧データを消します。ブックマークは残ります。")) return; try { await api.clearBoothSession(); notify("閲覧データを削除しました"); } catch (err) { fail(errorText(err)); } })()}>内蔵ブラウザの閲覧データを削除</button></div>}
+          </section>
+
+          <section className="settings-section" id="settings-classify">
             <header><h2>分類モデル</h2><p>商品説明を分類するモデルを選びます。既定は端末内のモデルです。</p></header>
             <SettingRow label="分類方法" help={settings.llmBackend === "apple" ? apple?.message : settings.llmBackend === "cloud" ? "OpenAI 互換の API に商品情報を送って分類します。キーと利用料金はご自身のものを使います。" : "この PC の Ollama を使います。"}>
               <select value={settings.llmBackend} onChange={(e) => changeSettings({ llmBackend: e.target.value === "apple" ? "apple" : e.target.value === "cloud" ? "cloud" : "ollama" })}>
@@ -351,67 +407,7 @@ export function SettingsPage() {
             </details>
           </section>
 
-          <section className="settings-section">
-            <header><h2>ライブラリとダウンロード</h2><p>ファイルの保存先と自動整理を設定します。</p></header>
-            <SettingRow label="ライブラリのフォルダ" help="ファイルの保存先を選ぶと、自動でスキャンします。">
-              <div className="inline-control"><input value={settings.libraryFolder} placeholder="ダウンロードしたファイルの移動先" onChange={(e) => changeSettings({ libraryFolder: e.target.value, ...(!e.target.value.trim() ? { routeDownloads: false } : {}) }, 300)} onBlur={flushSettings} /><button className="button" type="button" onClick={() => void chooseLibrary()}>選ぶ</button></div>
-            </SettingRow>
-            <SettingRow label="リモートライブラリ" help="ネットワークドライブやマウント済みのフォルダを指定します。">
-              <div className="inline-control"><input value={settings.remoteLibraryFolder} placeholder="リモートのフォルダ" onChange={(e) => changeSettings({ remoteLibraryFolder: e.target.value, remoteAutoSync: false }, 300)} onBlur={flushSettings} /><button className="button" type="button" onClick={() => void chooseFolder().then((path) => { if (path) changeSettings({ remoteLibraryFolder: path, remoteAutoSync: false }); }, (err: unknown) => fail(errorText(err)))}>選ぶ</button></div>
-            </SettingRow>
-            <SettingRow label="リモートへ自動同期" help="アプリ起動中、登録済みの手元のファイルを約1分ごとにリモートへコピーします。">
-              <label className="switch-label"><input type="checkbox" checked={settings.remoteAutoSync} disabled={!settings.remoteLibraryFolder.trim()} onChange={(e) => changeSettings({ remoteAutoSync: e.target.checked })} />有効にする</label>
-            </SettingRow>
-            {settings.remoteAutoSync && <div className="section-body"><p className="meta" role="status">{remoteSync?.running ? `同期中（${remoteSync.copied} 件コピー済み）` : remoteSync?.error ? `同期を再試行します: ${remoteSync.error}` : remoteSync?.lastCompletedAt ? `最終確認: ${new Date(remoteSync.lastCompletedAt).toLocaleString("ja-JP")}（${remoteSync.copied} 件コピー、${remoteSync.skipped} 件は同名ファイルあり）` : "同期を待っています"}</p></div>}
-            <details className="settings-details"><summary>リモートライブラリについて</summary><p>自動同期は既定でオフです。オンにすると、登録済みのファイルをリモートの商品IDフォルダへコピーします。保存先を変更すると自動同期はオフになります。除外した商品と未登録のファイルは対象外です。同名ファイルは上書きせず、ローカルとリモートのファイルを削除しません。</p><p>接続できないときは後で再試行します。オフにしても、処理中の1件は完了する場合があります。リモートから取得する場合は「ローカルへコピー」を使ってください。</p></details>
-            <SettingRow label="ダウンロードを自動整理" help="自分でダウンロードしたファイルだけを商品別にライブラリへ移動します。">
-              <label className="switch-label"><input type="checkbox" checked={settings.routeDownloads} onChange={(e) => void changeRouting(e.target.checked)} />有効にする</label>
-            </SettingRow>
-            <details className="settings-details"><summary>自動整理について詳しく</summary><p>有効にするには、移動先のライブラリフォルダが必要です。拡張機能や内蔵ブラウザでダウンロードしたファイルを、ダウンロードフォルダの VRCLibMan 以下から商品別に移動します。</p><p>ほかの場所にあるファイルは移動しません。内蔵ブラウザからのダウンロードも、選んだ1件ずつ行います。</p></details>
-          </section>
-
-          <section className="settings-section" id="settings-unity">
-            <header><h2>Unity</h2><p>unitypackage を開くときに使う Unity を選びます。</p></header>
-            <UnitySettings onNotify={notify} onFail={fail} />
-          </section>
-
-          <section className="settings-section">
-            <header><h2>デザイン</h2><p>画面の見た目を選びます。いつでも切り替えられます。</p></header>
-            <SettingRow label="デザイン" help="「従来」はこれまでの見た目、「Liquid」は角丸と浮いたパネルを強めた新しい見た目です。機能やデータは変わりません。">
-              <select value={settings.appearance === "liquid" ? "liquid" : "classic"} onChange={(e) => changeSettings({ appearance: e.target.value === "liquid" ? "liquid" : "classic" })}>
-                <option value="classic">従来</option>
-                <option value="liquid">Liquid（新しいデザイン）</option>
-              </select>
-            </SettingRow>
-          </section>
-
-          <section className="settings-section">
-            <header><h2>起動と常駐</h2><p>ウィンドウを閉じた後の動作を設定します。</p></header>
-            {!settings.backgroundSupported && <div className="section-body"><p>Linux 版ではバックグラウンド動作とログイン時の起動は利用できません。ウィンドウを閉じるとアプリも終了します。</p></div>}
-            <SettingRow label="バックグラウンドで動作" help="ウィンドウを閉じても、商品情報の受信・自動整理・リモートへの自動同期を続けます。">
-              <label className="switch-label"><input type="checkbox" checked={settings.backgroundSupported && settings.backgroundMode} disabled={!settings.backgroundSupported} onChange={(e) => { const enabled = e.target.checked; changeSettings({ backgroundMode: enabled, launchAtLogin: enabled ? settings.launchAtLogin : false }); }} />有効にする</label>
-            </SettingRow>
-            <SettingRow label="ログイン時に起動" help="バックグラウンド動作が有効な場合だけ使用できます。">
-              <label className="switch-label"><input type="checkbox" checked={settings.backgroundSupported && settings.launchAtLogin} disabled={!settings.backgroundSupported || !settings.backgroundMode} onChange={(e) => changeSettings({ launchAtLogin: e.target.checked })} />有効にする</label>
-            </SettingRow>
-            {settings.backgroundSupported && <details className="settings-details"><summary>起動と常駐について詳しく</summary><p>オフにすると、ウィンドウを閉じたときにアプリも終了します。オンにすると、トレイ（Windows）またはメニューバー（macOS）から再表示・終了できます。</p><p>「ログイン時に起動」を有効にすると、ウィンドウを表示せずに起動します。バックグラウンド動作をオフにすると、ログイン時の起動もオフになります。</p></details>}
-          </section>
-
-          <section className="settings-section">
-            <header><h2>BOOTH の読み込み方</h2><p>拡張機能・内蔵ブラウザ・併用を選びます。</p></header>
-            <div className="section-body"><BoothImportSettings onFail={fail} onChange={() => refresh()} /></div>
-            {settings.builtinBrowser && (
-              <SettingRow label="商品ページを開くブラウザ" help="アバター詳細と確認の商品リンクに使います。取得中やエラーのときは既定のブラウザで開きます。">
-                <select value={settings.boothLinkTarget === "builtin" ? "builtin" : "external"} onChange={(e) => changeSettings({ boothLinkTarget: e.target.value === "builtin" ? "builtin" : "external" })}>
-                  <option value="external">既定のブラウザ</option>
-                  <option value="builtin">内蔵ブラウザ</option>
-                </select>
-              </SettingRow>
-            )}
-            {settings.builtinBrowser && <div className="section-actions"><button className="button danger" type="button" onClick={() => void (async () => { if (!window.confirm("ブラウザを閉じ、内蔵ブラウザで開いたすべてのサイトのログイン状態と閲覧データを消します。ブックマークは残ります。")) return; try { await api.clearBoothSession(); notify("閲覧データを削除しました"); } catch (err) { fail(errorText(err)); } })()}>内蔵ブラウザの閲覧データを削除</button></div>}
-          </section>
-
-          <section className="settings-section">
+          <section className="settings-section" id="settings-data">
             <header><h2>データ</h2><p>バージョン、アバター対応表と初期データを確認します。</p></header>
             <SettingRow label="バージョン" help="アプリと拡張機能は別のバージョン番号です。">
               <div className="version-info"><p>アプリ v{version || "確認中"}</p>
@@ -451,6 +447,17 @@ export function SettingsPage() {
               <p>更新を確認・ダウンロードするときは GitHub と通信します。ライブラリや購入情報は送信しません。</p>
             </details>
           </section>
+          <section className="settings-section" id="settings-design">
+            <header><h2>デザイン</h2><p>画面の見た目を選びます。いつでも切り替えられます。</p></header>
+            <SettingRow label="デザイン" help="「従来」はこれまでの見た目、「Liquid」は角丸と浮いたパネルを強めた新しい見た目です。機能やデータは変わりません。">
+              <select value={settings.appearance === "liquid" ? "liquid" : "classic"} onChange={(e) => changeSettings({ appearance: e.target.value === "liquid" ? "liquid" : "classic" })}>
+                <option value="classic">従来</option>
+                <option value="liquid">Liquid（新しいデザイン）</option>
+              </select>
+            </SettingRow>
+          </section>
+
+          </div>
         </div>
       )}
       {saveError && <p className="settings-status warn-text" role="alert">設定を保存できませんでした。{saveError}</p>}
