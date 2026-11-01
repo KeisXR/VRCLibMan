@@ -1,0 +1,37 @@
+import { useCallback, useRef, useState } from "react";
+import { dismissIfCurrent, type ErrorEntry, type NoticeAction, type NoticeEntry, type NotifyOptions } from "./notice";
+
+/** 関数だけを渡したときは、これまでどおり「元に戻す」として出す。 */
+export function noticeAction(action?: NoticeAction | (() => void)): NoticeAction | undefined {
+  if (!action) return undefined;
+  if (typeof action === "function") return { label: "元に戻す", run: action };
+  return action;
+}
+
+/**
+ * 画面上部の情報通知と失敗の帯の状態。どちらも出すたびに連番を振り、
+ * 閉じるときは番号で照合するので、古いタイマーや古い×が新しい表示を消さない。
+ */
+export function useBanners() {
+  const [notice, setNotice] = useState<NoticeEntry | null>(null);
+  const [error, setErrorEntry] = useState<ErrorEntry | null>(null);
+  const serial = useRef(0);
+  const setError = useCallback((message: string | null) => {
+    setErrorEntry(message === null ? null : { id: ++serial.current, message });
+  }, []);
+  const notify = useCallback((message: string, action?: NoticeAction | (() => void), options?: NotifyOptions) => {
+    setErrorEntry(null);
+    setNotice({ id: ++serial.current, message, action: noticeAction(action), persist: options?.persist === true });
+  }, []);
+  const fail = useCallback((message: string) => {
+    setNotice(null);
+    setErrorEntry({ id: ++serial.current, message });
+  }, []);
+  const dismissNotice = useCallback((id: number) => setNotice((current) => dismissIfCurrent(current, id)), []);
+  const dismissError = useCallback((id: number) => setErrorEntry((current) => dismissIfCurrent(current, id)), []);
+  const runNoticeAction = useCallback((entry: NoticeEntry) => {
+    setNotice((current) => dismissIfCurrent(current, entry.id));
+    entry.action?.run();
+  }, []);
+  return { notice, error, notify, fail, setError, dismissNotice, dismissError, runNoticeAction };
+}

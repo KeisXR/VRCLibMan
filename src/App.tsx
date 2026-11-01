@@ -27,6 +27,11 @@ import {
 import { SidebarClassificationHint } from "./components/SidebarClassificationHint";
 import { RightPanelColumn, RightPanelProvider, useRightPanelState } from "./components/RightPanel";
 import { errorText } from "./ui";
+import { ErrorBanner, NoticeBanner } from "./components/NoticeBanner";
+import type { NoticeAction, NotifyOptions } from "./notice";
+import { noticeAction, useBanners } from "./useBanners";
+
+export type { NoticeAction, NotifyOptions } from "./notice";
 
 type Page = "avatars" | "avatar" | "assets" | "worlds" | "queue" | "import" | "settings" | "browser";
 
@@ -45,27 +50,13 @@ function decodePart(value: string): string {
   }
 }
 
-export interface NoticeAction {
-  label: string;
-  run: () => void;
-}
-
-interface Notice {
-  message: string;
-  action?: NoticeAction;
-}
-
-/** 関数だけを渡したときは、これまでどおり「元に戻す」として出す。 */
-export function noticeAction(action?: NoticeAction | (() => void)): NoticeAction | undefined {
-  if (!action) return undefined;
-  if (typeof action === "function") return { label: "元に戻す", run: action };
-  return action;
-}
+export { noticeAction };
 
 interface ShellValue {
   revision: number;
   refresh: () => void;
-  notify: (message: string, action?: NoticeAction | (() => void)) => void;
+  /** 情報通知。時間で消える。失敗や注意を含むときは `{ persist: true }` で残す。 */
+  notify: (message: string, action?: NoticeAction | (() => void), options?: NotifyOptions) => void;
   fail: (message: string) => void;
   builtinBrowser: boolean;
   refreshAccount: () => void;
@@ -107,8 +98,7 @@ export default function App() {
   const [hash, setHash] = useState(window.location.hash);
   const [stats, setStats] = useState<LibraryStats | null>(null);
   const [progress, setProgress] = useState<JobProgress | null>(null);
-  const [notice, setNotice] = useState<Notice | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { notice, error, notify, fail, setError, dismissNotice, dismissError, runNoticeAction } = useBanners();
   const [revision, setRevision] = useState(0);
   const [builtinBrowser, setBuiltinBrowser] = useState(false);
   const [accountView, setAccountView] = useState<AccountSnapshot>(checkingAccount());
@@ -120,14 +110,6 @@ export default function App() {
   const contentRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(() => setRevision((value) => value + 1), []);
-  const notify = useCallback((message: string, action?: NoticeAction | (() => void)) => {
-    setError(null);
-    setNotice({ message, action: noticeAction(action) });
-  }, []);
-  const fail = useCallback((message: string) => {
-    setNotice(null);
-    setError(message);
-  }, []);
 
   useEffect(() => {
     const onHash = () => setHash(window.location.hash);
@@ -201,7 +183,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [revision]);
+  }, [revision, setError]);
 
   useEffect(() => {
     let stop = () => undefined as void;
@@ -287,25 +269,8 @@ export default function App() {
   const mainPane = (
     <div className="main" ref={contentRef} hidden={layout.panelMaximized}>
       <div className="topbar">
-        {error && <div className="banner error">{error}</div>}
-        {notice && (
-          <div className="banner notice" role="status">
-            <span>{notice.message}</span>
-            {notice.action && (
-              <button
-                className="button"
-                type="button"
-                onClick={() => {
-                  const action = notice.action;
-                  setNotice(null);
-                  action?.run();
-                }}
-              >
-                {notice.action.label}
-              </button>
-            )}
-          </div>
-        )}
+        {error && <ErrorBanner key={error.id} error={error} onDismiss={dismissError} />}
+        {notice && <NoticeBanner key={notice.id} notice={notice} onDismiss={dismissNotice} onAction={runNoticeAction} />}
         {progress && (
           <div className="progress">
             <p>{progress.message}</p>

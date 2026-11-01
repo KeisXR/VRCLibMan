@@ -33,7 +33,7 @@ export function SettingsPage() {
     if (patch.libraryFolder !== undefined && saved.libraryFolder !== lastScannedFolder.current) {
       lastScannedFolder.current = saved.libraryFolder;
       if (saved.libraryFolder) void api.scanLibrary(saved.libraryFolder).then((report) => {
-        notify(`ライブラリのフォルダを調べ、${report.indexed} 件中 ${report.linked} 件を結び付けました${report.truncated ? "（上限で中断）" : ""}`);
+        notify(`ライブラリのフォルダを調べ、${report.indexed} 件中 ${report.linked} 件を結び付けました${report.truncated ? "（上限で中断）" : ""}`, undefined, { persist: report.truncated });
         refresh();
       }, (err: unknown) => fail(`設定は保存しましたが、フォルダを調べられませんでした。${errorText(err)}`));
     }

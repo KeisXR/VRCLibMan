@@ -381,15 +381,38 @@ span.account-avatar { background: var(--button); }
   color: var(--text);
   box-shadow: var(--shadow);
 }
-.banner.error { color: var(--danger); }
+.banner.error,
 .banner.notice {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-3);
-  color: var(--text);
+  animation: banner-in 160ms ease-out;
 }
-.banner.notice > span { color: var(--good); }
+.banner.error { color: var(--danger); }
+.banner.notice { color: var(--text); }
+.banner-message { flex: 1 1 auto; min-width: 0; }
+.banner.notice > .banner-message { color: var(--good); }
+.banner-close {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  margin: -4px -6px -4px 0;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 18px;
+  line-height: 1;
+  transition: background-color var(--motion) ease;
+}
+.banner-close:hover { background: var(--hover); color: var(--text); }
+@keyframes banner-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
 .progress { margin: var(--space-3) var(--space-6) 0; }
 .progress p { margin: 0 0 6px; color: var(--text-secondary); font-size: 13px; }
 .track {

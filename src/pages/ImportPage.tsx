@@ -144,7 +144,7 @@ export function ImportPage() {
         setClassificationErrors([]);
         setExtracting(true);
         const extracted = await api.extractProducts("unclassified");
-        notify(extractNotice(extracted));
+        notify(extractNotice(extracted), undefined, { persist: extracted.failed > 0 });
         setClassificationErrors(extracted.errors);
         if (typeof extracted.boothSettled === "number" && typeof extracted.modelUsed === "number") {
           setExtractStats({ boothSettled: extracted.boothSettled, modelUsed: extracted.modelUsed });
@@ -179,6 +179,8 @@ export function ImportPage() {
       setLibraryFolder(path);
       notify(
         `${result.indexed} 件を調べ、${result.linked} 件を商品と結び付けました${result.truncated ? "。上限に達したため途中です" : ""}`,
+        undefined,
+        { persist: result.truncated },
       );
       refresh();
     } catch (err) {
@@ -212,7 +214,7 @@ export function ImportPage() {
     setProgress(null);
     try {
       const result = await api.extractProducts(target);
-      notify(extractNotice(result));
+      notify(extractNotice(result), undefined, { persist: result.failed > 0 });
       setClassificationErrors(result.errors);
       if (typeof result.boothSettled === "number" && typeof result.modelUsed === "number") {
         setExtractStats({ boothSettled: result.boothSettled, modelUsed: result.modelUsed });
