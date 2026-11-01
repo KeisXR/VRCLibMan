@@ -41,6 +41,11 @@ jobs:
           CHROME_PATH: /usr/bin/google-chrome
         run: npm run test:tab-click
 
+      - name: test design typography and corners
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: npm run test:design
+
   rust:
     name: rust (${{ matrix.platform }})
     strategy:
