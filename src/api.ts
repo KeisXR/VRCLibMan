@@ -377,9 +377,11 @@ export function listenBrowserChanged(onChanged: () => void): Promise<() => void>
 }
 
 /** The app moved the browser into the right panel (or opened it there) and wants the tab shown. */
-export function listenBrowserPanelRequested(onRequested: () => void): Promise<() => void> {
+export function listenBrowserPanelRequested(onRequested: (tabId?: string) => void): Promise<() => void> {
   if (!isTauri()) return import("./preview/browser").then(({ onPreviewBrowserPanelRequested }) => onPreviewBrowserPanelRequested(onRequested));
-  return import("@tauri-apps/api/event").then(({ listen }) => listen("browser-panel-requested", () => onRequested()));
+  return import("@tauri-apps/api/event").then(({ listen }) =>
+    listen<string>("browser-panel-requested", (event) => onRequested(event.payload)),
+  );
 }
 
 export async function listenBrowserControlEvents(onFocus: () => void, onError: (message: string) => void): Promise<() => void> {

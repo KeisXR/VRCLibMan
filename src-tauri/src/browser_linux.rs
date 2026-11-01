@@ -162,16 +162,16 @@ fn shortcut(key: gtk::gdk::keys::Key, state: gtk::gdk::ModifierType) -> Option<&
     }
 }
 
-fn install_shortcuts(view: &webkit2gtk::WebView, app: &AppHandle, host_label: &str) {
+fn install_shortcuts(view: &webkit2gtk::WebView, app: &AppHandle, _host_label: &str) {
     use gtk::{glib::Propagation, prelude::*};
     let app = app.clone();
-    let host_label = host_label.to_string();
     view.connect_key_press_event(move |_, event| {
         let Some(action) = shortcut(event.keyval(), event.state()) else {
             return Propagation::Proceed;
         };
+        // The key arrives on the focused page. Act on that host, not the window this view was created in.
         if browser_surface::host_window(&app)
-            .is_none_or(|host| host.label() != host_label || !host.is_focused().unwrap_or(false))
+            .is_none_or(|host| !host.is_focused().unwrap_or(false))
         {
             return Propagation::Proceed;
         }

@@ -7455,9 +7455,10 @@ mod tests {
         .unwrap();
         assert_eq!(
             saved.right_panel_tabs,
-            r#"{"tabs":["files","preview","browser"],"active":2}"#
+            r#"{"tabs":["files","preview"],"active":1}"#
         );
         assert!(!saved.right_panel_tabs.contains("booth.pm"));
+        assert!(!saved.right_panel_tabs.contains("browser"));
         let one_browser = update_settings(
             &connection,
             &crate::model::SettingsPatch {
@@ -7468,10 +7469,10 @@ mod tests {
             },
         )
         .unwrap();
-        // The browser is one session, so a second browser tab collapses into the first.
+        // A stored "browser" tab is the old single session. Page tabs are not saved, so it drops out.
         assert_eq!(
             one_browser.right_panel_tabs,
-            r#"{"tabs":["browser","preview"],"active":0}"#
+            r#"{"tabs":["preview"],"active":0}"#
         );
         let saved = update_settings(
             &connection,

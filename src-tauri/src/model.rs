@@ -536,11 +536,11 @@ pub(crate) fn clamp_preview_pane_width(value: u32) -> u32 {
     value.clamp(240, 1600)
 }
 
-/// Tab kinds the right panel knows. Later kinds are added here and in `src/rightPanel.ts`.
-const RIGHT_PANEL_KINDS: &[&str] = &["preview", "files", "browser"];
-/// Kinds that may appear only once.
-/// One preview follows the selection, and the browser is a single session (one host).
-const RIGHT_PANEL_SINGLETONS: &[&str] = &["preview", "browser"];
+/// Fixed tab kinds stored in settings. Web pages are session tabs and are not listed here.
+/// `browser` remains readable so older settings still load; it is dropped on save.
+const RIGHT_PANEL_KINDS: &[&str] = &["preview", "files"];
+/// Kinds that may appear only once. Page tabs are not fixed kinds, so this does not apply to them.
+const RIGHT_PANEL_SINGLETONS: &[&str] = &["preview", "files"];
 const RIGHT_PANEL_MAX_TABS: usize = 12;
 pub(crate) const DEFAULT_RIGHT_PANEL_TABS: &str = r#"{"tabs":["preview"],"active":0}"#;
 

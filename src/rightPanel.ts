@@ -5,7 +5,7 @@ import { PREVIEW_PANE_WIDTH, clampStoredPreviewPaneWidth } from "./previewPane";
  * and registering a renderer in `components/rightPanelRegistry.tsx`.
  * The same allow-list lives in `src-tauri/src/model.rs` (`RIGHT_PANEL_KINDS`, `RIGHT_PANEL_SINGLETONS`).
  */
-export const RIGHT_PANEL_KINDS = ["preview", "files", "browser"] as const;
+export const RIGHT_PANEL_KINDS = ["preview", "files"] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
 export interface RightPanelKindInfo {
@@ -27,8 +27,6 @@ export interface RightPanelGates {
 export const RIGHT_PANEL_KIND_INFO: Record<RightPanelKind, RightPanelKindInfo> = {
   preview: { kind: "preview", label: "プレビュー", singleton: true, available: true },
   files: { kind: "files", label: "ファイル", singleton: true, available: true },
-  // One browser session (one set of BOOTH tabs), so one panel tab shows it.
-  browser: { kind: "browser", label: "ブラウザ", singleton: true, available: true, requires: "builtinBrowser" },
 };
 
 export const RIGHT_PANEL_MAX_TABS = 12;
@@ -39,7 +37,11 @@ export const RIGHT_PANEL_SHORTCUT_LABEL = "Ctrl+Shift+B";
 export interface RightPanelTab {
   /** Session-only id for React keys. Not stored. */
   id: string;
-  kind: RightPanelKind;
+  kind: RightPanelKind | "web";
+  /** Rust page id. Present only for a web tab, and never written to settings. */
+  tabId?: string;
+  /** Page title shown on a web tab. Not stored. */
+  title?: string;
 }
 
 export interface RightPanelTabs {
@@ -100,16 +102,38 @@ export function parseRightPanelTabs(raw: string | null | undefined): RightPanelT
   return { tabs, activeId: tabs[activeIndex]?.id ?? null };
 }
 
-/** Only kinds and the active index are stored. Page addresses never go into settings. */
+/** Only fixed kinds and their active index are stored. Page addresses and web tabs are not. */
 export function serializeRightPanelTabs(state: RightPanelTabs): string {
-  const tabs = state.tabs.slice(0, RIGHT_PANEL_MAX_TABS);
-  const active = Math.max(0, tabs.findIndex((tab) => tab.id === state.activeId));
+  const tabs = state.tabs.filter((tab): tab is RightPanelTab & { kind: RightPanelKind } => tab.kind !== "web").slice(0, RIGHT_PANEL_MAX_TABS);
+  const activeTab = state.tabs.find((tab) => tab.id === state.activeId);
+  let active = 0;
+  if (activeTab && activeTab.kind !== "web") {
+    active = Math.max(0, tabs.findIndex((tab) => tab.id === activeTab.id));
+  } else {
+    const index = state.tabs.findIndex((tab) => tab.id === state.activeId);
+    const prior = state.tabs.slice(0, Math.max(0, index)).filter((tab) => tab.kind !== "web");
+    active = prior.length === 0 ? 0 : prior.length - 1;
+  }
+  if (!tabs.length) active = 0;
   return JSON.stringify({ tabs: tabs.map((tab) => tab.kind), active });
+}
+
+/** Page tabs follow the built-in browser setting. They are not a stored kind. */
+export function pageTabsAllowed(gates: RightPanelGates = {}): boolean {
+  return gates.builtinBrowser === true;
+}
+
+export function tabLabel(tab: RightPanelTab): string {
+  if (tab.kind === "web") return tab.title?.trim() || "ページ";
+  return RIGHT_PANEL_KIND_INFO[tab.kind].label;
 }
 
 /** Tabs whose kind is implemented in this build and turned on. Hidden tabs stay in settings. */
 export function visibleTabs(state: RightPanelTabs, gates: RightPanelGates = {}): RightPanelTab[] {
-  return state.tabs.filter((tab) => kindAvailable(tab.kind, gates));
+  return state.tabs.filter((tab) => {
+    if (tab.kind === "web") return pageTabsAllowed(gates) && Boolean(tab.tabId);
+    return kindAvailable(tab.kind, gates);
+  });
 }
 
 export function activeTab(state: RightPanelTabs, gates: RightPanelGates = {}): RightPanelTab | null {
@@ -121,7 +145,8 @@ export function canAddTab(state: RightPanelTabs, kind: RightPanelKind, gates: Ri
   const info = RIGHT_PANEL_KIND_INFO[kind];
   if (!kindAvailable(kind, gates)) return false;
   if (info.singleton && state.tabs.some((tab) => tab.kind === kind)) return true;
-  return state.tabs.length < RIGHT_PANEL_MAX_TABS;
+  const fixed = state.tabs.filter((tab) => tab.kind !== "web").length;
+  return fixed < RIGHT_PANEL_MAX_TABS;
 }
 
 /** Add a tab, or focus the existing one for single-instance kinds. */
@@ -188,4 +213,74 @@ export function rightPanelMaxWidth(windowWidth: number, leftColumns: number): nu
 export function fitRightPanelWidth(stored: number, windowWidth: number, leftColumns: number): number {
   const preferred = clampStoredPreviewPaneWidth(stored);
   return Math.min(rightPanelMaxWidth(windowWidth, leftColumns), preferred);
+}
+
+export interface PanelPage {
+  tabId: string;
+  title: string;
+}
+
+/** Keep the user's order. Drop pages that left the panel and append pages that arrived. */
+export function mergePanelWebTabs(state: RightPanelTabs, pages: PanelPage[]): RightPanelTabs {
+  const titles = new Map(pages.map((page) => [page.tabId, page.title.trim() || "ページ"]));
+  let changed = false;
+  const tabs: RightPanelTab[] = [];
+  for (const tab of state.tabs) {
+    if (tab.kind !== "web" || !tab.tabId) {
+      tabs.push(tab);
+      continue;
+    }
+    const title = titles.get(tab.tabId);
+    if (title == null) {
+      changed = true;
+      continue;
+    }
+    if (tab.title !== title) {
+      changed = true;
+      tabs.push({ ...tab, title });
+    } else {
+      tabs.push(tab);
+    }
+  }
+  for (const page of pages) {
+    if (tabs.some((tab) => tab.kind === "web" && tab.tabId === page.tabId)) continue;
+    changed = true;
+    tabs.push({ id: `web-${page.tabId}`, kind: "web", tabId: page.tabId, title: titles.get(page.tabId) });
+  }
+  let activeId = state.activeId;
+  if (activeId && !tabs.some((tab) => tab.id === activeId)) {
+    changed = true;
+    const index = state.tabs.findIndex((tab) => tab.id === activeId);
+    activeId = (tabs[index] ?? tabs[index - 1] ?? null)?.id ?? null;
+  }
+  if (!changed) return state;
+  return { tabs, activeId };
+}
+
+export function focusWebTab(state: RightPanelTabs, tabId: string, title = "ページ"): RightPanelTabs {
+  const existing = state.tabs.find((tab) => tab.kind === "web" && tab.tabId === tabId);
+  if (existing) return existing.id === state.activeId ? state : { ...state, activeId: existing.id };
+  return {
+    tabs: [...state.tabs, { id: `web-${tabId}`, kind: "web", tabId, title: title.trim() || "ページ" }],
+    activeId: `web-${tabId}`,
+  };
+}
+
+/** Move `id` so it sits at `index` in the list before the removal (a gap index). */
+export function placeTab(state: RightPanelTabs, id: string, index: number): RightPanelTabs {
+  const from = state.tabs.findIndex((tab) => tab.id === id);
+  if (from < 0) return state;
+  const tabs = state.tabs.slice();
+  const [tab] = tabs.splice(from, 1);
+  if (!tab) return state;
+  let target = index;
+  if (target > from) target -= 1;
+  target = Math.max(0, Math.min(target, tabs.length));
+  if (target === from) return state;
+  tabs.splice(target, 0, tab);
+  return { ...state, tabs };
+}
+
+export function webTabIds(state: RightPanelTabs): string[] {
+  return state.tabs.flatMap((tab) => (tab.kind === "web" && tab.tabId ? [tab.tabId] : []));
 }

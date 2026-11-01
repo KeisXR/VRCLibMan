@@ -222,30 +222,72 @@ test("the docked browser keeps BOOTH addresses out of settings and follows the b
   const model = readFileSync("src-tauri/src/model.rs", "utf8");
   // Only kinds and an index are saved; the browser tab never writes a page address.
   assert.doesNotMatch(browserPanel, /updateSettings|localStorage/);
-  assert.match(kinds, /requires: "builtinBrowser"/);
-  assert.match(model, /RIGHT_PANEL_SINGLETONS: &\[&str\] = &\["preview", "browser"\]/);
+  assert.match(kinds, /pageTabsAllowed/);
+  assert.match(model, /RIGHT_PANEL_SINGLETONS: &\[&str\] = &\["preview", "files"\]/);
   assert.match(panel, /listenBrowserPanelRequested/);
-  assert.match(panel, /if \(!builtinBrowser\) return;/);
-  // Docked BOOTH tabs are children of the main window. The main window's capability stays
+  assert.match(panel, /if \(!builtinBrowser\)/);
+  // Docked pages are children of the main window. The main window's capability stays
   // local-only (no remote URLs), and browser commands check the caller's webview label.
   const capability = JSON.parse(readFileSync("src-tauri/capabilities/default.json", "utf8"));
   assert.equal(capability.remote, undefined);
+  const toolbar = JSON.parse(readFileSync("src-tauri/capabilities/browser-toolbar.json", "utf8"));
+  assert.ok(toolbar.webviews.includes("booth-toolbar-*"));
   const commands = readFileSync("src-tauri/src/commands.rs", "utf8");
   assert.match(commands, /BrowserAction::PanelArea \{ area, visible \} => \{\s*main_window_only\(&label\)\?;/);
-  // Closing the panel's browser tab ends only a docked session.
-  assert.match(panel, /state\.host === "panel" \? api\.closeBoothBrowser\(\)/);
+  // Closing the panel hides docked pages. It does not end their session.
+  assert.doesNotMatch(panel, /closeBoothBrowser/);
+  assert.match(panel, /unified/);
 });
 
-test("one browser tab: a stored duplicate collapses into the first and keeps focus on it", async () => {
+test("stored browser tabs are fixed kinds only, and old browser entries are dropped", async () => {
   const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
   try {
     const panel = await server.ssrLoadModule("/src/rightPanel.ts");
     const parsed = panel.parseRightPanelTabs('{"tabs":["browser","preview","browser"],"active":2}');
-    assert.deepEqual(parsed.tabs.map((tab) => tab.kind), ["browser", "preview"]);
-    assert.equal(parsed.tabs.find((tab) => tab.id === parsed.activeId).kind, "browser");
-    assert.equal(panel.serializeRightPanelTabs(parsed), '{"tabs":["browser","preview"],"active":0}');
-    const again = panel.openTab(parsed, "browser");
-    assert.equal(again.tabs.length, 2);
+    assert.deepEqual(parsed.tabs.map((tab) => tab.kind), ["preview"]);
+    assert.equal(parsed.tabs.find((tab) => tab.id === parsed.activeId).kind, "preview");
+    assert.equal(panel.serializeRightPanelTabs(parsed), '{"tabs":["preview"],"active":0}');
+    const again = panel.openTab(parsed, "preview");
+    assert.equal(again.tabs.length, 1);
+  } finally {
+    await server.close();
+  }
+});
+
+test("one page can leave for its own window while the panel keeps the rest", async () => {
+  const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  try {
+    const preview = await server.ssrLoadModule("/src/preview/browser.ts");
+    preview.resetPreviewBrowser();
+    preview.previewBrowserAction({ kind: "newTab", url: "https://one.example/a" });
+    preview.previewBrowserAction({ kind: "newTab", url: "https://two.example/b" });
+    const opened = preview.previewBrowserState();
+    assert.equal(opened.host, "panel");
+    assert.equal(opened.hosts.length, 1);
+    const [first, second] = opened.hosts[0].tabIds;
+    const detached = preview.previewBrowserAction({ kind: "detachTab", tabId: first, x: -1920, y: 40 });
+    const panelHost = detached.hosts.find((host) => host.kind === "panel");
+    const windowHost = detached.hosts.find((host) => host.kind === "window");
+    assert.deepEqual(panelHost.tabIds, [second]);
+    assert.deepEqual(windowHost.tabIds, [first]);
+    assert.equal(windowHost.activeId, first);
+    assert.equal(detached.tabs.find((tab) => tab.id === second).url, "https://two.example/b");
+    const named = preview.previewBrowserAction({ kind: "navigate", url: "https://two.example/next", tabId: second, hostId: "panel" });
+    assert.equal(named.tabs.find((tab) => tab.id === second).url, "https://two.example/next");
+    assert.equal(named.tabs.find((tab) => tab.id === first).url, "https://one.example/a");
+    const docked = preview.previewBrowserAction({ kind: "dockTab", tabId: first });
+    assert.equal(docked.hosts.some((host) => host.kind === "window"), false);
+    assert.equal(docked.host, "panel");
+    const order = docked.hosts[0].tabIds;
+    const reversed = preview.previewBrowserAction({ kind: "reorderTabs", hostId: "panel", tabIds: [...order].reverse() });
+    assert.deepEqual(reversed.hosts[0].tabIds, [...order].reverse());
+    const popped = preview.previewBrowserAction({ kind: "detachTab", tabId: order[0], x: 12, y: 12 });
+    const alone = popped.hosts.find((host) => host.kind === "window");
+    const closed = preview.previewBrowserAction({ kind: "closeTab", tabId: alone.tabIds[0] });
+    assert.equal(closed.hosts.some((host) => host.id === alone.id), false);
+    assert.equal(closed.host, "panel");
+    assert.throws(() => preview.previewBrowserAction({ kind: "detachTab", tabId: closed.hosts[0].tabIds[0], x: Number.NaN, y: 1 }));
+    assert.throws(() => preview.previewBrowserAction({ kind: "reorderTabs", hostId: "panel", tabIds: ["missing"] }));
   } finally {
     await server.close();
   }

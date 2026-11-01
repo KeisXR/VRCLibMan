@@ -541,15 +541,34 @@ export interface AvatarInput {
 }
 
 export interface BrowserBookmark { title: string; url: string; }
-export interface BrowserTab { id: string; url: string; title: string; loading: boolean; canGoBack: boolean; canGoForward: boolean; }
+export interface BrowserTab {
+  id: string;
+  url: string;
+  title: string;
+  loading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  /** Which panel or window currently shows this page. Omitted only by older callers. */
+  hostId?: string;
+}
 /** Where the browser pages are shown: their own window, the main window's right panel, or nowhere. */
 export type BrowserHostKind = "window" | "panel";
+/** One open panel or window and the pages that belong to it, in strip order. */
+export interface BrowserHostState {
+  id: string;
+  kind: BrowserHostKind;
+  tabIds: string[];
+  activeId: string | null;
+}
 export interface BrowserState {
   open: boolean;
   tabs: BrowserTab[];
+  /** Active page of the focused host. Each host also has `hosts[].activeId`. */
   activeId: string | null;
+  hosts: BrowserHostState[];
   bookmarks: BrowserBookmark[];
   busy: boolean;
+  /** "panel" when the right panel has pages, otherwise "window" when a separate window does. */
   host: BrowserHostKind | null;
   /** The right panel can host the pages on this OS (Windows). Elsewhere the separate window is used. */
   panelSupported: boolean;
@@ -557,14 +576,17 @@ export interface BrowserState {
 /** A rectangle in the main window, in CSS pixels. */
 export interface BrowserPanelRect { left: number; top: number; width: number; height: number; }
 export type BrowserAction =
-  | { kind: "newTab"; url?: string }
-  | { kind: "navigate"; url: string }
+  | { kind: "newTab"; url?: string; hostId?: string }
+  | { kind: "navigate"; url: string; tabId?: string; hostId?: string }
   | { kind: "selectTab" | "closeTab"; tabId: string }
-  | { kind: "back" | "forward" | "reload" | "stop" }
-  | { kind: "toolbarHeight"; height: number }
-  | { kind: "dock"; area: BrowserPanelRect | null }
+  | { kind: "back" | "forward" | "reload" | "stop"; tabId?: string; hostId?: string }
+  | { kind: "toolbarHeight"; height: number; hostId?: string }
+  | { kind: "dock"; area: BrowserPanelRect | null; hostId?: string }
   | { kind: "undock" }
-  | { kind: "panelArea"; area: BrowserPanelRect | null; visible: boolean };
+  | { kind: "panelArea"; area: BrowserPanelRect | null; visible: boolean }
+  | { kind: "reorderTabs"; hostId: string; tabIds: string[] }
+  | { kind: "detachTab"; tabId: string; x: number; y: number }
+  | { kind: "dockTab"; tabId: string; index?: number };
 
 export interface AppUpdateStatus {
   revision: number;

@@ -2,7 +2,6 @@ import { useEffect } from "react";
 import type { ComponentType } from "react";
 import type { RightPanelKind } from "../rightPanel";
 import type { RightPanelValue } from "./RightPanel";
-import { BrowserPanelTab } from "./BrowserPanel";
 import { FilesTab } from "./FilesTab";
 import { PreviewPane, useLargePreview } from "./PreviewPane";
 
@@ -38,5 +37,4 @@ function PreviewTab({ panel }: { panel: RightPanelValue }) {
 export const RIGHT_PANEL_RENDERERS: Partial<Record<RightPanelKind, RightPanelRenderer>> = {
   preview: PreviewTab,
   files: FilesTab,
-  browser: BrowserPanelTab,
 };

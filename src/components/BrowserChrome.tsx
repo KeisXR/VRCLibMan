@@ -25,6 +25,7 @@ const emptyState: BrowserState = {
   open: false,
   tabs: [],
   activeId: null,
+  hosts: [],
   bookmarks: [],
   busy: false,
   host: null,
@@ -40,11 +41,17 @@ type BookmarkEdit = { originalUrl: string | null; title: string; url: string };
 export function BrowserChrome({
   embedded: embeddedProp = false,
   panel = false,
+  hostId,
+  showPageTabs = !panel,
   onImported,
 }: {
   embedded?: boolean;
   /** Shown in the main window's right panel, above the docked pages. */
   panel?: boolean;
+  /** Limit controls to one panel or window. The right panel passes "panel". */
+  hostId?: string;
+  /** The right panel draws page tabs in its own strip, so this row stays hidden there. */
+  showPageTabs?: boolean;
   onImported?: () => void;
 }) {
   const embedded = embeddedProp || panel;
@@ -61,7 +68,11 @@ export function BrowserChrome({
   const epoch = useRef(0);
   const reading = useRef(false);
   const alive = useRef(false);
-  const active = state.tabs.find((tab) => tab.id === state.activeId);
+  const scopedHost = hostId ?? new URLSearchParams(window.location.search).get("browserHost") ?? undefined;
+  const host = scopedHost ? state.hosts.find((item) => item.id === scopedHost) : undefined;
+  const pageTabs = host ? state.tabs.filter((tab) => tab.hostId === host.id) : state.tabs;
+  const selectedId = host?.activeId ?? state.activeId;
+  const active = pageTabs.find((tab) => tab.id === selectedId) ?? state.tabs.find((tab) => tab.id === selectedId);
   const disabled = working || state.busy;
   const bookmarked = state.bookmarks.find((item) => item.url === active?.url);
   const canImport = (() => {
@@ -133,7 +144,7 @@ export function BrowserChrome({
     controls.current
       ?.querySelector('[role="tab"][aria-selected="true"]')
       ?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
-  }, [state.activeId]);
+  }, [selectedId]);
 
   useEffect(() => {
     if (
@@ -149,21 +160,29 @@ export function BrowserChrome({
       if (height !== previous) {
         previous = height;
         void api
-          .browserAction({ kind: "toolbarHeight", height })
+          .browserAction({ kind: "toolbarHeight", height, hostId: scopedHost })
           .catch((err) => setError(errorText(err)));
       }
     });
     observer.observe(controls.current);
     return () => observer.disconnect();
-  }, [embedded]);
+  }, [embedded, scopedHost]);
 
   const action = useCallback(async (command: BrowserAction) => {
+    const hostIdForCommand = scopedHost;
+    const tabId = active?.id;
+    let targeted = command;
+    if (command.kind === "newTab") targeted = { ...command, hostId: command.hostId ?? hostIdForCommand };
+    else if (command.kind === "navigate" || command.kind === "back" || command.kind === "forward" || command.kind === "reload" || command.kind === "stop")
+      targeted = { ...command, hostId: command.hostId ?? hostIdForCommand, tabId: command.tabId ?? tabId };
+    else if (command.kind === "toolbarHeight" || command.kind === "dock")
+      targeted = { ...command, hostId: command.hostId ?? hostIdForCommand };
     epoch.current++;
     setWorking(true);
     setError("");
     setMessage("");
     try {
-      const next = await api.browserAction(command);
+      const next = await api.browserAction(targeted);
       if (alive.current) {
         setState(next);
         if (command.kind === "newTab")
@@ -177,7 +196,7 @@ export function BrowserChrome({
     } finally {
       if (alive.current) setWorking(false);
     }
-  }, []);
+  }, [active?.id, scopedHost]);
 
   useEffect(() => {
     // Native accelerators also work when an external tab has keyboard focus.
@@ -195,18 +214,18 @@ export function BrowserChrome({
         event.preventDefault();
         void action({ kind: "newTab" });
       }
-      if (event.key.toLowerCase() === "w" && state.activeId) {
+      if (event.key.toLowerCase() === "w" && active?.id) {
         event.preventDefault();
-        void action({ kind: "closeTab", tabId: state.activeId });
+        void action({ kind: "closeTab", tabId: active.id });
       }
-      if (event.key.toLowerCase() === "r" && state.activeId) {
+      if (event.key.toLowerCase() === "r" && active?.id) {
         event.preventDefault();
         void action({ kind: "reload" });
       }
     }
     window.addEventListener("keydown", shortcut);
     return () => window.removeEventListener("keydown", shortcut);
-  }, [action, disabled, state.activeId, embedded, panel]);
+  }, [action, disabled, active?.id, embedded, panel]);
 
   async function saveBookmark() {
     if (!edit) return;
@@ -263,24 +282,24 @@ export function BrowserChrome({
       className={panel ? "browser-chrome embedded panel" : embedded ? "browser-chrome embedded" : "browser-chrome"}
       ref={controls}
     >
-      <BrowserTitleBar embedded={embedded} onError={setError}>
+      {showPageTabs && <BrowserTitleBar embedded={embedded} onError={setError}>
         <div
           className="browser-tabs"
           data-tauri-drag-region={embedded ? undefined : "false"}
           role="tablist"
           aria-label="ブラウザのタブ"
         >
-          {state.tabs.map((tab, index) => (
+          {pageTabs.map((tab, index) => (
             <div
               className={
-                tab.id === state.activeId ? "browser-tab active" : "browser-tab"
+                tab.id === selectedId ? "browser-tab active" : "browser-tab"
               }
               key={tab.id}
             >
               <button
                 type="button"
                 role="tab"
-                aria-selected={tab.id === state.activeId}
+                aria-selected={tab.id === selectedId}
                 disabled={disabled}
                 title={tab.url}
                 onClick={() =>
@@ -290,12 +309,12 @@ export function BrowserChrome({
                   if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
                     event.preventDefault();
                     const next =
-                      state.tabs[
+                      pageTabs[
                         (index +
                           (event.key === "ArrowRight"
                             ? 1
-                            : state.tabs.length - 1)) %
-                          state.tabs.length
+                            : pageTabs.length - 1)) %
+                          pageTabs.length
                       ];
                     if (next)
                       void action({ kind: "selectTab", tabId: next.id });
@@ -321,14 +340,14 @@ export function BrowserChrome({
         <button
           className="browser-icon browser-new-tab"
           type="button"
-          disabled={disabled || state.tabs.length >= 20}
+          disabled={disabled || pageTabs.length >= 20}
           aria-label="新しいタブ"
           title="新しいタブ"
           onClick={() => void action({ kind: "newTab" })}
         >
           <PlusGlyph />
         </button>
-      </BrowserTitleBar>
+      </BrowserTitleBar>}
       <div className="browser-navigation">
         <button
           className="browser-icon"

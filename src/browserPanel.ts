@@ -59,7 +59,8 @@ export interface PanelVisibility {
 
 /** Whether the native view may be drawn at `area` right now. */
 export function browserPanelVisible(area: BrowserPanelRect | null, state: PanelVisibility): boolean {
-  if (!area || state.overlay || state.dragging) return false;
+  const tabDrag = typeof document !== "undefined" && document.body.classList.contains("tab-dragging");
+  if (!area || state.overlay || state.dragging || tabDrag) return false;
   return !state.covers.some((cover) => rectsOverlap(area, cover));
 }
 

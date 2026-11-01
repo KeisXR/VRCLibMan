@@ -1,10 +1,8 @@
-//! Native browser surface. Tab data is independent of its host window and layout rectangle.
-//! The same child webviews are shown either in the separate browser window or docked in the
-//! main window's right panel. Only one host exists at a time; moving between them reparents
-//! the tab webviews, so pages and sign-in stay as they are.
+//! Native browser surface. Each page tab belongs to one host: the right panel or its own window.
+//! Several hosts can be open at once. Moving a tab reparents that webview, so history and sign-in stay.
 use crate::{
     browser,
-    browser_tabs::{self, BrowserState, TabSession, TOOLBAR_LABEL},
+    browser_tabs::{self, BrowserState, HostKind, MoveToken, TabSession, PANEL_HOST_ID},
 };
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -17,7 +15,7 @@ use tauri::{
 use url::Url;
 
 const CHANGED: &str = "browser-state-changed";
-/// Asks the main window to show the browser tab of its right panel.
+/// Asks the main window to show the page tab in its right panel.
 pub const PANEL_REQUESTED: &str = "browser-panel-requested";
 /// The docked host is the main window; it never owns or destroys it.
 pub const PANEL_WINDOW_LABEL: &str = crate::presence::MAIN_WINDOW;
@@ -32,7 +30,7 @@ pub const fn panel_supported() -> bool {
     cfg!(windows)
 }
 
-/// The user moved the browser to its own window in this session, so later opens use the window.
+/// The user moved a page to its own window in this session, so a later empty open uses a window.
 /// Kept in memory only.
 static PREFER_WINDOW: AtomicBool = AtomicBool::new(false);
 
@@ -77,55 +75,7 @@ impl SurfaceArea {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum HostKind {
-    /// The separate browser window with its own toolbar webview. The surface owns it.
-    Window,
-    /// The main window's right panel. The toolbar is the main window's own DOM.
-    Panel,
-}
-impl HostKind {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Window => "window",
-            Self::Panel => "panel",
-        }
-    }
-}
-
-#[derive(Clone)]
-struct BrowserHost {
-    window_label: String,
-    kind: HostKind,
-    // None fills the host. A docked host supplies the panel rectangle in logical pixels.
-    area: Option<SurfaceArea>,
-    /// A docked host hides its tabs while menus, dialogs or drags cover the panel.
-    visible: bool,
-}
-impl BrowserHost {
-    fn window(label: &str) -> Self {
-        Self {
-            window_label: label.into(),
-            kind: HostKind::Window,
-            area: None,
-            visible: true,
-        }
-    }
-    fn panel(area: Option<SurfaceArea>, visible: bool) -> Self {
-        Self {
-            window_label: PANEL_WINDOW_LABEL.into(),
-            kind: HostKind::Panel,
-            area,
-            visible,
-        }
-    }
-    fn owns_window(&self) -> bool {
-        self.kind == HostKind::Window
-    }
-}
-
-/// Where the active tab goes in a docked host. None hides every tab: the panel is covered,
-/// not measured yet, or too small to show a page.
+/// Where the active tab goes in a docked host. None hides every tab of that host.
 fn panel_content(area: Option<SurfaceArea>, visible: bool) -> Option<SurfaceArea> {
     let area = area?;
     (visible && area.width >= 2.0 && area.height >= 2.0).then_some(area)
@@ -135,16 +85,31 @@ fn panel_content(area: Option<SurfaceArea>, visible: bool) -> Option<SurfaceArea
 fn start_in_panel(supported: bool, prefer_window: bool, main_visible: bool) -> bool {
     supported && !prefer_window && main_visible
 }
+
+#[derive(Clone)]
+struct LiveHost {
+    id: String,
+    kind: HostKind,
+    window_label: String,
+    toolbar_label: Option<String>,
+    generation: u64,
+    area: Option<SurfaceArea>,
+    visible: bool,
+    toolbar_height: f64,
+}
+
 struct Surface {
     session: TabSession,
-    host: Option<BrowserHost>,
+    live: Vec<LiveHost>,
+    next_generation: u64,
 }
 static SURFACE: Mutex<Surface> = Mutex::new(Surface {
     session: TabSession::new(),
-    host: None,
+    live: Vec::new(),
+    next_generation: 1,
 });
 fn surface() -> std::sync::MutexGuard<'static, Surface> {
-    SURFACE.lock().unwrap_or_else(|e| e.into_inner())
+    SURFACE.lock().unwrap_or_else(|error| error.into_inner())
 }
 fn changed(app: &AppHandle) {
     let _ = app.emit(CHANGED, ());
@@ -156,32 +121,125 @@ fn mutable() -> Result<(), String> {
     Ok(())
 }
 
+fn new_tab_host(state: &Mutex<Surface>, requested: Option<String>) -> String {
+    requested.unwrap_or_else(|| {
+        let state = state.lock().unwrap_or_else(|error| error.into_inner());
+        state
+            .session
+            .focused_host()
+            .filter(|id| state.session.kind_of(id).is_some())
+            .or_else(|| state.session.primary_host().map(str::to_string))
+            .unwrap_or_else(|| PANEL_HOST_ID.to_string())
+    })
+}
+
+/// Native actions may read the surface again, so release its lock before calling them.
+fn with_active_tab<T>(
+    state: &Mutex<Surface>,
+    host_id: &str,
+    action: impl FnOnce(&str) -> Result<T, String>,
+) -> Result<T, String> {
+    let id = {
+        let state = state.lock().unwrap_or_else(|error| error.into_inner());
+        state.session.active_of(host_id)
+    }
+    .ok_or_else(|| "タブが見つかりません".to_string())?;
+    action(&id)
+}
+
+fn live_label(state: &Surface, host_id: &str) -> Option<String> {
+    state
+        .live
+        .iter()
+        .find(|host| host.id == host_id)
+        .map(|host| host.window_label.clone())
+        .or_else(|| (host_id == PANEL_HOST_ID).then(|| PANEL_WINDOW_LABEL.to_string()))
+}
+
+/// The window of the focused host, or of the panel when that is where the pages are.
 pub fn host_window(app: &AppHandle) -> Option<Window> {
-    let label = surface()
-        .host
-        .as_ref()
-        .map(|host| host.window_label.clone())?;
+    let label = {
+        let state = surface();
+        let host_id = state
+            .session
+            .focused_host()
+            .filter(|id| state.session.active_of(id).is_some())
+            .or_else(|| state.session.primary_host().map(str::to_string))?;
+        live_label(&state, &host_id)?
+    };
     app.get_window(&label)
 }
+
 pub fn active_view(app: &AppHandle) -> Result<Webview, String> {
     let id = surface()
         .session
-        .active_id
-        .clone()
+        .focused_tab()
         .ok_or("ブラウザを開いてから操作してください")?;
     app.get_webview(&id)
         .ok_or_else(|| "選択中のタブが見つかりません".into())
 }
+
+pub fn view_for(app: &AppHandle, tab_id: &str) -> Result<Webview, String> {
+    if !surface().session.has(tab_id) {
+        return Err("タブが見つかりません".into());
+    }
+    app.get_webview(tab_id)
+        .ok_or_else(|| "選択中のタブが見つかりません".into())
+}
+
+/// Host implied by the webview that sent the command. The main window means the right panel.
+pub fn host_id_for_label(label: &str) -> Option<String> {
+    let state = surface();
+    if let Some(host) = state
+        .live
+        .iter()
+        .find(|host| host.toolbar_label.as_deref() == Some(label))
+    {
+        return Some(host.id.clone());
+    }
+    if label == PANEL_WINDOW_LABEL {
+        return Some(PANEL_HOST_ID.to_string());
+    }
+    None
+}
+
+pub fn tab_for_caller(
+    caller: &str,
+    explicit_tab: Option<String>,
+    explicit_host: Option<String>,
+) -> Result<String, String> {
+    if let Some(id) = explicit_tab {
+        if surface().session.has(&id) {
+            return Ok(id);
+        }
+        return Err("タブが見つかりません".into());
+    }
+    let host = explicit_host.or_else(|| host_id_for_label(caller));
+    let state = surface();
+    if let Some(host) = host.as_deref() {
+        if let Some(id) = state.session.active_of(host) {
+            return Ok(id);
+        }
+    }
+    state
+        .session
+        .focused_tab()
+        .ok_or_else(|| "ブラウザを開いてから操作してください".into())
+}
+
 pub fn booth_view(app: &AppHandle) -> Option<Webview> {
     let ids = {
         let state = surface();
-        state
-            .session
-            .active_id
-            .iter()
-            .cloned()
-            .chain(state.session.tabs.iter().rev().map(|tab| tab.id.clone()))
-            .collect::<Vec<_>>()
+        let mut ids = Vec::new();
+        if let Some(id) = state.session.focused_tab() {
+            ids.push(id);
+        }
+        for tab in state.session.tabs.iter().rev() {
+            if !ids.iter().any(|id| id == &tab.id) {
+                ids.push(tab.id.clone());
+            }
+        }
+        ids
     };
     ids.into_iter()
         .filter_map(|id| app.get_webview(&id))
@@ -281,19 +339,20 @@ fn native_history(
         let view = native
             .controller()
             .CoreWebView2()
-            .map_err(|e| format!("履歴を確認できません: {e}"))?;
+            .map_err(|error| format!("履歴を確認できません: {error}"))?;
         if let Some(forward) = action {
             if forward {
                 view.GoForward()
             } else {
                 view.GoBack()
             }
-            .map_err(|e| format!("履歴を移動できません: {e}"))?;
+            .map_err(|error| format!("履歴を移動できません: {error}"))?;
         }
         let mut back = Default::default();
         let mut forward = Default::default();
-        view.CanGoBack(&mut back).map_err(|e| e.to_string())?;
-        view.CanGoForward(&mut forward).map_err(|e| e.to_string())?;
+        view.CanGoBack(&mut back).map_err(|error| error.to_string())?;
+        view.CanGoForward(&mut forward)
+            .map_err(|error| error.to_string())?;
         Ok((back.as_bool(), forward.as_bool()))
     }
     #[cfg(target_os = "macos")]
@@ -313,19 +372,32 @@ fn native_history(
 }
 
 pub fn state(app: &AppHandle) -> Result<BrowserState, String> {
-    if let Ok(view) = active_view(app) {
-        if let Ok(url) = crate::browser_url::current_url(&view) {
-            let mut state = surface();
-            state
-                .session
-                .update(view.label(), |tab| tab.url = url.to_string());
-            drop(state);
-            refresh_history(&view);
+    let ids = surface()
+        .session
+        .tabs
+        .iter()
+        .map(|tab| tab.id.clone())
+        .collect::<Vec<_>>();
+    for id in ids {
+        if let Some(view) = app.get_webview(&id) {
+            if let Ok(url) = crate::browser_url::current_url(&view) {
+                let mut state = surface();
+                state
+                    .session
+                    .update(view.label(), |tab| tab.url = url.to_string());
+                drop(state);
+                refresh_history(&view);
+            }
         }
     }
-    let (tabs, active_id) = {
+    let (tabs, active_id, hosts, coarse) = {
         let state = surface();
-        (state.session.tabs.clone(), state.session.active_id.clone())
+        (
+            state.session.tabs.clone(),
+            state.session.focused_tab(),
+            state.session.host_states(),
+            state.session.coarse_host(),
+        )
     };
     let app_state = app.state::<crate::AppState>();
     let connection = app_state
@@ -333,14 +405,14 @@ pub fn state(app: &AppHandle) -> Result<BrowserState, String> {
         .lock()
         .map_err(|_| "データベースをロックできません".to_string())?;
     let bookmarks = crate::db::browser_bookmarks(&connection)?;
-    let host = surface().host.as_ref().map(|host| host.kind.name());
     Ok(BrowserState {
-        open: host_window(app).is_some(),
+        open: !tabs.is_empty(),
         tabs,
         active_id,
+        hosts,
         bookmarks,
         busy: browser::library_walk_running() || browser::download_job_armed(),
-        host,
+        host: coarse,
         panel_supported: panel_supported(),
     })
 }
@@ -352,7 +424,7 @@ fn set_view_bounds(
     _toolbar: bool,
     _fill_host: bool,
 ) -> Result<(), String> {
-    view.set_bounds(area.rect()).map_err(|e| e.to_string())
+    view.set_bounds(area.rect()).map_err(|error| error.to_string())
 }
 
 #[cfg(target_os = "linux")]
@@ -366,79 +438,194 @@ fn set_view_bounds(
 }
 
 pub fn layout(app: &AppHandle) -> Result<(), String> {
-    let (host, toolbar_height, tabs, active) = {
+    let (live, tabs) = {
         let state = surface();
-        (
-            state.host.clone(),
-            state.session.toolbar_height,
-            state.session.tabs.clone(),
-            state.session.active_id.clone(),
-        )
+        (state.live.clone(), state.session.tabs.clone())
     };
-    let Some(host) = host else {
-        return Ok(());
-    };
-    let Some(window) = app.get_window(&host.window_label) else {
-        return Ok(());
-    };
-    let content = match host.kind {
-        HostKind::Window => {
-            let size = window
-                .inner_size()
-                .map_err(|e| e.to_string())?
-                .to_logical::<f64>(window.scale_factor().map_err(|e| e.to_string())?);
-            let area = host.area.unwrap_or(SurfaceArea {
-                left: 0.0,
-                top: 0.0,
-                width: size.width,
-                height: size.height,
-            });
-            let (toolbar, content) = area.split(toolbar_height);
-            if let Some(view) = app.get_webview(TOOLBAR_LABEL) {
-                set_view_bounds(&view, toolbar, true, host.area.is_none())?;
-            }
-            Some(content)
-        }
-        // The main window draws the controls itself; the native view fills only the measured area.
-        HostKind::Panel => panel_content(host.area, host.visible),
-    };
-    for tab in tabs {
-        if let Some(view) = app.get_webview(&tab.id) {
-            match content {
-                Some(content) => {
-                    set_view_bounds(&view, content, false, host.area.is_none())?;
-                    if active.as_deref() == Some(&tab.id) {
-                        view.show().map_err(|e| e.to_string())?;
-                    } else {
-                        view.hide().map_err(|e| e.to_string())?;
-                    }
-                }
-                None => view.hide().map_err(|e| e.to_string())?,
-            }
+    for host in live {
+        let mine = tabs
+            .iter()
+            .filter(|tab| tab.host_id == host.id)
+            .cloned()
+            .collect::<Vec<_>>();
+        let active = surface().session.active_of(&host.id);
+        match host.kind {
+            HostKind::Window => layout_window(app, &host, &mine, active.as_deref())?,
+            HostKind::Panel => layout_panel(app, &host, &mine, active.as_deref())?,
         }
     }
     Ok(())
 }
 
-pub fn toolbar_height(app: &AppHandle, height: f64) -> Result<(), String> {
+fn layout_window(
+    app: &AppHandle,
+    host: &LiveHost,
+    tabs: &[browser_tabs::BrowserTab],
+    active: Option<&str>,
+) -> Result<(), String> {
+    let Some(window) = app.get_window(&host.window_label) else {
+        return Ok(());
+    };
+    let size = window
+        .inner_size()
+        .map_err(|error| error.to_string())?
+        .to_logical::<f64>(window.scale_factor().map_err(|error| error.to_string())?);
+    let area = SurfaceArea {
+        left: 0.0,
+        top: 0.0,
+        width: size.width,
+        height: size.height,
+    };
+    let (toolbar, content) = area.split(host.toolbar_height);
+    if let Some(label) = &host.toolbar_label {
+        if let Some(view) = app.get_webview(label) {
+            set_view_bounds(&view, toolbar, true, true)?;
+        }
+    }
+    place_tabs(app, tabs, Some(content), true, active)
+}
+
+fn layout_panel(
+    app: &AppHandle,
+    host: &LiveHost,
+    tabs: &[browser_tabs::BrowserTab],
+    active: Option<&str>,
+) -> Result<(), String> {
+    place_tabs(
+        app,
+        tabs,
+        panel_content(host.area, host.visible),
+        false,
+        active,
+    )
+}
+
+fn place_tabs(
+    app: &AppHandle,
+    tabs: &[browser_tabs::BrowserTab],
+    content: Option<SurfaceArea>,
+    fill_host: bool,
+    active: Option<&str>,
+) -> Result<(), String> {
+    for tab in tabs {
+        let Some(view) = app.get_webview(&tab.id) else {
+            continue;
+        };
+        match content {
+            Some(content) => {
+                set_view_bounds(&view, content, false, fill_host)?;
+                if active == Some(tab.id.as_str()) {
+                    view.show().map_err(|error| error.to_string())?;
+                } else {
+                    view.hide().map_err(|error| error.to_string())?;
+                }
+            }
+            None => view.hide().map_err(|error| error.to_string())?,
+        }
+    }
+    Ok(())
+}
+
+pub fn toolbar_height(app: &AppHandle, height: f64, host_id: Option<String>) -> Result<(), String> {
     if !height.is_finite() {
         return Err("操作バーの高さが不正です".into());
     }
-    surface().session.toolbar_height = height.clamp(browser_tabs::DEFAULT_TOOLBAR_HEIGHT, 420.0);
+    let height = height.clamp(browser_tabs::DEFAULT_TOOLBAR_HEIGHT, 420.0);
+    let host_id = host_id.or_else(|| {
+        let state = surface();
+        state
+            .session
+            .focused_host()
+            .filter(|id| state.session.kind_of(id) == Some(HostKind::Window))
+    });
+    if let Some(host_id) = host_id {
+        if let Some(host) = surface().live.iter_mut().find(|host| host.id == host_id) {
+            host.toolbar_height = height;
+        }
+    }
     layout(app)
 }
 
-/// The parent window and rectangle are the only placement concerns; tab behavior is unchanged.
-fn mount_tab(app: &AppHandle, host: &Window, url: Url) -> Result<String, String> {
-    let previous = surface().session.active_id.clone();
-    let id = surface().session.add(&url)?;
+fn register_live(host: LiveHost) -> u64 {
+    let mut state = surface();
+    let generation = state.next_generation;
+    state.next_generation = state.next_generation.wrapping_add(1);
+    state.live.push(LiveHost { generation, ..host });
+    generation
+}
+
+fn ensure_panel_live(area: Option<SurfaceArea>, visible: bool) -> u64 {
+    {
+        let mut state = surface();
+        state.session.ensure_panel();
+        if let Some(host) = state.live.iter_mut().find(|host| host.id == PANEL_HOST_ID) {
+            if let Some(area) = area {
+                host.area = Some(area);
+                host.visible = visible;
+            }
+            return host.generation;
+        }
+    }
+    register_live(LiveHost {
+        id: PANEL_HOST_ID.into(),
+        kind: HostKind::Panel,
+        window_label: PANEL_WINDOW_LABEL.into(),
+        toolbar_label: None,
+        generation: 0,
+        area,
+        visible: visible && area.is_some(),
+        toolbar_height: browser_tabs::DEFAULT_TOOLBAR_HEIGHT,
+    })
+}
+
+fn forget_live(host_id: &str) -> Option<LiveHost> {
+    let mut state = surface();
+    state
+        .live
+        .iter()
+        .position(|host| host.id == host_id)
+        .map(|index| state.live.remove(index))
+}
+
+/// Drops an empty host. A window is destroyed only after it is no longer registered,
+/// so a late Destroyed event cannot remove tabs that already moved.
+fn retire_if_empty(app: &AppHandle, host_id: &str) {
+    let retired = {
+        let mut state = surface();
+        if !state.session.drop_host_if_empty(host_id) {
+            return;
+        }
+        state
+            .live
+            .iter()
+            .position(|host| host.id == host_id)
+            .map(|index| state.live.remove(index))
+    };
+    if let Some(host) = retired {
+        if host.kind == HostKind::Window {
+            if let Some(source) = app.get_window(&host.window_label) {
+                let _ = source.destroy();
+            }
+        }
+    }
+}
+
+fn close_webviews(app: &AppHandle, ids: &[String]) {
+    for id in ids {
+        if let Some(view) = app.get_webview(id) {
+            let _ = view.close();
+        }
+    }
+}
+
+fn mount_tab(app: &AppHandle, host_id: &str, window: &Window, url: Url) -> Result<String, String> {
+    let id = surface().session.add(host_id, &url)?;
     let navigation_app = app.clone();
     let navigation_id = id.clone();
     let popup_app = app.clone();
     let popup_source = id.clone();
-    let mut builder = WebviewBuilder::new(&id, WebviewUrl::External(url))
+    let mut builder = WebviewBuilder::new(&id, WebviewUrl::External(url.clone()))
         .on_navigation(move |url| {
-            // Empty documents are also used by ordinary sites for frames.
             if url.as_str() == "about:blank" {
                 return true;
             }
@@ -464,11 +651,7 @@ fn mount_tab(app: &AppHandle, host: &Window, url: Url) -> Result<String, String>
                 view.app_handle(),
                 &format!(
                     "{} {}",
-                    if loading {
-                        "読み始め"
-                    } else {
-                        "読み終わり"
-                    },
+                    if loading { "読み始め" } else { "読み終わり" },
                     payload.url().origin().ascii_serialization()
                 ),
             );
@@ -485,7 +668,6 @@ fn mount_tab(app: &AppHandle, host: &Window, url: Url) -> Result<String, String>
             }
         })
         .on_new_window(move |url, _| {
-            // Queue creation after the current WebView callback, as required by WebView2.
             if checked_url(&popup_app, url.as_str()).is_ok() && mutable().is_ok() {
                 let handle = popup_app.clone();
                 let source = popup_source.clone();
@@ -497,10 +679,11 @@ fn mount_tab(app: &AppHandle, host: &Window, url: Url) -> Result<String, String>
                             if let Some(view) = app.get_webview(&source) {
                                 return view
                                     .navigate(checked_url(app, &input)?)
-                                    .map_err(|e| e.to_string());
+                                    .map_err(|error| error.to_string());
                             }
                         }
-                        new_tab(app, Some(&input))
+                        let host = surface().session.host_of(&source);
+                        new_tab_on(app, Some(&input), host)
                     })
                     .await;
                 });
@@ -513,33 +696,36 @@ fn mount_tab(app: &AppHandle, host: &Window, url: Url) -> Result<String, String>
         let root = browser::local_data_dir(app)?;
         let dir = browser::session_dir(&root);
         if !browser::session_dir_is_safe(&root, &dir) {
+            let _ = surface().session.remove(&id);
             return Err("セッションの場所が不正です".into());
         }
-        std::fs::create_dir_all(&dir)
-            .map_err(|_| "セッション用のフォルダを作れません".to_string())?;
+        if let Err(error) = std::fs::create_dir_all(&dir) {
+            let _ = surface().session.remove(&id);
+            return Err(format!("セッション用のフォルダを作れません: {error}"));
+        }
         builder = builder.data_directory(dir);
     }
     #[cfg(target_os = "macos")]
     {
         builder = builder.data_store_identifier(browser::BOOTH_DATA_STORE_ID);
     }
-    let view = match host.add_child(
+    let view = match window.add_child(
         builder,
-        LogicalPosition::new(0.0, browser_tabs::DEFAULT_TOOLBAR_HEIGHT),
+        LogicalPosition::new(0.0, 0.0),
         LogicalSize::new(1100.0, 650.0),
     ) {
         Ok(view) => view,
         Err(error) => {
-            let mut state = surface();
-            let _ = state.session.remove(&id);
-            if let Some(previous) = previous {
-                let _ = state.session.select(&previous);
-            }
+            let _ = surface().session.remove(&id);
             return Err(format!("タブを開けません: {error}"));
         }
     };
     #[cfg(target_os = "linux")]
-    crate::browser_linux::remember_profile(&view)?;
+    if let Err(error) = crate::browser_linux::remember_profile(&view) {
+        let _ = view.close();
+        let _ = surface().session.remove(&id);
+        return Err(error);
+    }
     #[cfg(not(target_os = "linux"))]
     let _ = view;
     layout(app)?;
@@ -547,25 +733,41 @@ fn mount_tab(app: &AppHandle, host: &Window, url: Url) -> Result<String, String>
     Ok(id)
 }
 
-fn install_browser_menu(app: &AppHandle, window: &Window) -> Result<(), String> {
+fn shortcut_name(id: &str) -> Option<&str> {
+    const NAMES: &[&str] = &[
+        "browser-new-tab",
+        "browser-close-tab",
+        "browser-address",
+        "browser-reload",
+        "browser-back",
+        "browser-forward",
+    ];
+    NAMES.iter().copied().find(|name| {
+        id == *name
+            || id
+                .strip_prefix(name)
+                .is_some_and(|rest| rest.starts_with('-'))
+    })
+}
+
+fn install_browser_menu(app: &AppHandle, window: &Window, host_id: &str, slot: u64) -> Result<(), String> {
     use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
-    let item =
-        |id: &str, title: &str, key: &str| MenuItem::with_id(app, id, title, true, Some(key));
-    let new_item =
-        item("browser-new-tab", "新しいタブ", "CmdOrCtrl+T").map_err(|e| e.to_string())?;
+    let item = |name: &str, title: &str, key: &str| {
+        MenuItem::with_id(app, format!("{name}-{slot}"), title, true, Some(key))
+    };
+    let new_item = item("browser-new-tab", "新しいタブ", "CmdOrCtrl+T").map_err(|error| error.to_string())?;
     let close_item =
-        item("browser-close-tab", "タブを閉じる", "CmdOrCtrl+W").map_err(|e| e.to_string())?;
-    let address =
-        item("browser-address", "アドレスバー", "CmdOrCtrl+L").map_err(|e| e.to_string())?;
+        item("browser-close-tab", "タブを閉じる", "CmdOrCtrl+W").map_err(|error| error.to_string())?;
+    let address = item("browser-address", "アドレスバー", "CmdOrCtrl+L").map_err(|error| error.to_string())?;
     let reload_item =
-        item("browser-reload", "再読み込み", "CmdOrCtrl+R").map_err(|e| e.to_string())?;
+        item("browser-reload", "再読み込み", "CmdOrCtrl+R").map_err(|error| error.to_string())?;
     #[cfg(target_os = "macos")]
     let keys = ("Cmd+[", "Cmd+]");
     #[cfg(not(target_os = "macos"))]
     let keys = ("Alt+Left", "Alt+Right");
-    let back = item("browser-back", "戻る", keys.0).map_err(|e| e.to_string())?;
-    let forward = item("browser-forward", "進む", keys.1).map_err(|e| e.to_string())?;
-    let menu = Menu::new(app).map_err(|e| e.to_string())?;
+    let back = item("browser-back", "戻る", keys.0).map_err(|error| error.to_string())?;
+    let forward = item("browser-forward", "進む", keys.1).map_err(|error| error.to_string())?;
+    let menu = Menu::new(app).map_err(|error| error.to_string())?;
     #[cfg(target_os = "macos")]
     menu.append(
         &Submenu::with_items(
@@ -573,89 +775,96 @@ fn install_browser_menu(app: &AppHandle, window: &Window) -> Result<(), String> 
             "VRCLibMan",
             true,
             &[
-                &PredefinedMenuItem::about(app, None, None).map_err(|e| e.to_string())?,
-                &PredefinedMenuItem::services(app, None).map_err(|e| e.to_string())?,
-                &PredefinedMenuItem::hide(app, None).map_err(|e| e.to_string())?,
-                &PredefinedMenuItem::hide_others(app, None).map_err(|e| e.to_string())?,
-                &PredefinedMenuItem::quit(app, None).map_err(|e| e.to_string())?,
+                &PredefinedMenuItem::about(app, None, None).map_err(|error| error.to_string())?,
+                &PredefinedMenuItem::services(app, None).map_err(|error| error.to_string())?,
+                &PredefinedMenuItem::hide(app, None).map_err(|error| error.to_string())?,
+                &PredefinedMenuItem::hide_others(app, None).map_err(|error| error.to_string())?,
+                &PredefinedMenuItem::quit(app, None).map_err(|error| error.to_string())?,
             ],
         )
-        .map_err(|e| e.to_string())?,
+        .map_err(|error| error.to_string())?,
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|error| error.to_string())?;
     menu.append(
         &Submenu::with_items(
             app,
             "編集",
             true,
             &[
-                &PredefinedMenuItem::undo(app, None).map_err(|e| e.to_string())?,
-                &PredefinedMenuItem::redo(app, None).map_err(|e| e.to_string())?,
-                &PredefinedMenuItem::cut(app, None).map_err(|e| e.to_string())?,
-                &PredefinedMenuItem::copy(app, None).map_err(|e| e.to_string())?,
-                &PredefinedMenuItem::paste(app, None).map_err(|e| e.to_string())?,
-                &PredefinedMenuItem::select_all(app, None).map_err(|e| e.to_string())?,
+                &PredefinedMenuItem::undo(app, None).map_err(|error| error.to_string())?,
+                &PredefinedMenuItem::redo(app, None).map_err(|error| error.to_string())?,
+                &PredefinedMenuItem::cut(app, None).map_err(|error| error.to_string())?,
+                &PredefinedMenuItem::copy(app, None).map_err(|error| error.to_string())?,
+                &PredefinedMenuItem::paste(app, None).map_err(|error| error.to_string())?,
+                &PredefinedMenuItem::select_all(app, None).map_err(|error| error.to_string())?,
             ],
         )
-        .map_err(|e| e.to_string())?,
+        .map_err(|error| error.to_string())?,
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|error| error.to_string())?;
     let controls = Submenu::with_items(
         app,
         "ブラウザ",
         true,
-        &[
-            &new_item,
-            &close_item,
-            &address,
-            &reload_item,
-            &back,
-            &forward,
-        ],
+        &[&new_item, &close_item, &address, &reload_item, &back, &forward],
     )
-    .map_err(|e| e.to_string())?;
-    menu.append(&controls).map_err(|e| e.to_string())?;
-    window.set_menu(menu).map_err(|e| e.to_string())?;
-    // Keep native accelerators registered without an Alt-activated menu bar.
+    .map_err(|error| error.to_string())?;
+    menu.append(&controls).map_err(|error| error.to_string())?;
+    window.set_menu(menu).map_err(|error| error.to_string())?;
     #[cfg(not(target_os = "macos"))]
-    window.hide_menu().map_err(|e| e.to_string())?;
-    window.on_menu_event(|window, event| {
-        let app = window.app_handle().clone();
-        if !window.is_focused().unwrap_or(false)
-            || host_window(&app).is_none_or(|host| host.label() != window.label())
-        {
+    window.hide_menu().map_err(|error| error.to_string())?;
+    let host_id = host_id.to_string();
+    let app_handle = app.clone();
+    window.on_menu_event(move |window, event| {
+        if !window.is_focused().unwrap_or(false) {
             return;
         }
-        let action = event.id().as_ref().to_string();
-        if !action.starts_with("browser-") {
+        let Some(action) = shortcut_name(event.id().as_ref()) else {
             return;
-        }
-        dispatch_shortcut(&app, &action);
+        };
+        dispatch_shortcut_on(&app_handle, &host_id, action);
     });
     Ok(())
 }
 
 pub(crate) fn dispatch_shortcut(app: &AppHandle, action: &str) {
+    let host = surface()
+        .session
+        .focused_host()
+        .unwrap_or_else(|| PANEL_HOST_ID.to_string());
+    dispatch_shortcut_on(app, &host, action);
+}
+
+fn dispatch_shortcut_on(app: &AppHandle, host_id: &str, action: &str) {
     let app = app.clone();
     let action = action.to_string();
+    let host_id = host_id.to_string();
     tauri::async_runtime::spawn(async move {
-        let _ = browser::dispatch_ui(app.clone(), move |handle| {
+        let _ = browser::dispatch_ui(app, move |handle| {
+            surface().session.focus_host(&host_id);
             let result = match action.as_str() {
-                "browser-new-tab" => new_tab(handle, None),
+                "browser-new-tab" => new_tab_on(handle, None, Some(host_id.clone())),
                 "browser-close-tab" => {
-                    active_view(handle).and_then(|view| close_tab(handle, view.label()))
+                    with_active_tab(&SURFACE, &host_id, |id| close_tab(handle, id))
                 }
-                "browser-reload" => reload(handle),
-                "browser-back" => history(handle, false),
-                "browser-forward" => history(handle, true),
+                "browser-reload" => reload_host(handle, &host_id),
+                "browser-back" => history_host(handle, &host_id, false),
+                "browser-forward" => history_host(handle, &host_id, true),
                 "browser-address" => Ok(()),
                 _ => Ok(()),
             };
             if action == "browser-address" || action == "browser-new-tab" {
-                if let Some(view) = handle.get_webview(TOOLBAR_LABEL) {
-                    let _ = view.set_focus();
+                let toolbar_label = surface()
+                    .live
+                    .iter()
+                    .find(|host| host.id == host_id)
+                    .and_then(|host| host.toolbar_label.clone());
+                if let Some(label) = toolbar_label {
+                    if let Some(view) = handle.get_webview(&label) {
+                        let _ = view.set_focus();
+                    }
+                    let _ = handle.emit_to(&label, "browser-focus-address", ());
                 }
-                let _ = handle.emit_to(TOOLBAR_LABEL, "browser-focus-address", ());
             }
             if let Err(error) = result {
                 let _ = handle.emit("browser-operation-error", error);
@@ -672,24 +881,54 @@ fn raise(window: &Window) {
     let _ = window.set_focus();
 }
 
-/// Ask the main window to show its right panel's browser tab.
-fn request_panel(app: &AppHandle) {
-    let _ = app.emit_to(PANEL_WINDOW_LABEL, PANEL_REQUESTED, ());
+fn request_panel(app: &AppHandle, tab_id: &str) {
+    let _ = app.emit_to(PANEL_WINDOW_LABEL, PANEL_REQUESTED, tab_id.to_string());
 }
 
-fn host_kind() -> Option<HostKind> {
-    surface().host.as_ref().map(|host| host.kind)
+fn raise_focused(app: &AppHandle) {
+    let (label, panel_tab) = {
+        let state = surface();
+        let host_id = state
+            .session
+            .focused_host()
+            .filter(|id| state.session.active_of(id).is_some())
+            .or_else(|| state.session.primary_host().map(str::to_string));
+        let Some(host_id) = host_id else {
+            return;
+        };
+        let label = live_label(&state, &host_id);
+        let panel_tab = (host_id == PANEL_HOST_ID)
+            .then(|| state.session.active_of(PANEL_HOST_ID))
+            .flatten();
+        (label, panel_tab)
+    };
+    if let Some(label) = label {
+        if let Some(window) = app.get_window(&label) {
+            raise(&window);
+        }
+    }
+    if let Some(id) = panel_tab {
+        request_panel(app, &id);
+    }
 }
 
-/// Creates the separate browser window and its toolbar webview. Tabs are added by the caller.
-fn build_browser_window(app: &AppHandle) -> Result<Window, String> {
+fn build_browser_window(
+    app: &AppHandle,
+    slot: u64,
+    position: Option<(f64, f64)>,
+) -> Result<(Window, String), String> {
     if let Some(probe) = app.get_webview_window("booth-probe") {
         let _ = probe.destroy();
     }
-    let builder = WindowBuilder::new(app, browser::WINDOW_LABEL)
+    let label = browser_tabs::window_label_for(slot);
+    let toolbar = browser_tabs::toolbar_label_for(slot);
+    let mut builder = WindowBuilder::new(app, &label)
         .title("ブラウザ — VRCLibMan")
         .inner_size(1200.0, 850.0)
         .min_inner_size(640.0, 480.0);
+    if let Some((x, y)) = position {
+        builder = builder.position(x, y);
+    }
     #[cfg(target_os = "macos")]
     let builder = builder
         .title_bar_style(tauri::TitleBarStyle::Overlay)
@@ -698,55 +937,54 @@ fn build_browser_window(app: &AppHandle) -> Result<Window, String> {
     let builder = builder.decorations(false);
     let window = builder
         .build()
-        .map_err(|e| format!("ブラウザを開けません: {e}"))?;
+        .map_err(|error| format!("ブラウザを開けません: {error}"))?;
+    let toolbar_url = format!("index.html?browserToolbar=1&browserHost=window-{slot}");
     let result = (|| {
         window
             .add_child(
-                WebviewBuilder::new(
-                    TOOLBAR_LABEL,
-                    WebviewUrl::App("index.html?browserToolbar=1".into()),
-                ),
+                WebviewBuilder::new(&toolbar, WebviewUrl::App(toolbar_url.into())),
                 LogicalPosition::new(0.0, 0.0),
                 LogicalSize::new(1200.0, browser_tabs::DEFAULT_TOOLBAR_HEIGHT),
             )
-            .map_err(|e| format!("操作バーを開けません: {e}"))?;
-        // Child webviews do not install Tauri's Windows resize borders themselves.
+            .map_err(|error| format!("操作バーを開けません: {error}"))?;
         #[cfg(windows)]
-        window.set_resizable(true).map_err(|e| e.to_string())?;
+        window.set_resizable(true).map_err(|error| error.to_string())?;
         Ok::<_, String>(())
     })();
     if let Err(error) = result {
         let _ = window.destroy();
         return Err(error);
     }
-    Ok(window)
+    Ok((window, toolbar))
 }
 
-/// Window events of the separate browser window. Closing it ends the session only while it
-/// is still the host; after the tabs moved to the panel the old window just goes away.
-fn watch_browser_window(app: &AppHandle, window: &Window) {
+fn watch_browser_window(app: &AppHandle, window: &Window, host_id: &str, generation: u64) {
     let handle = app.clone();
-    let host_label = window.label().to_string();
+    let host_id = host_id.to_string();
     window.on_window_event(move |event| match event {
         tauri::WindowEvent::Resized(_) | tauri::WindowEvent::ScaleFactorChanged { .. } => {
             let _ = layout(&handle);
         }
+        tauri::WindowEvent::Focused(true) => {
+            surface().session.focus_host(&host_id);
+            changed(&handle);
+        }
         tauri::WindowEvent::Destroyed => {
-            let ended = {
+            let ids = {
                 let mut state = surface();
-                if state
-                    .host
-                    .as_ref()
-                    .is_some_and(|host| host.window_label == host_label)
-                {
-                    state.session.clear();
-                    state.host = None;
-                    true
-                } else {
-                    false
+                let current = state
+                    .live
+                    .iter()
+                    .find(|host| host.id == host_id)
+                    .map(|host| host.generation);
+                if !browser_tabs::destroy_matches(current, generation) {
+                    return;
                 }
+                state.live.retain(|host| host.id != host_id);
+                state.session.take_host(&host_id)
             };
-            if ended {
+            close_webviews(&handle, &ids);
+            if ids.iter().any(|id| browser::walk_uses_tab(id)) {
                 browser::request_library_walk_cancel();
             }
             changed(&handle);
@@ -756,55 +994,99 @@ fn watch_browser_window(app: &AppHandle, window: &Window) {
     });
 }
 
-/// The main window went away while it hosted the tabs. Its child webviews are gone with it.
+/// The main window went away. Only the pages docked in it go with it.
 pub fn handle_window_event(window: &Window, event: &tauri::WindowEvent) {
-    if window.label() != PANEL_WINDOW_LABEL || !matches!(event, tauri::WindowEvent::Destroyed) {
+    if window.label() != PANEL_WINDOW_LABEL {
         return;
     }
-    let ended = {
-        let mut state = surface();
-        if state
-            .host
-            .as_ref()
-            .is_some_and(|host| host.kind == HostKind::Panel)
-        {
-            state.session.clear();
-            state.host = None;
-            true
-        } else {
-            false
+    match event {
+        tauri::WindowEvent::Destroyed => {
+            let ids = {
+                let mut state = surface();
+                state.live.retain(|host| host.id != PANEL_HOST_ID);
+                state.session.take_host(PANEL_HOST_ID)
+            };
+            if ids.iter().any(|id| browser::walk_uses_tab(id)) {
+                browser::request_library_walk_cancel();
+            }
+            if !ids.is_empty() {
+                changed(window.app_handle());
+            }
         }
-    };
-    if ended {
-        browser::request_library_walk_cancel();
-        changed(window.app_handle());
+        tauri::WindowEvent::Focused(true) => {
+            let mut state = surface();
+            if state
+                .session
+                .kind_of(PANEL_HOST_ID)
+                .is_some_and(|_| state.session.active_of(PANEL_HOST_ID).is_some())
+            {
+                state.session.focus_host(PANEL_HOST_ID);
+            }
+        }
+        _ => {}
     }
 }
 
-fn open_window(app: &AppHandle) -> Result<(), String> {
-    let window = build_browser_window(app)?;
-    {
-        let mut state = surface();
-        state.session.clear();
-        state.host = Some(BrowserHost::window(window.label()));
+fn discard_host(app: &AppHandle, host_id: &str, window: Option<&Window>) {
+    let ids = surface().session.take_host(host_id);
+    close_webviews(app, &ids);
+    if let Some(host) = forget_live(host_id) {
+        if let Some(label) = host.toolbar_label {
+            if let Some(view) = app.get_webview(&label) {
+                let _ = view.close();
+            }
+        }
     }
+    if let Some(window) = window {
+        let _ = window.destroy();
+    }
+}
+
+fn open_window_at(app: &AppHandle, position: Option<(f64, f64)>) -> Result<String, String> {
+    let host_id = surface().session.add_window();
+    let slot = surface()
+        .session
+        .slot_of(&host_id)
+        .ok_or("表示先が見つかりません")?;
+    let (window, toolbar) = match build_browser_window(app, slot, position) {
+        Ok(built) => built,
+        Err(error) => {
+            surface().session.take_host(&host_id);
+            return Err(error);
+        }
+    };
+    let generation = register_live(LiveHost {
+        id: host_id.clone(),
+        kind: HostKind::Window,
+        window_label: window.label().to_string(),
+        toolbar_label: Some(toolbar),
+        generation: 0,
+        area: None,
+        visible: true,
+        toolbar_height: browser_tabs::DEFAULT_TOOLBAR_HEIGHT,
+    });
     let result = (|| {
-        mount_tab(app, &window, checked_url(app, browser::LIBRARY_URL)?)?;
-        install_browser_menu(app, &window)?;
+        mount_tab(
+            app,
+            &host_id,
+            &window,
+            checked_url(app, browser::LIBRARY_URL)?,
+        )?;
+        install_browser_menu(app, &window, &host_id, slot)?;
         Ok::<_, String>(())
     })();
     if let Err(error) = result {
-        let _ = window.destroy();
-        surface().session.clear();
-        surface().host = None;
+        discard_host(app, &host_id, Some(&window));
         return Err(error);
     }
-    watch_browser_window(app, &window);
-    Ok(())
+    watch_browser_window(app, &window, &host_id, generation);
+    Ok(host_id)
 }
 
-/// Starts a session in the main window's right panel. The tabs stay hidden until the panel
-/// reports where it is, so a closed or covered panel never shows a page over the app.
+fn open_window(app: &AppHandle) -> Result<(), String> {
+    open_window_at(app, None).map(|_| ())
+}
+
 fn open_panel(app: &AppHandle, area: Option<SurfaceArea>) -> Result<(), String> {
     let main = app
         .get_window(PANEL_WINDOW_LABEL)
@@ -812,48 +1094,34 @@ fn open_panel(app: &AppHandle, area: Option<SurfaceArea>) -> Result<(), String> 
     if let Some(probe) = app.get_webview_window("booth-probe") {
         let _ = probe.destroy();
     }
+    ensure_panel_live(area, area.is_some());
+    if let Err(error) = checked_url(app, browser::LIBRARY_URL).and_then(|url| mount_tab(app, PANEL_HOST_ID, &main, url))
     {
-        let mut state = surface();
-        state.session.clear();
-        state.host = Some(BrowserHost::panel(area, area.is_some()));
-    }
-    if let Err(error) = checked_url(app, browser::LIBRARY_URL)
-        .and_then(|url| mount_tab(app, &main, url))
-    {
-        let ids = {
-            let mut state = surface();
-            let ids = state
-                .session
-                .tabs
-                .iter()
-                .map(|tab| tab.id.clone())
-                .collect::<Vec<_>>();
-            state.session.clear();
-            state.host = None;
-            ids
-        };
-        for id in ids {
-            if let Some(view) = app.get_webview(&id) {
-                let _ = view.close();
-            }
-        }
+        let ids = surface().session.take_host(PANEL_HOST_ID);
+        forget_live(PANEL_HOST_ID);
+        close_webviews(app, &ids);
         changed(app);
         return Err(error);
     }
-    request_panel(app);
+    if let Some(id) = surface().session.active_of(PANEL_HOST_ID) {
+        request_panel(app, &id);
+    }
     Ok(())
 }
 
-/// Opens the browser, or brings the current host forward. A new session starts in the right
-/// panel when this build supports it, unless the user moved the browser to its own window.
 pub fn open(app: &AppHandle) -> Result<(), String> {
     browser::browser_enabled(app)?;
-    if let Some(window) = host_window(app) {
-        raise(&window);
-        if host_kind() == Some(HostKind::Panel) {
-            request_panel(app);
-        }
+    if surface()
+        .session
+        .tabs
+        .iter()
+        .any(|tab| app.get_webview(&tab.id).is_some())
+    {
+        raise_focused(app);
         return Ok(());
+    }
+    if !surface().session.tabs.is_empty() {
+        close(app)?;
     }
     let main_visible = app
         .get_window(PANEL_WINDOW_LABEL)
@@ -869,117 +1137,233 @@ pub fn open(app: &AppHandle) -> Result<(), String> {
     open_window(app)
 }
 
-/// Moves every tab webview to `target`. On failure the moved ones go back to `source`.
-fn move_tabs(app: &AppHandle, source: &Window, target: &Window) -> Result<(), String> {
-    let ids = surface()
-        .session
-        .tabs
-        .iter()
-        .map(|tab| tab.id.clone())
-        .collect::<Vec<_>>();
-    let mut moved = Vec::new();
-    for id in ids {
-        let Some(view) = app.get_webview(&id) else {
-            continue;
-        };
-        if let Err(error) = view.reparent(target) {
-            for view in moved {
-                let _ = Webview::reparent(&view, source);
+fn reparent_tab(app: &AppHandle, tab_id: &str, target: &Window) -> Result<(), String> {
+    let view = app
+        .get_webview(tab_id)
+        .ok_or("タブが見つかりません")?;
+    view.reparent(target)
+        .map_err(|error| format!("ブラウザを移せません: {error}"))
+}
+
+fn restore_moves(tokens: Vec<MoveToken>) {
+    for token in tokens.into_iter().rev() {
+        let _ = surface().session.restore(token);
+    }
+}
+
+fn move_ids(
+    tab_ids: &[String],
+    to_host: &str,
+) -> Result<Vec<MoveToken>, String> {
+    let mut tokens = Vec::new();
+    for id in tab_ids {
+        let moved = surface().session.move_tab(id, to_host, usize::MAX);
+        match moved {
+            Ok(token) => tokens.push(token),
+            Err(error) => {
+                restore_moves(tokens);
+                return Err(error);
             }
-            return Err(format!("ブラウザを移せません: {error}"));
         }
-        moved.push(view);
+    }
+    Ok(tokens)
+}
+
+fn reparent_ids(
+    app: &AppHandle,
+    tab_ids: &[String],
+    target: &Window,
+    source: Option<&Window>,
+    tokens: Vec<MoveToken>,
+) -> Result<(), String> {
+    let mut moved: Vec<String> = Vec::new();
+    for id in tab_ids {
+        if let Err(error) = reparent_tab(app, id, target) {
+            if let Some(source) = source {
+                for id in moved.iter().rev() {
+                    let _ = reparent_tab(app, id, source);
+                }
+            }
+            restore_moves(tokens);
+            return Err(error);
+        }
+        moved.push(id.clone());
     }
     Ok(())
 }
 
-/// Shows the browser in the main window's right panel. An open browser window hands its tabs
-/// over and closes; with no session, a new one starts in the panel.
-pub fn dock(app: &AppHandle, area: Option<SurfaceArea>) -> Result<(), String> {
+/// Moves every page of one window onto the right panel, or starts a panel session.
+pub fn dock(app: &AppHandle, area: Option<SurfaceArea>, from_host: Option<String>) -> Result<(), String> {
     browser::browser_enabled(app)?;
     mutable()?;
     if !panel_supported() {
         return Err(PANEL_UNSUPPORTED.into());
     }
     PREFER_WINDOW.store(false, Ordering::Relaxed);
-    let current = surface().host.clone();
-    match current {
-        Some(host) if host.kind == HostKind::Panel => {
+    let sources = {
+        let state = surface();
+        if let Some(id) = from_host {
+            vec![id]
+        } else {
+            state
+                .session
+                .hosts
+                .iter()
+                .filter(|host| host.kind == HostKind::Window && !host.order.is_empty())
+                .map(|host| host.id.clone())
+                .collect::<Vec<_>>()
+        }
+    };
+    let pending = sources
+        .iter()
+        .filter(|id| surface().session.active_of(id).is_some())
+        .cloned()
+        .collect::<Vec<_>>();
+    if pending.is_empty() {
+        if surface().session.coarse_host() == Some("panel") {
             if let Some(area) = area {
-                if let Some(host) = surface().host.as_mut() {
+                if let Some(host) = surface().live.iter_mut().find(|host| host.id == PANEL_HOST_ID) {
                     host.area = Some(area);
                     host.visible = true;
                 }
             }
             layout(app)?;
-        }
-        Some(host) => {
-            let main = app
-                .get_window(PANEL_WINDOW_LABEL)
-                .ok_or("メインウィンドウが見つかりません")?;
-            let source = app
-                .get_window(&host.window_label)
-                .ok_or("ブラウザのウィンドウが見つかりません")?;
-            move_tabs(app, &source, &main)?;
-            surface().host = Some(BrowserHost::panel(area, area.is_some()));
-            if let Some(view) = app.get_webview(TOOLBAR_LABEL) {
-                let _ = view.close();
+            if let Some(id) = surface().session.active_of(PANEL_HOST_ID) {
+                request_panel(app, &id);
             }
-            // The Destroyed handler sees that the window is no longer the host and keeps the tabs.
-            let _ = source.destroy();
-            layout(app)?;
-            raise(&main);
-            request_panel(app);
+            changed(app);
+            return Ok(());
         }
-        None => open_panel(app, area)?,
+        return open_panel(app, area);
+    }
+    let main = app
+        .get_window(PANEL_WINDOW_LABEL)
+        .ok_or("メインウィンドウが見つかりません")?;
+    ensure_panel_live(area, area.is_some());
+    for source_id in pending {
+        let ids = surface()
+            .session
+            .hosts
+            .iter()
+            .find(|host| host.id == source_id)
+            .map(|host| host.order.clone())
+            .unwrap_or_default();
+        let window_label = live_label(&surface(), &source_id);
+        let source = window_label.as_ref().and_then(|label| app.get_window(label));
+        let tokens = move_tab_ids(app, &ids, PANEL_HOST_ID)?;
+        if let Err(error) = reparent_ids(app, &ids, &main, source.as_ref(), tokens) {
+            layout(app)?;
+            changed(app);
+            return Err(error);
+        }
+        // The session already lists these tabs on the panel. Forget the window
+        // before destroy so its Destroyed handler cannot drop the moved tabs.
+        {
+            let mut state = surface();
+            state.live.retain(|host| host.id != source_id);
+            let _ = state.session.drop_host_if_empty(&source_id);
+        }
+        if let Some(source) = source {
+            let _ = source.destroy();
+        }
+    }
+    layout(app)?;
+    raise(&main);
+    if let Some(id) = surface().session.active_of(PANEL_HOST_ID) {
+        request_panel(app, &id);
     }
     changed(app);
     Ok(())
 }
 
-/// Moves the docked tabs to the separate browser window, or brings that window forward.
+fn move_tab_ids(app: &AppHandle, ids: &[String], to_host: &str) -> Result<Vec<MoveToken>, String> {
+    let _ = app;
+    move_ids(ids, to_host)
+}
+
+/// Moves every page that is in the right panel into one new window.
 pub fn undock(app: &AppHandle) -> Result<(), String> {
     browser::browser_enabled(app)?;
     mutable()?;
     PREFER_WINDOW.store(true, Ordering::Relaxed);
-    let current = surface().host.clone();
-    let Some(host) = current.filter(|host| host.kind == HostKind::Panel) else {
-        return open(app);
+    let ids = surface()
+        .session
+        .hosts
+        .iter()
+        .find(|host| host.id == PANEL_HOST_ID)
+        .map(|host| host.order.clone())
+        .unwrap_or_default();
+    if ids.is_empty() {
+        if surface().session.tabs.is_empty() {
+            return open_window(app);
+        }
+        raise_focused(app);
+        return Ok(());
+    }
+    let host_id = surface().session.add_window();
+    let slot = surface()
+        .session
+        .slot_of(&host_id)
+        .ok_or("表示先が見つかりません")?;
+    let (window, toolbar) = match build_browser_window(app, slot, None) {
+        Ok(built) => built,
+        Err(error) => {
+            surface().session.take_host(&host_id);
+            return Err(error);
+        }
     };
-    let main = app
-        .get_window(&host.window_label)
-        .ok_or("メインウィンドウが見つかりません")?;
-    let window = build_browser_window(app)?;
-    if let Err(error) = move_tabs(app, &main, &window) {
-        let _ = window.destroy();
+    let generation = register_live(LiveHost {
+        id: host_id.clone(),
+        kind: HostKind::Window,
+        window_label: window.label().to_string(),
+        toolbar_label: Some(toolbar),
+        generation: 0,
+        area: None,
+        visible: true,
+        toolbar_height: browser_tabs::DEFAULT_TOOLBAR_HEIGHT,
+    });
+    let main = app.get_window(PANEL_WINDOW_LABEL);
+    let tokens = match move_ids(&ids, &host_id) {
+        Ok(tokens) => tokens,
+        Err(error) => {
+            discard_host(app, &host_id, Some(&window));
+            return Err(error);
+        }
+    };
+    if let Err(error) = reparent_ids(app, &ids, &window, main.as_ref(), tokens) {
+        discard_host(app, &host_id, Some(&window));
+        layout(app)?;
+        changed(app);
         return Err(error);
     }
-    surface().host = Some(BrowserHost::window(window.label()));
-    if let Err(error) = install_browser_menu(app, &window) {
+    if let Err(error) = install_browser_menu(app, &window, &host_id, slot) {
         browser::browser_log(app, &format!("メニューを設定できません {error}"));
     }
-    watch_browser_window(app, &window);
+    watch_browser_window(app, &window, &host_id, generation);
+    {
+        let mut state = surface();
+        let _ = state.session.drop_host_if_empty(PANEL_HOST_ID);
+        if state.session.kind_of(PANEL_HOST_ID).is_none() {
+            state.live.retain(|host| host.id != PANEL_HOST_ID);
+        }
+    }
     layout(app)?;
     raise(&window);
     changed(app);
     Ok(())
 }
 
-/// The right panel reports its browser area. `visible` is false while a menu, dialog, drag or
-/// overlay covers it, because the native view is always drawn above the page.
 pub fn panel_area(app: &AppHandle, area: Option<SurfaceArea>, visible: bool) -> Result<(), String> {
     let docked = {
         let mut state = surface();
-        match state.host.as_mut() {
-            Some(host) if host.kind == HostKind::Panel => {
-                if area.is_some() {
-                    host.area = area;
-                }
-                host.visible = visible && area.is_some();
-                true
-            }
-            _ => false,
+        let Some(host) = state.live.iter_mut().find(|host| host.id == PANEL_HOST_ID) else {
+            return Ok(());
+        };
+        if area.is_some() {
+            host.area = area;
         }
+        host.visible = visible && area.is_some();
+        true
     };
     if docked {
         layout(app)?;
@@ -987,81 +1371,240 @@ pub fn panel_area(app: &AppHandle, area: Option<SurfaceArea>, visible: bool) -> 
     Ok(())
 }
 
-pub fn new_tab(app: &AppHandle, url: Option<&str>) -> Result<(), String> {
+pub fn new_tab_on(app: &AppHandle, url: Option<&str>, host_id: Option<String>) -> Result<(), String> {
     browser::browser_enabled(app)?;
     mutable()?;
     let target = checked_url(app, url.unwrap_or(browser::LIBRARY_URL))?;
-    if host_window(app).is_none() {
-        open(app)?;
+    if surface().session.tabs.is_empty() {
+        match host_id.as_deref() {
+            Some(PANEL_HOST_ID) if !panel_supported() => return Err(PANEL_UNSUPPORTED.into()),
+            Some(PANEL_HOST_ID) => open_panel(app, None)?,
+            Some(_) => return Err("表示先が見つかりません".into()),
+            None => open(app)?,
+        }
         if target.as_str() != browser::LIBRARY_URL {
-            active_view(app)?
+            let id = surface()
+                .session
+                .focused_tab()
+                .ok_or("タブがありません")?;
+            view_for(app, &id)?
                 .navigate(target)
-                .map_err(|e| e.to_string())?;
+                .map_err(|error| error.to_string())?;
         }
         return Ok(());
     }
-    mount_tab(
-        app,
-        &host_window(app).ok_or("ブラウザが開いていません")?,
-        target,
-    )?;
+    let host = new_tab_host(&SURFACE, host_id);
+    if surface().session.kind_of(&host).is_none() {
+        if host == PANEL_HOST_ID {
+            if !panel_supported() {
+                return Err(PANEL_UNSUPPORTED.into());
+            }
+            ensure_panel_live(None, false);
+        } else {
+            return Err("表示先が見つかりません".into());
+        }
+    } else if host == PANEL_HOST_ID {
+        ensure_panel_live(None, false);
+    }
+    let label = live_label(&surface(), &host).ok_or("表示先が見つかりません")?;
+    let window = app
+        .get_window(&label)
+        .ok_or("表示先が見つかりません")?;
+    mount_tab(app, &host, &window, target)?;
+    if host == PANEL_HOST_ID {
+        if let Some(id) = surface().session.active_of(PANEL_HOST_ID) {
+            request_panel(app, &id);
+        }
+    }
+    Ok(())
+}
+
+pub fn new_tab(app: &AppHandle, url: Option<&str>) -> Result<(), String> {
+    new_tab_on(app, url, None)?;
     // An already-open window does not come forward when a tab is added.
     // Match open(): show and focus. Do not navigate to an age-gate URL from here.
     if let Some(window) = host_window(app) {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
-        if host_kind() == Some(HostKind::Panel) {
-            request_panel(app);
-        }
     }
     Ok(())
 }
+
+pub fn navigate_tab(app: &AppHandle, tab_id: &str, input: &str) -> Result<(), String> {
+    browser::browser_enabled(app)?;
+    mutable()?;
+    let url = checked_url(app, input)?;
+    view_for(app, tab_id)?
+        .navigate(url)
+        .map_err(|error| format!("ページを開けません: {error}"))
+}
+
 pub fn navigate(app: &AppHandle, input: &str) -> Result<(), String> {
     browser::browser_enabled(app)?;
     mutable()?;
     let url = checked_url(app, input)?;
-    if host_window(app).is_none() {
+    if host_window(app).is_none() && surface().session.tabs.is_empty() {
         open(app)?;
     }
     active_view(app)?
         .navigate(url)
-        .map_err(|e| format!("ページを開けません: {e}"))
+        .map_err(|error| format!("ページを開けません: {error}"))
 }
+
 pub fn select(app: &AppHandle, id: &str) -> Result<(), String> {
     browser::browser_enabled(app)?;
     mutable()?;
     surface().session.select(id)?;
     layout(app)?;
-    if let Ok(view) = active_view(app) {
+    if let Ok(view) = view_for(app, id) {
         let _ = view.set_focus();
     }
     changed(app);
     Ok(())
 }
+
 pub fn close_tab(app: &AppHandle, id: &str) -> Result<(), String> {
     browser::browser_enabled(app)?;
     mutable()?;
-    if !surface().session.tabs.iter().any(|tab| tab.id == id) {
+    if !surface().session.has(id) {
         return Err("タブが見つかりません".into());
     }
     if let Some(view) = app.get_webview(id) {
-        view.close().map_err(|e| e.to_string())?;
+        view.close().map_err(|error| error.to_string())?;
     }
-    surface().session.remove(id)?;
-    let empty = surface().session.tabs.is_empty();
-    if empty {
-        close(app)?;
+    let emptied = surface().session.remove(id)?;
+    if let Some(host_id) = emptied {
+        // The tab is already gone. Drop the window only when it was the last page there.
+        retire_if_empty(app, &host_id);
+        if surface().session.kind_of(&host_id).is_none() {
+            if let Some(host) = forget_live(&host_id) {
+                if host.kind == HostKind::Window {
+                    if let Some(source) = app.get_window(&host.window_label) {
+                        let _ = source.destroy();
+                    }
+                }
+            }
+        }
     } else {
         layout(app)?;
     }
     changed(app);
     Ok(())
 }
+
+pub fn reorder(app: &AppHandle, host_id: &str, ids: &[String]) -> Result<(), String> {
+    browser::browser_enabled(app)?;
+    mutable()?;
+    surface().session.reorder(host_id, ids)?;
+    changed(app);
+    Ok(())
+}
+
+pub fn detach_tab(app: &AppHandle, tab_id: &str, x: f64, y: f64) -> Result<(), String> {
+    browser::browser_enabled(app)?;
+    mutable()?;
+    let (x, y) = browser_tabs::detach_position(x, y)?;
+    let from = surface()
+        .session
+        .host_of(tab_id)
+        .ok_or("タブが見つかりません")?;
+    let host_id = surface().session.add_window();
+    let slot = surface()
+        .session
+        .slot_of(&host_id)
+        .ok_or("表示先が見つかりません")?;
+    let (window, toolbar) = match build_browser_window(app, slot, Some((x, y))) {
+        Ok(built) => built,
+        Err(error) => {
+            surface().session.take_host(&host_id);
+            return Err(error);
+        }
+    };
+    let generation = register_live(LiveHost {
+        id: host_id.clone(),
+        kind: HostKind::Window,
+        window_label: window.label().to_string(),
+        toolbar_label: Some(toolbar),
+        generation: 0,
+        area: None,
+        visible: true,
+        toolbar_height: browser_tabs::DEFAULT_TOOLBAR_HEIGHT,
+    });
+    let moved = surface().session.move_tab(tab_id, &host_id, 0);
+    let token = match moved {
+        Ok(token) => token,
+        Err(error) => {
+            discard_host(app, &host_id, Some(&window));
+            return Err(error);
+        }
+    };
+    if let Err(error) = reparent_tab(app, tab_id, &window) {
+        let _ = surface().session.restore(token);
+        discard_host(app, &host_id, Some(&window));
+        layout(app)?;
+        changed(app);
+        return Err(error);
+    }
+    if let Err(error) = install_browser_menu(app, &window, &host_id, slot) {
+        browser::browser_log(app, &format!("メニューを設定できません {error}"));
+    }
+    watch_browser_window(app, &window, &host_id, generation);
+    retire_if_empty(app, &from);
+    PREFER_WINDOW.store(true, Ordering::Relaxed);
+    layout(app)?;
+    raise(&window);
+    changed(app);
+    Ok(())
+}
+
+pub fn dock_tab(app: &AppHandle, tab_id: &str, index: Option<usize>) -> Result<(), String> {
+    browser::browser_enabled(app)?;
+    mutable()?;
+    if !panel_supported() {
+        return Err(PANEL_UNSUPPORTED.into());
+    }
+    let from = surface()
+        .session
+        .host_of(tab_id)
+        .ok_or("タブが見つかりません")?;
+    if from == PANEL_HOST_ID {
+        if let Some(id) = Some(tab_id.to_string()) {
+            request_panel(app, &id);
+        }
+        return Ok(());
+    }
+    PREFER_WINDOW.store(false, Ordering::Relaxed);
+    let main = app
+        .get_window(PANEL_WINDOW_LABEL)
+        .ok_or("メインウィンドウが見つかりません")?;
+    ensure_panel_live(None, false);
+    let at = index.unwrap_or(usize::MAX);
+    let token = match surface().session.move_tab(tab_id, PANEL_HOST_ID, at) {
+        Ok(token) => token,
+        Err(error) => return Err(error),
+    };
+    let source_label = live_label(&surface(), &from);
+    let source = source_label.as_ref().and_then(|label| app.get_window(label));
+    if let Err(error) = reparent_tab(app, tab_id, &main) {
+        let _ = surface().session.restore(token);
+        layout(app)?;
+        changed(app);
+        return Err(error);
+    }
+    retire_if_empty(app, &from);
+    let _ = source;
+    layout(app)?;
+    raise(&main);
+    request_panel(app, tab_id);
+    changed(app);
+    Ok(())
+}
+
 pub fn close(app: &AppHandle) -> Result<(), String> {
-    let (host, ids) = {
+    let (hosts, ids) = {
         let mut state = surface();
-        let host = state.host.take();
+        let hosts = std::mem::take(&mut state.live);
         let ids = state
             .session
             .tabs
@@ -1069,57 +1612,170 @@ pub fn close(app: &AppHandle) -> Result<(), String> {
             .map(|tab| tab.id.clone())
             .collect::<Vec<_>>();
         state.session.clear();
-        (host, ids)
+        (hosts, ids)
     };
-    for id in ids {
-        if let Some(view) = app.get_webview(&id) {
-            let _ = view.close();
+    close_webviews(app, &ids);
+    for host in hosts {
+        if let Some(label) = host.toolbar_label {
+            if let Some(view) = app.get_webview(&label) {
+                let _ = view.close();
+            }
         }
-    }
-    if let Some(view) = app.get_webview(TOOLBAR_LABEL) {
-        let _ = view.close();
-    }
-    if let Some(host) = host {
-        if host.owns_window() {
-            if let Some(window) = app.get_window(&host.window_label) {
-                let _ = window.destroy();
+        if host.kind == HostKind::Window {
+            if let Some(source) = app.get_window(&host.window_label) {
+                let _ = source.destroy();
             }
         }
     }
     changed(app);
     Ok(())
 }
-pub fn history(app: &AppHandle, forward: bool) -> Result<(), String> {
-    browser::browser_enabled(app)?;
-    mutable()?;
-    let view = active_view(app)?;
+
+fn history_on(app: &AppHandle, view: Webview, forward: bool) -> Result<(), String> {
     let handle = app.clone();
     view.with_webview(move |native| {
         if let Err(error) = native_history(&native, Some(forward)) {
             let _ = handle.emit("browser-operation-error", error);
         }
     })
-    .map_err(|e| format!("履歴を移動できません: {e}"))
+    .map_err(|error| format!("履歴を移動できません: {error}"))
 }
+
+pub fn history_tab(app: &AppHandle, tab_id: &str, forward: bool) -> Result<(), String> {
+    browser::browser_enabled(app)?;
+    mutable()?;
+    history_on(app, view_for(app, tab_id)?, forward)
+}
+
+fn history_host(app: &AppHandle, host_id: &str, forward: bool) -> Result<(), String> {
+    let id = surface()
+        .session
+        .active_of(host_id)
+        .ok_or("ブラウザを開いてから操作してください")?;
+    history_tab(app, &id, forward)
+}
+
+pub fn history(app: &AppHandle, forward: bool) -> Result<(), String> {
+    browser::browser_enabled(app)?;
+    mutable()?;
+    history_on(app, active_view(app)?, forward)
+}
+
+pub fn reload_tab(app: &AppHandle, tab_id: &str) -> Result<(), String> {
+    browser::browser_enabled(app)?;
+    mutable()?;
+    view_for(app, tab_id)?
+        .reload()
+        .map_err(|error| format!("ページを読み直せません: {error}"))
+}
+
+fn reload_host(app: &AppHandle, host_id: &str) -> Result<(), String> {
+    let id = surface()
+        .session
+        .active_of(host_id)
+        .ok_or("ブラウザを開いてから操作してください")?;
+    reload_tab(app, &id)
+}
+
 pub fn reload(app: &AppHandle) -> Result<(), String> {
     browser::browser_enabled(app)?;
     mutable()?;
     active_view(app)?
         .reload()
-        .map_err(|e| format!("ページを読み直せません: {e}"))
+        .map_err(|error| format!("ページを読み直せません: {error}"))
 }
-pub fn stop(app: &AppHandle) -> Result<(), String> {
+
+pub fn stop_tab(app: &AppHandle, tab_id: &str) -> Result<(), String> {
     browser::browser_enabled(app)?;
     mutable()?;
-    let view = active_view(app)?;
-    view.eval("window.stop() ").map_err(|e| e.to_string())?;
+    let view = view_for(app, tab_id)?;
+    view.eval("window.stop() ").map_err(|error| error.to_string())?;
     update_page(app, view.label(), None, None, Some(false));
     Ok(())
+}
+
+pub fn stop(app: &AppHandle) -> Result<(), String> {
+    let id = surface()
+        .session
+        .focused_tab()
+        .ok_or("ブラウザを開いてから操作してください")?;
+    stop_tab(app, &id)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::browser_tabs::HostKind;
+
+    fn test_surface() -> Surface {
+        Surface {
+            session: TabSession::new(),
+            live: Vec::new(),
+            next_generation: 1,
+        }
+    }
+
+    #[test]
+    fn new_tabs_resolve_their_host_without_relocking_the_surface() {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let state = Mutex::new(test_surface());
+            let first = state.lock().unwrap().session.add_window();
+            let second = state.lock().unwrap().session.add_window();
+            let url = Url::parse("https://example.com/").unwrap();
+            state.lock().unwrap().session.add(&first, &url).unwrap();
+            state.lock().unwrap().session.add(&second, &url).unwrap();
+
+            assert_eq!(new_tab_host(&state, None), second);
+            assert_eq!(new_tab_host(&state, Some(first.clone())), first);
+            assert!(state.try_lock().is_ok(), "host lookup must release the lock");
+
+            state.lock().unwrap().session.take_host(&second);
+            assert_eq!(new_tab_host(&state, None), first);
+            state.lock().unwrap().session.take_host(&first);
+            assert_eq!(new_tab_host(&state, None), PANEL_HOST_ID);
+            sender.send(()).unwrap();
+        });
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("new-tab host lookup must not deadlock");
+    }
+
+    #[test]
+    fn closing_a_host_tab_releases_the_surface_before_the_action() {
+        let state = Mutex::new(test_surface());
+        let host = state.lock().unwrap().session.add_window();
+        let other = state.lock().unwrap().session.add_window();
+        let url = Url::parse("https://example.com/").unwrap();
+        let first = state.lock().unwrap().session.add(&host, &url).unwrap();
+        let selected = state.lock().unwrap().session.add(&host, &url).unwrap();
+        let unrelated = state.lock().unwrap().session.add(&other, &url).unwrap();
+
+        with_active_tab(&state, &host, |id| {
+            assert_eq!(id, selected);
+            let mut state = state.try_lock().expect("close action must be able to read the surface");
+            state.session.remove(id)?;
+            Ok(())
+        })
+        .unwrap();
+        let session = &state.lock().unwrap().session;
+        assert_eq!(session.active_of(&host).as_deref(), Some(first.as_str()));
+        assert!(session.has(&unrelated));
+    }
+
+    fn function_body<'a>(source: &'a str, name: &str) -> &'a str {
+        let start = source.find(name).unwrap_or_else(|| panic!("missing {name}"));
+        let rest = &source[start..];
+        let after = rest.find('\n').unwrap() + 1;
+        let tail = &rest[after..];
+        let end = tail
+            .find("\nfn ")
+            .or_else(|| tail.find("\npub fn "))
+            .or_else(|| tail.find("\npub(crate) fn "))
+            .unwrap_or(tail.len());
+        &rest[..after + end]
+    }
+
     #[test]
     fn layout_uses_host_relative_coordinates_for_a_docked_panel() {
         let area = SurfaceArea {
@@ -1172,7 +1828,6 @@ mod tests {
         assert!(start_in_panel(true, false, true));
         assert!(!start_in_panel(false, false, true));
         assert!(!start_in_panel(true, true, true));
-        // A hidden main window (background mode) cannot show the panel.
         assert!(!start_in_panel(true, false, false));
         assert_eq!(panel_supported(), cfg!(windows));
         assert_eq!(HostKind::Window.name(), "window");
@@ -1181,34 +1836,47 @@ mod tests {
 
     #[test]
     fn the_panel_host_never_owns_or_destroys_the_main_window() {
-        let panel = BrowserHost::panel(None, false);
-        assert_eq!(panel.window_label, crate::presence::MAIN_WINDOW);
-        assert!(!panel.owns_window());
-        assert!(!panel.visible);
-        assert!(BrowserHost::window(browser::WINDOW_LABEL).owns_window());
+        assert_eq!(PANEL_WINDOW_LABEL, crate::presence::MAIN_WINDOW);
         let source = include_str!("browser_surface.rs");
-        let start = source.find("pub fn dock").expect("dock");
-        let body = &source[start..source[start..].find("\npub fn undock").unwrap() + start];
-        // The host switches to the panel before the old window is destroyed, so its
-        // Destroyed handler keeps the moved tabs.
-        let switched = body.find("BrowserHost::panel(area").expect("switch host");
-        let destroyed = body.find("source.destroy()").expect("close old window");
-        assert!(switched < destroyed);
+        let retire = function_body(source, "fn retire_if_empty");
+        let destroyed = retire.find("source.destroy()").expect("destroy empty window");
+        let kind = retire.find("HostKind::Window").expect("only windows");
+        assert!(kind < destroyed);
+    }
+
+    #[test]
+    fn docking_moves_the_session_before_the_old_window_is_destroyed() {
+        let source = include_str!("browser_surface.rs");
+        let body = function_body(source, "pub fn dock");
         assert!(body.contains("mutable()?"));
+        let moved = body.find("move_tab_ids(").expect("move tabs");
+        let destroyed = body.find("source.destroy()").expect("close old window");
+        assert!(moved < destroyed);
+        assert!(body.contains("state.live.retain"));
+        assert!(body.find("state.live.retain").unwrap() < destroyed);
+    }
+
+    #[test]
+    fn detaching_reparents_before_retiring_and_restores_when_that_fails() {
+        let source = include_str!("browser_surface.rs");
+        let body = function_body(source, "pub fn detach_tab");
+        let reparent = body.find("reparent_tab(").expect("reparent");
+        let restore = body.find("session.restore").expect("restore");
+        let retire = body.find("retire_if_empty").expect("retire");
+        assert!(restore < reparent || body.find("if let Err(error) = reparent_tab").unwrap() < retire);
+        assert!(reparent < retire);
+        assert!(body.contains("session.restore"));
+        assert!(!body.contains("age_verification"));
     }
 
     #[test]
     fn adding_a_tab_raises_an_existing_window() {
         let source = include_str!("browser_surface.rs");
-        let start = source
-            .find("pub fn new_tab")
-            .expect("new_tab");
+        let start = source.find("pub fn new_tab(").expect("new_tab");
         let rest = &source[start..];
-        let end = rest.find("\npub fn navigate").expect("navigate");
+        let end = rest.find("\npub fn navigate_tab").expect("navigate");
         let body = &rest[..end];
-        let raised = body
-            .rfind("host_window(app)")
-            .expect("focus the existing window");
+        let raised = body.rfind("host_window(app)").expect("focus the existing window");
         let focus = &body[raised..];
         assert!(focus.contains(".show()"));
         assert!(focus.contains("unminimize()"));

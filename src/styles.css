@@ -735,6 +735,14 @@ a.tab { display: inline-flex; align-items: center; gap: 6px; text-decoration: no
   overflow-x: auto;
   scrollbar-width: none;
 }
+.right-panel-tab-insert {
+  flex: 0 0 2px;
+  align-self: stretch;
+  width: 2px;
+  margin: 6px 0;
+  border-radius: 1px;
+  background: var(--button);
+}
 .right-panel-tab {
   display: inline-flex;
   align-items: center;
