@@ -138,15 +138,13 @@ test("page tabs fill the right panel in a real browser", { timeout: 60000 }, asy
       await evaluate("document.querySelector('.app-shell').classList.add('density-roomy')");
       await checkViewport();
     });
-    await t.test("Liquid keeps the native viewport aligned without card borders or shadows", async () => {
-      await evaluate("document.documentElement.classList.add('theme-liquid')");
+    await t.test("standard design keeps the native viewport aligned without card borders or shadows", async () => {
       for (const [width, height] of [[1908, 1044], [1180, 800], [1100, 700]]) {
         await wd("POST", "/window/rect", { width, height });
         await checkViewport();
       }
       const chrome = await evaluate("const s = getComputedStyle(document.querySelector('.browser-chrome.panel')); return { shadow:s.boxShadow, left:s.borderLeftWidth, right:s.borderRightWidth, bottom:s.borderBottomWidth }");
       assert.deepEqual(chrome, { shadow: "none", left: "0px", right: "0px", bottom: "0px" });
-      await evaluate("document.documentElement.classList.remove('theme-liquid')");
     });
     await t.test("standalone controls fit a small window with reachable zoom buttons", async () => {
       await wd("POST", "/window/rect", { width: 640, height: 640 });

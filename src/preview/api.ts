@@ -1,4 +1,3 @@
-import { normalizeAppearance } from "../appearance";
 import { previewBrowserState, previewBrowserAction, previewSaveBookmark, previewDeleteBookmark, previewOpenBrowser, previewCloseBrowser } from "./browser";
 import extensionManifest from "../../extension/manifest.json";
 import { previewListDirectory, previewListZip, previewPrepareUnityPackages, previewUnityPackages } from "./files";
@@ -150,7 +149,6 @@ const store: Store = {
     builtinBrowser: false,
     browserForceDark: false,
     boothLinkTarget: "external",
-    appearance: "classic",
     remoteAutoSync: false,
     remoteLibraryFolder: "\\\\nas\\vrclibman",
     routeDownloads: false,
@@ -1902,13 +1900,12 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       const backgroundSupported = store.settings.backgroundSupported;
       const backgroundMode = backgroundSupported && Boolean(settings.backgroundMode);
       const boothLinkTarget = settings.boothLinkTarget === "builtin" ? "builtin" : "external";
-      const appearance = normalizeAppearance(settings.appearance);
       const browserForceDark = settings.browserForceDark === true;
       const cloudBaseUrl = previewCloudBaseUrl(settings.cloudBaseUrl ?? "https://api.openai.com/v1");
       const cloudModel = String(settings.cloudModel ?? "").trim();
       if (cloudModel.length > 200 || /[\u0000-\u001f]/.test(cloudModel)) throw new Error("クラウドAPIのモデル名に使えない文字があります");
       const llmBackend = settings.llmBackend === "apple" || settings.llmBackend === "cloud" ? settings.llmBackend : "ollama";
-      store.settings = { ...settings, llmBackend, cloudBaseUrl, cloudModel, ollamaModel: settings.ollamaModel.trim(), backgroundSupported, backgroundMode, launchAtLogin: backgroundMode && Boolean(settings.launchAtLogin), confidenceThreshold: Math.min(1, Math.max(0, settings.confidenceThreshold)), boothLinkTarget, appearance, browserForceDark };
+      store.settings = { ...settings, llmBackend, cloudBaseUrl, cloudModel, ollamaModel: settings.ollamaModel.trim(), backgroundSupported, backgroundMode, launchAtLogin: backgroundMode && Boolean(settings.launchAtLogin), confidenceThreshold: Math.min(1, Math.max(0, settings.confidenceThreshold)), boothLinkTarget, browserForceDark };
       return (command === "update_settings" ? { ...store.settings } : undefined) as T;
     }
     case "import_export":

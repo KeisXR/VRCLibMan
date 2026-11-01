@@ -301,24 +301,11 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       },
     );
 
-    await t.test("design selection updates the current screen and survives page navigation", async () => {
-      const design = () => document.querySelector("#settings-design select");
-      const selectDesign = async (value) => {
-        const node = design();
-        await act(async () => {
-          const propsKey = Object.keys(node).find((name) => name.startsWith("__reactProps$"));
-          node[propsKey].onChange({ target: { value } });
-          await delay();
-        });
-        await wait(async () => (await api.settings()).appearance === value);
-        assert.equal(document.documentElement.classList.contains("theme-liquid"), value === "liquid");
-      };
-      await selectDesign("liquid");
-      await route("#/import");
-      assert.equal(document.documentElement.classList.contains("theme-liquid"), true);
+    await t.test("settings use the standard design without a design section", async () => {
       await route("#/settings");
-      await wait(() => design()?.value === "liquid");
-      await selectDesign("classic");
+      assert.equal(document.querySelector("#settings-design"), null);
+      assert.equal(document.querySelector('a[href="#settings-design"]'), null);
+      assert.equal(document.documentElement.classList.contains("theme-liquid"), false);
     });
 
     await t.test("force dark mode is off until the built-in browser is enabled", async () => {

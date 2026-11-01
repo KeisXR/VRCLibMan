@@ -248,8 +248,6 @@ export interface Settings {
   /** 内蔵ブラウザの強制ダークモード。背景と文字だけを暗くし、画像・動画・キャンバスは元の色のまま。既定はオフ。 */
   browserForceDark: boolean;
   boothLinkTarget: "external" | "builtin";
-  /** 見た目のデザイン。classic = 従来、liquid = 新デザイン。 */
-  appearance: "classic" | "liquid";
   remoteLibraryFolder: string;
   remoteAutoSync: boolean;
   routeDownloads: boolean;

@@ -129,8 +129,7 @@ test("right panel tabs switch on a real pointer click in Chromium", { timeout: 6
       const prevented = await evaluate("(() => { const e = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }); document.body.dispatchEvent(e); return e.defaultPrevented; })()");
       assert.equal(prevented, false);
     });
-    await t.test("Liquid keeps page geometry aligned in both color schemes", async () => {
-      await evaluate("document.documentElement.classList.add('theme-liquid')");
+    await t.test("standard design keeps page geometry aligned in both color schemes", async () => {
       for (const scheme of ["light", "dark"]) {
         await page("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: scheme }] });
         for (const width of [1600, 1180, 1100]) {
