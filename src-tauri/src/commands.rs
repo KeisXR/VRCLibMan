@@ -506,6 +506,127 @@ fn library_roots(app: &AppHandle) -> Result<(String, String), String> {
     Ok((settings.library_folder, settings.remote_library_folder))
 }
 
+fn unity_cache_root(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    app.path()
+        .app_cache_dir()
+        .map_err(|_| "アプリのキャッシュフォルダが見つかりません".to_string())
+}
+
+/// 「Unityで開く」: zip か .unitypackage の中の Unity パッケージを一覧する。展開しない。
+#[tauri::command]
+pub async fn unity_packages(
+    app: AppHandle,
+    path: String,
+) -> Result<crate::unity_import::UnityPackageList, String> {
+    let (library, remote) = library_roots(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let source = crate::unity_import::allowed_source(&path, &library, &remote)?;
+        crate::unity_import::list_packages(&source)
+    })
+    .await
+    .map_err(|err| format!("Unity パッケージを読めません: {err}"))?
+}
+
+/// 選んだ Unity パッケージを、アプリのキャッシュ `unity-import/<商品ID>/` に取り出す。
+/// 単体の .unitypackage は取り出さず、そのまま返す。メイン画面からだけ受け付ける。
+#[tauri::command]
+pub async fn prepare_unity_packages(
+    view: tauri::Webview,
+    app: AppHandle,
+    path: String,
+    entries: Vec<String>,
+    booth_id: Option<String>,
+) -> Result<Vec<crate::unity_import::PreparedPackage>, String> {
+    if view.label() != "main" {
+        return Err("この画面から Unity パッケージは開けません".into());
+    }
+    let (library, remote) = library_roots(&app)?;
+    let cache_root = unity_cache_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let source = crate::unity_import::allowed_source(&path, &library, &remote)?;
+        let list = crate::unity_import::list_packages(&source)?;
+        if list.kind == "package" {
+            return Ok(list
+                .packages
+                .into_iter()
+                .map(|package| crate::unity_import::PreparedPackage {
+                    name: package.name,
+                    path: list.path.clone(),
+                    size: package.size,
+                })
+                .collect());
+        }
+        let dest = crate::unity_import::cache_folder(&cache_root, booth_id.as_deref());
+        crate::unity_import::extract_packages(
+            &source,
+            &entries,
+            &dest,
+            crate::unity_import::MAX_PACKAGE_BYTES,
+        )
+    })
+    .await
+    .map_err(|err| format!("Unity パッケージを取り出せません: {err}"))?
+}
+
+/// 取り出した Unity パッケージを先頭から順に開く。`mode` は "unity"（設定の既定 Unity で
+/// `-openfile`）か "system"（OS の関連付け）。Unity の起動を待つときは途中で止まり、残りは呼び直す。
+#[tauri::command]
+pub async fn launch_unity_packages(
+    view: tauri::Webview,
+    app: AppHandle,
+    paths: Vec<String>,
+    mode: String,
+) -> Result<crate::unity_import::LaunchResult, String> {
+    if view.label() != "main" {
+        return Err("この画面から Unity パッケージは開けません".into());
+    }
+    let mode = crate::unity_import::LaunchMode::parse(&mode)?;
+    if paths.is_empty() {
+        return Err("開く Unity パッケージがありません".into());
+    }
+    let (library, remote) = library_roots(&app)?;
+    let selected = {
+        let state = app.state::<AppState>();
+        let connection = db(&state)?;
+        db::unity_editor_path(&connection)?
+    };
+    let cache_root = unity_cache_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let packages = paths
+            .iter()
+            .map(|path| crate::unity_import::allowed_launch_path(path, &cache_root, &library, &remote))
+            .collect::<Result<Vec<_>, _>>()?;
+        match mode {
+            crate::unity_import::LaunchMode::Unity => {
+                let editor = crate::unity_import::editor_from_setting(&selected)?;
+                crate::unity_import::launch_with_editor(
+                    &editor,
+                    &packages,
+                    crate::unity_import::HANDOFF_TIMEOUT,
+                    crate::unity_import::HANDOFF_GAP,
+                )
+            }
+            crate::unity_import::LaunchMode::System => {
+                use tauri_plugin_opener::OpenerExt;
+                for (index, package) in packages.iter().enumerate() {
+                    if index > 0 {
+                        std::thread::sleep(std::time::Duration::from_millis(1500));
+                    }
+                    app.opener()
+                        .open_path(package.display().to_string(), None::<&str>)
+                        .map_err(|_| {
+                            "関連付けで開けませんでした。Unity Hub で .unitypackage の関連付けを確かめてください"
+                                .to_string()
+                        })?;
+                }
+                Ok(crate::unity_import::LaunchResult { launched: packages.len(), waiting: false })
+            }
+        }
+    })
+    .await
+    .map_err(|err| format!("Unity パッケージを開けません: {err}"))?
+}
+
 #[tauri::command]
 pub fn list_staged_downloads(state: State<'_, AppState>) -> Result<Vec<StagedLeftover>, String> {
     state
@@ -1632,6 +1753,15 @@ fn trusted_browser_controls(view: &tauri::Webview) -> Result<(), String> {
     }
 }
 
+/// Only the main window measures its own right panel.
+fn main_window_only(label: &str) -> Result<(), String> {
+    if label == crate::browser_surface::PANEL_WINDOW_LABEL {
+        Ok(())
+    } else {
+        Err("この画面からブラウザの表示場所は変えられません".into())
+    }
+}
+
 #[derive(serde::Deserialize)]
 #[serde(
     tag = "kind",
@@ -1649,6 +1779,31 @@ pub enum BrowserAction {
     Reload,
     Stop,
     ToolbarHeight { height: f64 },
+    /// Show the browser in the main window's right panel.
+    Dock { area: Option<PanelRect> },
+    /// Move the browser to its own window.
+    Undock,
+    /// The right panel's browser area, or None while the panel tab is not on screen.
+    PanelArea { area: Option<PanelRect>, visible: bool },
+}
+
+/// A rectangle in the main window, in CSS (logical) pixels.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PanelRect {
+    left: f64,
+    top: f64,
+    width: f64,
+    height: f64,
+}
+
+fn panel_rect(
+    rect: Option<PanelRect>,
+) -> Result<Option<crate::browser_surface::SurfaceArea>, String> {
+    rect.map(|rect| {
+        crate::browser_surface::SurfaceArea::from_panel(rect.left, rect.top, rect.width, rect.height)
+    })
+    .transpose()
 }
 
 #[tauri::command]
@@ -1667,6 +1822,7 @@ pub async fn browser_action(
     action: BrowserAction,
 ) -> Result<crate::browser_tabs::BrowserState, String> {
     trusted_browser_controls(&webview)?;
+    let label = webview.label().to_string();
     crate::browser::dispatch_ui(app, move |handle| {
         use crate::browser_surface as surface;
         match action {
@@ -1679,6 +1835,13 @@ pub async fn browser_action(
             BrowserAction::Reload => surface::reload(handle)?,
             BrowserAction::Stop => surface::stop(handle)?,
             BrowserAction::ToolbarHeight { height } => surface::toolbar_height(handle, height)?,
+            // The separate window's "パネルに戻す" sends no rectangle; the panel reports it next.
+            BrowserAction::Dock { area } => surface::dock(handle, panel_rect(area)?)?,
+            BrowserAction::Undock => surface::undock(handle)?,
+            BrowserAction::PanelArea { area, visible } => {
+                main_window_only(&label)?;
+                surface::panel_area(handle, panel_rect(area)?, visible)?
+            }
         }
         surface::state(handle)
     })

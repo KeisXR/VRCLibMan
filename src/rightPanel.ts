@@ -1,9 +1,9 @@
 import { PREVIEW_PANE_WIDTH, clampStoredPreviewPaneWidth } from "./previewPane";
 
 /**
- * Right panel tab kinds. Later PRs add "browser" by flipping `available`
+ * Right panel tab kinds. A kind is enabled by flipping `available`
  * and registering a renderer in `components/rightPanelRegistry.tsx`.
- * The same allow-list lives in `src-tauri/src/model.rs` (`RIGHT_PANEL_KINDS`).
+ * The same allow-list lives in `src-tauri/src/model.rs` (`RIGHT_PANEL_KINDS`, `RIGHT_PANEL_SINGLETONS`).
  */
 export const RIGHT_PANEL_KINDS = ["preview", "files", "browser"] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
@@ -15,12 +15,20 @@ export interface RightPanelKindInfo {
   singleton: boolean;
   /** Shown in the add menu and rendered. Unavailable kinds are kept in settings but hidden. */
   available: boolean;
+  /** Shown only while this app setting is on. The browser follows "BOOTH の読み込み方" (built-in browser). */
+  requires?: keyof RightPanelGates;
+}
+
+/** Settings that turn tab kinds on or off at run time. */
+export interface RightPanelGates {
+  builtinBrowser?: boolean;
 }
 
 export const RIGHT_PANEL_KIND_INFO: Record<RightPanelKind, RightPanelKindInfo> = {
   preview: { kind: "preview", label: "プレビュー", singleton: true, available: true },
   files: { kind: "files", label: "ファイル", singleton: true, available: true },
-  browser: { kind: "browser", label: "ブラウザ", singleton: false, available: false },
+  // One browser session (one set of BOOTH tabs), so one panel tab shows it.
+  browser: { kind: "browser", label: "ブラウザ", singleton: true, available: true, requires: "builtinBrowser" },
 };
 
 export const RIGHT_PANEL_MAX_TABS = 12;
@@ -44,6 +52,13 @@ export function newTabId(kind: RightPanelKind): string {
   const id = `${kind}-${nextTabNumber}`;
   nextTabNumber += 1;
   return id;
+}
+
+/** The kind is implemented and its setting is on. */
+export function kindAvailable(kind: RightPanelKind, gates: RightPanelGates = {}): boolean {
+  const info = RIGHT_PANEL_KIND_INFO[kind];
+  if (!info.available) return false;
+  return info.requires ? gates[info.requires] === true : true;
 }
 
 export function isRightPanelKind(value: unknown): value is RightPanelKind {
@@ -71,7 +86,14 @@ export function parseRightPanelTabs(raw: string | null | undefined): RightPanelT
   let activeIndex = 0;
   record.tabs.forEach((kind, index) => {
     if (tabs.length >= RIGHT_PANEL_MAX_TABS || !isRightPanelKind(kind)) return;
-    if (RIGHT_PANEL_KIND_INFO[kind].singleton && tabs.some((tab) => tab.kind === kind)) return;
+    if (RIGHT_PANEL_KIND_INFO[kind].singleton) {
+      const existing = tabs.findIndex((tab) => tab.kind === kind);
+      if (existing >= 0) {
+        // An active duplicate keeps focus on the tab it collapsed into.
+        if (index === wanted) activeIndex = existing;
+        return;
+      }
+    }
     if (index <= wanted) activeIndex = tabs.length;
     tabs.push({ id: newTabId(kind), kind });
   });
@@ -85,19 +107,19 @@ export function serializeRightPanelTabs(state: RightPanelTabs): string {
   return JSON.stringify({ tabs: tabs.map((tab) => tab.kind), active });
 }
 
-/** Tabs whose kind is implemented in this build. */
-export function visibleTabs(state: RightPanelTabs): RightPanelTab[] {
-  return state.tabs.filter((tab) => RIGHT_PANEL_KIND_INFO[tab.kind].available);
+/** Tabs whose kind is implemented in this build and turned on. Hidden tabs stay in settings. */
+export function visibleTabs(state: RightPanelTabs, gates: RightPanelGates = {}): RightPanelTab[] {
+  return state.tabs.filter((tab) => kindAvailable(tab.kind, gates));
 }
 
-export function activeTab(state: RightPanelTabs): RightPanelTab | null {
-  const shown = visibleTabs(state);
+export function activeTab(state: RightPanelTabs, gates: RightPanelGates = {}): RightPanelTab | null {
+  const shown = visibleTabs(state, gates);
   return shown.find((tab) => tab.id === state.activeId) ?? shown[0] ?? null;
 }
 
-export function canAddTab(state: RightPanelTabs, kind: RightPanelKind): boolean {
+export function canAddTab(state: RightPanelTabs, kind: RightPanelKind, gates: RightPanelGates = {}): boolean {
   const info = RIGHT_PANEL_KIND_INFO[kind];
-  if (!info.available) return false;
+  if (!kindAvailable(kind, gates)) return false;
   if (info.singleton && state.tabs.some((tab) => tab.kind === kind)) return true;
   return state.tabs.length < RIGHT_PANEL_MAX_TABS;
 }

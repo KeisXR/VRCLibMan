@@ -5,8 +5,8 @@ import type { FileEntry, ZipEntry } from "./types";
  * and zip files are read from their index without extracting anything.
  */
 
-/** Flipped by the change that adds "Unityで開く" (PR3). Until then the slot is not rendered. */
-export const UNITY_OPEN_AVAILABLE = false;
+/** "Unityで開く" on .unitypackage and zip rows. Only files inside the library or the remote library. */
+export const UNITY_OPEN_AVAILABLE = true;
 
 export type FileKind = "dir" | "zip" | "unitypackage" | "file" | "link";
 
@@ -95,7 +95,7 @@ export function zipParent(inner: string): string | null {
   return cut < 0 ? "" : inner.slice(0, cut);
 }
 
-/** `.unitypackage` files anywhere in an archive, for the later "Unityで開く" change. */
+/** `.unitypackage` files anywhere in an archive. "Unityで開く" on a zip offers these. */
 export function zipUnityPackages(entries: ZipEntry[]): ZipEntry[] {
   return entries.filter((entry) => !entry.dir && extensionOf(entry.path) === "unitypackage");
 }

@@ -1,10 +1,15 @@
 //! Native browser surface. Tab data is independent of its host window and layout rectangle.
-//! A future docked panel can use the same child webviews and commands in a different host.
+//! The same child webviews are shown either in the separate browser window or docked in the
+//! main window's right panel. Only one host exists at a time; moving between them reparents
+//! the tab webviews, so pages and sign-in stay as they are.
 use crate::{
     browser,
     browser_tabs::{self, BrowserState, TabSession, TOOLBAR_LABEL},
 };
-use std::sync::Mutex;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Mutex,
+};
 use tauri::{
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Webview, WebviewBuilder, WebviewUrl,
     Window, WindowBuilder,
@@ -12,6 +17,24 @@ use tauri::{
 use url::Url;
 
 const CHANGED: &str = "browser-state-changed";
+/// Asks the main window to show the browser tab of its right panel.
+pub const PANEL_REQUESTED: &str = "browser-panel-requested";
+/// The docked host is the main window; it never owns or destroys it.
+pub const PANEL_WINDOW_LABEL: &str = crate::presence::MAIN_WINDOW;
+pub const PANEL_UNSUPPORTED: &str =
+    "この環境ではブラウザを右パネルに表示できません。別ウィンドウで開きます";
+/// Largest panel rectangle accepted from the main window, in logical pixels.
+const MAX_PANEL_EDGE: f64 = 16384.0;
+
+/// Docking is implemented and checked against WebView2 first. macOS and Linux keep the
+/// separate window until the docked layout is confirmed on real machines.
+pub const fn panel_supported() -> bool {
+    cfg!(windows)
+}
+
+/// The user moved the browser to its own window in this session, so later opens use the window.
+/// Kept in memory only.
+static PREFER_WINDOW: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, Copy)]
 pub struct SurfaceArea {
@@ -21,6 +44,19 @@ pub struct SurfaceArea {
     pub height: f64,
 }
 impl SurfaceArea {
+    /// A rectangle measured by the main window's right panel. Rejects non-finite values and
+    /// keeps the rectangle inside a sane range.
+    pub fn from_panel(left: f64, top: f64, width: f64, height: f64) -> Result<Self, String> {
+        if ![left, top, width, height].iter().all(|value| value.is_finite()) {
+            return Err("ブラウザの表示位置が不正です".into());
+        }
+        Ok(Self {
+            left: left.clamp(0.0, MAX_PANEL_EDGE),
+            top: top.clamp(0.0, MAX_PANEL_EDGE),
+            width: width.clamp(0.0, MAX_PANEL_EDGE),
+            height: height.clamp(0.0, MAX_PANEL_EDGE),
+        })
+    }
     pub fn split(self, toolbar_height: f64) -> (Self, Self) {
         let height = toolbar_height.max(0.0).min((self.height - 1.0).max(0.0));
         (
@@ -41,12 +77,63 @@ impl SurfaceArea {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HostKind {
+    /// The separate browser window with its own toolbar webview. The surface owns it.
+    Window,
+    /// The main window's right panel. The toolbar is the main window's own DOM.
+    Panel,
+}
+impl HostKind {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Window => "window",
+            Self::Panel => "panel",
+        }
+    }
+}
+
 #[derive(Clone)]
 struct BrowserHost {
     window_label: String,
-    owns_window: bool,
-    // None fills the host. A docked host can supply a panel rectangle in logical pixels.
+    kind: HostKind,
+    // None fills the host. A docked host supplies the panel rectangle in logical pixels.
     area: Option<SurfaceArea>,
+    /// A docked host hides its tabs while menus, dialogs or drags cover the panel.
+    visible: bool,
+}
+impl BrowserHost {
+    fn window(label: &str) -> Self {
+        Self {
+            window_label: label.into(),
+            kind: HostKind::Window,
+            area: None,
+            visible: true,
+        }
+    }
+    fn panel(area: Option<SurfaceArea>, visible: bool) -> Self {
+        Self {
+            window_label: PANEL_WINDOW_LABEL.into(),
+            kind: HostKind::Panel,
+            area,
+            visible,
+        }
+    }
+    fn owns_window(&self) -> bool {
+        self.kind == HostKind::Window
+    }
+}
+
+/// Where the active tab goes in a docked host. None hides every tab: the panel is covered,
+/// not measured yet, or too small to show a page.
+fn panel_content(area: Option<SurfaceArea>, visible: bool) -> Option<SurfaceArea> {
+    let area = area?;
+    (visible && area.width >= 2.0 && area.height >= 2.0).then_some(area)
+}
+
+/// Which host a new browser session starts in.
+fn start_in_panel(supported: bool, prefer_window: bool, main_visible: bool) -> bool {
+    supported && !prefer_window && main_visible
 }
 struct Surface {
     session: TabSession,
@@ -246,12 +333,15 @@ pub fn state(app: &AppHandle) -> Result<BrowserState, String> {
         .lock()
         .map_err(|_| "データベースをロックできません".to_string())?;
     let bookmarks = crate::db::browser_bookmarks(&connection)?;
+    let host = surface().host.as_ref().map(|host| host.kind.name());
     Ok(BrowserState {
         open: host_window(app).is_some(),
         tabs,
         active_id,
         bookmarks,
         busy: browser::library_walk_running() || browser::download_job_armed(),
+        host,
+        panel_supported: panel_supported(),
     })
 }
 
@@ -291,27 +381,39 @@ pub fn layout(app: &AppHandle) -> Result<(), String> {
     let Some(window) = app.get_window(&host.window_label) else {
         return Ok(());
     };
-    let size = window
-        .inner_size()
-        .map_err(|e| e.to_string())?
-        .to_logical::<f64>(window.scale_factor().map_err(|e| e.to_string())?);
-    let area = host.area.unwrap_or(SurfaceArea {
-        left: 0.0,
-        top: 0.0,
-        width: size.width,
-        height: size.height,
-    });
-    let (toolbar, content) = area.split(toolbar_height);
-    if let Some(view) = app.get_webview(TOOLBAR_LABEL) {
-        set_view_bounds(&view, toolbar, true, host.area.is_none())?;
-    }
+    let content = match host.kind {
+        HostKind::Window => {
+            let size = window
+                .inner_size()
+                .map_err(|e| e.to_string())?
+                .to_logical::<f64>(window.scale_factor().map_err(|e| e.to_string())?);
+            let area = host.area.unwrap_or(SurfaceArea {
+                left: 0.0,
+                top: 0.0,
+                width: size.width,
+                height: size.height,
+            });
+            let (toolbar, content) = area.split(toolbar_height);
+            if let Some(view) = app.get_webview(TOOLBAR_LABEL) {
+                set_view_bounds(&view, toolbar, true, host.area.is_none())?;
+            }
+            Some(content)
+        }
+        // The main window draws the controls itself; the native view fills only the measured area.
+        HostKind::Panel => panel_content(host.area, host.visible),
+    };
     for tab in tabs {
         if let Some(view) = app.get_webview(&tab.id) {
-            set_view_bounds(&view, content, false, host.area.is_none())?;
-            if active.as_deref() == Some(&tab.id) {
-                view.show().map_err(|e| e.to_string())?;
-            } else {
-                view.hide().map_err(|e| e.to_string())?;
+            match content {
+                Some(content) => {
+                    set_view_bounds(&view, content, false, host.area.is_none())?;
+                    if active.as_deref() == Some(&tab.id) {
+                        view.show().map_err(|e| e.to_string())?;
+                    } else {
+                        view.hide().map_err(|e| e.to_string())?;
+                    }
+                }
+                None => view.hide().map_err(|e| e.to_string())?,
             }
         }
     }
@@ -564,14 +666,23 @@ pub(crate) fn dispatch_shortcut(app: &AppHandle, action: &str) {
     });
 }
 
-pub fn open(app: &AppHandle) -> Result<(), String> {
-    browser::browser_enabled(app)?;
-    if let Some(window) = host_window(app) {
-        let _ = window.show();
-        let _ = window.unminimize();
-        let _ = window.set_focus();
-        return Ok(());
-    }
+fn raise(window: &Window) {
+    let _ = window.show();
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+}
+
+/// Ask the main window to show its right panel's browser tab.
+fn request_panel(app: &AppHandle) {
+    let _ = app.emit_to(PANEL_WINDOW_LABEL, PANEL_REQUESTED, ());
+}
+
+fn host_kind() -> Option<HostKind> {
+    surface().host.as_ref().map(|host| host.kind)
+}
+
+/// Creates the separate browser window and its toolbar webview. Tabs are added by the caller.
+fn build_browser_window(app: &AppHandle) -> Result<Window, String> {
     if let Some(probe) = app.get_webview_window("booth-probe") {
         let _ = probe.destroy();
     }
@@ -588,15 +699,6 @@ pub fn open(app: &AppHandle) -> Result<(), String> {
     let window = builder
         .build()
         .map_err(|e| format!("ブラウザを開けません: {e}"))?;
-    {
-        let mut state = surface();
-        state.session.clear();
-        state.host = Some(BrowserHost {
-            window_label: window.label().into(),
-            owns_window: true,
-            area: None,
-        });
-    }
     let result = (|| {
         window
             .add_child(
@@ -608,8 +710,6 @@ pub fn open(app: &AppHandle) -> Result<(), String> {
                 LogicalSize::new(1200.0, browser_tabs::DEFAULT_TOOLBAR_HEIGHT),
             )
             .map_err(|e| format!("操作バーを開けません: {e}"))?;
-        mount_tab(app, &window, checked_url(app, browser::LIBRARY_URL)?)?;
-        install_browser_menu(app, &window)?;
         // Child webviews do not install Tauri's Windows resize borders themselves.
         #[cfg(windows)]
         window.set_resizable(true).map_err(|e| e.to_string())?;
@@ -617,10 +717,14 @@ pub fn open(app: &AppHandle) -> Result<(), String> {
     })();
     if let Err(error) = result {
         let _ = window.destroy();
-        surface().session.clear();
-        surface().host = None;
         return Err(error);
     }
+    Ok(window)
+}
+
+/// Window events of the separate browser window. Closing it ends the session only while it
+/// is still the host; after the tabs moved to the panel the old window just goes away.
+fn watch_browser_window(app: &AppHandle, window: &Window) {
     let handle = app.clone();
     let host_label = window.label().to_string();
     window.on_window_event(move |event| match event {
@@ -628,7 +732,7 @@ pub fn open(app: &AppHandle) -> Result<(), String> {
             let _ = layout(&handle);
         }
         tauri::WindowEvent::Destroyed => {
-            {
+            let ended = {
                 let mut state = surface();
                 if state
                     .host
@@ -637,14 +741,249 @@ pub fn open(app: &AppHandle) -> Result<(), String> {
                 {
                     state.session.clear();
                     state.host = None;
+                    true
+                } else {
+                    false
                 }
+            };
+            if ended {
+                browser::request_library_walk_cancel();
             }
-            browser::request_library_walk_cancel();
             changed(&handle);
             let _ = handle.emit("booth-browser-used", ());
         }
         _ => {}
     });
+}
+
+/// The main window went away while it hosted the tabs. Its child webviews are gone with it.
+pub fn handle_window_event(window: &Window, event: &tauri::WindowEvent) {
+    if window.label() != PANEL_WINDOW_LABEL || !matches!(event, tauri::WindowEvent::Destroyed) {
+        return;
+    }
+    let ended = {
+        let mut state = surface();
+        if state
+            .host
+            .as_ref()
+            .is_some_and(|host| host.kind == HostKind::Panel)
+        {
+            state.session.clear();
+            state.host = None;
+            true
+        } else {
+            false
+        }
+    };
+    if ended {
+        browser::request_library_walk_cancel();
+        changed(window.app_handle());
+    }
+}
+
+fn open_window(app: &AppHandle) -> Result<(), String> {
+    let window = build_browser_window(app)?;
+    {
+        let mut state = surface();
+        state.session.clear();
+        state.host = Some(BrowserHost::window(window.label()));
+    }
+    let result = (|| {
+        mount_tab(app, &window, checked_url(app, browser::LIBRARY_URL)?)?;
+        install_browser_menu(app, &window)?;
+        Ok::<_, String>(())
+    })();
+    if let Err(error) = result {
+        let _ = window.destroy();
+        surface().session.clear();
+        surface().host = None;
+        return Err(error);
+    }
+    watch_browser_window(app, &window);
+    Ok(())
+}
+
+/// Starts a session in the main window's right panel. The tabs stay hidden until the panel
+/// reports where it is, so a closed or covered panel never shows a page over the app.
+fn open_panel(app: &AppHandle, area: Option<SurfaceArea>) -> Result<(), String> {
+    let main = app
+        .get_window(PANEL_WINDOW_LABEL)
+        .ok_or("メインウィンドウが見つかりません")?;
+    if let Some(probe) = app.get_webview_window("booth-probe") {
+        let _ = probe.destroy();
+    }
+    {
+        let mut state = surface();
+        state.session.clear();
+        state.host = Some(BrowserHost::panel(area, area.is_some()));
+    }
+    if let Err(error) = checked_url(app, browser::LIBRARY_URL)
+        .and_then(|url| mount_tab(app, &main, url))
+    {
+        let ids = {
+            let mut state = surface();
+            let ids = state
+                .session
+                .tabs
+                .iter()
+                .map(|tab| tab.id.clone())
+                .collect::<Vec<_>>();
+            state.session.clear();
+            state.host = None;
+            ids
+        };
+        for id in ids {
+            if let Some(view) = app.get_webview(&id) {
+                let _ = view.close();
+            }
+        }
+        changed(app);
+        return Err(error);
+    }
+    request_panel(app);
+    Ok(())
+}
+
+/// Opens the browser, or brings the current host forward. A new session starts in the right
+/// panel when this build supports it, unless the user moved the browser to its own window.
+pub fn open(app: &AppHandle) -> Result<(), String> {
+    browser::browser_enabled(app)?;
+    if let Some(window) = host_window(app) {
+        raise(&window);
+        if host_kind() == Some(HostKind::Panel) {
+            request_panel(app);
+        }
+        return Ok(());
+    }
+    let main_visible = app
+        .get_window(PANEL_WINDOW_LABEL)
+        .and_then(|main| main.is_visible().ok())
+        .unwrap_or(false);
+    if start_in_panel(
+        panel_supported(),
+        PREFER_WINDOW.load(Ordering::Relaxed),
+        main_visible,
+    ) {
+        return open_panel(app, None);
+    }
+    open_window(app)
+}
+
+/// Moves every tab webview to `target`. On failure the moved ones go back to `source`.
+fn move_tabs(app: &AppHandle, source: &Window, target: &Window) -> Result<(), String> {
+    let ids = surface()
+        .session
+        .tabs
+        .iter()
+        .map(|tab| tab.id.clone())
+        .collect::<Vec<_>>();
+    let mut moved = Vec::new();
+    for id in ids {
+        let Some(view) = app.get_webview(&id) else {
+            continue;
+        };
+        if let Err(error) = view.reparent(target) {
+            for view in moved {
+                let _ = Webview::reparent(&view, source);
+            }
+            return Err(format!("ブラウザを移せません: {error}"));
+        }
+        moved.push(view);
+    }
+    Ok(())
+}
+
+/// Shows the browser in the main window's right panel. An open browser window hands its tabs
+/// over and closes; with no session, a new one starts in the panel.
+pub fn dock(app: &AppHandle, area: Option<SurfaceArea>) -> Result<(), String> {
+    browser::browser_enabled(app)?;
+    mutable()?;
+    if !panel_supported() {
+        return Err(PANEL_UNSUPPORTED.into());
+    }
+    PREFER_WINDOW.store(false, Ordering::Relaxed);
+    let current = surface().host.clone();
+    match current {
+        Some(host) if host.kind == HostKind::Panel => {
+            if let Some(area) = area {
+                if let Some(host) = surface().host.as_mut() {
+                    host.area = Some(area);
+                    host.visible = true;
+                }
+            }
+            layout(app)?;
+        }
+        Some(host) => {
+            let main = app
+                .get_window(PANEL_WINDOW_LABEL)
+                .ok_or("メインウィンドウが見つかりません")?;
+            let source = app
+                .get_window(&host.window_label)
+                .ok_or("ブラウザのウィンドウが見つかりません")?;
+            move_tabs(app, &source, &main)?;
+            surface().host = Some(BrowserHost::panel(area, area.is_some()));
+            if let Some(view) = app.get_webview(TOOLBAR_LABEL) {
+                let _ = view.close();
+            }
+            // The Destroyed handler sees that the window is no longer the host and keeps the tabs.
+            let _ = source.destroy();
+            layout(app)?;
+            raise(&main);
+            request_panel(app);
+        }
+        None => open_panel(app, area)?,
+    }
+    changed(app);
+    Ok(())
+}
+
+/// Moves the docked tabs to the separate browser window, or brings that window forward.
+pub fn undock(app: &AppHandle) -> Result<(), String> {
+    browser::browser_enabled(app)?;
+    mutable()?;
+    PREFER_WINDOW.store(true, Ordering::Relaxed);
+    let current = surface().host.clone();
+    let Some(host) = current.filter(|host| host.kind == HostKind::Panel) else {
+        return open(app);
+    };
+    let main = app
+        .get_window(&host.window_label)
+        .ok_or("メインウィンドウが見つかりません")?;
+    let window = build_browser_window(app)?;
+    if let Err(error) = move_tabs(app, &main, &window) {
+        let _ = window.destroy();
+        return Err(error);
+    }
+    surface().host = Some(BrowserHost::window(window.label()));
+    if let Err(error) = install_browser_menu(app, &window) {
+        browser::browser_log(app, &format!("メニューを設定できません {error}"));
+    }
+    watch_browser_window(app, &window);
+    layout(app)?;
+    raise(&window);
+    changed(app);
+    Ok(())
+}
+
+/// The right panel reports its browser area. `visible` is false while a menu, dialog, drag or
+/// overlay covers it, because the native view is always drawn above the page.
+pub fn panel_area(app: &AppHandle, area: Option<SurfaceArea>, visible: bool) -> Result<(), String> {
+    let docked = {
+        let mut state = surface();
+        match state.host.as_mut() {
+            Some(host) if host.kind == HostKind::Panel => {
+                if area.is_some() {
+                    host.area = area;
+                }
+                host.visible = visible && area.is_some();
+                true
+            }
+            _ => false,
+        }
+    };
+    if docked {
+        layout(app)?;
+    }
     Ok(())
 }
 
@@ -672,6 +1011,9 @@ pub fn new_tab(app: &AppHandle, url: Option<&str>) -> Result<(), String> {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
+        if host_kind() == Some(HostKind::Panel) {
+            request_panel(app);
+        }
     }
     Ok(())
 }
@@ -738,7 +1080,7 @@ pub fn close(app: &AppHandle) -> Result<(), String> {
         let _ = view.close();
     }
     if let Some(host) = host {
-        if host.owns_window {
+        if host.owns_window() {
             if let Some(window) = app.get_window(&host.window_label) {
                 let _ = window.destroy();
             }
@@ -779,7 +1121,7 @@ pub fn stop(app: &AppHandle) -> Result<(), String> {
 mod tests {
     use super::*;
     #[test]
-    fn layout_uses_host_relative_coordinates_for_a_future_docked_panel() {
+    fn layout_uses_host_relative_coordinates_for_a_docked_panel() {
         let area = SurfaceArea {
             left: 500.0,
             top: 20.0,
@@ -801,6 +1143,58 @@ mod tests {
         }
         .split(136.0);
         assert_eq!(tiny.height, 1.0);
+    }
+
+    #[test]
+    fn docked_tabs_hide_until_the_panel_is_measured_and_uncovered() {
+        let area = SurfaceArea::from_panel(820.0, 96.0, 420.0, 600.0).unwrap();
+        assert!(panel_content(None, true).is_none());
+        assert!(panel_content(Some(area), false).is_none());
+        let shown = panel_content(Some(area), true).expect("shown");
+        assert_eq!(
+            (shown.left, shown.top, shown.width, shown.height),
+            (820.0, 96.0, 420.0, 600.0)
+        );
+        let collapsed = SurfaceArea::from_panel(820.0, 96.0, 0.0, 600.0).unwrap();
+        assert!(panel_content(Some(collapsed), true).is_none());
+    }
+
+    #[test]
+    fn panel_rectangles_reject_non_finite_values_and_stay_in_range() {
+        assert!(SurfaceArea::from_panel(f64::NAN, 0.0, 10.0, 10.0).is_err());
+        assert!(SurfaceArea::from_panel(0.0, 0.0, f64::INFINITY, 10.0).is_err());
+        let area = SurfaceArea::from_panel(-5.0, -1.0, 1e9, 30.0).unwrap();
+        assert_eq!((area.left, area.top, area.width), (0.0, 0.0, MAX_PANEL_EDGE));
+    }
+
+    #[test]
+    fn new_sessions_start_in_the_panel_only_where_it_is_supported() {
+        assert!(start_in_panel(true, false, true));
+        assert!(!start_in_panel(false, false, true));
+        assert!(!start_in_panel(true, true, true));
+        // A hidden main window (background mode) cannot show the panel.
+        assert!(!start_in_panel(true, false, false));
+        assert_eq!(panel_supported(), cfg!(windows));
+        assert_eq!(HostKind::Window.name(), "window");
+        assert_eq!(HostKind::Panel.name(), "panel");
+    }
+
+    #[test]
+    fn the_panel_host_never_owns_or_destroys_the_main_window() {
+        let panel = BrowserHost::panel(None, false);
+        assert_eq!(panel.window_label, crate::presence::MAIN_WINDOW);
+        assert!(!panel.owns_window());
+        assert!(!panel.visible);
+        assert!(BrowserHost::window(browser::WINDOW_LABEL).owns_window());
+        let source = include_str!("browser_surface.rs");
+        let start = source.find("pub fn dock").expect("dock");
+        let body = &source[start..source[start..].find("\npub fn undock").unwrap() + start];
+        // The host switches to the panel before the old window is destroyed, so its
+        // Destroyed handler keeps the moved tabs.
+        let switched = body.find("BrowserHost::panel(area").expect("switch host");
+        let destroyed = body.find("source.destroy()").expect("close old window");
+        assert!(switched < destroyed);
+        assert!(body.contains("mutable()?"));
     }
 
     #[test]

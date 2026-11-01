@@ -81,7 +81,8 @@ pub(crate) fn show_main_later<R: Runtime>(app: &AppHandle<R>) {
 }
 
 pub(crate) fn show_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+    // A docked browser adds child webviews, so main is no longer a WebviewWindow.
+    if let Some(window) = app.get_window(MAIN_WINDOW) {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
@@ -280,6 +281,37 @@ fn menu_bar_icon() -> tauri::image::Image<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn showing_main_reuses_a_window_with_docked_browser_tabs() {
+        let app = tauri::test::mock_app();
+        let _main = tauri::WebviewWindowBuilder::new(
+            &app,
+            MAIN_WINDOW,
+            tauri::WebviewUrl::App("index.html".into()),
+        )
+        .build()
+        .unwrap();
+        app.get_window(MAIN_WINDOW)
+            .unwrap()
+            .add_child(
+                tauri::WebviewBuilder::new(
+                    "booth-tab-1",
+                    tauri::WebviewUrl::External("https://example.invalid/".parse().unwrap()),
+                ),
+                tauri::LogicalPosition::new(800.0, 100.0),
+                tauri::LogicalSize::new(400.0, 600.0),
+            )
+            .unwrap();
+        assert!(app.get_webview_window(MAIN_WINDOW).is_none());
+        let window_count = app.windows().len();
+
+        show_main_window(app.handle()).unwrap();
+
+        assert_eq!(app.windows().len(), window_count);
+        assert!(app.get_webview(MAIN_WINDOW).is_some());
+        assert_eq!(app.get_webview("booth-tab-1").unwrap().window().label(), MAIN_WINDOW);
+    }
 
     #[test]
     fn background_off_close_quits_the_process() {

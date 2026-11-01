@@ -273,7 +273,7 @@ export default function App() {
         : "";
   const browseKind = route.page === "assets" ? "asset" : route.page === "worlds" ? "world" : null;
   const browseBase = browseKind === "asset" ? "#/assets" : "#/worlds";
-  const rightPanel = useRightPanelState(fail);
+  const rightPanel = useRightPanelState(fail, { builtinBrowser });
   const layout = useAppLayout(browseKind !== null, rightPanel);
 
   const mainPane = (

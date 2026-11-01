@@ -531,13 +531,29 @@ export interface AvatarInput {
 
 export interface BrowserBookmark { title: string; url: string; }
 export interface BrowserTab { id: string; url: string; title: string; loading: boolean; canGoBack: boolean; canGoForward: boolean; }
-export interface BrowserState { open: boolean; tabs: BrowserTab[]; activeId: string | null; bookmarks: BrowserBookmark[]; busy: boolean; }
+/** Where the browser pages are shown: their own window, the main window's right panel, or nowhere. */
+export type BrowserHostKind = "window" | "panel";
+export interface BrowserState {
+  open: boolean;
+  tabs: BrowserTab[];
+  activeId: string | null;
+  bookmarks: BrowserBookmark[];
+  busy: boolean;
+  host: BrowserHostKind | null;
+  /** The right panel can host the pages on this OS (Windows). Elsewhere the separate window is used. */
+  panelSupported: boolean;
+}
+/** A rectangle in the main window, in CSS pixels. */
+export interface BrowserPanelRect { left: number; top: number; width: number; height: number; }
 export type BrowserAction =
   | { kind: "newTab"; url?: string }
   | { kind: "navigate"; url: string }
   | { kind: "selectTab" | "closeTab"; tabId: string }
   | { kind: "back" | "forward" | "reload" | "stop" }
-  | { kind: "toolbarHeight"; height: number };
+  | { kind: "toolbarHeight"; height: number }
+  | { kind: "dock"; area: BrowserPanelRect | null }
+  | { kind: "undock" }
+  | { kind: "panelArea"; area: BrowserPanelRect | null; visible: boolean };
 
 export interface AppUpdateStatus {
   revision: number;
@@ -569,3 +585,35 @@ export interface UnityStatus {
   hubFound: boolean;
   searched: string[];
 }
+
+/** 「Unityで開く」: zip か .unitypackage の中の Unity パッケージ。展開せずに読んだ一覧。 */
+export interface UnityPackageEntry {
+  /** zip 内のパス（`/` 区切り）。単体の .unitypackage では空文字 */
+  entry: string;
+  name: string;
+  size: number;
+}
+
+export interface UnityPackageList {
+  path: string;
+  kind: "zip" | "package";
+  packages: UnityPackageEntry[];
+  truncated: boolean;
+}
+
+/** Unity に渡すファイル。zip 内のものはアプリのキャッシュ（unity-import/<商品ID>/）に取り出したもの */
+export interface PreparedUnityPackage {
+  name: string;
+  path: string;
+  size: number;
+}
+
+export interface UnityLaunchResult {
+  /** 先頭から渡し終えた件数 */
+  launched: number;
+  /** Unity の起動を待つため途中で止めた */
+  waiting: boolean;
+}
+
+/** "unity" は設定の既定 Unity で -openfile、"system" は OS の関連付け */
+export type UnityLaunchMode = "unity" | "system";

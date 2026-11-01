@@ -13,7 +13,7 @@ VRCLibMan を変更するときは、このファイルを先に読む。実装�
 続けて作らないもの:
 
 - Booth 商品の購入、一括または無人の自動ダウンロード
-- Unity への転送
+- Unity プロジェクトへの自動転送（「Unityで開く」は選んだ unitypackage を Unity の Import 画面に渡すだけ）
 - クラウド同期
 - 複数の AI エージェントをアプリに組み込むこと
 - 対応表に無い素体関係の推測や、コミュニティの「似ている」という情報でのグループ化
@@ -111,13 +111,15 @@ VRCLibMan を変更するときは、このファイルを先に読む。実装�
 
 既定は拡張機能のまま。設定で内蔵ブラウザを有効にしたときだけ、別ウィンドウで `https://accounts.booth.pm/library` を開く。ログインとページ移動はユーザーが行う。今見えているライブラリのページだけを `extension/extract.js` の `extractPage` で読み、ファイルのインポートと同じ `import_export_json` に渡す。ページの自動移動は「ライブラリ全取得」を押したときだけである。年齢確認の URL はインポートを拒否し、確認を自動で通過させない。セッションはメイン画面とは別の WebView データストアに置く。本人が1件のファイルを「ダウンロード」操作時のみ、最初の `https://booth.pm/downloadables/{番号}` 向けリクエストに使うため Cookie を取得する。Rust の `quiet.rs` はリダイレクト先が BOOTH の同一ホストやサブドメインでも初回用 Cookie を再送しない。転送先の認証が必要なら失敗として扱い、元の Cookie を流用しない。ログアウト時は専用のログイン状態を消去する。`library.sqlite` は消さない。
 
-一般の http / https サイトも閲覧でき、URL入力・タブごとのネイティブ履歴・再読み込みと停止・ブックマークバーがある。外部ページは `booth-tab-N` の子 WebView、アプリ製の操作バーは `booth-toolbar` の別 WebView で、外部ページにローカルアプリの capability は与えない。アプリ内部の URL と認証情報付き URL は開かない。BOOTH のページ抽出はネイティブの現在 URL を先に検査し、他サイトの DOM を読まない。全取得・ダウンロード中はタブ変更と手動移動を止める。`browser_tabs.rs` は配置に依存しないタブ状態と入力検証、`browser_surface.rs` はホストウィンドウと矩形に基づくネイティブ配置、`BrowserChrome.tsx` は再利用する操作バーである。現在は別窓全体を使う。配置を変更するときは、ホストと矩形を差し替える。ブックマークは settings の JSON に保存し、明示的な空配列を初期ブックマークで戻さない。タブは終了で閉じる。セッション削除は専用プロファイルの全サイトに効き、ブックマークは残す。 Linux の子 WebView は標準 GtkBox では bounds が効かないため、`browser_linux.rs` の GtkLayout に配置する。専用 WebKit データマネージャーを保持し、全ビューを閉じたあとにメモリ上の閲覧データの削除完了も待ってからフォルダを消す。メイン画面のデータマネージャーは保持・削除しない。
+一般の http / https サイトも閲覧でき、URL入力・タブごとのネイティブ履歴・再読み込みと停止・ブックマークバーがある。外部ページは `booth-tab-N` の子 WebView、アプリ製の操作バーは `booth-toolbar` の別 WebView で、外部ページにローカルアプリの capability は与えない。アプリ内部の URL と認証情報付き URL は開かない。BOOTH のページ抽出はネイティブの現在 URL を先に検査し、他サイトの DOM を読まない。全取得・ダウンロード中はタブ変更と手動移動を止める。`browser_tabs.rs` は配置に依存しないタブ状態と入力検証、`browser_surface.rs` はホストウィンドウと矩形に基づくネイティブ配置、`BrowserChrome.tsx` は再利用する操作バーである。ホストは `BrowserHost`（`kind` が `window` か `panel`）で、`Surface.host` は 1 つだけなので、ブラウザは一度に 1 か所にだけ出す。Windows（`panel_supported()` = `cfg!(windows)`）では、メイン窓の右パネルの「ブラウザ」タブ（`src/components/BrowserPanel.tsx`）にタブの子 WebView を `main` 窓の子として置く（`Window::add_child`、`unstable`）。操作バーはメイン画面の DOM の `BrowserChrome panel` で、`booth-toolbar` は作らない。React が表示域を `getBoundingClientRect` で測り（ResizeObserver・resize・MutationObserver・500ms の確認）、`browser_action` の `panelArea`（CSS px、`main` からだけ受け付ける）で渡す。ネイティブ WebView は DOM より手前に描かれるので、メニュー・ダイアログ・ポップオーバー・重ね表示（`src/browserPanel.ts` の `BROWSER_PANEL_COVER_SELECTORS`）が重なるとき、境界ドラッグと HTML のドラッグ中、窓幅 1000px 未満の重ね表示、タブが画面から消えたときは `visible: false` か `area: null` で隠す。新しいセッションは、パネル対応・メイン窓が見えている・その起動中に「別ウィンドウで開く」を選んでいない、のときに右パネルで始め、Rust は `browser-panel-requested` を `main` へ送って React に「ブラウザ」タブを開かせる。矩形が届くまでタブは隠す。`dock` / `undock` は `Webview::reparent` でタブを移し、失敗したら戻す。`dock` はホストを先に `panel` へ変えてから古い別窓を壊すので、その `Destroyed` はセッションを閉じない。パネルのホストはメイン窓を所有せず閉じない。メイン窓が壊れたら `handle_window_event` でセッションを閉じる。「別ウィンドウで開く」の選択はメモリだけで保存しない。右パネルの設定にはブラウザの URL を保存しない。「ブラウザ」タブ種別は単一で、`builtinBrowser` がオンのときだけ出す。macOS と Linux は別窓だけで、パネル埋め込みは未検証のため無効。ブックマークは settings の JSON に保存し、明示的な空配列を初期ブックマークで戻さない。タブは終了で閉じる。セッション削除は専用プロファイルの全サイトに効き、ブックマークは残す。 Linux の子 WebView は標準 GtkBox では bounds が効かないため、`browser_linux.rs` の GtkLayout に配置する。専用 WebKit データマネージャーを保持し、全ビューを閉じたあとにメモリ上の閲覧データの削除完了も待ってからフォルダを消す。メイン画面のデータマネージャーは保持・削除しない。
 
 「ライブラリ全取得」は、内蔵ブラウザが有効なときだけブラウザ画面に出る。拡張の「ライブラリをすべて送る」と同じく、`https://accounts.booth.pm/library` を `?page=` で 1 ページずつ読み、続いて `https://accounts.booth.pm/library/gifts`、そのあと `https://accounts.booth.pm/library/free_downloads` を同じ読み方で読む。間隔は SQLite の `booth_page_interval_ms` で指定した1000 / 500 / 250ミリ秒（初期値1000）で、並列にしない。250msはUIで高リスク確認を行う。各ページは `extractPage` で読み、まとめて `import_export_json` に渡す。ファイルのダウンロードはしない。中止は次のページへ移動する前に効く。ログイン切れ（ライブラリ、ギフト、無料ダウンロード以外のページ、ログインへの移動）か年齢確認の URL では止まり、年齢確認の URL へは自分からは移動しない。終わりに商品数、ファイル数、名前のあるファイル数、名前の無いファイル数を出す。記録と進捗に商品名やクエリは残さない。無料ダウンロードで `isFree` が無い商品は無料として保存する。ライブラリの「非公開」は `products.unpublished`（DB版5）に残し、説明が「公開終了（取得できず）」の商品とは別に扱う。非公開だけではカテゴリをその他にしない。全取得のあと、`booth_detail_at` が空で年齢制限でない商品だけ、公開の `https://booth.pm/ja/items/{id}.json` を 1 件ずつ読む。間隔はページ間隔と 3 秒の長い方で、並列にしない。Cookie は送らない。年齢制限の応答と年齢確認の URL からは本文、カテゴリ、タグを保存しない。429 / 503 では印を付けず、次回の続きから読む。中止は次の取得の前に効く。保存先は `booth_category_id`、`booth_category_name`、`booth_category_parent`、`booth_tags`、`booth_detail_at`（DB版7）。省略されたカテゴリとタグは既存の値を消さない。
 
 内蔵ブラウザが有効で、自動整理がオン、ライブラリフォルダがあるとき、未ダウンロードの行か「ダウンロード」を押すと、その1件だけを `https://booth.pm/downloadables/{番号}` から Rust の HTTP クライアントで取得する。WebView のセッションを使い、通常の取得でブラウザを移動・前面表示しない。番号は保存済みの `downloadable_id`、無いときは番号だけのファイル名。署名付きの別ホストへ移ったダウンロードも、押した1件だけ保存先を `ダウンロード/VRCLibMan/{商品ID}/{ファイル名}` にする。パス検査は拡張の自動整理と同じで、別の場所、別の商品ID、サブフォルダ、`..`、シンボリックリンクは拒否する。ダウンロードした中身が HTML のときは消し、窓を前面にしてログインを案内する。年齢確認の URL は開かず、通過もしない。ブラウザがオフのときはボタンを出さず、拡張の自動整理のままにする。一括や自動のダウンロードはしない。記録に商品名、ファイル名、クエリは残さない。`download_booth_file` は移した先の絶対パスを返し、完了の `booth-file-download`（phase `done`）にも `path` を載せる。画面は完了の通知とその行に「保存先を開く」を出す。完了した商品は、画面のリモート確認結果（`remoteProductProbe.ts` の60秒キャッシュ）を捨てて確認し直す。リモート確認結果を一覧へ重ねるときも、手元にある行は読み直した一覧の状態を正とする。
 
 Windows では、BOOTH の窓を同期コマンドの中で作らない。WebView2 は再入できず、IPC のコールバックから `WebviewWindowBuilder::build` すると新しい窓だけが応答しなくなる（メインの窓は動いたままに見える）。開く・ライブラリへ移動する・戻る進む・閉じるは async コマンドにし、コールバックが返ったあとメインスレッドで行う。データベースのロックを持ったまま窓を作らない。ページ読み取りの待ちも UI スレッドに載せない。`booth-browser` をメイン画面の `EBWebView` と同じ data_directory にしない。操作とページの移動先はアプリデータの `booth-browser.log` に残す。一般サイトのページ読み込みは origin だけを記録し、パス・クエリ・断片は残さない。BOOTH のインポートや巡回の記録は検証済みライブラリのパスまでとする。BOOTH / pixiv のログイン用別窓要求は元のタブで開き、ほかの http / https の別窓要求は新しいタブで開く。年齢確認を自動通過しない。
+
+メイン画面にブラウザの子 WebView があると `get_webview_window("main")` は取得できないため、トレイ・深いリンク・単一起動からの再表示は `get_window("main")` で既存ウィンドウを取得する。
 
 ### 商品の除外と設定の自動保存
 
@@ -133,6 +135,19 @@ Windows では、BOOTH の窓を同期コマンドの中で作らない。WebVie
 - 既定の Unity は settings の `unity_editor_path`（スキーマ変更なし）。`set_unity_editor` はメイン画面からだけ受け、ファイル名が Unity 本体（Windows は `Unity.exe`、Mac と Linux は `Unity`）で実在するときだけ保存する。空文字は未設定。保存したパスが検出に無くても実在すれば「手動」として一覧に足し、消えていれば `selectedMissing` にする。
 - Mac と Linux の検出は実機で未検証。
 
+### Unity で開く
+
+- `src-tauri/src/unity_import.rs` とコマンド `unity_packages` / `prepare_unity_packages` / `launch_unity_packages`。画面は `src/components/UnityOpenDialog.tsx`（`useUnityOpen` と `UnityOpenButton`）、純粋な判断は `src/unityOpen.ts`。導線はダウンロード行（`state === "local"`）、商品カードの手元のファイル、右パネルのファイルタブ。
+- 対象はライブラリかリモートライブラリの中の zip と `.unitypackage` だけ（`allowed_source`）。zip は `file_browser::read_zip` で目次を読み、5 秒で打ち切る。展開しない。
+- 取り出しは選んだ `.unitypackage` だけを `app_cache_dir/unity-import/<商品ID>/` へ。商品 ID は 1〜12 桁の数字、それ以外は `other`。ファイル名は zip 内の最後の名前だけを使い、Windows で使えない文字を置き換え、120 文字まで、同名は「 (2)」を付ける。書き出し先を `canonicalize` して親が取り出し先と同じか確かめる（zip slip）。宣言サイズ 8 GiB まで、`.part` に宣言サイズ + 1 バイトまで書き、宣言と一致したときだけ名前を戻す。zip の圧縮は Deflate だけ有効（`deflate-flate2-zlib-rs`）。
+- キャッシュは起動時に別スレッドで 24 時間より古いファイルと空フォルダを消す。リンクはたどらない。
+- 起動は `<Unity> -openfile <pkg>` を引数の配列で渡す（シェルを通さない、`-importPackage` は使わない、プロジェクトに書き込まない）。作業フォルダは Unity 本体のフォルダ、標準入出力は null。1 件ずつ順に渡す。起動中の Unity に渡す子プロセスはすぐ終わるので 1.2 秒空けて次へ。最後の 1 件も最大 20 秒まで起動状態を確認する。異常終了や状態確認の失敗はエラーにし、残りは渡さない。20 秒たっても終わらなければそれが Unity 本体なので止め、`waiting: true` を返す。画面は「続きを Unity に渡す」で残りを渡す。
+- 既定の Unity が無い・見つからないときは設定（`#settings-unity`）へ誘導し、`mode: "system"` で `tauri_plugin_opener` の `open_path`（OS の関連付け）でも開ける。渡せるのはキャッシュ・ライブラリ・リモートの中の `.unitypackage` だけ（`allowed_launch_path`）。取り出しと起動はメイン画面からだけ受ける。
+- R18 の商品も取り出し・起動するが、パスとファイル名はログに出さない。
+- ダウンロード完了の通知に操作ボタンを付けられるようになったら、`unityNoticeAction` を渡す。
+- プレビューモードは `src/preview/files.ts` の `previewUnityPackages` / `previewPrepareUnityPackages` と、`src/preview/api.ts` の起動（既定の Unity が無ければエラー、3 件以上は 1 件目で待つ）。
+- Windows を基準にし、Mac（`Contents/MacOS/Unity`）と Linux の起動は実機で未検証。
+
 ### 抽出と安全境界
 
 細かい分類規則は次節。ここは境界だけを書く。
@@ -144,8 +159,8 @@ Windows では、BOOTH の窓を同期コマンドの中で作らない。WebVie
 - クラウドへの同時送信は最大 2 件。429 は Retry-After（60 秒まで）か 2・4・8 秒で最大 3 回やり直す。400 は `response_format` と `temperature` を外して 1 回だけ再送する。接続テストは `GET {接続先}/models` で、商品情報は送らない。
 - 説明の補完もサムネイルも、ログインセッションと `adult` クッキーを送らない。アプリの受信口は `Cookie` を読まない。拡張からアプリへの POST は `credentials: "omit"`。
 - サムネイルは https かつ `pximg.net` / `booth.pm` だけ。`Referer: https://booth.pm/` を付け、pximg は `/c/150x150/` に書き換える。`360x360` と素の `300x300` は 403 になる。4MB まで。
-- アセットとワールドのプレビューは、選択が落ち着いてから 1 件だけ、保存済みサムネイル URL の `/c/` を外した画像を `previews` に置く。Cookie は送らない。失敗したら 150px のサムネイルに戻す。年齢制限の商品は「表示する」まで大きい画像を取らない。プレビューはアプリ全体のグリッド右列にある右パネル（`src/components/RightPanel.tsx`）の「プレビュー」タブに出す。開閉は `settings.preview_pane`（既定オフ）、幅は `settings.preview_pane_width`（既定 300、240〜1600。画面上の上限は窓幅の半分と、左の列と一覧 360px の余り）で、どちらも右パネル全体の値として使う。タブの種類と並びと選択は `settings.right_panel_tabs`（`{"tabs":[...],"active":n}` の JSON。種類は `preview` `files` `browser` の許可リストだけで、URL やページの中身は保存しない）。タブの種類は `src/rightPanel.ts` と `src/components/rightPanelRegistry.tsx` に足す。いま動くのは「プレビュー」と「ファイル」で、「ブラウザ」は種類だけ登録し、`available: false` の間は＋メニューにもタブにも出さない。アセット画面の「プレビュー」ボタンは右パネルを開いてプレビュータブを選ぶ。Ctrl+Shift+B（Mac は ⌘⇧B）で開閉、全面表示はその場限りで保存しない。窓幅 1000px 未満では右パネルを重ねて出す。商品未選択のプレビューは背景を遮らない右上の小さいパネルにし、一覧の選択とタブ追加を両立する。Escape と背景は選択を外し、ヘッダーの閉じる操作はパネル全体を閉じる。スキーマ版は変えない。ログに商品名は出さない。
-- 右パネルの「ファイル」タブ（`src/components/FilesTab.tsx`、純粋な補助は `src/fileBrowser.ts`、Rust は `src-tauri/src/file_browser.rs` の `list_directory` / `list_zip_entries`）は読み取り専用。ファイルの書き込み・削除・移動・展開をしない。操作は「保存先を開く」（既存の `revealInFolder`）だけ。空のパスは `settings.library_folder` を開く。入力は前後の空白と引用符を外し、絶対パスだけ受け付け、`..` を含むパスは解決せず拒む。開く場所は `canonicalize` して表示し、Windows の `\\?\` は外す。一覧の中のシンボリックリンク・ジャンクションは `DirEntry::file_type` で「リンク」とし、たどらない。ライブラリの外も読み取りのみで開ける。ネットワークの停止で固まらないよう、解決と読み取りは `library_files::wait_for` で 5 秒まで。フォルダは 2000 件、zip は 5000 件で打ち切り `truncated` を返す。フォルダと zip の一覧は現在のライブラリ／リモートのルートも返し、zip を再表示したときもショートカットと操作の対象判定を更新する。zip は `zip` クレート（`default-features = false`、展開機能なし）で目次だけ読み、UTF-8 フラグのない名前は UTF-8 として正しければ UTF-8、それ以外は `encoding_rs` の Shift_JIS で読む。名前とサイズ以外（中身・サムネイル）は読まない。ログにファイル名やパスを出さない。開いている場所はモジュール変数に持つだけで設定に保存しない。`.unitypackage` の「Unityで開く」は `UNITY_OPEN_AVAILABLE`（いまは false で枠を描かない）で後の変更が有効にする。プレビューモードは `src/preview/files.ts` の架空のツリーと zip を返す。
+- アセットとワールドのプレビューは、選択が落ち着いてから 1 件だけ、保存済みサムネイル URL の `/c/` を外した画像を `previews` に置く。Cookie は送らない。失敗したら 150px のサムネイルに戻す。年齢制限の商品は「表示する」まで大きい画像を取らない。プレビューはアプリ全体のグリッド右列にある右パネル（`src/components/RightPanel.tsx`）の「プレビュー」タブに出す。開閉は `settings.preview_pane`（既定オフ）、幅は `settings.preview_pane_width`（既定 300、240〜1600。画面上の上限は窓幅の半分と、左の列と一覧 360px の余り）で、どちらも右パネル全体の値として使う。タブの種類と並びと選択は `settings.right_panel_tabs`（`{"tabs":[...],"active":n}` の JSON。種類は `preview` `files` `browser` の許可リストだけで、URL やページの中身は保存しない）。タブの種類は `src/rightPanel.ts` と `src/components/rightPanelRegistry.tsx` に足す。いま動くのは「プレビュー」と「ファイル」と「ブラウザ」（内蔵ブラウザが有効なときだけ。`requires: "builtinBrowser"`）。`available: false` の種類は＋メニューにもタブにも出さない。「プレビュー」と「ブラウザ」は単一（Rust の `RIGHT_PANEL_SINGLETONS` も同じ）で、保存値の重複は最初の 1 つにまとめ、重複側が選択中ならまとめた先を選ぶ。アセット画面の「プレビュー」ボタンは右パネルを開いてプレビュータブを選ぶ。Ctrl+Shift+B（Mac は ⌘⇧B）で開閉、全面表示はその場限りで保存しない。窓幅 1000px 未満では右パネルを重ねて出す。商品未選択のプレビューは背景を遮らない右上の小さいパネルにし、一覧の選択とタブ追加を両立する。Escape と背景は選択を外し、ヘッダーの閉じる操作はパネル全体を閉じる。スキーマ版は変えない。ログに商品名は出さない。
+- 右パネルの「ファイル」タブ（`src/components/FilesTab.tsx`、純粋な補助は `src/fileBrowser.ts`、Rust は `src-tauri/src/file_browser.rs` の `list_directory` / `list_zip_entries`）は読み取り専用。ファイルの書き込み・削除・移動・展開をしない。操作は「保存先を開く」（既存の `revealInFolder`）だけ。空のパスは `settings.library_folder` を開く。入力は前後の空白と引用符を外し、絶対パスだけ受け付け、`..` を含むパスは解決せず拒む。開く場所は `canonicalize` して表示し、Windows の `\\?\` は外す。一覧の中のシンボリックリンク・ジャンクションは `DirEntry::file_type` で「リンク」とし、たどらない。ライブラリの外も読み取りのみで開ける。ネットワークの停止で固まらないよう、解決と読み取りは `library_files::wait_for` で 5 秒まで。フォルダは 2000 件、zip は 5000 件で打ち切り `truncated` を返す。フォルダと zip の一覧は現在のライブラリ／リモートのルートも返し、zip を再表示したときもショートカットと操作の対象判定を更新する。zip は `zip` クレート（`default-features = false`、展開機能なし）で目次だけ読み、UTF-8 フラグのない名前は UTF-8 として正しければ UTF-8、それ以外は `encoding_rs` の Shift_JIS で読む。名前とサイズ以外（中身・サムネイル）は読まない。ログにファイル名やパスを出さない。開いている場所はモジュール変数に持つだけで設定に保存しない。「Unityで開く」は `UNITY_OPEN_AVAILABLE`（true）で、ライブラリかリモートの中の `.unitypackage` と zip、zip の中の `.unitypackage` に出す（次節）。プレビューモードは `src/preview/files.ts` の架空のツリーと zip を返す。
 - スキャンはドライブ直下、`Windows`、`Program Files` を拒否する。Mac では `/System`、`/Library`、`/Applications`、`/private` の木と、ホームフォルダそのもの、`/Volumes` そのものを拒否する。一時ディレクトリの中はテストのため許可する。深さ 8、2 万件、シンボリックリンクは追わない。上限で打ち切ったときは、見えていないパスを削除しない。途中までの結果は実際に訪れたパスの自動登録だけを入れ直し、未走査の登録・手動紐づけ・除外商品の登録を残す。
 
 ## 抽出と確認の契約
@@ -302,9 +317,14 @@ Mac の内蔵ブラウザは `data_directory` を使わない。固定の 16 バ
 | `src-tauri/src/preview_image.rs` | 選択中の大きいプレビュー。Cookie は付けない |
 | `src-tauri/src/view.rs` | 一覧、詳細、キューの形 |
 | `src-tauri/src/unity.rs` | Unity エディタの検出（Hub の記録と既定のインストール先） |
+| `src-tauri/src/unity_import.rs` | 「Unityで開く」の一覧、取り出し、キャッシュ、`-openfile` での起動 |
 | `src-tauri/src/commands.rs` | Tauri コマンド |
+| `src-tauri/src/browser_surface.rs` | 内蔵ブラウザのホスト（別窓・右パネル）と配置 |
+| `src/components/BrowserPanel.tsx` | 右パネルの「ブラウザ」タブ。表示域を測って渡す |
+| `src/browserPanel.ts` | 表示域の丸めと、重なり・ドラッグで隠す判定 |
 | `src/pages` | 画面 |
 | `src/preview/api.ts` | ブラウザ見本 |
 | `extension` | Booth 書き出し |
 | `test/extract.test.mjs` | 拡張の DOM テスト |
+| `test/browser-panel.test.mjs` | 右パネルのブラウザ（配置・隠す条件・URL を保存しないこと） |
 | `examples/sample-booth-export.json` | 分類前のインポート見本 |

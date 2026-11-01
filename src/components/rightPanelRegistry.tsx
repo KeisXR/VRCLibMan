@@ -2,10 +2,12 @@ import { useEffect } from "react";
 import type { ComponentType } from "react";
 import type { RightPanelKind } from "../rightPanel";
 import type { RightPanelValue } from "./RightPanel";
+import { BrowserPanelTab } from "./BrowserPanel";
 import { FilesTab } from "./FilesTab";
 import { PreviewPane, useLargePreview } from "./PreviewPane";
 
-export type RightPanelRenderer = ComponentType<{ panel: RightPanelValue }>;
+/** `overlay`: the panel shows over the page in a narrow window instead of as a column. */
+export type RightPanelRenderer = ComponentType<{ panel: RightPanelValue; overlay: boolean }>;
 
 function PreviewTab({ panel }: { panel: RightPanelValue }) {
   const item = panel.preview?.item ?? null;
@@ -30,10 +32,11 @@ function PreviewTab({ panel }: { panel: RightPanelValue }) {
 }
 
 /**
- * One renderer per tab kind. The embedded browser is added by a later change; until then its
- * kind stays hidden (`available: false` in `src/rightPanel.ts`).
+ * One renderer per tab kind. Kinds without a renderer stay hidden (`available: false` in
+ * `src/rightPanel.ts`).
  */
 export const RIGHT_PANEL_RENDERERS: Partial<Record<RightPanelKind, RightPanelRenderer>> = {
   preview: PreviewTab,
   files: FilesTab,
+  browser: BrowserPanelTab,
 };

@@ -19,7 +19,7 @@ pub(crate) const MAX_DIR_ENTRIES: usize = 2000;
 /// Entries read from one zip file.
 pub(crate) const MAX_ZIP_ENTRIES: usize = 5000;
 /// A shared folder that stops answering ends the listing instead of freezing the tab.
-const LIST_TIMEOUT: Duration = Duration::from_secs(5);
+pub(crate) const LIST_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -79,7 +79,7 @@ const NO_LIBRARY: &str =
 const NOT_ABSOLUTE: &str = "フォルダの場所は、ドライブや / から始まるパスで入力してください";
 const PARENT_PART: &str = "「..」を含むパスは開けません。上の階層へは「上へ」を使ってください";
 const NOT_FOUND: &str = "このパスは見つかりません";
-const NO_ANSWER: &str = "フォルダが応答しません。接続を確認してからもう一度";
+pub(crate) const NO_ANSWER: &str = "フォルダが応答しません。接続を確認してからもう一度";
 
 /// Accepts what a user pastes: surrounding spaces or quotes ("Copy as path" on Windows).
 fn clean_input(raw: &str) -> &str {
@@ -108,7 +108,7 @@ pub(crate) fn requested_path(raw: &str, library: &str) -> Result<PathBuf, String
     Ok(path)
 }
 
-fn resolve(path: &Path) -> Result<PathBuf, String> {
+pub(crate) fn resolve(path: &Path) -> Result<PathBuf, String> {
     let owned = path.to_path_buf();
     match wait_for(LIST_TIMEOUT, move || std::fs::canonicalize(&owned)) {
         None => Err(NO_ANSWER.into()),
@@ -118,7 +118,7 @@ fn resolve(path: &Path) -> Result<PathBuf, String> {
 }
 
 /// A configured root that may be missing or offline. Never fails the listing.
-fn optional_root(value: &str) -> Option<PathBuf> {
+pub(crate) fn optional_root(value: &str) -> Option<PathBuf> {
     let value = value.trim();
     if value.is_empty() {
         return None;
@@ -227,7 +227,7 @@ pub(crate) fn clean_zip_path(name: &str) -> String {
         .join("/")
 }
 
-fn read_zip(path: PathBuf) -> Result<(Vec<ZipEntryView>, bool), String> {
+pub(crate) fn read_zip(path: PathBuf) -> Result<(Vec<ZipEntryView>, bool), String> {
     let file = File::open(&path).map_err(|_| "zip を開けません".to_string())?;
     let mut archive = zip::ZipArchive::new(BufReader::new(file))
         .map_err(|_| "zip として読めません。壊れているか、別の形式です".to_string())?;
