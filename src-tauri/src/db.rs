@@ -381,6 +381,7 @@ fn ensure_ready(connection: &Connection) -> Result<(), String> {
         ("ui_genre_width", "200"),
         ("preview_pane", "0"),
         ("preview_pane_width", "300"),
+        ("right_panel_tabs", crate::model::DEFAULT_RIGHT_PANEL_TABS),
         ("check_update_on_startup", "0"),
         ("ui_update_dismissed_version", ""),
     ] {
@@ -468,6 +469,9 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
             setting(connection, "preview_pane_width")?
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(300),
+        ),
+        right_panel_tabs: crate::model::normalize_right_panel_tabs(
+            &setting(connection, "right_panel_tabs")?.unwrap_or_default(),
         ),
         check_update_on_startup: setting(connection, "check_update_on_startup")?.as_deref() == Some("1"),
         ui_update_dismissed_version: setting(connection, "ui_update_dismissed_version")?
@@ -636,6 +640,11 @@ fn save_settings_values(
         connection,
         "preview_pane_width",
         &crate::model::clamp_preview_pane_width(input.preview_pane_width).to_string(),
+    )?;
+    set_setting(
+        connection,
+        "right_panel_tabs",
+        &crate::model::normalize_right_panel_tabs(&input.right_panel_tabs),
     )?;
     set_setting(
         connection,
@@ -3582,6 +3591,24 @@ pub(crate) fn commit_browser_download(
     Ok(placed)
 }
 
+/// 画面から「開く」を頼まれたパスが、スキャン済みのファイルか、
+/// 商品ファイルとして記録した手元の保存先とちょうど一致するときだけ真。
+/// 画面から任意のパスを開けないようにするための境界である。
+pub(crate) fn is_known_local_path(connection: &Connection, path: &str) -> Result<bool, String> {
+    if path.trim().is_empty() {
+        return Ok(false);
+    }
+    let found: i64 = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM local_files WHERE path = ?1)
+                 OR EXISTS(SELECT 1 FROM product_files WHERE local_path = ?1)",
+            [path],
+            |row| row.get(0),
+        )
+        .sql()?;
+    Ok(found != 0)
+}
+
 pub(crate) struct SweepReport {
     pub moved: u32,
     pub left: Vec<crate::model::StagedLeftover>,
@@ -5705,6 +5732,25 @@ mod tests {
     use crate::view::{avatar_cards, avatar_detail, products_by_ids, queue_page};
 
     #[test]
+    fn only_registered_local_paths_may_be_opened() {
+        let connection = open_memory().unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO products (booth_id, title, imported_at, updated_at) VALUES ('4242', '架空の服', 't', 't');
+                 INSERT INTO product_files (booth_id, filename, local_path) VALUES ('4242', 'pack.zip', '/lib/4242/pack.zip');
+                 INSERT INTO local_files (path, filename, scanned_at) VALUES ('/lib/scan/other.unitypackage', 'other.unitypackage', 't');",
+            )
+            .unwrap();
+        assert!(is_known_local_path(&connection, "/lib/4242/pack.zip").unwrap());
+        assert!(is_known_local_path(&connection, "/lib/scan/other.unitypackage").unwrap());
+        assert!(!is_known_local_path(&connection, "/lib/4242").unwrap());
+        assert!(!is_known_local_path(&connection, "/lib/4242/../4242/pack.zip").unwrap());
+        assert!(!is_known_local_path(&connection, "/etc/passwd").unwrap());
+        assert!(!is_known_local_path(&connection, "").unwrap());
+        assert!(!is_known_local_path(&connection, "  ").unwrap());
+    }
+
+    #[test]
     fn bookmarks_persist_edits_and_intentionally_empty_lists() {
         let connection = open_memory().unwrap();
         assert_eq!(browser_bookmarks(&connection).unwrap().len(), 2);
@@ -7137,6 +7183,7 @@ mod tests {
                 ui_genre_width: 200,
                 preview_pane: false,
                 preview_pane_width: 300,
+                right_panel_tabs: crate::model::DEFAULT_RIGHT_PANEL_TABS.into(),
                 check_update_on_startup: false,
                 ui_update_dismissed_version: String::new(),
             },
@@ -7236,6 +7283,62 @@ mod tests {
     }
 
     #[test]
+    fn right_panel_tabs_keep_only_known_kinds_without_a_schema_change() {
+        let connection = open_memory().unwrap();
+        assert_eq!(
+            settings(&connection).unwrap().right_panel_tabs,
+            r#"{"tabs":["preview"],"active":0}"#
+        );
+        let saved = update_settings(
+            &connection,
+            &crate::model::SettingsPatch {
+                right_panel_tabs: Some(
+                    r#"{"tabs":["files","https://booth.pm/ja/items/1","preview","preview","browser"],"active":4}"#
+                        .into(),
+                ),
+                ..crate::model::SettingsPatch::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            saved.right_panel_tabs,
+            r#"{"tabs":["files","preview","browser"],"active":2}"#
+        );
+        assert!(!saved.right_panel_tabs.contains("booth.pm"));
+        let kept = update_settings(
+            &connection,
+            &crate::model::SettingsPatch {
+                preview_pane: Some(true),
+                ..crate::model::SettingsPatch::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(kept.right_panel_tabs, saved.right_panel_tabs);
+        let broken = update_settings(
+            &connection,
+            &crate::model::SettingsPatch {
+                right_panel_tabs: Some("not json".into()),
+                ..crate::model::SettingsPatch::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(broken.right_panel_tabs, r#"{"tabs":["preview"],"active":0}"#);
+        let empty = update_settings(
+            &connection,
+            &crate::model::SettingsPatch {
+                right_panel_tabs: Some(r#"{"tabs":[],"active":3}"#.into()),
+                ..crate::model::SettingsPatch::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(empty.right_panel_tabs, r#"{"tabs":[],"active":0}"#);
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 7);
+    }
+
+    #[test]
     fn builtin_browser_stays_off_until_the_user_enables_it() {
         let connection = open_memory().unwrap();
         assert!(!settings(&connection).unwrap().builtin_browser);
@@ -7263,6 +7366,7 @@ mod tests {
                 ui_genre_width: 200,
                 preview_pane: false,
                 preview_pane_width: 300,
+                right_panel_tabs: crate::model::DEFAULT_RIGHT_PANEL_TABS.into(),
                 check_update_on_startup: false,
                 ui_update_dismissed_version: String::new(),
             },
@@ -8685,6 +8789,7 @@ mod tests {
                 ui_genre_width: 200,
                 preview_pane: false,
                 preview_pane_width: 300,
+                right_panel_tabs: crate::model::DEFAULT_RIGHT_PANEL_TABS.into(),
                 check_update_on_startup: false,
                 ui_update_dismissed_version: String::new(),
             },
@@ -8713,6 +8818,7 @@ mod tests {
                 ui_genre_width: 200,
                 preview_pane: false,
                 preview_pane_width: 300,
+                right_panel_tabs: crate::model::DEFAULT_RIGHT_PANEL_TABS.into(),
                 check_update_on_startup: false,
                 ui_update_dismissed_version: String::new(),
             },
@@ -8836,6 +8942,7 @@ mod tests {
                 ui_genre_width: 200,
                 preview_pane: false,
                 preview_pane_width: 300,
+                right_panel_tabs: crate::model::DEFAULT_RIGHT_PANEL_TABS.into(),
                 check_update_on_startup: false,
                 ui_update_dismissed_version: String::new(),
             },
@@ -9106,6 +9213,7 @@ mod tests {
             ui_genre_width: 200,
             preview_pane: false,
             preview_pane_width: 300,
+            right_panel_tabs: crate::model::DEFAULT_RIGHT_PANEL_TABS.into(),
             check_update_on_startup: false,
             ui_update_dismissed_version: String::new(),
         };
@@ -9305,6 +9413,7 @@ mod tests {
                 ui_genre_width: 200,
                 preview_pane: false,
                 preview_pane_width: 300,
+                right_panel_tabs: crate::model::DEFAULT_RIGHT_PANEL_TABS.into(),
                 check_update_on_startup: false,
                 ui_update_dismissed_version: String::new(),
             },

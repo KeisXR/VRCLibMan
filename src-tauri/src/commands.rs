@@ -421,6 +421,7 @@ pub fn save_settings(
                 ui_genre_width: settings.ui_genre_width,
                 preview_pane: settings.preview_pane,
                 preview_pane_width: settings.preview_pane_width,
+                right_panel_tabs: settings.right_panel_tabs,
                 check_update_on_startup: settings.check_update_on_startup,
                 ui_update_dismissed_version: settings.ui_update_dismissed_version,
             },
@@ -677,8 +678,34 @@ pub async fn download_booth_file(
     booth_id: String,
     variation: String,
     filename: String,
-) -> Result<(), String> {
+) -> Result<String, String> {
     crate::browser::download_one_file(app, booth_id, variation, filename).await
+}
+
+/// スキャン済みファイルと、記録済みの商品ファイルだけを既定のアプリで開く。
+/// JS 側の opener に open-path 権限を足さず、Rust で登録済みのパスか確かめてから開く。
+#[tauri::command]
+pub async fn open_local_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let known = {
+            let state = app.state::<AppState>();
+            let connection = state
+                .db
+                .lock()
+                .map_err(|_| "データベースをロックできません".to_string())?;
+            db::is_known_local_path(&connection, &path)?
+        };
+        if !known {
+            return Err("ライブラリに登録されていない場所は開けません".to_string());
+        }
+        if std::fs::symlink_metadata(&path).is_err() {
+            return Err("ファイルが見つかりません。フォルダを調べ直してください".to_string());
+        }
+        tauri_plugin_opener::open_path(&path, None::<&str>)
+            .map_err(|_| "ファイルを開けませんでした".to_string())
+    })
+    .await
+    .map_err(|err| format!("ファイルを開けません: {err}"))?
 }
 
 #[tauri::command]

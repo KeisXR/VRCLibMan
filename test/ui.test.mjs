@@ -995,6 +995,47 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       await assert.rejects(() => api.attachProductToAvatar("lime", "8901001"), /ワールド/);
       await assert.rejects(() => api.attachProductToAvatar("lime", "4876459"), /アバター本体/);
     });
+    await t.test("a finished download offers its saved place even after a remote probe", async () => {
+      const { requestRefresh } = await server.ssrLoadModule("/src/api.ts");
+      const main = () => document.querySelector("main");
+      const refresh = async () => {
+        await act(async () => {
+          requestRefresh();
+          await delay();
+        });
+      };
+      const { resetPreviewRemoteCheck } = await server.ssrLoadModule("/src/preview/api.ts");
+      const { clearRemoteProbeCache } = await server.ssrLoadModule("/src/remoteProductProbe.ts");
+      await api.updateSettings({ builtinBrowser: true, routeDownloads: true });
+      await route("#/avatar/lime");
+      await wait(() => main().querySelector("h1")?.textContent === "ライム");
+      // 実アプリと同じく、確認前の一覧からリモート確認を走らせる。
+      clearRemoteProbeCache();
+      resetPreviewRemoteCheck();
+      await refresh();
+      const row = () =>
+        [...main().querySelectorAll(".download-row")].find((node) => node.textContent.includes("見本の未取得.unitypackage"));
+      // リモートの確認が終わり、行が未ダウンロードとして確定するまで待つ。
+      await wait(() => row() && button("ダウンロード", row()) && row().textContent.includes("未ダウンロード"));
+      assert.equal(button("保存先を開く", row()), undefined);
+      await click(button("ダウンロード", row()));
+      await wait(() => text().includes("ファイルをライブラリに移しました"));
+      const banner = document.querySelector(".banner.notice");
+      assert.ok(button("保存先を開く", banner), "notice offers the saved place");
+      assert.equal(button("元に戻す", banner), undefined);
+      // 古いリモート確認結果で行が未ダウンロードに戻らない。
+      await wait(() => row()?.classList.contains("local"));
+      assert.ok(button("保存先を開く", row()));
+      assert.equal(button("ダウンロード", row()), undefined);
+      await click(button("保存先を開く", banner));
+      assert.equal(document.querySelector(".banner.notice"), null);
+      assert.equal(document.querySelector(".banner.error"), null);
+      const { openLocal } = await server.ssrLoadModule("/src/api.ts");
+      await openLocal("C:\\Assets\\Lime\\見本の本体.unitypackage");
+      await assert.rejects(() => openLocal("C:\\Windows\\notepad.exe"), /登録されていない/);
+      await api.updateSettings({ builtinBrowser: false, routeDownloads: false });
+      await refresh();
+    });
     await t.test(
       "Apple model setup remains available with Ollama offline",
       async () => {

@@ -264,6 +264,8 @@ export interface Settings {
   /** アセットとワールドの大きい画像欄。列幅と同じく設定に残す。 */
   previewPane: boolean;
   previewPaneWidth: number;
+  /** 右パネルのタブの種類と並び、選択中の位置（JSON）。URL は含めない。開閉は previewPane、幅は previewPaneWidth を引き継ぐ。 */
+  rightPanelTabs: string;
   checkUpdateOnStartup: boolean;
   uiUpdateDismissedVersion: string;
 }
@@ -418,6 +420,8 @@ export interface BoothFileStatus {
   filename: string;
   phase: "receiving" | "error" | "done";
   message: string;
+  /** 完了時だけ、ライブラリへ移した先の絶対パス。 */
+  path?: string | null;
 }
 
 export interface ManagedProduct {

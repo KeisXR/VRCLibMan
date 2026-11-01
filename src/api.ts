@@ -212,7 +212,7 @@ export const api = {
   pullRemoteFile: (boothId: string, variation: string, filename: string) =>
     call<void>("pull_remote_file", { boothId, variation, filename }),
   downloadBoothFile: (boothId: string, variation: string, filename: string) =>
-    call<void>("download_booth_file", { boothId, variation, filename }),
+    call<string>("download_booth_file", { boothId, variation, filename }),
   pushRemoteFile: (boothId: string, variation: string, filename: string) =>
     call<void>("push_remote_file", { boothId, variation, filename }),
   cacheThumbnails: () => call<number>("cache_thumbnails"),
@@ -348,12 +348,9 @@ export async function openBoothLink(url: string): Promise<void> {
   });
 }
 
+/** スキャン済み・記録済みのファイルだけを Rust 側で確かめてから開く。 */
 export async function openLocal(path: string): Promise<void> {
-  if (!isTauri()) {
-    return;
-  }
-  const { openPath } = await import("@tauri-apps/plugin-opener");
-  await openPath(path);
+  await call<void>("open_local_path", { path });
 }
 
 export function listenBrowserChanged(onChanged: () => void): Promise<() => void> {

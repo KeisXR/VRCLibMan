@@ -347,6 +347,8 @@ pub struct Settings {
     pub ui_genre_width: u32,
     pub preview_pane: bool,
     pub preview_pane_width: u32,
+    /// Right panel tab kinds and the active index, as normalized JSON. Never holds a URL.
+    pub right_panel_tabs: String,
     pub check_update_on_startup: bool,
     pub ui_update_dismissed_version: String,
     pub unload_ollama_after_classification: bool,
@@ -389,6 +391,8 @@ pub struct SettingsInput {
     pub preview_pane: bool,
     #[serde(default = "default_preview_pane_width")]
     pub preview_pane_width: u32,
+    #[serde(default = "default_right_panel_tabs")]
+    pub right_panel_tabs: String,
     #[serde(default)]
     pub check_update_on_startup: bool,
     #[serde(default)]
@@ -424,6 +428,7 @@ pub struct SettingsPatch {
     #[serde(default)]
     pub preview_pane: Option<bool>,
     pub preview_pane_width: Option<u32>,
+    pub right_panel_tabs: Option<String>,
     pub check_update_on_startup: Option<bool>,
     pub ui_update_dismissed_version: Option<String>,
     pub unload_ollama_after_classification: Option<bool>,
@@ -471,6 +476,11 @@ impl SettingsPatch {
             preview_pane: self.preview_pane.unwrap_or(current.preview_pane),
             preview_pane_width: clamp_preview_pane_width(
                 self.preview_pane_width.unwrap_or(current.preview_pane_width),
+            ),
+            right_panel_tabs: normalize_right_panel_tabs(
+                self.right_panel_tabs
+                    .as_deref()
+                    .unwrap_or(&current.right_panel_tabs),
             ),
             check_update_on_startup: self
                 .check_update_on_startup
@@ -524,6 +534,50 @@ pub(crate) fn clamp_ui_genre_width(value: u32) -> u32 {
 
 pub(crate) fn clamp_preview_pane_width(value: u32) -> u32 {
     value.clamp(240, 1600)
+}
+
+/// Tab kinds the right panel knows. Later kinds are added here and in `src/rightPanel.ts`.
+const RIGHT_PANEL_KINDS: &[&str] = &["preview", "files", "browser"];
+/// Kinds that may appear only once.
+const RIGHT_PANEL_SINGLETONS: &[&str] = &["preview"];
+const RIGHT_PANEL_MAX_TABS: usize = 12;
+pub(crate) const DEFAULT_RIGHT_PANEL_TABS: &str = r#"{"tabs":["preview"],"active":0}"#;
+
+fn default_right_panel_tabs() -> String {
+    DEFAULT_RIGHT_PANEL_TABS.into()
+}
+
+#[derive(Deserialize, Serialize)]
+struct RightPanelTabs {
+    tabs: Vec<String>,
+    active: usize,
+}
+
+/// Keep only known kinds, so a page address or other free text is never stored here.
+pub(crate) fn normalize_right_panel_tabs(raw: &str) -> String {
+    let Ok(parsed) = serde_json::from_str::<RightPanelTabs>(raw) else {
+        return default_right_panel_tabs();
+    };
+    let mut tabs: Vec<String> = Vec::new();
+    let mut active = 0;
+    for (index, kind) in parsed.tabs.iter().enumerate() {
+        if tabs.len() >= RIGHT_PANEL_MAX_TABS {
+            break;
+        }
+        if !RIGHT_PANEL_KINDS.contains(&kind.as_str()) {
+            continue;
+        }
+        if RIGHT_PANEL_SINGLETONS.contains(&kind.as_str()) && tabs.iter().any(|tab| tab == kind) {
+            continue;
+        }
+        if index <= parsed.active {
+            active = tabs.len();
+        }
+        tabs.push(kind.clone());
+    }
+    let active = if tabs.is_empty() { 0 } else { active.min(tabs.len() - 1) };
+    serde_json::to_string(&RightPanelTabs { tabs, active })
+        .unwrap_or_else(|_| default_right_panel_tabs())
 }
 
 #[derive(Debug, Clone, Serialize)]
