@@ -3980,6 +3980,7 @@ dependencies = [
  "reqwest",
  "rusqlite",
  "rust-ini",
+ "same-file",
  "serde",
  "serde_json",
  "tauri",

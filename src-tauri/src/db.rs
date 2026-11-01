@@ -2457,13 +2457,15 @@ pub(crate) fn apply_scan(
     let products = load_products(connection)?;
     let excluded = excluded_product_ids(connection)?;
     let tx = connection.transaction().sql()?;
-    tx.execute(
-        "DELETE FROM local_files WHERE (link_source IS NULL OR link_source != 'manual')
-         AND COALESCE(linked_product_id, '') NOT IN (SELECT booth_id FROM product_exclusions)
-         AND COALESCE(candidate_product_id, '') NOT IN (SELECT booth_id FROM product_exclusions)",
-        [],
-    )
-    .sql()?;
+    if !outcome.truncated {
+        tx.execute(
+            "DELETE FROM local_files WHERE (link_source IS NULL OR link_source != 'manual')
+             AND COALESCE(linked_product_id, '') NOT IN (SELECT booth_id FROM product_exclusions)
+             AND COALESCE(candidate_product_id, '') NOT IN (SELECT booth_id FROM product_exclusions)",
+            [],
+        )
+        .sql()?;
+    }
     let now = now_iso();
     let mut linked = 0u32;
     let mut seen = HashSet::new();
@@ -2481,6 +2483,16 @@ pub(crate) fn apply_scan(
             excluded.iter().any(|id| contains_booth_id(label, id))
         }) {
             continue;
+        }
+        if outcome.truncated {
+            // An incomplete scan may only replace rows it actually visited.
+            // Manual and excluded links keep the same protections as a full scan.
+            tx.execute(
+                "DELETE FROM local_files WHERE path = ?1
+                 AND (link_source IS NULL OR link_source != 'manual')",
+                [&entry.path],
+            )
+            .sql()?;
         }
         let source: Option<String> = tx
             .query_row(
@@ -5994,6 +6006,62 @@ mod tests {
             "/tmp/vrclibman-new"
         );
         assert_eq!(load_files(&connection).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn truncated_scans_replace_only_visited_automatic_rows() {
+        let mut connection = open_memory().unwrap();
+        connection.execute_batch(
+            "INSERT INTO products (booth_id, title, imported_at, updated_at) VALUES
+             ('4242', 'Synthetic package', 't', 't'), ('4243', 'Excluded package', 't', 't');",
+        ).unwrap();
+        set_product_excluded(&mut connection, "4243", true).unwrap();
+        let root = "/dummy-library";
+        for (name, product, source) in [
+            ("seen-4242.zip", "4242", "auto"),
+            ("unseen-4242.zip", "4242", "auto"),
+            ("manual-4242.zip", "4242", "manual"),
+            ("unseen-manual-4242.zip", "4242", "manual"),
+            ("unseen-4243.zip", "4243", "auto"),
+        ] {
+            connection.execute(
+                "INSERT INTO local_files (path, filename, linked_product_id, link_source, size, scanned_at)
+                 VALUES (?1, ?2, ?3, ?4, 5, 't')",
+                params![format!("{root}/{name}"), name, product, source],
+            ).unwrap();
+        }
+        let entry = |name: &str| crate::scan::ScanEntry {
+            path: format!("{root}/{name}"), filename: name.into(), is_dir: false,
+            size: 99, labels: vec![name.into()],
+        };
+        let report = apply_scan(&mut connection, root, &ScanOutcome {
+            entries: vec![entry("seen-4242.zip"), entry("manual-4242.zip")],
+            truncated: true,
+        }).unwrap();
+
+        assert!(report.truncated);
+        let files = load_files(&connection).unwrap();
+        assert_eq!(files.len(), 5);
+        assert_eq!(files.iter().find(|f| f.filename == "seen-4242.zip").unwrap().size, 99);
+        let manual = files.iter().find(|f| f.filename == "manual-4242.zip").unwrap();
+        assert_eq!(manual.size, 99);
+        assert_eq!(manual.link_source.as_deref(), Some("manual"));
+        for name in ["unseen-4242.zip", "unseen-manual-4242.zip", "unseen-4243.zip"] {
+            assert_eq!(files.iter().find(|f| f.filename == name).unwrap().size, 5);
+        }
+    }
+
+    #[test]
+    fn a_complete_scan_still_removes_unseen_automatic_rows() {
+        let mut connection = open_memory().unwrap();
+        connection.execute_batch(
+            "INSERT INTO local_files (path, filename, link_source, scanned_at)
+             VALUES ('/dummy-library/unseen.zip', 'unseen.zip', 'auto', 't');",
+        ).unwrap();
+        apply_scan(&mut connection, "/dummy-library", &ScanOutcome {
+            entries: vec![], truncated: false,
+        }).unwrap();
+        assert!(load_files(&connection).unwrap().is_empty());
     }
 
     #[test]

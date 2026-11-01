@@ -779,6 +779,14 @@ fn copy_confirmed(source: &Path, dest: &Path) -> Result<(), String> {
             return Err("保存先に届きません。接続を確認してからもう一度".into());
         }
     }
+    // std::fs::copy may truncate the source when both paths name the same file.
+    // File identity also catches hard links and differently spelled share paths.
+    match same_file::is_same_file(source, dest) {
+        Ok(true) => return Ok(()),
+        Ok(false) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(format!("コピー先を確認できません: {err}")),
+    }
     std::fs::copy(source, dest).map_err(|err| format!("ファイルをコピーできません: {err}"))?;
     Ok(())
 }
@@ -1385,6 +1393,56 @@ mod tests {
         assert!(err.contains("届きません"));
         assert!(dead.elapsed() < Duration::from_secs(1));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn manual_copies_to_the_same_file_preserve_its_contents() {
+        let root = tempfile::tempdir().unwrap();
+        let library = root.path().join("library");
+        std::fs::create_dir_all(library.join("424242")).unwrap();
+        let file = library.join("424242").join("sample.zip");
+        let contents = b"synthetic package bytes";
+        std::fs::write(&file, contents).unwrap();
+
+        push_file(&file, &library, "424242", "sample.zip").unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), contents);
+        pull_file(&library, &library, "424242", "sample.zip").unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), contents);
+    }
+
+    #[test]
+    fn manual_copies_between_hard_links_preserve_both_names() {
+        let root = tempfile::tempdir().unwrap();
+        let library = root.path().join("library");
+        let remote = root.path().join("remote");
+        std::fs::create_dir_all(library.join("424242")).unwrap();
+        std::fs::create_dir_all(remote.join("424242")).unwrap();
+        let file = library.join("424242").join("sample.zip");
+        let alias = remote.join("424242").join("sample.zip");
+        let contents = b"synthetic package bytes";
+        std::fs::write(&file, contents).unwrap();
+        std::fs::hard_link(&file, &alias).unwrap();
+
+        push_file(&file, &remote, "424242", "sample.zip").unwrap();
+        pull_file(&remote, &library, "424242", "sample.zip").unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), contents);
+        assert_eq!(std::fs::read(&alias).unwrap(), contents);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn manual_copies_through_a_library_alias_preserve_the_package() {
+        let root = tempfile::tempdir().unwrap();
+        let library = root.path().join("library");
+        let remote = root.path().join("alias");
+        std::fs::create_dir_all(library.join("424242")).unwrap();
+        std::os::unix::fs::symlink(&library, &remote).unwrap();
+        let file = library.join("424242").join("sample.zip");
+        std::fs::write(&file, b"synthetic package bytes").unwrap();
+
+        push_file(&file, &remote, "424242", "sample.zip").unwrap();
+        pull_file(&remote, &library, "424242", "sample.zip").unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), b"synthetic package bytes");
     }
 
     #[test]
