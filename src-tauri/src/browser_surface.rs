@@ -480,7 +480,19 @@ fn set_view_bounds(
     // The main window uses a full-size content view, and the page fills it, so the
     // child's origin matches getBoundingClientRect. Do not add a titlebar inset.
     let area = child_bounds(area);
-    view.set_bounds(area.rect()).map_err(|error| error.to_string())
+    view.set_bounds(area.rect()).map_err(|error| error.to_string())?;
+    #[cfg(target_os = "macos")]
+    if !_fill_host {
+        // A docked WKWebView is above the HTML controls. Explicitly clip its
+        // drawing (including subviews) to the viewport on macOS 14 and later.
+        // Reapply after reparenting as well as when the panel is resized.
+        view.with_webview(|native| unsafe {
+            let view = native.inner().cast::<objc2::runtime::AnyObject>();
+            let _: () = objc2::msg_send![view, setClipsToBounds: true];
+        })
+        .map_err(|error| format!("ブラウザの表示領域を設定できません: {error}"))?;
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]
