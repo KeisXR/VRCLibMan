@@ -995,6 +995,28 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       await assert.rejects(() => api.attachProductToAvatar("lime", "8901001"), /ワールド/);
       await assert.rejects(() => api.attachProductToAvatar("lime", "4876459"), /アバター本体/);
     });
+    await t.test("shared bodies do not share hair until the avatar is explicitly added", async () => {
+      await api.updateProduct({ boothId: "8800102", category: "hair", avatarIds: ["lime"] });
+      const title = (await api.productsByCategory("hair")).find((item) => item.boothId === "8800102").title;
+      const hairOf = (detail) => detail.sections.find((section) => section.category === "hair")?.items ?? [];
+      assert.ok(hairOf(await api.avatar("lime")).some((item) => item.boothId === "8800102"));
+      assert.ok(!hairOf(await api.avatar("plum")).some((item) => item.boothId === "8800102"));
+      assert.equal((await api.avatars()).find((avatar) => avatar.id === "plum").hairCount, 0);
+
+      await route("#/avatar/plum");
+      const main = () => document.querySelector("main");
+      await wait(() => main().querySelector("h1")?.textContent === "プラム");
+      assert.ok(!main().textContent.includes(title));
+      await click(button("アイテムを追加"));
+      await wait(() => button(title, document.querySelector(".avatar-add-panel")));
+      await click(button(title, document.querySelector(".avatar-add-panel")));
+      await wait(() => [...main().querySelectorAll(".section")].some((section) =>
+        section.querySelector("h2")?.textContent === "髪" && section.textContent.includes(title),
+      ));
+      const hair = hairOf(await api.avatar("plum")).find((item) => item.boothId === "8800102");
+      assert.equal(hair.viaBaseBody, false);
+      assert.equal((await api.avatars()).find((avatar) => avatar.id === "plum").hairCount, 1);
+    });
     await t.test("a finished download offers its saved place even after a remote probe", async () => {
       const { requestRefresh } = await server.ssrLoadModule("/src/api.ts");
       const main = () => document.querySelector("main");
