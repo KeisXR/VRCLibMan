@@ -29,14 +29,17 @@ test("right panel tabs keep only known kinds and never store free text", async (
     assert.equal(empty.activeId, null);
     assert.equal(panel.serializeRightPanelTabs(empty), '{"tabs":[],"active":0}');
 
-    // Kinds that later changes implement stay stored but hidden in this build.
+    // Kinds that later changes implement stay stored but hidden in this build. The browser tab
+    // shows only while the built-in browser is turned on.
     assert.equal(panel.RIGHT_PANEL_KIND_INFO.preview.available, true);
     assert.equal(panel.RIGHT_PANEL_KIND_INFO.files.available, true);
-    assert.equal(panel.RIGHT_PANEL_KIND_INFO.browser.available, false);
     assert.deepEqual(panel.visibleTabs(parsed).map((tab) => tab.kind), ["files", "preview"]);
     assert.equal(panel.activeTab(parsed).kind, "files");
+    assert.deepEqual(panel.visibleTabs(parsed, { builtinBrowser: true }).map((tab) => tab.kind), ["files", "preview", "browser"]);
+    assert.equal(panel.activeTab(parsed, { builtinBrowser: true }).kind, "browser");
     assert.equal(panel.canAddTab(parsed, "files"), true);
     assert.equal(panel.canAddTab(parsed, "browser"), false);
+    assert.equal(panel.canAddTab(parsed, "browser", { builtinBrowser: true }), true);
 
     // The preview tab is single; opening it again focuses it.
     let state = panel.openTab(empty, "preview");
@@ -82,13 +85,14 @@ test("the preview lives in the app's right panel instead of a split inside the l
   const browser = readFileSync("src/components/GenreBrowser.tsx", "utf8");
   const layout = readFileSync("src/useAppLayout.tsx", "utf8");
   assert.match(app, /<RightPanelColumn/);
-  assert.match(app, /useRightPanelState\(fail\)/);
+  assert.match(app, /useRightPanelState\(fail, \{ builtinBrowser \}\)/);
   assert.match(layout, /panelDocked/);
   assert.doesNotMatch(browser, /split with-side|ResizeSeparator|PreviewPane/);
   assert.match(browser, /panel\.togglePreview/);
   assert.match(browser, /aria-controls="right-panel"/);
   const registry = readFileSync("src/components/rightPanelRegistry.tsx", "utf8");
   assert.match(registry, /preview: PreviewTab/);
+  assert.match(registry, /browser: BrowserPanelTab/);
   assert.match(registry, /files: FilesTab/);
 });
 

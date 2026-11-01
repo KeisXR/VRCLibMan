@@ -79,6 +79,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .on_window_event(|window, event| {
             presence::handle_main_close(window, event);
+            browser_surface::handle_window_event(window, event);
         })
         .setup(|app| {
             use tauri_plugin_deep_link::DeepLinkExt;

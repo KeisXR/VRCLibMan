@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { api } from "../api";
+import { api, listenBrowserPanelRequested } from "../api";
 import { PREVIEW_PANE_WIDTH, clampStoredPreviewPaneWidth } from "../previewPane";
 import {
   RIGHT_PANEL_KINDS,
@@ -12,6 +12,7 @@ import {
   closeTab,
   defaultRightPanelTabs,
   isRightPanelShortcut,
+  kindAvailable,
   moveTab,
   openTab,
   parseRightPanelTabs,
@@ -19,10 +20,11 @@ import {
   serializeRightPanelTabs,
   visibleTabs,
 } from "../rightPanel";
-import type { RightPanelKind, RightPanelTab, RightPanelTabs } from "../rightPanel";
+import type { RightPanelGates, RightPanelKind, RightPanelTab, RightPanelTabs } from "../rightPanel";
 import type { ItemView } from "../types";
 import { errorText } from "../ui";
 import { ResizeSeparator } from "./ResizeSeparator";
+import { CloseGlyph, PlusGlyph } from "./glyphs";
 import { RIGHT_PANEL_RENDERERS } from "./rightPanelRegistry";
 
 /** What the asset or world list currently selects for the preview tab. */
@@ -36,6 +38,8 @@ export interface RightPanelValue {
   maximized: boolean;
   width: number;
   tabs: RightPanelTabs;
+  /** Settings that show or hide tab kinds (the browser needs the built-in browser). */
+  gates: RightPanelGates;
   active: RightPanelTab | null;
   /** The preview tab is on screen, so list rows can be selected. */
   previewActive: boolean;
@@ -66,7 +70,9 @@ export function useRightPanel(): RightPanelValue {
 }
 
 /** Panel state lives in the app shell, so it survives page changes. */
-export function useRightPanelState(fail: (message: string) => void): RightPanelValue {
+export function useRightPanelState(fail: (message: string) => void, gates: RightPanelGates = {}): RightPanelValue {
+  const builtinBrowser = gates.builtinBrowser === true;
+  const stableGates = useMemo<RightPanelGates>(() => ({ builtinBrowser }), [builtinBrowser]);
   const [open, setOpen] = useState(false);
   const [maximized, setMaximized] = useState(false);
   const [width, setWidth] = useState<number>(PREVIEW_PANE_WIDTH.default);
@@ -129,7 +135,7 @@ export function useRightPanelState(fail: (message: string) => void): RightPanelV
     [report],
   );
 
-  const active = activeTab(tabs);
+  const active = activeTab(tabs, stableGates);
   const previewActive = open && active?.kind === "preview";
 
   const toggle = useCallback(() => saveOpen(!open), [open, saveOpen]);
@@ -140,6 +146,40 @@ export function useRightPanelState(fail: (message: string) => void): RightPanelV
       if (!open) saveOpen(true);
     },
     [open, saveOpen, saveTabs],
+  );
+
+  // The app opened the browser in the panel (login, a BOOTH link, "パネルに戻す"): show its tab.
+  const openKindRef = useRef(openKind);
+  openKindRef.current = openKind;
+  useEffect(() => {
+    if (!builtinBrowser) return;
+    let alive = true;
+    let stop = () => {};
+    void listenBrowserPanelRequested(() => openKindRef.current("browser")).then(
+      (unlisten) => {
+        if (alive) stop = unlisten;
+        else unlisten();
+      },
+      () => undefined,
+    );
+    return () => {
+      alive = false;
+      stop();
+    };
+  }, [builtinBrowser]);
+
+  const closeTabById = useCallback(
+    (id: string) => {
+      // Closing the browser tab ends a docked session; a separate window stays open.
+      if (tabs.tabs.find((tab) => tab.id === id)?.kind === "browser") {
+        void api
+          .browserState()
+          .then((state) => (state.host === "panel" ? api.closeBoothBrowser() : undefined))
+          .catch(report);
+      }
+      saveTabs((current) => closeTab(current, id));
+    },
+    [report, saveTabs, tabs],
   );
 
   const togglePreview = useCallback(() => {
@@ -171,6 +211,7 @@ export function useRightPanelState(fail: (message: string) => void): RightPanelV
       maximized,
       width,
       tabs,
+      gates: stableGates,
       active,
       previewActive,
       preview,
@@ -180,30 +221,14 @@ export function useRightPanelState(fail: (message: string) => void): RightPanelV
       togglePreview,
       openKind,
       select: (id: string) => saveTabs((current) => selectTab(current, id)),
-      closeTabById: (id: string) => saveTabs((current) => closeTab(current, id)),
+      closeTabById,
       move: (id: string, offset: number) => saveTabs((current) => moveTab(current, id, offset)),
       setMaximized,
       resize: (next: number) => publishWidth(next, false),
       commitWidth: (next: number) => publishWidth(next, true),
       resetWidth: () => publishWidth(PREVIEW_PANE_WIDTH.default, true),
     }),
-    [open, maximized, width, tabs, active, previewActive, preview, publishPreview, toggle, saveOpen, togglePreview, openKind, saveTabs, publishWidth],
-  );
-}
-
-function CloseGlyph() {
-  return (
-    <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-      <path d="M1.5 1.5 8.5 8.5M8.5 1.5 1.5 8.5" />
-    </svg>
-  );
-}
-
-function PlusGlyph() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-      <path d="M6 1.5v9M1.5 6h9" />
-    </svg>
+    [open, maximized, width, tabs, stableGates, active, previewActive, preview, publishPreview, toggle, saveOpen, togglePreview, openKind, closeTabById, saveTabs, publishWidth],
   );
 }
 
@@ -222,7 +247,7 @@ function ExpandGlyph({ expanded }: { expanded: boolean }) {
 function AddTabMenu({ panel }: { panel: RightPanelValue }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  const kinds = RIGHT_PANEL_KINDS.filter((kind) => RIGHT_PANEL_KIND_INFO[kind].available);
+  const kinds = RIGHT_PANEL_KINDS.filter((kind) => kindAvailable(kind, panel.gates));
 
   useEffect(() => {
     if (!open) return;
@@ -268,7 +293,7 @@ function AddTabMenu({ panel }: { panel: RightPanelValue }) {
                 key={kind}
                 type="button"
                 role="menuitem"
-                disabled={!canAddTab(panel.tabs, kind)}
+                disabled={!canAddTab(panel.tabs, kind, panel.gates)}
                 onClick={() => {
                   setOpen(false);
                   panel.openKind(kind);
@@ -286,7 +311,7 @@ function AddTabMenu({ panel }: { panel: RightPanelValue }) {
 }
 
 function PanelHeader({ panel, overlay, onDismiss }: { panel: RightPanelValue; overlay: boolean; onDismiss: () => void }) {
-  const shown = visibleTabs(panel.tabs);
+  const shown = visibleTabs(panel.tabs, panel.gates);
   const activeId = panel.active?.id ?? null;
   return (
     <div className="right-panel-head">
@@ -362,7 +387,7 @@ function PanelHeader({ panel, overlay, onDismiss }: { panel: RightPanelValue; ov
   );
 }
 
-function PanelBody({ panel }: { panel: RightPanelValue }) {
+function PanelBody({ panel, overlay }: { panel: RightPanelValue; overlay: boolean }) {
   const active = panel.active;
   if (!active) {
     return (
@@ -378,8 +403,13 @@ function PanelBody({ panel }: { panel: RightPanelValue }) {
   }
   const Render = RIGHT_PANEL_RENDERERS[active.kind];
   return (
-    <div className="right-panel-body" id="right-panel-body" role="tabpanel" aria-labelledby={`right-panel-tab-${active.id}`}>
-      {Render ? <Render panel={panel} /> : null}
+    <div
+      className={`right-panel-body right-panel-body-${active.kind}`}
+      id="right-panel-body"
+      role="tabpanel"
+      aria-labelledby={`right-panel-tab-${active.id}`}
+    >
+      {Render ? <Render panel={panel} overlay={overlay} /> : null}
     </div>
   );
 }
@@ -392,7 +422,7 @@ function PanelSurface({ panel, overlay, onDismiss }: { panel: RightPanelValue; o
       aria-label="右パネル"
     >
       <PanelHeader panel={panel} overlay={overlay} onDismiss={onDismiss} />
-      <PanelBody panel={panel} />
+      <PanelBody panel={panel} overlay={overlay} />
     </aside>
   );
 }
