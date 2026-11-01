@@ -97,7 +97,10 @@ test("page tabs fill the right panel in a real browser", { timeout: 60000 }, asy
       if (driverError) throw new Error(`Install webkit2gtk-driver and run with xvfb-run: ${driverError.message}`);
       try { return await request("GET", "/status"); } catch { return false; }
     }, "WebKitWebDriver");
-    session = (await request("POST", "/session", { capabilities: { alwaysMatch: {} } })).sessionId;
+    const browserOptions = process.env.WEBKIT_MINIBROWSER
+      ? { "webkitgtk:browserOptions": { binary: process.env.WEBKIT_MINIBROWSER } }
+      : {};
+    session = (await request("POST", "/session", { capabilities: { alwaysMatch: browserOptions } })).sessionId;
     await wd("POST", "/window/rect", { width: 1908, height: 1044 });
     await wd("POST", "/url", { url: `${baseUrl}/test/fixtures/browser-panel-layout.html` });
     await waitFor(async () => {
@@ -134,6 +137,16 @@ test("page tabs fill the right panel in a real browser", { timeout: 60000 }, asy
     await t.test("roomy density also keeps controls flush with tabs and pages", async () => {
       await evaluate("document.querySelector('.app-shell').classList.add('density-roomy')");
       await checkViewport();
+    });
+    await t.test("Liquid keeps the native viewport aligned without card borders or shadows", async () => {
+      await evaluate("document.documentElement.classList.add('theme-liquid')");
+      for (const [width, height] of [[1908, 1044], [1180, 800], [1100, 700]]) {
+        await wd("POST", "/window/rect", { width, height });
+        await checkViewport();
+      }
+      const chrome = await evaluate("const s = getComputedStyle(document.querySelector('.browser-chrome.panel')); return { shadow:s.boxShadow, left:s.borderLeftWidth, right:s.borderRightWidth, bottom:s.borderBottomWidth }");
+      assert.deepEqual(chrome, { shadow: "none", left: "0px", right: "0px", bottom: "0px" });
+      await evaluate("document.documentElement.classList.remove('theme-liquid')");
     });
     await t.test("standalone controls fit a small window with reachable zoom buttons", async () => {
       await wd("POST", "/window/rect", { width: 640, height: 640 });

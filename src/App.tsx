@@ -344,7 +344,6 @@ export default function App() {
             <SidebarClassificationHint revision={revision} />
             <StartupUpdateCheck enabled={checkUpdateOnStartup} />
             <SidebarUpdaterBadge onOpenSettings={openAppUpdateSettings} />
-            <span className="app-version">{version === "未確認" ? "バージョン未確認" : version ? `v${version}` : "バージョン確認中"}</span>
             {builtinBrowser && (
               <AccountPill
                 view={accountView}
@@ -362,9 +361,11 @@ export default function App() {
                 onFail={(message) => fail(message)}
               />
             )}
-            <div className="rail-meta">
-              {stats ? `${stats.products} 商品` : "読み込み中"}
-              {!isTauri() && <><br />ブラウザ確認用</>}
+            <div className="rail-status">
+              <span className="app-version">{version === "未確認" ? "バージョン未確認" : version ? `v${version}` : "バージョン確認中"}</span>
+              <span className="rail-status-sep" aria-hidden="true" />
+              <span className="rail-status-count">{stats ? `ライブラリ ${stats.products} 商品` : "読み込み中"}</span>
+              {!isTauri() && <span className="rail-preview-chip">ブラウザ確認用</span>}
             </div>
           </div>
         </aside>
@@ -463,10 +464,33 @@ function AccountPill({
   const signedIn = view.account?.loggedIn === true && view.phase !== "checking";
   const avatar = !broken && signedIn ? safeAvatar(view.account?.avatarUrl ?? "") : "";
   const unverified = view.phase === "unverified" ? " unverified" : "";
+  const initial = (view.account?.displayName.trim() || view.account?.pixivId.trim() || "").slice(0, 1);
   const face = avatar ? (
     <img className="account-avatar" src={avatar} alt="" onError={() => setBroken(true)} />
   ) : (
-    <span className="account-avatar" aria-hidden="true" />
+    <span className="account-avatar" aria-hidden="true">
+      {signedIn && initial ? (
+        initial
+      ) : (
+        <svg className="glyph" width="16" height="16" viewBox="0 0 16 16">
+          <circle cx="8" cy="5.4" r="2.6" />
+          <path d="M2.8 13.6c.7-2.3 2.7-3.5 5.2-3.5s4.5 1.2 5.2 3.5" />
+        </svg>
+      )}
+    </span>
+  );
+  const nameText = signedIn
+    ? view.account?.displayName.trim() || view.account?.pixivId.trim() || "ログイン中"
+    : label;
+  const subText = signedIn && view.phase === "unverified" ? "確認できません" : "";
+  const pillText = (
+    <>
+      {face}
+      <span className="account-text">
+        <span className="account-name">{nameText}</span>
+        {subText && <span className="account-sub warn">{subText}</span>}
+      </span>
+    </>
   );
 
   useEffect(() => {
@@ -495,8 +519,7 @@ function AccountPill({
     if (view.phase === "checking") {
       return (
         <div className="account-pill neutral" title={label} data-account-phase={view.phase}>
-          {face}
-          <span className="account-name">{label}</span>
+          {pillText}
         </div>
       );
     }
@@ -508,8 +531,8 @@ function AccountPill({
         title={label}
         data-account-phase={view.phase}
       >
-        {face}
-        <span className="account-name">{label}</span>
+        {pillText}
+        <span className="account-action">ログイン</span>
       </button>
     );
   }
@@ -542,8 +565,12 @@ function AccountPill({
           setOpen((value) => !value);
         }}
       >
-        {face}
-        <span className="account-name">{label}</span>
+        {pillText}
+        <span className={`account-chevron${open ? " open" : ""}`} aria-hidden="true">
+          <svg className="glyph" width="12" height="12" viewBox="0 0 12 12">
+            <path d="M3 7.5 6 4.5l3 3" />
+          </svg>
+        </span>
       </button>
       {open && (
         <div className="account-popover" role="menu">

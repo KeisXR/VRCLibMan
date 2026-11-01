@@ -129,6 +129,29 @@ test("right panel tabs switch on a real pointer click in Chromium", { timeout: 6
       const prevented = await evaluate("(() => { const e = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }); document.body.dispatchEvent(e); return e.defaultPrevented; })()");
       assert.equal(prevented, false);
     });
+    await t.test("Liquid keeps page geometry aligned in both color schemes", async () => {
+      await evaluate("document.documentElement.classList.add('theme-liquid')");
+      for (const scheme of ["light", "dark"]) {
+        await page("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: scheme }] });
+        for (const width of [1600, 1180, 1100]) {
+          await page("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: false });
+          await pause(600);
+          const metrics = await evaluate(`(() => {
+            const viewport = document.querySelector('.browser-panel-viewport').getBoundingClientRect();
+            const body = document.querySelector('.right-panel-body-web').getBoundingClientRect();
+            const chrome = getComputedStyle(document.querySelector('.browser-chrome.panel'));
+            return { viewport: { left:viewport.left, top:viewport.top, width:viewport.width, height:viewport.height, bottom:viewport.bottom }, body: { width:body.width, bottom:body.bottom }, reported:window.layoutFixture.area(), shadow:chrome.boxShadow, border:chrome.borderLeftWidth };
+          })()`);
+          assert.equal(metrics.reported.visible, true);
+          for (const key of ["left", "top", "width", "height"]) assert.ok(Math.abs(metrics.viewport[key] - metrics.reported.area[key]) <= 1, `${scheme}/${width}/${key}: native and DOM rectangles match`);
+          assert.ok(metrics.viewport.height > 200);
+          assert.ok(Math.abs(metrics.viewport.bottom - metrics.body.bottom) <= 2);
+          assert.ok(Math.abs(metrics.viewport.width - metrics.body.width) <= 2);
+          assert.equal(metrics.shadow, "none");
+          assert.equal(metrics.border, "0px");
+        }
+      }
+    });
   } finally {
     socket?.close();
     chrome.kill();
