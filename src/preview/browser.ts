@@ -50,7 +50,7 @@ let preferWindow = false;
 let nextWindow = 1;
 let panelArea: { area: BrowserPanelRect | null; visible: boolean } = { area: null, visible: false };
 
-/** `?browserPanel=0` previews an OS without the docked browser (macOS and Linux today). */
+/** `?browserPanel=0` previews an OS without the docked browser (Linux). */
 function panelSupported() {
   return !(
     typeof location !== "undefined" &&
