@@ -190,7 +190,7 @@ fn path_keys(path: &Path) -> Result<Vec<String>, ()> {
     Ok(keys)
 }
 
-fn same_path(left: &Path, right: &Path) -> bool {
+pub(crate) fn same_path(left: &Path, right: &Path) -> bool {
     path_keys(left).ok() == path_keys(right).ok()
 }
 

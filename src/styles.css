@@ -849,6 +849,10 @@ a.tab { display: inline-flex; align-items: center; gap: 6px; text-decoration: no
 .files-row-dir .files-icon, .files-row-zip .files-icon { color: var(--text); }
 .files-row-link { color: var(--faint); }
 .files-name { min-width: 0; overflow-wrap: anywhere; }
+.files-name-line { display: flex; align-items: baseline; min-width: 0; }
+.files-name-line .files-name { flex: 0 1 auto; }
+.files-note { flex: 0 1000 auto; min-width: 4em; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.files-name-line .badge { flex: 0 0 auto; }
 .files-detail { font-size: 12px; }
 .files-list .row-actions { margin-left: auto; flex: 0 0 auto; }
 

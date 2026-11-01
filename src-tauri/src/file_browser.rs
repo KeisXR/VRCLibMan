@@ -7,8 +7,9 @@
 //! from their central directory only; no entry is decompressed or extracted.
 //! Names and paths are never written to logs.
 
-use crate::library_files::{wait_for, without_verbatim_prefix};
+use crate::library_files::{same_path, valid_booth_id, wait_for, without_verbatim_prefix};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Component, Path, PathBuf};
@@ -37,6 +38,18 @@ pub(crate) struct DirEntryView {
     pub kind: EntryKind,
     /// File size in bytes. Folders and links have none.
     pub size: Option<u64>,
+    /// Shown next to the name as `name（title）`. The name on disk is never changed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<EntryLabel>,
+}
+
+/// A product title from the local DB, for display only. Never sent anywhere or logged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EntryLabel {
+    pub title: String,
+    /// BOOTH's age-restriction flag. The tab shows the same「R-18」badge as the library list.
+    pub adult: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -53,6 +66,9 @@ pub(crate) struct DirListing {
     pub inside_library: bool,
     pub entries: Vec<DirEntryView>,
     pub truncated: bool,
+    /// The open folder's own label, when it is a product folder.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<EntryLabel>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -154,7 +170,7 @@ fn read_entries(dir: PathBuf) -> std::io::Result<(Vec<DirEntryView>, bool)> {
             let size = entry.metadata().ok().map(|meta| meta.len());
             (EntryKind::File, size)
         };
-        entries.push(DirEntryView { name, kind, size });
+        entries.push(DirEntryView { name, kind, size, label: None });
     }
     sort_entries(&mut entries);
     Ok((entries, truncated))
@@ -197,7 +213,96 @@ pub(crate) fn list_directory(raw: &str, library: &str, remote: &str) -> Result<D
         inside_library,
         entries,
         truncated,
+        label: None,
     })
+}
+
+/// Which product each name belongs to, for labels. Folder names are only read as product IDs
+/// inside the library or the remote library, where folders are `{root}/{booth_id}`; a numbered
+/// folder elsewhere is left alone. Files match a scan link or a recorded download path exactly,
+/// anywhere, except inside the folder of that same product, where the folder already says it.
+struct LabelPlan {
+    folder: Option<String>,
+    entries: Vec<Option<String>>,
+}
+
+fn inside_roots(listing: &DirListing) -> bool {
+    let path = Path::new(&listing.path);
+    [&listing.library, &listing.remote]
+        .into_iter()
+        .flatten()
+        .any(|root| path.starts_with(root))
+}
+
+fn same_name(left: &str, right: &str) -> bool {
+    if cfg!(windows) {
+        left.to_lowercase() == right.to_lowercase()
+    } else {
+        left == right
+    }
+}
+
+fn label_plan(listing: &DirListing, linked: &[(String, String)]) -> LabelPlan {
+    let here = Path::new(&listing.path);
+    let roots = inside_roots(listing);
+    let is_root = [&listing.library, &listing.remote]
+        .into_iter()
+        .flatten()
+        .any(|root| same_path(here, Path::new(root)));
+    let folder_name = here.file_name().map(|name| name.to_string_lossy().into_owned());
+    let folder = folder_name
+        .filter(|name| roots && !is_root && valid_booth_id(name));
+    let files: Vec<(String, &str)> = if listing.entries.iter().any(|entry| entry.kind == EntryKind::File) {
+        linked
+            .iter()
+            .filter_map(|(path, booth_id)| {
+                let path = Path::new(path);
+                let parent = path.parent()?;
+                if !same_path(parent, here) {
+                    return None;
+                }
+                Some((path.file_name()?.to_string_lossy().into_owned(), booth_id.as_str()))
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let entries = listing
+        .entries
+        .iter()
+        .map(|entry| match entry.kind {
+            EntryKind::Dir if roots && valid_booth_id(&entry.name) => Some(entry.name.clone()),
+            EntryKind::File => files
+                .iter()
+                .find(|(name, _)| same_name(name, &entry.name))
+                .map(|(_, booth_id)| booth_id.to_string())
+                .filter(|booth_id| folder.as_deref() != Some(booth_id.as_str())),
+            _ => None,
+        })
+        .collect();
+    LabelPlan { folder, entries }
+}
+
+/// Product IDs whose titles the listing needs. The caller looks them up in the DB.
+pub(crate) fn label_ids(listing: &DirListing, linked: &[(String, String)]) -> Vec<String> {
+    let plan = label_plan(listing, linked);
+    let mut ids: Vec<String> = plan.folder.into_iter().chain(plan.entries.into_iter().flatten()).collect();
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
+/// Adds `label` to entries with a known title. Names, paths and order stay as they are.
+pub(crate) fn apply_labels(
+    listing: &mut DirListing,
+    linked: &[(String, String)],
+    titles: &HashMap<String, EntryLabel>,
+) {
+    let plan = label_plan(listing, linked);
+    listing.label = plan.folder.and_then(|id| titles.get(&id).cloned());
+    for (entry, id) in listing.entries.iter_mut().zip(plan.entries) {
+        entry.label = id.and_then(|id| titles.get(&id).cloned());
+    }
 }
 
 /// zip decodes names without the UTF-8 flag as CP437, but on Japanese Windows they are
@@ -370,6 +475,104 @@ mod tests {
         std::fs::remove_dir_all(other).unwrap();
     }
 
+    fn entry(name: &str, kind: EntryKind) -> DirEntryView {
+        DirEntryView { name: name.into(), kind, size: None, label: None }
+    }
+
+    fn fake_listing(path: &Path, library: &Path, remote: Option<&Path>, entries: Vec<DirEntryView>) -> DirListing {
+        DirListing {
+            path: display(path),
+            parent: path.parent().map(display),
+            library: Some(display(library)),
+            remote: remote.map(display),
+            inside_library: path.starts_with(library),
+            entries,
+            truncated: false,
+            label: None,
+        }
+    }
+
+    fn label(title: &str, adult: bool) -> EntryLabel {
+        EntryLabel { title: title.into(), adult }
+    }
+
+    // Dummy IDs and titles only.
+    #[test]
+    fn product_folders_get_a_label_without_renaming_anything() {
+        let library = std::env::temp_dir().join("lib-labels");
+        let remote = std::env::temp_dir().join("nas-labels");
+        let mut listing = fake_listing(
+            &library,
+            &library,
+            Some(&remote),
+            vec![
+                entry("9000001", EntryKind::Dir),
+                entry("9000002", EntryKind::Dir),
+                entry("9000003", EntryKind::Dir),
+                entry("_misc", EntryKind::Dir),
+                entry("9000001", EntryKind::Link),
+                entry("loose.zip", EntryKind::File),
+            ],
+        );
+        let linked = vec![(display(&library.join("loose.zip")), "9000003".to_string())];
+        assert_eq!(label_ids(&listing, &linked), ["9000001", "9000002", "9000003"]);
+        let titles = HashMap::from([
+            ("9000001".to_string(), label("架空の服", false)),
+            ("9000003".to_string(), label("架空の髪", true)),
+        ]);
+        apply_labels(&mut listing, &linked, &titles);
+        let names: Vec<_> = listing.entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, ["9000001", "9000002", "9000003", "_misc", "9000001", "loose.zip"]);
+        assert_eq!(listing.entries[0].label, Some(label("架空の服", false)));
+        assert_eq!(listing.entries[1].label, None, "unknown IDs keep the plain name");
+        assert_eq!(listing.entries[2].label, Some(label("架空の髪", true)));
+        assert_eq!(listing.entries[3].label, None);
+        assert_eq!(listing.entries[4].label, None, "links are never labelled");
+        assert_eq!(listing.entries[5].label, Some(label("架空の髪", true)));
+        assert_eq!(listing.label, None, "the library root itself has no label");
+
+        let mut inside = fake_listing(
+            &library.join("9000001"),
+            &library,
+            None,
+            vec![entry("pack.zip", EntryKind::File), entry("other.zip", EntryKind::File)],
+        );
+        let linked = vec![
+            (display(&library.join("9000001").join("pack.zip")), "9000001".to_string()),
+            (display(&library.join("9000001").join("other.zip")), "9000003".to_string()),
+        ];
+        apply_labels(&mut inside, &linked, &titles);
+        assert_eq!(inside.label, Some(label("架空の服", false)));
+        assert_eq!(inside.entries[0].label, None, "the folder already names this product");
+        assert_eq!(inside.entries[1].label, Some(label("架空の髪", true)));
+
+        let mut on_remote = fake_listing(&remote, &library, Some(&remote), vec![entry("9000001", EntryKind::Dir)]);
+        apply_labels(&mut on_remote, &[], &titles);
+        assert_eq!(on_remote.entries[0].label, Some(label("架空の服", false)));
+    }
+
+    #[test]
+    fn numbered_folders_outside_the_roots_are_not_read_as_products() {
+        let library = std::env::temp_dir().join("lib-labels");
+        let elsewhere = std::env::temp_dir().join("photos-2024");
+        let mut listing = fake_listing(&elsewhere, &library, None, vec![entry("9000001", EntryKind::Dir)]);
+        assert!(label_ids(&listing, &[]).is_empty());
+        let titles = HashMap::from([("9000001".to_string(), label("架空の服", false))]);
+        apply_labels(&mut listing, &[], &titles);
+        assert_eq!(listing.entries[0].label, None);
+    }
+
+    #[test]
+    fn labels_are_left_out_of_the_json_when_missing() {
+        let json = serde_json::to_value(entry("9000001", EntryKind::Dir)).unwrap();
+        assert!(json.get("label").is_none());
+        let mut labelled = entry("9000001", EntryKind::Dir);
+        labelled.label = Some(label("架空の服", true));
+        let json = serde_json::to_value(labelled).unwrap();
+        assert_eq!(json["label"]["title"], "架空の服");
+        assert_eq!(json["label"]["adult"], true);
+    }
+
     #[cfg(unix)]
     #[test]
     fn symlinks_are_shown_but_not_followed() {
@@ -380,7 +583,7 @@ mod tests {
         let listing = list_directory(&root.display().to_string(), "", "").unwrap();
         assert_eq!(
             listing.entries,
-            vec![DirEntryView { name: "link".into(), kind: EntryKind::Link, size: None }]
+            vec![DirEntryView { name: "link".into(), kind: EntryKind::Link, size: None, label: None }]
         );
         std::fs::remove_dir_all(root).unwrap();
         std::fs::remove_dir_all(target).unwrap();
