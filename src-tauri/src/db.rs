@@ -139,10 +139,10 @@ fn finish_open(mut connection: Connection, wal: bool) -> Result<Connection, Stri
         let _ = connection.execute_batch("PRAGMA journal_mode = WAL;");
     }
     migrate(&mut connection)?;
-    ensure_ready(&connection)?;
+    let seeded = ensure_ready(&connection)?;
     let added = merge_catalog(&connection)?;
     settle_dictionary(&mut connection)?;
-    if added > 0 {
+    if added > 0 || seeded > 0 {
         reresolve_all(&mut connection)?;
     }
     Ok(connection)
@@ -358,7 +358,8 @@ fn ensure_owned_column(connection: &Connection) -> Result<(), String> {
     Ok(())
 }
 
-fn ensure_ready(connection: &Connection) -> Result<(), String> {
+/// Returns how many avatars a seed upgrade inserted, so the caller can re-resolve.
+fn ensure_ready(connection: &Connection) -> Result<u32, String> {
     for (key, value) in [
         ("ollama_base_url", "http://127.0.0.1:11434"),
         ("ollama_model", crate::model::DEFAULT_OLLAMA_MODEL),
@@ -392,13 +393,24 @@ fn ensure_ready(connection: &Connection) -> Result<(), String> {
             )
             .sql()?;
     }
+    let mut seeded = 0;
     if setting(connection, "initialized")?.as_deref() != Some("1") {
-        merge_seed(connection)?;
+        merge_seed(connection, 0)?;
         set_setting(connection, "initialized", "1")?;
+    } else {
+        // Existing libraries get base-body groups added by a newer seed once.
+        // Older groups are not merged again, so rows the user deleted stay gone.
+        let stored = setting(connection, "seed_revision")?
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(1);
+        if stored < seed_file()?.revision {
+            seeded = merge_seed(connection, stored)?.inserted;
+        }
     }
+    set_setting(connection, "seed_revision", &seed_file()?.revision.to_string())?;
     close_unavailable_products(connection)?;
     skip_setup_for_existing_use(connection)?;
-    Ok(())
+    Ok(seeded)
 }
 
 fn skip_setup_for_existing_use(connection: &Connection) -> Result<(), String> {
@@ -4039,39 +4051,164 @@ pub(crate) fn merge_avatars(
 }
 
 pub(crate) fn restore_seed(connection: &mut Connection) -> Result<u32, String> {
-    let added = merge_seed(connection)?;
+    let merged = merge_seed(connection, 0)?;
     reresolve_all(connection)?;
-    Ok(added)
+    Ok(merged.inserted + merged.filled)
 }
 
-fn merge_seed(connection: &Connection) -> Result<u32, String> {
-    let seed: SeedFile = serde_json::from_str(include_str!("../knowledge/seed.json"))
-        .map_err(|err| format!("初期データを読めません: {err}"))?;
-    for body in seed.base_bodies {
-        connection
+fn seed_file() -> Result<SeedFile, String> {
+    serde_json::from_str(include_str!("../knowledge/seed.json"))
+        .map_err(|err| format!("初期データを読めません: {err}"))
+}
+
+struct SeedMerge {
+    /// New avatar rows.
+    inserted: u32,
+    /// Existing avatars that received the base body of a group added now.
+    filled: u32,
+}
+
+/// Adds seed rows that are missing. Only base bodies with a revision above
+/// `after` are considered, together with the avatars that belong to them,
+/// plus avatars whose own revision is above `after` (`after = 0` merges
+/// everything). Such an avatar joins its older group only when that group is
+/// still in the library.
+///
+/// An avatar already in the library, found by id, by its catalog Booth id or
+/// by one unambiguous name, is not inserted again. It gets the seed base body
+/// only when its base body is empty and the group was inserted by this call,
+/// so a base body the user cleared on an existing group stays cleared.
+fn merge_seed(connection: &Connection, after: u32) -> Result<SeedMerge, String> {
+    let seed = seed_file()?;
+    let mut inserted_bodies: HashSet<String> = HashSet::new();
+    let mut considered: HashSet<String> = HashSet::new();
+    for body in &seed.base_bodies {
+        if body.revision <= after {
+            continue;
+        }
+        considered.insert(body.id.clone());
+        let rows = connection
             .execute(
                 "INSERT OR IGNORE INTO base_bodies (id, display_name, note) VALUES (?1, ?2, ?3)",
                 params![body.id, body.display_name, body.note],
             )
             .sql()?;
+        if rows > 0 {
+            inserted_bodies.insert(body.id.clone());
+        }
     }
-    let mut added = 0;
-    for avatar in seed.avatars {
+    let mut merged = SeedMerge {
+        inserted: 0,
+        filled: 0,
+    };
+    for avatar in &seed.avatars {
+        let seed_body = avatar.base_body.as_deref().filter(|body| !body.is_empty());
+        let new_avatar = after > 0 && avatar.revision > after;
+        let in_scope = match seed_body {
+            Some(body) => considered.contains(body) || new_avatar,
+            None => after == 0 || new_avatar,
+        };
+        if !in_scope {
+            continue;
+        }
+        // A new avatar in an older group joins it only if the user kept that group.
+        let joins_kept_group = match seed_body {
+            Some(body) if !considered.contains(body) => base_body_exists(connection, body)?,
+            _ => false,
+        };
+        let body = seed_body.filter(|body| considered.contains(*body) || joins_kept_group);
+        let existing = match existing_seed_avatar(connection, avatar)? {
+            SeedMatch::Found(id) => Some(id),
+            SeedMatch::Ambiguous => continue,
+            SeedMatch::Missing => None,
+        };
+        if let Some(id) = existing {
+            if let Some(body) =
+                body.filter(|body| inserted_bodies.contains(*body) || joins_kept_group)
+            {
+                let rows = connection
+                    .execute(
+                        "UPDATE avatars SET base_body = ?1
+                         WHERE id = ?2 AND (base_body IS NULL OR base_body = '')",
+                        params![body, id],
+                    )
+                    .sql()?;
+                merged.filled += rows as u32;
+            }
+            continue;
+        }
         let rows = connection
             .execute(
                 "INSERT OR IGNORE INTO avatars (id, display_name, base_body, aliases_json, is_builtin, notes)
                  VALUES (?1, ?2, ?3, ?4, 1, '')",
-                params![
-                    avatar.id,
-                    avatar.display_name,
-                    avatar.base_body,
-                    to_json(&avatar.aliases)?
-                ],
+                params![avatar.id, avatar.display_name, body, to_json(&avatar.aliases)?],
             )
             .sql()?;
-        added += rows as u32;
+        merged.inserted += rows as u32;
+        if let Some(booth_id) = avatar.booth_id.as_deref().filter(|id| !id.is_empty()) {
+            if rows > 0 && avatar_id_for_booth(connection, booth_id)?.is_none() {
+                bind_booth(connection, &avatar.id, booth_id)?;
+            }
+        }
     }
-    Ok(added)
+    Ok(merged)
+}
+
+enum SeedMatch {
+    Found(String),
+    Missing,
+    Ambiguous,
+}
+
+fn existing_seed_avatar(connection: &Connection, avatar: &SeedAvatar) -> Result<SeedMatch, String> {
+    if avatar_exists(connection, &avatar.id)? {
+        return Ok(SeedMatch::Found(avatar.id.clone()));
+    }
+    if let Some(booth_id) = avatar.booth_id.as_deref().filter(|id| !id.is_empty()) {
+        if let Some(id) = avatar_id_for_booth(connection, booth_id)? {
+            return Ok(SeedMatch::Found(id));
+        }
+    }
+    let keys: HashSet<String> = std::iter::once(&avatar.display_name)
+        .chain(avatar.aliases.iter())
+        .map(|name| crate::normalize::normalize_label(name))
+        .filter(|key| !key.is_empty())
+        .collect();
+    let booth = avatar.booth_id.as_deref().filter(|id| !id.is_empty());
+    let mut hits: Vec<String> = Vec::new();
+    for other in load_avatars(connection)? {
+        // Same name but already tied to another Booth item: a different avatar.
+        if booth.is_some() && bound_to_any_booth(connection, &other.id)? {
+            continue;
+        }
+        let hit = std::iter::once(&other.display_name)
+            .chain(other.aliases.iter())
+            .any(|name| keys.contains(&crate::normalize::normalize_label(name)));
+        if hit && !hits.contains(&other.id) {
+            hits.push(other.id);
+        }
+    }
+    Ok(match hits.len() {
+        0 => SeedMatch::Missing,
+        1 => {
+            let id = hits.remove(0);
+            if let Some(booth_id) = booth {
+                bind_booth(connection, &id, booth_id)?;
+            }
+            SeedMatch::Found(id)
+        }
+        _ => SeedMatch::Ambiguous,
+    })
+}
+
+fn bound_to_any_booth(connection: &Connection, avatar_id: &str) -> Result<bool, String> {
+    connection
+        .query_row(
+            "SELECT EXISTS (SELECT 1 FROM avatar_sources WHERE avatar_id = ?1)",
+            params![avatar_id],
+            |row| row.get(0),
+        )
+        .sql()
 }
 
 fn merge_catalog(connection: &Connection) -> Result<u32, String> {
@@ -5632,6 +5769,14 @@ fn avatar_by_id(connection: &Connection, id: &str) -> Result<Option<Avatar>, Str
     Ok(avatars.into_iter().find(|avatar| avatar.id == id))
 }
 
+fn base_body_exists(connection: &Connection, id: &str) -> Result<bool, String> {
+    connection
+        .query_row("SELECT EXISTS(SELECT 1 FROM base_bodies WHERE id = ?1)", params![id], |row| {
+            row.get::<_, bool>(0)
+        })
+        .sql()
+}
+
 fn avatar_exists(connection: &Connection, id: &str) -> Result<bool, String> {
     let count: i64 = connection
         .query_row(
@@ -5770,8 +5915,15 @@ fn is_under_os(path: &str, root: &str, windows: bool) -> bool {
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SeedFile {
+    /// Highest base-body revision. Raise it when a seed adds a base-body group.
+    #[serde(default = "first_seed_revision")]
+    revision: u32,
     base_bodies: Vec<SeedBody>,
     avatars: Vec<SeedAvatar>,
+}
+
+fn first_seed_revision() -> u32 {
+    1
 }
 
 #[derive(serde::Deserialize)]
@@ -5780,6 +5932,9 @@ struct SeedBody {
     id: String,
     display_name: String,
     note: String,
+    /// Seed revision that added this group; existing libraries receive it once.
+    #[serde(default = "first_seed_revision")]
+    revision: u32,
 }
 
 #[derive(serde::Deserialize)]
@@ -5789,6 +5944,13 @@ struct SeedAvatar {
     display_name: String,
     base_body: Option<String>,
     aliases: Vec<String>,
+    /// Booth item of the avatar, matching the bundled もちふぃった～ catalog.
+    #[serde(default)]
+    booth_id: Option<String>,
+    /// Seed revision that added this avatar. An avatar added to an older group
+    /// reaches existing libraries once, like a new group.
+    #[serde(default = "first_seed_revision")]
+    revision: u32,
 }
 
 #[cfg(test)]
@@ -10553,6 +10715,263 @@ mod tests {
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap()
+    }
+
+    fn base_body_of(connection: &Connection, id: &str) -> Option<String> {
+        connection
+            .query_row(
+                "SELECT base_body FROM avatars WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .unwrap()
+    }
+
+    fn avatars_named(connection: &Connection, name: &str) -> Vec<String> {
+        let key = crate::normalize::normalize_label(name);
+        load_avatars(connection)
+            .unwrap()
+            .into_iter()
+            .filter(|avatar| {
+                std::iter::once(&avatar.display_name)
+                    .chain(avatar.aliases.iter())
+                    .any(|label| crate::normalize::normalize_label(label) == key)
+            })
+            .map(|avatar| avatar.id)
+            .collect()
+    }
+
+    #[test]
+    fn seed_base_bodies_have_sources_and_unique_members() {
+        let seed = seed_file().unwrap();
+        let bodies: HashSet<&str> = seed.base_bodies.iter().map(|body| body.id.as_str()).collect();
+        assert_eq!(bodies.len(), seed.base_bodies.len());
+        for body in &seed.base_bodies {
+            assert!(valid_id(&body.id), "{}", body.id);
+            assert!(body.revision <= seed.revision, "{}", body.id);
+            assert!(body.note.chars().count() <= 400, "{}", body.id);
+            assert!(body.note.contains("https://booth.pm/"), "{} の note に出典が無い", body.id);
+            let members = seed
+                .avatars
+                .iter()
+                .filter(|avatar| avatar.base_body.as_deref() == Some(body.id.as_str()))
+                .count();
+            assert!(members >= 2, "{} は2体以上で組む", body.id);
+        }
+        let mut keys: HashMap<String, &str> = HashMap::new();
+        let mut booths: HashSet<&str> = HashSet::new();
+        for avatar in &seed.avatars {
+            if let Some(body) = avatar.base_body.as_deref() {
+                assert!(bodies.contains(body), "{} の素体 {body} が無い", avatar.id);
+                assert!(avatar.booth_id.is_some(), "{} に Booth ID が無い", avatar.id);
+            }
+            if let Some(booth) = avatar.booth_id.as_deref() {
+                assert!(booths.insert(booth), "Booth ID {booth} が重複");
+            }
+            for name in std::iter::once(&avatar.display_name).chain(avatar.aliases.iter()) {
+                let key = crate::normalize::normalize_label(name);
+                if let Some(other) = keys.insert(key.clone(), &avatar.id) {
+                    assert_eq!(other, avatar.id, "名前 {name} が {other} と {} に当たる", avatar.id);
+                }
+            }
+        }
+        let komado: Vec<&str> = seed
+            .avatars
+            .iter()
+            .filter(|avatar| avatar.base_body.as_deref() == Some("komado"))
+            .map(|avatar| avatar.id.as_str())
+            .collect();
+        assert_eq!(komado, vec!["lime", "plum", "chiffon", "chocolat", "mf-8962830"]);
+        for id in ["manuka", "shinano"] {
+            let avatar = seed.avatars.iter().find(|avatar| avatar.id == id).unwrap();
+            assert_eq!(avatar.base_body, None);
+        }
+        assert!(
+            seed.avatars
+                .iter()
+                .all(|avatar| avatar.aliases.iter().all(|alias| alias != "Chocolate"))
+        );
+    }
+
+    #[test]
+    fn fresh_library_groups_catalog_avatars_by_seed_base_body() {
+        let connection = open_memory().unwrap();
+        for name in ["まめひなた", "キプフェル", "ルキフェル", "ライム", "リーファ"] {
+            assert_eq!(avatars_named(&connection, name).len(), 1, "{name}");
+        }
+        for avatar in seed_file().unwrap().avatars {
+            let Some(booth_id) = avatar.booth_id.as_deref() else {
+                continue;
+            };
+            assert_eq!(
+                avatar_id_for_booth(&connection, booth_id).unwrap().as_deref(),
+                Some(avatar.id.as_str()),
+                "{booth_id}"
+            );
+            assert_eq!(base_body_of(&connection, &avatar.id), avatar.base_body, "{}", avatar.id);
+        }
+        assert_eq!(base_body_of(&connection, "mf-4340548").as_deref(), Some("mamefriends"));
+        assert_eq!(base_body_of(&connection, "mf-5813187").as_deref(), Some("mamefriends"));
+        assert_eq!(base_body_of(&connection, "mf-2040716").as_deref(), Some("ym-body-women-m"));
+        assert_eq!(base_body_of(&connection, "mf-2040691").as_deref(), Some("ym-body-women-s"));
+        assert_eq!(base_body_of(&connection, "lime").as_deref(), Some("komado"));
+        assert_eq!(base_body_of(&connection, "manuka"), None);
+        assert_eq!(base_body_of(&connection, "shinano"), None);
+        // 同じショップでも共通素体と書かれていないカリンは結ばない。
+        let karin = avatars_named(&connection, "カリン");
+        assert_eq!(karin.len(), 1);
+        assert_eq!(base_body_of(&connection, &karin[0]), None);
+        assert_eq!(avatar_id_for_booth(&connection, "4340548").unwrap().as_deref(), Some("mf-4340548"));
+        assert_eq!(avatar_id_for_booth(&connection, "4876459").unwrap().as_deref(), Some("lime"));
+        assert_eq!(
+            setting(&connection, "seed_revision").unwrap(),
+            Some(seed_file().unwrap().revision.to_string())
+        );
+    }
+
+    #[test]
+    fn existing_library_receives_new_base_bodies_once() {
+        let mut connection = open_memory().unwrap();
+        // v0.1.19 までのライブラリを再現する: 素体はこまどだけ、カタログ由来のアバターは素体なし。
+        connection
+            .execute_batch(
+                "UPDATE avatars SET base_body = NULL WHERE base_body IS NOT NULL AND base_body <> 'komado';
+                 DELETE FROM base_bodies WHERE id <> 'komado';
+                 UPDATE avatars SET base_body = NULL WHERE id = 'chiffon';
+                 DELETE FROM settings WHERE key = 'seed_revision';",
+            )
+            .unwrap();
+        let before = load_avatars(&connection).unwrap().len();
+        let inserted = ensure_ready(&connection).unwrap();
+        assert_eq!(inserted, 0);
+        assert_eq!(load_avatars(&connection).unwrap().len(), before);
+        assert_eq!(base_body_of(&connection, "mf-4340548").as_deref(), Some("mamefriends"));
+        assert_eq!(base_body_of(&connection, "mf-7163384").as_deref(), Some("chiwado-palfy"));
+        // こまどは以前からある素体なので、ユーザーが外したシフォンは戻さない。
+        assert_eq!(base_body_of(&connection, "chiffon"), None);
+
+        // 消した素体は次の起動で戻らない。
+        delete_base_body(&connection, "mamefriends").unwrap();
+        ensure_ready(&connection).unwrap();
+        assert_eq!(base_body_of(&connection, "mf-4340548"), None);
+        // 「初期データを追加」は消した素体と、その素体の空欄を戻す。
+        let added = restore_seed(&mut connection).unwrap();
+        assert!(added >= 15, "{added}");
+        assert_eq!(base_body_of(&connection, "mf-4340548").as_deref(), Some("mamefriends"));
+        assert_eq!(base_body_of(&connection, "chiffon"), None);
+        assert_eq!(avatars_named(&connection, "まめひなた").len(), 1);
+    }
+
+    #[test]
+    fn existing_library_receives_an_avatar_added_to_an_older_group_once() {
+        let connection = open_memory().unwrap();
+        // v0.1.19 にはソルトが無い。こまどは以前からある素体。
+        let forget_salt = "DELETE FROM avatar_sources WHERE booth_id = '8962830';
+             DELETE FROM avatars WHERE id = 'mf-8962830';
+             UPDATE settings SET value = '1' WHERE key = 'seed_revision';";
+        connection.execute_batch(forget_salt).unwrap();
+        assert_eq!(ensure_ready(&connection).unwrap(), 1);
+        assert_eq!(base_body_of(&connection, "mf-8962830").as_deref(), Some("komado"));
+        assert_eq!(
+            avatar_id_for_booth(&connection, "8962830").unwrap().as_deref(),
+            Some("mf-8962830")
+        );
+        assert_eq!(avatars_named(&connection, "Salt"), vec!["mf-8962830".to_string()]);
+
+        // 二度目の起動では足さない。
+        assert_eq!(ensure_ready(&connection).unwrap(), 0);
+        assert_eq!(avatars_named(&connection, "ソルト"), vec!["mf-8962830".to_string()]);
+
+        // こまどを消してあれば、ソルトは素体なしで足す。
+        connection.execute_batch(forget_salt).unwrap();
+        delete_base_body(&connection, "komado").unwrap();
+        assert_eq!(ensure_ready(&connection).unwrap(), 1);
+        assert_eq!(base_body_of(&connection, "mf-8962830"), None);
+        assert_eq!(base_body_of(&connection, "lime"), None);
+
+        // 自分で作った同名のアバターには、残っているこまどを埋める。
+        let connection = open_memory().unwrap();
+        connection
+            .execute_batch(
+                "DELETE FROM avatar_sources WHERE booth_id = '8962830';
+                 UPDATE avatars SET id = 'my-salt', is_builtin = 0, base_body = NULL WHERE id = 'mf-8962830';
+                 UPDATE settings SET value = '1' WHERE key = 'seed_revision';",
+            )
+            .unwrap();
+        assert_eq!(ensure_ready(&connection).unwrap(), 0);
+        assert_eq!(base_body_of(&connection, "my-salt").as_deref(), Some("komado"));
+        assert_eq!(avatars_named(&connection, "ソルト"), vec!["my-salt".to_string()]);
+    }
+
+    #[test]
+    fn seed_upgrade_reuses_an_unbound_avatar_with_the_same_name() {
+        let connection = open_memory().unwrap();
+        connection
+            .execute_batch(
+                "DELETE FROM avatar_sources WHERE booth_id = '5986971';
+                 UPDATE avatars SET id = 'nemesis-user', is_builtin = 0, base_body = NULL WHERE id = 'mf-5986971';
+                 UPDATE avatars SET base_body = NULL WHERE id = 'mf-6663666';
+                 DELETE FROM base_bodies WHERE id = 'komainu-nemesis';
+                 UPDATE settings SET value = '1' WHERE key = 'seed_revision';",
+            )
+            .unwrap();
+        assert_eq!(ensure_ready(&connection).unwrap(), 0);
+        assert_eq!(avatars_named(&connection, "ネメシス"), vec!["nemesis-user".to_string()]);
+        assert_eq!(base_body_of(&connection, "nemesis-user").as_deref(), Some("komainu-nemesis"));
+        assert_eq!(base_body_of(&connection, "mf-6663666").as_deref(), Some("komainu-nemesis"));
+        assert_eq!(
+            avatar_id_for_booth(&connection, "5986971").unwrap().as_deref(),
+            Some("nemesis-user")
+        );
+    }
+
+    #[test]
+    fn seed_upgrade_skips_a_same_name_avatar_bound_to_another_item() {
+        let connection = open_memory().unwrap();
+        connection
+            .execute_batch(
+                "DELETE FROM avatar_sources WHERE booth_id = '5986971';
+                 UPDATE avatars SET id = 'other-nemesis', is_builtin = 0, base_body = NULL WHERE id = 'mf-5986971';
+                 INSERT INTO avatar_sources (booth_id, avatar_id) VALUES ('8800999', 'other-nemesis');
+                 DELETE FROM base_bodies WHERE id = 'komainu-nemesis';
+                 UPDATE settings SET value = '1' WHERE key = 'seed_revision';",
+            )
+            .unwrap();
+        assert_eq!(ensure_ready(&connection).unwrap(), 1);
+        assert_eq!(base_body_of(&connection, "other-nemesis"), None);
+        assert_eq!(base_body_of(&connection, "mf-5986971").as_deref(), Some("komainu-nemesis"));
+    }
+
+    #[test]
+    fn outfits_for_one_mamefriends_avatar_show_on_another() {
+        let mut connection = open_memory().unwrap();
+        let json = r#"{
+            "products": [
+                {"boothId":"4340548","title":"まめひなた Mamehinata / オリジナル3Dモデル","shop":"もち山金魚","description":"このアバターはまめふれんず共通素体を使用しています。"},
+                {"boothId":"5813187","title":"キプフェル Kipfel / オリジナル3Dモデル","shop":"もち山金魚","description":"このアバターはまめふれんず共通素体を使用しています。"},
+                {"boothId":"8800501","title":"【まめひなた対応】架空のワンピース","shop":"s","description":"衣装です。"}
+            ]
+        }"#;
+        import_products(&mut connection, &parse_export(json).unwrap()).unwrap();
+        apply_extraction(
+            &mut connection,
+            "8800501",
+            &extraction(Category::Outfit, &["まめひなた"], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        let snapshot = load_snapshot(&mut connection).unwrap();
+        let kipfel = avatar_detail(&snapshot, "mf-5813187").unwrap();
+        assert!(kipfel.siblings.iter().any(|sibling| sibling.id == "mf-4340548"));
+        assert_eq!(
+            section_items(&kipfel, "outfit"),
+            vec![("8800501".to_string(), true)]
+        );
+        let hinata = avatar_detail(&snapshot, "mf-4340548").unwrap();
+        assert_eq!(
+            section_items(&hinata, "outfit"),
+            vec![("8800501".to_string(), false)]
+        );
     }
 
     fn section_items(detail: &crate::view::AvatarDetail, category: &str) -> Vec<(String, bool)> {
