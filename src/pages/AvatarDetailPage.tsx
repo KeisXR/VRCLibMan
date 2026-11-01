@@ -8,6 +8,7 @@ import { FileMark, Thumb, errorText } from "../ui";
 import { ExcludeProductButton } from "../components/ProductExclusions";
 import { UnityOpenButton } from "../components/UnityOpenDialog";
 import { isUnityOpenableName } from "../unityOpen";
+import { FREE_FILE_CHECK_BUSY_LABEL, FREE_FILE_CHECK_LABEL, freeFilesFoundMessage, offerFreeFileCheck } from "../freeFiles";
 import {
   type RemoteProbeStatus,
   invalidateRemoteProbe,
@@ -378,8 +379,23 @@ export function ItemCard({
   tabStop?: boolean;
   onSelect?: () => void;
 }) {
-  const { refresh, notify, fail } = useShell();
+  const { builtinBrowser, refresh, notify, fail } = useShell();
   const [busy, setBusy] = useState("");
+  const [checkingFree, setCheckingFree] = useState(false);
+
+  async function checkFreeFiles() {
+    if (checkingFree) return;
+    setCheckingFree(true);
+    try {
+      const report = await api.fetchFreeFiles(item.boothId);
+      notify(freeFilesFoundMessage(report.files));
+      refresh();
+    } catch (err) {
+      fail(errorText(err));
+    } finally {
+      setCheckingFree(false);
+    }
+  }
 
   async function pull(file: DownloadView) {
     setBusy(file.filename);
@@ -477,6 +493,13 @@ export function ItemCard({
         <div id={`files-${item.boothId}`}>
           {item.downloads.length === 0 && item.localFileCount === 0 && (
             <p className="meta">ファイル情報はまだありません。再インポートするか、フォルダを調べてください</p>
+          )}
+          {offerFreeFileCheck(item, builtinBrowser) && (
+            <div className="free-file-check">
+              <button className="button" type="button" disabled={checkingFree} onClick={() => void checkFreeFiles()}>
+                {checkingFree ? FREE_FILE_CHECK_BUSY_LABEL : FREE_FILE_CHECK_LABEL}
+              </button>
+            </div>
           )}
           {item.downloads.length > 0 &&
             item.remoteConfigured &&

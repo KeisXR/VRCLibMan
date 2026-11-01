@@ -463,6 +463,11 @@ export interface JobProgress {
   message: string;
 }
 
+/** 「ファイルを取得」の結果。保存後の商品のファイル行の数。 */
+export interface FreeFilesReport {
+  files: number;
+}
+
 export interface BoothFileStatus {
   boothId: string;
   variation: string;

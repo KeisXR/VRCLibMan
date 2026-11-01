@@ -16,6 +16,7 @@ mod compat;
 mod genre;
 mod db;
 mod file_browser;
+mod free_files;
 mod import_data;
 mod integration;
 mod library_files;
@@ -283,6 +284,7 @@ pub fn run() {
             commands::close_booth_browser,
             commands::booth_browser_log,
             commands::download_booth_file,
+            commands::fetch_free_files,
             commands::open_local_path,
             commands::booth_account,
             commands::list_directory,

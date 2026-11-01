@@ -3259,6 +3259,55 @@ pub(crate) fn add_free_product(connection: &mut Connection, url: &str) -> Result
     Ok(booth_id)
 }
 
+/// The product must exist and not be excluded before the public read starts.
+pub(crate) fn free_files_target(connection: &Connection, booth_id: &str) -> Result<(), String> {
+    if product_by_id(connection, booth_id)?.is_none() {
+        return Err("商品が見つかりません".into());
+    }
+    if product_excluded(connection, booth_id)? {
+        return Err("この商品は除外されています".into());
+    }
+    Ok(())
+}
+
+/// Rows from「ファイルを取得」. Title, shop, description, category, and tags stay as they are.
+/// Returns how many rows the product has after the merge.
+pub(crate) fn store_free_files(
+    connection: &mut Connection,
+    booth_id: &str,
+    files: &[IncomingDownload],
+    is_free: Option<bool>,
+    is_adult: Option<bool>,
+) -> Result<usize, String> {
+    free_files_target(connection, booth_id)?;
+    let incoming = IncomingProduct {
+        booth_id: booth_id.to_string(),
+        title: String::new(),
+        shop: String::new(),
+        description_snippet: String::new(),
+        url: String::new(),
+        thumbnail_url: None,
+        variations: Vec::new(),
+        downloads: files.to_vec(),
+        is_free,
+        is_adult: if is_adult == Some(true) { Some(true) } else { None },
+        unpublished: None,
+        booth_category: None,
+        booth_tags: None,
+    };
+    let transaction = connection.transaction().sql()?;
+    upsert(&transaction, &incoming)?;
+    let count: i64 = transaction
+        .query_row(
+            "SELECT COUNT(*) FROM product_files WHERE booth_id = ?1",
+            params![booth_id],
+            |row| row.get(0),
+        )
+        .sql()?;
+    transaction.commit().sql()?;
+    Ok(count.max(0) as usize)
+}
+
 #[derive(Debug)]
 pub(crate) struct DownloadPlan {
     pub source: std::path::PathBuf,
@@ -9046,6 +9095,51 @@ mod tests {
             )
             .unwrap();
         assert_eq!(note, 0);
+    }
+
+    #[test]
+    fn free_files_fill_an_empty_product_without_touching_its_text() {
+        let mut connection = open_memory().unwrap();
+        let id = add_free_product(&mut connection, "https://booth.pm/ja/items/424242").unwrap();
+        connection
+            .execute(
+                "UPDATE products SET title = 'ダミー', is_free = NULL WHERE booth_id = ?1",
+                params![id],
+            )
+            .unwrap();
+        let files = vec![IncomingDownload {
+            filename: "dummy_v1.zip".into(),
+            size_bytes: None,
+            variation: String::new(),
+            downloadable_id: "9400002".into(),
+        }];
+        assert_eq!(
+            store_free_files(&mut connection, &id, &files, Some(true), Some(false)).unwrap(),
+            1
+        );
+        assert_eq!(
+            store_free_files(&mut connection, &id, &files, Some(true), Some(false)).unwrap(),
+            1
+        );
+        let (title, free, adult): (String, Option<i64>, Option<i64>) = connection
+            .query_row(
+                "SELECT title, is_free, is_adult FROM products WHERE booth_id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(title, "ダミー");
+        assert_eq!(free, Some(1));
+        assert_ne!(adult, Some(1));
+        let (downloaded, number): (i64, String) = connection
+            .query_row(
+                "SELECT downloaded, downloadable_id FROM product_files WHERE booth_id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((downloaded, number.as_str()), (0, "9400002"));
+        assert!(store_free_files(&mut connection, "999999", &files, Some(true), None).is_err());
     }
 
     #[test]

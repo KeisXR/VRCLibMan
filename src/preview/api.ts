@@ -2156,6 +2156,23 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       }
       return { loggedIn: true, displayName: "テスト利用者", pixivId: "424242", avatarUrl: "" } as T;
     }
+    case "fetch_free_files": {
+      // Preview stand-in for the public items/{id}.json read: only free products get rows.
+      const boothId = String(args.boothId ?? "");
+      const product = store.products.find((item) => item.boothId === boothId);
+      if (!product) throw new Error("商品が見つかりません");
+      if (!product.isFree) {
+        throw new Error(
+          "無料でダウンロードできるファイルはありません。有料の商品は、購入後に BOOTH のライブラリから読み込んでください",
+        );
+      }
+      for (const filename of ["ribbon_v1.zip", "ribbon_textures.zip"]) {
+        if (!store.downloads.some((row) => row.boothId === boothId && row.filename === filename)) {
+          store.downloads.push({ boothId, variation: "", filename, sizeBytes: null, state: "missing", localPath: null, remotePath: null });
+        }
+      }
+      return { files: store.downloads.filter((row) => row.boothId === boothId).length } as T;
+    }
     case "download_booth_file": {
       if (!store.settings.builtinBrowser) {
         throw new Error("内蔵ブラウザはオフです。拡張のダウンロードを使ってください");

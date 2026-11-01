@@ -23,6 +23,7 @@ import type {
   ImportReport,
   LibraryWalkReport,
   BoothFileStatus,
+  FreeFilesReport,
   JobProgress,
   Knowledge,
   LibraryStats,
@@ -219,6 +220,7 @@ export const api = {
     call<void>("pull_remote_file", { boothId, variation, filename }),
   downloadBoothFile: (boothId: string, variation: string, filename: string) =>
     call<string>("download_booth_file", { boothId, variation, filename }),
+  fetchFreeFiles: (boothId: string) => call<FreeFilesReport>("fetch_free_files", { boothId }),
   pushRemoteFile: (boothId: string, variation: string, filename: string) =>
     call<void>("push_remote_file", { boothId, variation, filename }),
   cacheThumbnails: () => call<number>("cache_thumbnails"),
