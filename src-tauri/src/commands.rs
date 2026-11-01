@@ -482,12 +482,7 @@ pub async fn list_directory(
     app: AppHandle,
     path: String,
 ) -> Result<crate::file_browser::DirListing, String> {
-    let (library, remote) = {
-        let state = app.state::<AppState>();
-        let connection = db(&state)?;
-        let settings = db::settings(&connection)?;
-        (settings.library_folder, settings.remote_library_folder)
-    };
+    let (library, remote) = library_roots(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         crate::file_browser::list_directory(&path, &library, &remote)
     })
@@ -497,8 +492,9 @@ pub async fn list_directory(
 
 /// File tab: a zip file's entries from its central directory. Nothing is extracted.
 #[tauri::command]
-pub async fn list_zip_entries(path: String) -> Result<crate::file_browser::ZipListing, String> {
-    tauri::async_runtime::spawn_blocking(move || crate::file_browser::list_zip(&path))
+pub async fn list_zip_entries(app: AppHandle, path: String) -> Result<crate::file_browser::ZipListing, String> {
+    let (library, remote) = library_roots(&app)?;
+    tauri::async_runtime::spawn_blocking(move || crate::file_browser::list_zip(&path, &library, &remote))
         .await
         .map_err(|err| format!("zip を読めません: {err}"))?
 }

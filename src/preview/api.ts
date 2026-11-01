@@ -2306,7 +2306,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
         store.settings.remoteLibraryFolder,
       ) as T;
     case "list_zip_entries":
-      return previewListZip(String(args.path ?? "")) as T;
+      return previewListZip(String(args.path ?? ""), store.settings.libraryFolder, store.settings.remoteLibraryFolder) as T;
     default:
       throw new Error(`未対応の操作です: ${command}`);
   }

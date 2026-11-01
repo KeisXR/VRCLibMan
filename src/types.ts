@@ -310,6 +310,8 @@ export interface ZipEntry {
 
 export interface ZipListing {
   path: string;
+  library: string | null;
+  remote: string | null;
   entries: ZipEntry[];
   truncated: boolean;
 }

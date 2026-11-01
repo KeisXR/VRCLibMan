@@ -128,6 +128,7 @@ export function FilesTab() {
         remembered = next;
         setLocation(next);
         setZip(listing);
+        setRoots({ library: listing.library, remote: listing.remote });
         setDraft(listing.path);
       }
       setError("");

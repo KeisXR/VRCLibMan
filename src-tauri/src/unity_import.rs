@@ -386,18 +386,25 @@ pub(crate) fn launch_with_editor(
         let mut child = openfile_command(editor, package)
             .spawn()
             .map_err(|_| "Unity を起動できませんでした。設定の「Unity」を確かめてください".to_string())?;
-        launched += 1;
         let last = index + 1 == packages.len();
         let started = std::time::Instant::now();
         let finished = loop {
             match child.try_wait() {
-                Ok(Some(_)) => break true,
-                Ok(None) if last => break false,
+                Ok(Some(status)) if status.success() => break true,
+                Ok(Some(_)) => {
+                    return Err("Unity が異常終了しました。Unity の起動状態と設定を確かめてください".into());
+                }
                 Ok(None) if started.elapsed() >= handoff_timeout => break false,
                 Ok(None) => std::thread::sleep(Duration::from_millis(200)),
-                Err(_) => break false,
+                Err(_) => {
+                    std::thread::spawn(move || {
+                        let _ = child.wait();
+                    });
+                    return Err("Unity の起動状態を確認できませんでした。Unity の画面を確かめてください".into());
+                }
             }
         };
+        launched += 1;
         if !finished {
             // エディタ本体として動き続けるプロセス。終わるまで別スレッドで待つ。
             std::thread::spawn(move || {
@@ -613,6 +620,36 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn failed_handoff_stops_before_the_next_package_and_checks_the_last_one() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = temp_root("launch-failure");
+        let log = root.join("log.txt");
+        let editor = root.join("Unity");
+        std::fs::write(
+            &editor,
+            format!("#!/bin/sh\nprintf '%s\\n' \"$2\" >> '{}'\nexit 23\n", log.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&editor, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let packages = vec![root.join("a.unitypackage"), root.join("b.unitypackage")];
+
+        for count in [2, 1] {
+            let _ = std::fs::remove_file(&log);
+            let result = launch_with_editor(
+                &editor,
+                &packages[..count],
+                Duration::from_secs(5),
+                Duration::ZERO,
+            );
+            assert!(result.unwrap_err().contains("異常終了"));
+            let passed = std::fs::read_to_string(&log).unwrap();
+            assert_eq!(passed.lines().collect::<Vec<_>>(), vec![packages[0].to_str().unwrap()]);
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn launches_one_after_another_and_stops_when_the_editor_keeps_running() {
         use std::os::unix::fs::PermissionsExt;
         let root = temp_root("launch");
@@ -623,15 +660,7 @@ mod tests {
         let packages = vec![root.join("a b.unitypackage"), root.join("c.unitypackage")];
         let result = launch_with_editor(&quick, &packages, Duration::from_secs(5), Duration::from_millis(10)).unwrap();
         assert_eq!(result, LaunchResult { launched: 2, waiting: false });
-        // 最後の 1 件は終わりを待たないので、書き終わるまで少し待つ。
-        let mut text = String::new();
-        for _ in 0..50 {
-            text = std::fs::read_to_string(&log).unwrap_or_default();
-            if text.lines().count() >= 2 {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
+        let text = std::fs::read_to_string(&log).unwrap();
         assert_eq!(
             text.lines().collect::<Vec<_>>(),
             vec![
