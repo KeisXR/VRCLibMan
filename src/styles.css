@@ -560,7 +560,7 @@ button.account-pill:hover { background: var(--hover); }
   border-radius: calc(var(--radius-control) + 4px);
   box-shadow: var(--shadow);
 }
-.search, .field input, .field select, .field textarea {
+.search, .field input:where(:not([type="checkbox"], [type="radio"], [type="file"])), .field select, .field textarea {
   background: var(--surface-secondary);
   box-shadow: none;
   border-radius: var(--radius-control);
@@ -572,13 +572,13 @@ button.account-pill:hover { background: var(--hover); }
   background: transparent;
   border-radius: var(--radius-control);
 }
-.search:focus, .field input:focus, .field select:focus, .field textarea:focus {
+.search:focus, .field input:where(:not([type="checkbox"], [type="radio"], [type="file"])):focus, .field select:focus, .field textarea:focus {
   box-shadow: inset 0 0 0 1px var(--text);
 }
 /* 入力・選択・操作は同じ文字と行高。枠の有無で高さを変えない。 */
-.search, .field input, .field select, .field textarea,
-.setting-control > input, .setting-control > select,
-.inline-control > input, .inline-control > select {
+.search, .field input:where(:not([type="checkbox"], [type="radio"], [type="file"])), .field select, .field textarea,
+.setting-control > input:where(:not([type="checkbox"], [type="radio"], [type="file"])), .setting-control > select,
+.inline-control > input:where(:not([type="checkbox"], [type="radio"], [type="file"])), .inline-control > select {
   min-height: var(--control-height);
   font-size: var(--font-control);
   line-height: 20px;
@@ -587,6 +587,7 @@ button.account-pill:hover { background: var(--hover); }
 .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: var(--space-3); }
 .field span { color: var(--text-secondary); font-size: 13px; }
 .field textarea { min-height: 88px; resize: vertical; }
+.field input:is([type="checkbox"], [type="radio"]) { width: 18px; height: 18px; padding: 0; margin: 0; align-self: flex-start; accent-color: var(--line-accent); }
 .button {
   display: inline-flex;
   align-items: center;
@@ -718,7 +719,7 @@ a.tab { display: inline-flex; align-items: center; gap: 6px; text-decoration: no
 .empty > p { margin: 0 0 var(--space-2); }
 .empty > p:last-child { margin-bottom: 0; }
 .queue-card { padding: var(--space-3); display: grid; gap: var(--space-3); }
-.queue-main { display: grid; grid-template-columns: 64px 1fr; gap: var(--space-3); }
+.queue-main { display: grid; grid-template-columns: var(--thumb-size) minmax(0, 1fr); gap: var(--space-3); }
 .checks {
   display: flex;
   flex-wrap: wrap;
@@ -1240,7 +1241,7 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .setting-copy strong { display: block; font-size: var(--font-control); line-height: 20px; font-weight: 650; }
 .setting-copy p { margin: 4px 0 0; color: var(--text-secondary); font-size: var(--font-caption); line-height: 1.5; }
 .setting-control { min-width: 0; }
-.setting-control > input, .setting-control > select, .inline-control > input, .inline-control > select { width: 100%; min-width: 0; padding: 7px 12px; border: 1px solid transparent; border-radius: var(--radius-control); background: var(--surface-secondary); }
+.setting-control > input:where(:not([type="checkbox"], [type="radio"], [type="file"])), .setting-control > select, .inline-control > input:where(:not([type="checkbox"], [type="radio"], [type="file"])), .inline-control > select { width: 100%; min-width: 0; padding: 7px 12px; border: 1px solid transparent; border-radius: var(--radius-control); background: var(--surface-secondary); }
 .field select, .setting-control > select, .inline-control > select {
   appearance: none;
   padding-right: 32px;
@@ -1422,7 +1423,7 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
   .inline-control { justify-content: flex-start; flex-wrap: wrap; }
   .scope-choices { justify-content: flex-start; }
   .setting-control .version-info { text-align: left; }
-  .inline-control > input, .inline-control > select { flex: 1 1 240px; }
+  .inline-control > input:where(:not([type="checkbox"], [type="radio"], [type="file"])), .inline-control > select { flex: 1 1 240px; }
   .knowledge-section .knowledge { grid-template-columns: 1fr; }
 }
 
@@ -1571,9 +1572,9 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
   background: var(--line-accent);
 }
 .track span { background: var(--line-accent); }
-.field input:focus, .field select:focus, .field textarea:focus,
-.setting-control > input:focus, .setting-control > select:focus,
-.inline-control > input:focus, .inline-control > select:focus {
+.field input:where(:not([type="checkbox"], [type="radio"], [type="file"])):focus, .field select:focus, .field textarea:focus,
+.setting-control > input:where(:not([type="checkbox"], [type="radio"], [type="file"])):focus, .setting-control > select:focus,
+.inline-control > input:where(:not([type="checkbox"], [type="radio"], [type="file"])):focus, .inline-control > select:focus {
   border-color: var(--line-accent);
   box-shadow: 0 0 0 1px var(--line-accent);
 }
@@ -1664,7 +1665,7 @@ html.theme-liquid .choice-row:has(input:checked) { border-color: rgba(10, 108, 2
 html.theme-liquid .scope-choices label:has(input:checked) { border-color: rgba(10, 108, 255, 0.55); background: var(--accent-soft); }
 html.theme-liquid .item.selected { box-shadow: inset 0 0 0 2px var(--accent), 0 10px 28px rgba(18, 24, 38, 0.06); }
 html.theme-liquid .switch-label input, html.theme-liquid .choice-row input, html.theme-liquid .scope-choices input { accent-color: var(--accent); }
-html.theme-liquid .search, html.theme-liquid .field input, html.theme-liquid .field select, html.theme-liquid .field textarea, html.theme-liquid .setting-control > input, html.theme-liquid .setting-control > select, html.theme-liquid .inline-control > input, html.theme-liquid .inline-control > select { background-color: rgba(255, 255, 255, 0.9);
+html.theme-liquid .search, html.theme-liquid .field input:where(:not([type="checkbox"], [type="radio"], [type="file"])), html.theme-liquid .field select, html.theme-liquid .field textarea, html.theme-liquid .setting-control > input:where(:not([type="checkbox"], [type="radio"], [type="file"])), html.theme-liquid .setting-control > select, html.theme-liquid .inline-control > input:where(:not([type="checkbox"], [type="radio"], [type="file"])), html.theme-liquid .inline-control > select { background-color: rgba(255, 255, 255, 0.9);
   border: 1px solid rgba(23, 28, 38, 0.10); }
 html.theme-liquid .toolbar .search { background: transparent; border: 0; }
 html.theme-liquid .settings-section { border-radius: var(--radius-lg); border-color: rgba(255, 255, 255, 0.8); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 1px 2px rgba(18, 24, 38, 0.04), 0 10px 28px rgba(18, 24, 38, 0.06); }
@@ -1734,7 +1735,7 @@ html.theme-liquid .card, html.theme-liquid .panel:not(.browser-chrome), html.the
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 1px 2px rgba(0, 0, 0, 0.30), 0 10px 28px rgba(0, 0, 0, 0.28); }
 html.theme-liquid .nav-link.active, html.theme-liquid .genre-link.active, html.theme-liquid .tab.active, html.theme-liquid .right-panel-tab.active, html.theme-liquid .browser-tab.active { background: rgba(255, 255, 255, 0.14);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.30), inset 0 1px 0 rgba(255, 255, 255, 0.10); }
-html.theme-liquid .search, html.theme-liquid .field input, html.theme-liquid .field select, html.theme-liquid .field textarea, html.theme-liquid .setting-control > input, html.theme-liquid .setting-control > select, html.theme-liquid .inline-control > input, html.theme-liquid .inline-control > select { background-color: rgba(20, 21, 25, 0.85);
+html.theme-liquid .search, html.theme-liquid .field input:where(:not([type="checkbox"], [type="radio"], [type="file"])), html.theme-liquid .field select, html.theme-liquid .field textarea, html.theme-liquid .setting-control > input:where(:not([type="checkbox"], [type="radio"], [type="file"])), html.theme-liquid .setting-control > select, html.theme-liquid .inline-control > input:where(:not([type="checkbox"], [type="radio"], [type="file"])), html.theme-liquid .inline-control > select { background-color: rgba(20, 21, 25, 0.85);
   border-color: rgba(255, 255, 255, 0.12); }
 html.theme-liquid .toolbar .search { background: transparent; border: 0; }
 html.theme-liquid .settings-section { border-color: rgba(255, 255, 255, 0.10);

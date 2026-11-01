@@ -65,8 +65,19 @@ test("design typography and corner geometry in Chromium", { timeout: 60000, skip
             assert.ok(contrast(metrics.captionColor, metrics.background) >= 4.5, "Small captions stay legible on the page background");
             assert.ok(metrics.subheadings.every(size => size <= Math.min(...metrics.headings)), "Nested headings must not exceed section headings");
             assert.ok(metrics.sections.every(e => !e.overflow && e.radius <= 20));
+            await evaluate("location.hash = '#/queue'");
+            await waitFor("document.querySelector('.queue-card input[type=checkbox]')");
+            const queue = await evaluate(`(() => {
+              const checkbox=document.querySelector('.queue-card input[type=checkbox]').getBoundingClientRect();
+              const row=document.querySelector('.queue-main'),thumb=row.querySelector('.thumb').getBoundingClientRect();
+              return { checkbox:{width:checkbox.width,height:checkbox.height}, thumb:thumb.width, column:parseFloat(getComputedStyle(row).gridTemplateColumns) };
+            })()`);
+            assert.ok(queue.checkbox.width <= 20 && queue.checkbox.height <= 20, "Checkboxes must not inherit text input padding or minimum height");
+            assert.ok(Math.abs(queue.thumb - queue.column) <= 1, "The compact thumbnail column matches its image width");
           }
           // A translated or long action can wrap without a pill outline squeezing its text.
+          await evaluate("location.hash = '#/settings'");
+          await waitFor("document.querySelector('#settings-design select')");
           const wrapped = await evaluate(`(() => {
             const button=document.querySelector('#settings-library .inline-control .button');
             button.style.width='140px'; button.style.whiteSpace='normal'; button.textContent='長い操作名を二行で表示しても文字が切れない';
