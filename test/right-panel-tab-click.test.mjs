@@ -93,7 +93,14 @@ test("right panel tabs switch on a real pointer click in Chromium", { timeout: 6
       assert.equal(await selected(), previewId);
     });
     await t.test("a drag past the threshold reorders without breaking the next click", async () => {
-      const span = await evaluate(`document.querySelector(${JSON.stringify(pageTab)}).getBoundingClientRect().left - document.querySelector(${JSON.stringify(previewTab)}).getBoundingClientRect().left`);
+      // Drop just inside the left edge of the first tab, well before its midpoint. Measuring
+      // from tab edges instead made the drop point depend on label widths, so it landed past
+      // the midpoint (no reorder) with the fonts on CI runners.
+      const span = await evaluate(`(() => {
+        const from = document.querySelector(${JSON.stringify(pageTab)}).getBoundingClientRect();
+        const to = document.querySelector(${JSON.stringify(previewTab)}).getBoundingClientRect();
+        return from.left + from.width / 2 - (to.left + Math.min(4, to.width / 4));
+      })()`);
       await press(pageTab, -span);
       const order = await evaluate("[...document.querySelectorAll('.right-panel-tabs [role=tab]')].map((tab) => tab.id)");
       assert.equal(order[0], pageTab.slice(1), `page tab should move to the front: ${JSON.stringify(order)}`);
