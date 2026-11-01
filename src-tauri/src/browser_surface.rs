@@ -24,10 +24,11 @@ pub const PANEL_UNSUPPORTED: &str =
 /// Largest panel rectangle accepted from the main window, in logical pixels.
 const MAX_PANEL_EDGE: f64 = 16384.0;
 
-/// Docking is implemented and checked against WebView2 first. macOS and Linux keep the
-/// separate window until the docked layout is confirmed on real machines.
+/// The docked page is a child webview of the main window.
+/// Windows uses WebView2. macOS uses the same rectangle, hide, and reparent path.
+/// Linux stays a separate window until the Gtk layout is confirmed on a real machine.
 pub const fn panel_supported() -> bool {
-    cfg!(windows)
+    cfg!(any(windows, target_os = "macos"))
 }
 
 /// The user moved a page to its own window in this session, so a later empty open uses a window.
@@ -68,10 +69,40 @@ impl SurfaceArea {
     }
     #[cfg(not(target_os = "linux"))]
     fn rect(self) -> tauri::Rect {
+        // CSS pixels are already logical points. Do not multiply by the backing scale.
         tauri::Rect {
             position: LogicalPosition::new(self.left, self.top).into(),
             size: LogicalSize::new(self.width.max(1.0), self.height.max(1.0)).into(),
         }
+    }
+}
+
+/// Wry on macOS casts a child webview's bounds to integer points and truncates.
+/// Round the edges first so a fractional CSS pixel is not short by almost 1pt.
+/// The backing scale is not applied; these values stay logical points.
+pub(crate) fn snap_logical_points(area: SurfaceArea) -> SurfaceArea {
+    let left = area.left.round();
+    let top = area.top.round();
+    let right = (area.left + area.width).round();
+    let bottom = (area.top + area.height).round();
+    SurfaceArea {
+        left,
+        top,
+        width: (right - left).max(1.0),
+        height: (bottom - top).max(1.0),
+    }
+}
+
+/// macOS child bounds are snapped. Windows keeps the fractional DIP it already uses.
+#[cfg_attr(target_os = "linux", allow(dead_code))]
+fn child_bounds(area: SurfaceArea) -> SurfaceArea {
+    #[cfg(target_os = "macos")]
+    {
+        snap_logical_points(area)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        area
     }
 }
 
@@ -446,6 +477,9 @@ fn set_view_bounds(
     _toolbar: bool,
     _fill_host: bool,
 ) -> Result<(), String> {
+    // The main window uses a full-size content view, and the page fills it, so the
+    // child's origin matches getBoundingClientRect. Do not add a titlebar inset.
+    let area = child_bounds(area);
     view.set_bounds(area.rect()).map_err(|error| error.to_string())
 }
 
@@ -1042,6 +1076,12 @@ pub fn handle_window_event(window: &Window, event: &tauri::WindowEvent) {
         return;
     }
     match event {
+        // A child webview's autoresizing mask does not follow the panel rectangle.
+        // Put the last CSS rectangle back until the page measures a new one.
+        // Resizing or a scale change does not close pages.
+        tauri::WindowEvent::Resized(_) | tauri::WindowEvent::ScaleFactorChanged { .. } => {
+            let _ = layout(window.app_handle());
+        }
         tauri::WindowEvent::Destroyed => {
             let ids = {
                 let mut state = surface();
@@ -1180,11 +1220,23 @@ pub fn open(app: &AppHandle) -> Result<(), String> {
 }
 
 fn reparent_tab(app: &AppHandle, tab_id: &str, target: &Window) -> Result<(), String> {
+    let zoom = surface()
+        .session
+        .tabs
+        .iter()
+        .find(|tab| tab.id == tab_id)
+        .map(|tab| tab.zoom_factor);
     let view = app
         .get_webview(tab_id)
         .ok_or("タブが見つかりません")?;
+    // The same webview moves, so its history and the shared data store stay.
+    // Reapply the stored page zoom in case the new host reset it. Do not navigate.
     view.reparent(target)
-        .map_err(|error| format!("ブラウザを移せません: {error}"))
+        .map_err(|error| format!("ブラウザを移せません: {error}"))?;
+    if let Some(zoom) = zoom {
+        let _ = view.set_zoom(zoom);
+    }
+    Ok(())
 }
 
 fn restore_moves(tokens: Vec<MoveToken>) {
@@ -1893,7 +1945,7 @@ mod tests {
         assert!(!start_in_panel(false, false, true));
         assert!(!start_in_panel(true, true, true));
         assert!(!start_in_panel(true, false, false));
-        assert_eq!(panel_supported(), cfg!(windows));
+        assert_eq!(panel_supported(), cfg!(any(windows, target_os = "macos")));
         assert_eq!(HostKind::Window.name(), "window");
         assert_eq!(HostKind::Panel.name(), "panel");
     }
@@ -1931,6 +1983,77 @@ mod tests {
         assert!(reparent < retire);
         assert!(body.contains("session.restore"));
         assert!(!body.contains("age_verification"));
+    }
+
+    #[test]
+    fn logical_points_are_rounded_before_macos_truncates_them() {
+        let area = snap_logical_points(SurfaceArea {
+            left: 10.6,
+            top: 20.2,
+            width: 30.4,
+            height: 40.5,
+        });
+        assert_eq!((area.left, area.top, area.width, area.height), (11.0, 20.0, 30.0, 41.0));
+        let exact = snap_logical_points(SurfaceArea {
+            left: 10.0,
+            top: 12.0,
+            width: 20.0,
+            height: 24.0,
+        });
+        assert_eq!((exact.left, exact.top, exact.width, exact.height), (10.0, 12.0, 20.0, 24.0));
+        let sliver = snap_logical_points(SurfaceArea {
+            left: 1.2,
+            top: 1.2,
+            width: 0.2,
+            height: 0.2,
+        });
+        assert_eq!((sliver.width, sliver.height), (1.0, 1.0));
+        let source = include_str!("browser_surface.rs");
+        let bounds = function_body(source, "fn set_view_bounds");
+        assert!(bounds.contains("child_bounds"));
+        assert!(bounds.contains("area.rect()"));
+        assert!(!bounds.contains("scale_factor"));
+        let rect = function_body(source, "fn rect");
+        assert!(rect.contains("LogicalPosition"));
+        assert!(rect.contains("LogicalSize"));
+        assert!(!rect.contains("scale_factor"));
+        let adjust = function_body(source, "fn child_bounds");
+        assert!(adjust.contains("target_os = \"macos\""));
+        assert!(adjust.contains("snap_logical_points"));
+    }
+
+    #[test]
+    fn resizing_the_main_window_reapplies_bounds_without_closing_pages() {
+        let source = include_str!("browser_surface.rs");
+        let body = function_body(source, "pub fn handle_window_event");
+        let resized = body.find("WindowEvent::Resized").expect("resize");
+        let scale = body.find("ScaleFactorChanged").expect("scale");
+        let laid_out = body.find("layout(").expect("reapply the last rectangle");
+        assert!(resized < laid_out);
+        assert!(scale < laid_out);
+        let destroyed = body.find("WindowEvent::Destroyed").expect("destroy");
+        assert!(laid_out < destroyed);
+        assert!(body[destroyed..].contains("take_host"));
+        assert!(!body[destroyed..].contains("layout("));
+        assert!(!body[destroyed..].contains(".close("));
+    }
+
+    #[test]
+    fn moving_a_page_keeps_the_webview_and_reapplies_zoom() {
+        let source = include_str!("browser_surface.rs");
+        let body = function_body(source, "fn reparent_tab");
+        assert!(body.contains(".reparent("));
+        assert!(body.contains("set_zoom"));
+        assert!(!body.contains("WebviewBuilder"));
+        assert!(!body.contains(".navigate("));
+        let panel_at = source.find("pub fn panel_area(").expect("panel_area");
+        let panel = &source[panel_at..source[panel_at..].find("\npub fn new_tab_on").expect("new_tab_on") + panel_at];
+        assert!(panel.contains("layout(app)"));
+        assert!(!panel.contains(".close("));
+        assert!(!panel.contains("destroy"));
+        let close_at = source.find("pub fn close_tab(").expect("close_tab");
+        let close = &source[close_at..source[close_at..].find("\npub fn reorder").expect("reorder") + close_at];
+        assert!(close.contains(".close()"));
     }
 
     #[test]

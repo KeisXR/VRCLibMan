@@ -1,5 +1,16 @@
 # 検証記録
 
+## macOS の右パネル埋め込み（2026-11-01）
+
+対象は main の `8a53d08f35e177b4113d679b8c9a915b38c7ffb6`（v0.1.19）からの作業差分です。実行環境は Linux VM（Debian 系 x86_64）、Node.js 22.23.4、Rust 1.99.1（`cargo +stable`）です。macOS 実機も Windows 実機もなく、BOOTH のアカウントや Cookie には触れていません。
+
+- `npm run build` 成功、`npm test` 110件成功。
+- `npm run test:tab-click` は Chromium で7件成功。固定タブとページタブのクリック、6px未満の揺れ、閾値を超えた並べ替えのあとのクリック、Escape を確認しました。
+- `npm run test:browser-layout` は WebKitWebDriver と Xvfb で7件成功。右パネルの表示域、全面表示、窓のサイズ変更、タブ切替でページ領域を隠して戻すこと、別窓用の操作バーを確認しました。これは見本の画面であり、macOS の子 WebView ではありません。
+- `cargo +stable test --manifest-path src-tauri/Cargo.toml --lib` は309件成功、1件 ignore。`panel_supported` が Linux では偽であること、論理ポイントの四捨五入、パネルを隠す操作が WebView を閉じないこと、タブを閉じる操作が破棄であること、移動が同じ WebView の `reparent` で倍率を掛け直すことを含みます。
+
+macOS の子 WebView の実配置、Retina、タイトルバーとの重なり、別窓との往復での履歴・ログイン・倍率、スリープ復帰は未確認です。Windows の WebView2 での既存の右パネル動作も、この環境では再確認していません。
+
 ## ブラウザの余白とページズーム（2026-11-01）
 
 対象は main の `d226827624cd0c9d9591fa76a02d5c6419d0e0e1` を基準にした `fix/browser-toolbar-zoom` の作業差分です。Codex Cloud の Debian x86_64、Node.js 24、Rust 1.99.1、GTK 3 / WebKitGTK 4.1、Xvfb で検証しました。新しい専用 XDG ディレクトリとローカル HTTP ページを使い、既存ライブラリとログイン情報は使っていません。
