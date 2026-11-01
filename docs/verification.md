@@ -1,5 +1,14 @@
 # 検証記録
 
+## macOS の WebKit プロセス終了時の復旧（2026-11-01）
+
+対象は main の `e85cbadf5c3542901684028465de0f1d0f9946eb` からの `fix/macos-webview-process-recovery` の作業差分です。Debian 13 x86_64、Rust 1.99.1、Node.js 24.19.0 で確認しました。
+
+- `cargo test --offline --locked --manifest-path src-tauri/Cargo.toml --lib` は315件成功、1件 ignore。メイン画面・操作バー・表示タブでは再読み込みコールバックを実行し、確認用 `booth-probe` では実行せず、次のアカウント確認で再生成することを回帰テストで確認しました。別の WebView の復旧が確認用の再生成フラグを消さないことも含みます。
+- `npm run build` 成功。
+
+macOS の終了コールバック自体は Linux ではコンパイル対象外です。macOS 実機で WebKit プロセスを終了させて画面が復旧することは未確認です。BOOTH のアカウントや Cookie は使用していません。
+
 ## macOS の確認用 WebView を表示タブと分けて残す（2026-11-01）
 
 対象は `b3095363210abb011953c8e069eae619f1fbdc2c` です。前段は `e1a59d9f6f34457e678e9dfad72425af873a9449`。実行環境は Ubuntu 24.04 x86_64 の Linux VM、Rust 1.99.1 です。macOS と Windows の実機はなく、BOOTH のアカウントと Cookie には触れていません。apple 向けターゲットはこの環境に無く、`target_os = "macos"` の分岐（`background_throttling` と `on_web_content_process_terminate`）はコンパイルしていません。
