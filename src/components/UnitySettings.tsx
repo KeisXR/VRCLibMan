@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, chooseUnityEditor } from "../api";
 import type { UnityEditor, UnityStatus } from "../types";
 import { errorText } from "../ui";
+import type { NotifyOptions } from "../notice";
 import { SettingRow } from "./SettingRow";
 
 const SOURCE_LABEL: Record<UnityEditor["source"], string> = {
@@ -15,7 +16,7 @@ export function unityEditorLabel(editor: UnityEditor): string {
 }
 
 /** 設定の「Unity」セクションの中身。検出はファイルを読むだけで、Unity は起動しない。 */
-export function UnitySettings({ onNotify, onFail }: { onNotify: (message: string) => void; onFail: (message: string) => void }) {
+export function UnitySettings({ onNotify, onFail }: { onNotify: (message: string, action?: undefined, options?: NotifyOptions) => void; onFail: (message: string) => void }) {
   const [status, setStatus] = useState<UnityStatus | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -24,7 +25,10 @@ export function UnitySettings({ onNotify, onFail }: { onNotify: (message: string
     try {
       const next = await api.unityEditors();
       setStatus(next);
-      if (announce) onNotify(next.editors.length ? `Unity を ${next.editors.length} 件見つけました` : "Unity が見つかりませんでした");
+      if (announce) {
+        if (next.editors.length) onNotify(`Unity を ${next.editors.length} 件見つけました`);
+        else onNotify("Unity が見つかりませんでした", undefined, { persist: true });
+      }
     } catch (err) {
       onFail(errorText(err));
     } finally {
