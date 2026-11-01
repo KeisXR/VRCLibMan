@@ -238,10 +238,12 @@ Windows では、BOOTH の窓を同期コマンドの中で作らない。WebVie
 
 初期データは `src-tauri/knowledge/seed.json`。起動時に `settings.initialized` が無いときだけ入れる。ユーザーが消した行は、次回起動で戻さない。「初期データを追加」は `INSERT OR IGNORE` で欠けている行だけ戻す。
 
-素体として結んでいるのは、作者こまど氏の商品説明で衣装の着せ替えができると確認した 4 体だけ。
+既存 DB へは `seed.json` の `revision` で一度だけ足す。`settings.seed_revision` より新しい `revision` の素体だけを入れ、その素体を入れたときだけ、所属アバターの空の `base_body` を埋める。アバターは id、`boothId`、一意な名前の順で既存行に合わせ、新しく作るときは同梱カタログと同じ `mf-<boothId>` にする。別の商品に結ばれた同名のアバターには合わせない。名前が二つに当たるときは足さない。素体グループを足すときは `revision` を上げる。
 
-- 素体 id `komado`、表示名「あまとうさぎ共通素体」
-- ライム（Lime）、プラム（Plum）、シフォン（Chiffon）、ショコラ（Chocolat）
+素体は、作者の商品説明で共通素体と書かれているものだけを結ぶ。`base_bodies.note` に引用と商品 URL を残す。
+
+- 素体 id `komado`、表示名「あまとうさぎ共通素体」: ライム（Lime）、プラム（Plum）、シフォン（Chiffon）、ショコラ（Chocolat）。同じショップのカリン、ラスク、ミルク Re、ミントは「素体あり」だけなので結ばない。
+- そのほかの組は `seed.json` の `baseBodies` を見る。
 
 別名だけで、素体は空のままにしているもの: マヌカ（Manuka / MANUKA / 마누카）、しなの（Shinano）、セレスティア（Celestia / Selestia）、ミルティナ（Milltina）、桔梗、ルルネ（rurune / Rurune）。
 
@@ -282,7 +284,7 @@ Windows では、BOOTH の窓を同期コマンドの中で作らない。WebVie
 1. 抽出規則を変えたあとは、新しい一時 DB でサンプルと実ライブラリを分類する。サンプルはライム・プラム・マヌカになり、架空ちゃんは確認に残る。契約は上の節が優先する。
 2. ログイン済みの `https://accounts.booth.pm/library` で拡張を実行し、件数がそのページの商品数と一致するか見る。DOM が違えば `extension/extract.js` と `test/extract.test.mjs` を、短い構造フィクスチャのまま直す。公開商品ページ 3 件は、現行の `section.shop__text` のままで 1 件ずつ取れる。
 3. 保存したサムネイルが WebView の asset プロトコルで表示されるか見る。取得先の 403 は `150x150` で避けている。
-4. 素体の追加はユーザーの対応表編集で足りる。シードを増やすのは一次情報の引用を note に書けるときに限る。
+4. 素体の追加はユーザーの対応表編集で足りる。シードを増やすのは一次情報の引用を note に書けるときに限り、`revision` を上げる。
 5. 名前解決、突合、詳細の出し分けを変えるときは、先に `src-tauri/src` のテストを更新する。見本の `src/preview/api.ts` は画面用なので、同じ変更が必要なら別途合わせる。
 6. スキーマを変えるときは `user_version` を上げた移行を足す。既存の `library.sqlite` を暗黙に作り直さない。
 
