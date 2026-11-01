@@ -136,6 +136,9 @@ test("page tabs fill the right panel in a real browser", { timeout: 60000 }, asy
       await wd("POST", "/window/rect", { width: 640, height: 640 });
       await wd("POST", "/url", { url: `${baseUrl}/test/fixtures/browser-panel-layout.html?standalone=1&browserPanel=0` });
       await waitFor(() => evaluate("return window.layoutFixture?.ready && !!document.querySelector('.browser-zoom')"), "standalone controls");
+      // Until the first browserState() read lands, the controls show the "open the browser"
+      // status row. Measure after that read, not on the first render.
+      await waitFor(() => evaluate("return !document.querySelector('.browser-chrome .browser-status')"), "first browser state");
       const metrics = await evaluate(`
         const box = selector => { const r = document.querySelector(selector).getBoundingClientRect(); return { top:r.top, bottom:r.bottom, left:r.left, right:r.right, height:r.height }; };
         return { tabs:box('.browser-tabs-row'), navigation:box('.browser-navigation'), tools:box('.browser-tools'), chrome:box('.browser-chrome'), zoom:box('.browser-zoom'), width:innerWidth };
