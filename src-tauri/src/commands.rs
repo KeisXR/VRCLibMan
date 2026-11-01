@@ -776,10 +776,17 @@ pub async fn browse_booth_history(app: tauri::AppHandle, forward: bool) -> Resul
 }
 
 #[tauri::command]
-pub async fn import_booth_page(app: tauri::AppHandle) -> Result<ImportReport, String> {
+pub async fn import_booth_page(
+    app: tauri::AppHandle,
+    webview: tauri::Webview,
+) -> Result<ImportReport, String> {
     // ページ読み取りの待ちを UI スレッドに載せない。
+    trusted_browser_controls(&webview)?;
     let handle = app.clone();
-    let report = tauri::async_runtime::spawn_blocking(move || crate::browser::import_current_page(&handle))
+    let caller = webview.label().to_string();
+    let report = tauri::async_runtime::spawn_blocking(move || {
+        crate::browser::import_current_page(&handle, &caller, None)
+    })
         .await
         .map_err(|err| err.to_string())??;
     let _ = app.emit("library-changed", ());
@@ -1746,10 +1753,21 @@ pub async fn cache_product_preview(
 }
 
 fn trusted_browser_controls(view: &tauri::Webview) -> Result<(), String> {
-    if matches!(view.label(), "main" | crate::browser_tabs::TOOLBAR_LABEL) {
+    let label = view.label();
+    if label == "main" || crate::browser_tabs::is_toolbar_label(label) {
         Ok(())
     } else {
         Err("この画面からブラウザを操作する権限がありません".into())
+    }
+}
+
+/// A toolbar acts on its own window. The main window passes an explicit host when it means the panel.
+fn caller_host(label: &str) -> Option<String> {
+    let inferred = crate::browser_surface::host_id_for_label(label)?;
+    if label == crate::browser_surface::PANEL_WINDOW_LABEL {
+        None
+    } else {
+        Some(inferred)
     }
 }
 
@@ -1770,21 +1788,67 @@ fn main_window_only(label: &str) -> Result<(), String> {
     deny_unknown_fields
 )]
 pub enum BrowserAction {
-    NewTab { url: Option<String> },
-    Navigate { url: String },
+    NewTab {
+        #[serde(default)]
+        url: Option<String>,
+        #[serde(default)]
+        host_id: Option<String>,
+    },
+    Navigate {
+        url: String,
+        #[serde(default)]
+        tab_id: Option<String>,
+        #[serde(default)]
+        host_id: Option<String>,
+    },
     SelectTab { tab_id: String },
     CloseTab { tab_id: String },
-    Back,
-    Forward,
-    Reload,
-    Stop,
-    ToolbarHeight { height: f64 },
-    /// Show the browser in the main window's right panel.
-    Dock { area: Option<PanelRect> },
-    /// Move the browser to its own window.
+    Back {
+        #[serde(default)]
+        tab_id: Option<String>,
+        #[serde(default)]
+        host_id: Option<String>,
+    },
+    Forward {
+        #[serde(default)]
+        tab_id: Option<String>,
+        #[serde(default)]
+        host_id: Option<String>,
+    },
+    Reload {
+        #[serde(default)]
+        tab_id: Option<String>,
+        #[serde(default)]
+        host_id: Option<String>,
+    },
+    Stop {
+        #[serde(default)]
+        tab_id: Option<String>,
+        #[serde(default)]
+        host_id: Option<String>,
+    },
+    ToolbarHeight {
+        height: f64,
+        #[serde(default)]
+        host_id: Option<String>,
+    },
+    /// Move one window's pages into the right panel, or every separate window when omitted.
+    Dock {
+        area: Option<PanelRect>,
+        #[serde(default)]
+        host_id: Option<String>,
+    },
+    /// Move the right panel's pages into one new window.
     Undock,
-    /// The right panel's browser area, or None while the panel tab is not on screen.
+    /// The right panel's page area, or None while that tab is not on screen.
     PanelArea { area: Option<PanelRect>, visible: bool },
+    ReorderTabs { host_id: String, tab_ids: Vec<String> },
+    DetachTab { tab_id: String, x: f64, y: f64 },
+    DockTab {
+        tab_id: String,
+        #[serde(default)]
+        index: Option<usize>,
+    },
 }
 
 /// A rectangle in the main window, in CSS (logical) pixels.
@@ -1826,22 +1890,68 @@ pub async fn browser_action(
     crate::browser::dispatch_ui(app, move |handle| {
         use crate::browser_surface as surface;
         match action {
-            BrowserAction::NewTab { url } => surface::new_tab(handle, url.as_deref())?,
-            BrowserAction::Navigate { url } => surface::navigate(handle, &url)?,
+            BrowserAction::NewTab { url, host_id } => {
+                match host_id.or_else(|| caller_host(&label)) {
+                    Some(host) => {
+                        surface::new_tab_on(handle, url.as_deref(), Some(host))?;
+                        if let Some(window) = surface::host_window(handle) {
+                            let _ = window.show();
+                            let _ = window.unminimize();
+                            let _ = window.set_focus();
+                        }
+                    }
+                    None => surface::new_tab(handle, url.as_deref())?,
+                }
+            }
+            BrowserAction::Navigate { url, tab_id, host_id } => {
+                let id = surface::tab_for_caller(&label, tab_id, host_id)?;
+                surface::navigate_tab(handle, &id, &url)?;
+            }
             BrowserAction::SelectTab { tab_id } => surface::select(handle, &tab_id)?,
             BrowserAction::CloseTab { tab_id } => surface::close_tab(handle, &tab_id)?,
-            BrowserAction::Back => surface::history(handle, false)?,
-            BrowserAction::Forward => surface::history(handle, true)?,
-            BrowserAction::Reload => surface::reload(handle)?,
-            BrowserAction::Stop => surface::stop(handle)?,
-            BrowserAction::ToolbarHeight { height } => surface::toolbar_height(handle, height)?,
+            BrowserAction::Back { tab_id, host_id } => {
+                let id = surface::tab_for_caller(&label, tab_id, host_id)?;
+                surface::history_tab(handle, &id, false)?;
+            }
+            BrowserAction::Forward { tab_id, host_id } => {
+                let id = surface::tab_for_caller(&label, tab_id, host_id)?;
+                surface::history_tab(handle, &id, true)?;
+            }
+            BrowserAction::Reload { tab_id, host_id } => {
+                if tab_id.is_none() && host_id.is_none() && caller_host(&label).is_none() {
+                    surface::reload(handle)?;
+                } else {
+                    let id = surface::tab_for_caller(&label, tab_id, host_id)?;
+                    surface::reload_tab(handle, &id)?;
+                }
+            }
+            BrowserAction::Stop { tab_id, host_id } => {
+                if tab_id.is_none() && host_id.is_none() && caller_host(&label).is_none() {
+                    surface::stop(handle)?;
+                } else {
+                    let id = surface::tab_for_caller(&label, tab_id, host_id)?;
+                    surface::stop_tab(handle, &id)?;
+                }
+            }
+            BrowserAction::ToolbarHeight { height, host_id } => {
+                let host = host_id.or_else(|| caller_host(&label));
+                surface::toolbar_height(handle, height, host)?;
+            }
             // The separate window's "パネルに戻す" sends no rectangle; the panel reports it next.
-            BrowserAction::Dock { area } => surface::dock(handle, panel_rect(area)?)?,
+            BrowserAction::Dock { area, host_id } => {
+                let host = host_id.or_else(|| caller_host(&label));
+                surface::dock(handle, panel_rect(area)?, host)?;
+            }
             BrowserAction::Undock => surface::undock(handle)?,
             BrowserAction::PanelArea { area, visible } => {
                 main_window_only(&label)?;
-                surface::panel_area(handle, panel_rect(area)?, visible)?
+                surface::panel_area(handle, panel_rect(area)?, visible)?;
             }
+            BrowserAction::ReorderTabs { host_id, tab_ids } => {
+                surface::reorder(handle, &host_id, &tab_ids)?;
+            }
+            BrowserAction::DetachTab { tab_id, x, y } => surface::detach_tab(handle, &tab_id, x, y)?,
+            BrowserAction::DockTab { tab_id, index } => surface::dock_tab(handle, &tab_id, index)?,
         }
         surface::state(handle)
     })
@@ -1893,4 +2003,32 @@ pub async fn delete_browser_bookmark(
         crate::browser_surface::state(handle)
     })
     .await
+}
+
+#[cfg(test)]
+mod browser_action_tests {
+    use super::BrowserAction;
+
+    #[test]
+    fn older_browser_actions_parse_and_new_fields_stay_optional() {
+        let action: BrowserAction = serde_json::from_str(r#"{"kind":"newTab"}"#).unwrap();
+        assert!(matches!(action, BrowserAction::NewTab { url: None, host_id: None }));
+        let action: BrowserAction = serde_json::from_str(r#"{"kind":"back"}"#).unwrap();
+        assert!(matches!(action, BrowserAction::Back { tab_id: None, host_id: None }));
+        let action: BrowserAction = serde_json::from_str(r#"{"kind":"undock"}"#).unwrap();
+        assert!(matches!(action, BrowserAction::Undock));
+        let action: BrowserAction = serde_json::from_str(r#"{"kind":"dock","area":null}"#).unwrap();
+        assert!(matches!(action, BrowserAction::Dock { area: None, host_id: None }));
+        let action: BrowserAction =
+            serde_json::from_str(r#"{"kind":"detachTab","tabId":"booth-tab-1","x":-10.0,"y":4.0}"#).unwrap();
+        assert!(matches!(
+            action,
+            BrowserAction::DetachTab { ref tab_id, x, y }
+                if tab_id == "booth-tab-1" && x == -10.0 && y == 4.0
+        ));
+        assert!(serde_json::from_str::<BrowserAction>(
+            r#"{"kind":"navigate","url":"https://example.com","extra":1}"#
+        )
+        .is_err());
+    }
 }

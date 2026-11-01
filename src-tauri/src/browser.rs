@@ -423,9 +423,13 @@ pub fn browse_history(app: &AppHandle, forward: bool) -> Result<(), String> {
     crate::browser_surface::history(app, forward)
 }
 
-pub fn import_current_page(app: &AppHandle) -> Result<ImportReport, String> {
+pub fn import_current_page(
+    app: &AppHandle,
+    caller: &str,
+    tab_id: Option<String>,
+) -> Result<ImportReport, String> {
     // ページの結果を待つ間、UI スレッドを止めない。待ちはコマンド側の spawn_blocking に置く。
-    let result = import_current_page_inner(app);
+    let result = import_current_page_inner(app, caller, tab_id);
     match &result {
         Ok(report) => browser_log(
             app,
@@ -439,11 +443,18 @@ pub fn import_current_page(app: &AppHandle) -> Result<ImportReport, String> {
     result
 }
 
-fn import_current_page_inner(app: &AppHandle) -> Result<ImportReport, String> {
+fn import_current_page_inner(
+    app: &AppHandle,
+    caller: &str,
+    tab_id: Option<String>,
+) -> Result<ImportReport, String> {
     browser_enabled(app)?;
     if library_walk_running() { return Err("ライブラリのインポート中です".into()); }
     browser_log(app, "インポートを開始");
-    let window = crate::browser_surface::active_view(app)?;
+    let tab_id = crate::browser_surface::tab_for_caller(caller, tab_id, None)?;
+    let window = app
+        .get_webview(&tab_id)
+        .ok_or_else(|| "選択中のタブが見つかりません".to_string())?;
     let current_url = crate::browser_url::current_url(&window)?;
     library_page_for_import(current_url.as_str())?;
     let (sender, receiver) = std::sync::mpsc::channel();
@@ -1174,7 +1185,36 @@ struct WalkRunningGuard;
 impl Drop for WalkRunningGuard {
     fn drop(&mut self) {
         WALK_RUNNING.store(false, Ordering::SeqCst);
+        clear_walk_tab();
     }
+}
+
+/// The page the library walk is reading. Later tab changes do not move the walk.
+static WALK_TAB: Mutex<Option<String>> = Mutex::new(None);
+
+pub(crate) fn walk_uses_tab(id: &str) -> bool {
+    WALK_TAB
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .as_deref()
+        == Some(id)
+}
+
+fn pinned_walk_tab(app: &AppHandle) -> Result<String, String> {
+    let mut slot = WALK_TAB.lock().unwrap_or_else(|error| error.into_inner());
+    if let Some(id) = slot.clone() {
+        if app.get_webview(&id).is_some() {
+            return Ok(id);
+        }
+    }
+    let view = crate::browser_surface::active_view(app)?;
+    let id = view.label().to_string();
+    *slot = Some(id.clone());
+    Ok(id)
+}
+
+fn clear_walk_tab() {
+    *WALK_TAB.lock().unwrap_or_else(|error| error.into_inner()) = None;
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -1287,7 +1327,8 @@ async fn pause_for(total: Duration) {
 }
 
 async fn eval_booth(app: &AppHandle, script: String) -> Result<String, String> {
-    eval_label(app, WINDOW_LABEL, script).await
+    let label = pinned_walk_tab(app)?;
+    eval_label(app, &label, script).await
 }
 
 async fn eval_label(app: &AppHandle, label: &str, script: String) -> Result<String, String> {
@@ -1385,7 +1426,10 @@ async fn navigate_booth(
             open_browser(handle)?;
         }
         browser_enabled(handle)?;
-        let window = crate::browser_surface::active_view(handle)?;
+        let id = pinned_walk_tab(handle)?;
+        let window = handle
+            .get_webview(&id)
+            .ok_or_else(|| "ブラウザが開いていません".to_string())?;
         browser_log(
             handle,
             &format!("{label} の {page} ページ目を開きます {}", public_url(&url)),

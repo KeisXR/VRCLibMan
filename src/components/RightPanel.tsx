@@ -1,7 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { api, listenBrowserPanelRequested } from "../api";
+import { api, listenBrowserChanged, listenBrowserPanelRequested } from "../api";
+import { dragOutcome, insertionIndex, pointerInsideWindow, TAB_DRAG_THRESHOLD_PX } from "../tabStrip";
 import { PREVIEW_PANE_WIDTH, clampStoredPreviewPaneWidth } from "../previewPane";
 import {
   RIGHT_PANEL_KINDS,
@@ -11,16 +12,24 @@ import {
   canAddTab,
   closeTab,
   defaultRightPanelTabs,
+  focusWebTab,
   isRightPanelShortcut,
   kindAvailable,
+  mergePanelWebTabs,
   moveTab,
   openTab,
+  pageTabsAllowed,
   parseRightPanelTabs,
+  placeTab,
   selectTab,
   serializeRightPanelTabs,
+  tabLabel,
   visibleTabs,
+  webTabIds,
 } from "../rightPanel";
 import type { RightPanelGates, RightPanelKind, RightPanelTab, RightPanelTabs } from "../rightPanel";
+import type { BrowserState } from "../types";
+import { BrowserPanelTab } from "./BrowserPanel";
 import type { ItemView } from "../types";
 import { errorText } from "../ui";
 import { ResizeSeparator } from "./ResizeSeparator";
@@ -53,6 +62,10 @@ export interface RightPanelValue {
   select: (id: string) => void;
   closeTabById: (id: string) => void;
   move: (id: string, offset: number) => void;
+  arrange: (id: string, index: number) => void;
+  /** Open a page tab in the right panel, or a separate window where the panel cannot host one. */
+  openPage: () => void;
+  detachPage: (tabId: string, x: number, y: number) => void;
   setMaximized: (value: boolean) => void;
   resize: (width: number) => void;
   commitWidth: (width: number) => void;
@@ -89,7 +102,15 @@ export function useRightPanelState(fail: (message: string) => void, gates: Right
         if (!alive) return;
         if (!dirty.current.open) setOpen(settings.previewPane);
         if (!dirty.current.width) setWidth(clampStoredPreviewPaneWidth(settings.previewPaneWidth));
-        if (!dirty.current.tabs) setTabs(parseRightPanelTabs(settings.rightPanelTabs));
+        setTabs((current) => {
+          if (dirty.current.tabs) return current;
+          const pages = current.tabs.flatMap((tab) =>
+            tab.kind === "web" && tab.tabId ? [{ tabId: tab.tabId, title: tab.title ?? "ページ" }] : [],
+          );
+          const restored = mergePanelWebTabs(parseRightPanelTabs(settings.rightPanelTabs), pages);
+          const selected = current.tabs.find((tab) => tab.id === current.activeId && tab.kind === "web");
+          return selected ? selectTab(restored, selected.id) : restored;
+        });
       },
       () => undefined,
     );
@@ -148,38 +169,96 @@ export function useRightPanelState(fail: (message: string) => void, gates: Right
     [open, saveOpen, saveTabs],
   );
 
-  // The app opened the browser in the panel (login, a BOOTH link, "パネルに戻す"): show its tab.
-  const openKindRef = useRef(openKind);
-  openKindRef.current = openKind;
+  const openRef = useRef(open);
+  openRef.current = open;
+  const saveOpenRef = useRef(saveOpen);
+  saveOpenRef.current = saveOpen;
+
+  const panelCanDock = useRef(true);
+  const applyBrowser = useCallback((state: BrowserState) => {
+    panelCanDock.current = state.panelSupported;
+    const host = state.hosts.find((item) => item.id === "panel");
+    const pages = (host?.tabIds ?? []).map((tabId) => ({
+      tabId,
+      title: state.tabs.find((tab) => tab.id === tabId)?.title || "ページ",
+    }));
+    setTabs((current) => mergePanelWebTabs(current, pages));
+  }, []);
+
   useEffect(() => {
-    if (!builtinBrowser) return;
+    if (!builtinBrowser) {
+      setTabs((current) => mergePanelWebTabs(current, []));
+      return;
+    }
     let alive = true;
-    let stop = () => {};
-    void listenBrowserPanelRequested(() => openKindRef.current("browser")).then(
+    let stopChanged = () => {};
+    let stopRequested = () => {};
+    const load = () => {
+      void api.browserState().then(
+        (state) => {
+          if (alive) applyBrowser(state);
+        },
+        () => undefined,
+      );
+    };
+    load();
+    void listenBrowserChanged(() => {
+      if (alive) load();
+    }).then(
       (unlisten) => {
-        if (alive) stop = unlisten;
+        if (alive) stopChanged = unlisten;
+        else unlisten();
+      },
+      () => undefined,
+    );
+    // A page was opened in the panel. Show that tab without closing the others.
+    void listenBrowserPanelRequested((tabId) => {
+      if (!openRef.current) saveOpenRef.current(true);
+      if (tabId) setTabs((current) => focusWebTab(current, tabId));
+    }).then(
+      (unlisten) => {
+        if (alive) stopRequested = unlisten;
         else unlisten();
       },
       () => undefined,
     );
     return () => {
       alive = false;
-      stop();
+      stopChanged();
+      stopRequested();
     };
-  }, [builtinBrowser]);
+  }, [applyBrowser, builtinBrowser]);
+
+  const syncWebOrder = useCallback(
+    (next: RightPanelTabs) => {
+      const tabIds = webTabIds(next);
+      if (!tabIds.length) return;
+      void api.browserAction({ kind: "reorderTabs", hostId: "panel", tabIds }).catch(report);
+    },
+    [report],
+  );
 
   const closeTabById = useCallback(
     (id: string) => {
-      // Closing the browser tab ends a docked session; a separate window stays open.
-      if (tabs.tabs.find((tab) => tab.id === id)?.kind === "browser") {
-        void api
-          .browserState()
-          .then((state) => (state.host === "panel" ? api.closeBoothBrowser() : undefined))
-          .catch(report);
-      }
-      saveTabs((current) => closeTab(current, id));
+      saveTabs((current) => {
+        const tab = current.tabs.find((item) => item.id === id);
+        const next = closeTab(current, id);
+        if (tab?.kind === "web" && tab.tabId) {
+          const selected = next.tabs.find((item) => item.id === next.activeId);
+          void api
+            .browserAction({ kind: "closeTab", tabId: tab.tabId })
+            .then(() => {
+              if (selected?.kind === "web" && selected.tabId) {
+                return api.browserAction({ kind: "selectTab", tabId: selected.tabId });
+              }
+              return undefined;
+            })
+            .catch(report);
+        }
+        return next;
+      });
     },
-    [report, saveTabs, tabs],
+    [report, saveTabs],
   );
 
   const togglePreview = useCallback(() => {
@@ -220,15 +299,46 @@ export function useRightPanelState(fail: (message: string) => void, gates: Right
       close: () => saveOpen(false),
       togglePreview,
       openKind,
-      select: (id: string) => saveTabs((current) => selectTab(current, id)),
+      select: (id: string) =>
+        saveTabs((current) => {
+          const next = selectTab(current, id);
+          const tab = current.tabs.find((item) => item.id === id);
+          if (tab?.kind === "web" && tab.tabId) {
+            void api.browserAction({ kind: "selectTab", tabId: tab.tabId }).catch(report);
+          }
+          return next;
+        }),
       closeTabById,
-      move: (id: string, offset: number) => saveTabs((current) => moveTab(current, id, offset)),
+      move: (id: string, offset: number) =>
+        saveTabs((current) => {
+          const next = moveTab(current, id, offset);
+          if (next !== current) syncWebOrder(next);
+          return next;
+        }),
+      arrange: (id: string, index: number) =>
+        saveTabs((current) => {
+          const next = placeTab(current, id, index);
+          if (next !== current) syncWebOrder(next);
+          return next;
+        }),
+      openPage: () => {
+        const hostId = panelCanDock.current ? "panel" : undefined;
+        void api
+          .browserAction({ kind: "newTab", hostId })
+          .then(() => {
+            if (!openRef.current) saveOpenRef.current(true);
+          })
+          .catch(report);
+      },
+      detachPage: (tabId: string, x: number, y: number) => {
+        void api.browserAction({ kind: "detachTab", tabId, x, y }).catch(report);
+      },
       setMaximized,
       resize: (next: number) => publishWidth(next, false),
       commitWidth: (next: number) => publishWidth(next, true),
       resetWidth: () => publishWidth(PREVIEW_PANE_WIDTH.default, true),
     }),
-    [open, maximized, width, tabs, stableGates, active, previewActive, preview, publishPreview, toggle, saveOpen, togglePreview, openKind, closeTabById, saveTabs, publishWidth],
+    [open, maximized, width, tabs, stableGates, active, previewActive, preview, publishPreview, toggle, saveOpen, togglePreview, openKind, closeTabById, saveTabs, publishWidth, syncWebOrder, report],
   );
 }
 
@@ -304,6 +414,18 @@ function AddTabMenu({ panel }: { panel: RightPanelValue }) {
               </button>
             );
           })}
+          {pageTabsAllowed(panel.gates) && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                panel.openPage();
+              }}
+            >
+              ブラウザ
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -313,14 +435,135 @@ function AddTabMenu({ panel }: { panel: RightPanelValue }) {
 function PanelHeader({ panel, overlay, onDismiss }: { panel: RightPanelValue; overlay: boolean; onDismiss: () => void }) {
   const shown = visibleTabs(panel.tabs, panel.gates);
   const activeId = panel.active?.id ?? null;
+  const listRef = useRef<HTMLDivElement>(null);
+  const drag = useRef<{
+    id: string;
+    tabId?: string;
+    detachable: boolean;
+    startX: number;
+    startY: number;
+    moved: boolean;
+    cancelled: boolean;
+    pointerId: number;
+    insertAt: number | null;
+  } | null>(null);
+  const [insertAt, setInsertAt] = useState<number | null>(null);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || !drag.current) return;
+      event.preventDefault();
+      event.stopPropagation();
+      drag.current.cancelled = true;
+      drag.current = null;
+      setInsertAt(null);
+      document.body.classList.remove("tab-dragging");
+    };
+    // A native dragend is not a drop outside the window.
+    const onDragEnd = () => {
+      dragOutcome({ moved: true, cancelled: false, insideWindow: false, detachable: true, dragEndOnly: true });
+    };
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("dragend", onDragEnd);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("dragend", onDragEnd);
+    };
+  }, []);
+
+  function clearDrag() {
+    drag.current = null;
+    setInsertAt(null);
+    document.body.classList.remove("tab-dragging");
+  }
+
+  function onPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return;
+    const target = event.target;
+    if (!(target instanceof Element) || target.closest(".right-panel-tab-close")) return;
+    const row = target.closest<HTMLElement>(".right-panel-tab");
+    const id = row?.dataset.tabId;
+    const tab = shown.find((item) => item.id === id);
+    if (!row || !tab) return;
+    drag.current = {
+      id: tab.id,
+      tabId: tab.kind === "web" ? tab.tabId : undefined,
+      detachable: tab.kind === "web" && Boolean(tab.tabId),
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false,
+      cancelled: false,
+      pointerId: event.pointerId,
+      insertAt: null,
+    };
+    listRef.current?.setPointerCapture?.(event.pointerId);
+  }
+
+  function onPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    const current = drag.current;
+    if (!current || event.pointerId !== current.pointerId) return;
+    if (!current.moved && Math.hypot(event.clientX - current.startX, event.clientY - current.startY) < TAB_DRAG_THRESHOLD_PX) return;
+    current.moved = true;
+    document.body.classList.add("tab-dragging");
+    const inside = pointerInsideWindow(event.clientX, event.clientY, window.innerWidth, window.innerHeight);
+    if (!inside) {
+      current.insertAt = null;
+      setInsertAt(null);
+      return;
+    }
+    const rects = [...(listRef.current?.querySelectorAll<HTMLElement>(".right-panel-tab") ?? [])].map((node) => {
+      const box = node.getBoundingClientRect();
+      return { left: box.left, width: box.width };
+    });
+    const at = insertionIndex(event.clientX, rects);
+    current.insertAt = at;
+    setInsertAt(at);
+  }
+
+  function onPointerUp(event: ReactPointerEvent<HTMLDivElement>) {
+    const current = drag.current;
+    if (!current || event.pointerId !== current.pointerId) return;
+    const outcome = dragOutcome({
+      moved: current.moved,
+      cancelled: current.cancelled,
+      insideWindow: pointerInsideWindow(event.clientX, event.clientY, window.innerWidth, window.innerHeight),
+      detachable: current.detachable,
+    });
+    const at = current.insertAt;
+    const tabId = current.tabId;
+    const id = current.id;
+    clearDrag();
+    if (outcome === "reorder" && at != null) {
+      const target = shown[at];
+      const index = target ? panel.tabs.tabs.findIndex((item) => item.id === target.id) : panel.tabs.tabs.length;
+      panel.arrange(id, index < 0 ? panel.tabs.tabs.length : index);
+    } else if (outcome === "detach" && tabId) {
+      panel.detachPage(tabId, event.screenX, event.screenY);
+    }
+  }
+
   return (
     <div className="right-panel-head">
-      <div className="right-panel-tabs" role="tablist" aria-label="右パネルのタブ">
+      <div
+        className="right-panel-tabs"
+        role="tablist"
+        aria-label="右パネルのタブ"
+        ref={listRef}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onLostPointerCapture={() => {
+          if (!drag.current?.moved) return;
+          clearDrag();
+        }}
+      >
         {shown.map((tab, index) => {
-          const info = RIGHT_PANEL_KIND_INFO[tab.kind];
+          const label = tabLabel(tab);
           const selected = tab.id === activeId;
           return (
-            <div className={selected ? "right-panel-tab active" : "right-panel-tab"} key={tab.id}>
+            <div className="right-panel-tab-slot" key={tab.id} style={{ display: "contents" }}>
+              {insertAt === index && <span className="right-panel-tab-insert" aria-hidden="true" />}
+              <div className={selected ? "right-panel-tab active" : "right-panel-tab"} data-tab-id={tab.id}>
               <button
                 type="button"
                 role="tab"
@@ -344,20 +587,22 @@ function PanelHeader({ panel, overlay, onDismiss }: { panel: RightPanelValue; ov
                   window.setTimeout(() => document.getElementById(`right-panel-tab-${next.id}`)?.focus(), 0);
                 }}
               >
-                {info.label}
+                {label}
               </button>
               <button
                 className="right-panel-tab-close"
                 type="button"
-                aria-label={`${info.label}のタブを閉じる`}
+                aria-label={`${label}のタブを閉じる`}
                 title="タブを閉じる"
                 onClick={() => panel.closeTabById(tab.id)}
               >
                 <CloseGlyph />
               </button>
+              </div>
             </div>
           );
         })}
+        {insertAt === shown.length && <span className="right-panel-tab-insert" aria-hidden="true" />}
       </div>
       <AddTabMenu panel={panel} />
       <div className="right-panel-actions">
@@ -389,6 +634,18 @@ function PanelHeader({ panel, overlay, onDismiss }: { panel: RightPanelValue; ov
 
 function PanelBody({ panel, overlay }: { panel: RightPanelValue; overlay: boolean }) {
   const active = panel.active;
+  if (active?.kind === "web") {
+    return (
+      <div
+        className="right-panel-body right-panel-body-web"
+        id="right-panel-body"
+        role="tabpanel"
+        aria-labelledby={`right-panel-tab-${active.id}`}
+      >
+        <BrowserPanelTab panel={panel} overlay={overlay} unified />
+      </div>
+    );
+  }
   if (!active) {
     return (
       <div className="right-panel-body" id="right-panel-body">

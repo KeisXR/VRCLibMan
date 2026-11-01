@@ -122,8 +122,16 @@ function PanelMessage({ text, children }: { text: string; children?: ReactNode }
   );
 }
 
-/** The right panel's browser tab. Windows docks the pages here; other systems use the separate window. */
-export function BrowserPanelTab({ overlay }: { panel: RightPanelValue; overlay: boolean }) {
+/** The right panel's page view. Windows docks the pages here; other systems use the separate window. */
+export function BrowserPanelTab({
+  overlay,
+  unified = false,
+}: {
+  panel: RightPanelValue;
+  overlay: boolean;
+  /** The parent strip already shows the page tabs. */
+  unified?: boolean;
+}) {
   const { refresh, refreshAccount, fail } = useShell();
   const { info, reload } = useBrowserHost();
   const [working, setWorking] = useState(false);
@@ -193,6 +201,8 @@ export function BrowserPanelTab({ overlay }: { panel: RightPanelValue; overlay: 
     <div className="browser-panel">
       <BrowserChrome
         panel
+        hostId="panel"
+        showPageTabs={!unified}
         onImported={() => {
           refresh();
           refreshAccount();
