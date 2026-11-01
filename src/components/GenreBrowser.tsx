@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ItemCard } from "../pages/AvatarDetailPage";
 import { GENRE_FREE, GENRE_LABEL, GENRE_UNSET, genresForKind } from "../types";
 import type { GenreKind } from "../types";
@@ -7,8 +7,7 @@ import { filterItems, genreHref, selectedGenre } from "../genreBrowseUtils";
 import { useRemoteProductProbe } from "../remoteProductProbe";
 import { isPreviewMoveKey, nextPreviewId, previewKeysBlocked } from "../previewPane";
 import { GenreTarget } from "./GenreColumn";
-import { PreviewOverlay, PreviewPane, useLargePreview, usePreviewOpen, usePreviewPaneWidth } from "./PreviewPane";
-import { ResizeSeparator } from "./ResizeSeparator";
+import { useRightPanel } from "./RightPanel";
 
 const NOUN: Record<string, string> = { asset: "アセット", world: "ワールド" };
 
@@ -17,11 +16,10 @@ export { filterItems, genreHref, selectedGenre } from "../genreBrowseUtils";
 export function GenreBrowser({ title, lede }: { title: string; lede?: string }) {
   const { kind, basePath, routeGenre, selected, data, error, narrowLayout, reload, draggingId, setDraggingId, moveProduct } = useGenreBrowse();
   const [filter, setFilter] = useState("");
-  const [previewOpen, togglePreview] = usePreviewOpen();
-  const [windowWidth, setWindowWidth] = useState(() => (typeof window === "undefined" ? 1280 : window.innerWidth));
-  const [splitWidth, setSplitWidth] = useState<number | null>(null);
-  const splitRef = useRef<HTMLDivElement>(null);
-  const previewWidth = usePreviewPaneWidth(windowWidth, splitWidth);
+  const panel = useRightPanel();
+  const { publishPreview } = panel;
+  // Rows are selectable while the right panel shows its preview tab.
+  const previewOpen = panel.previewActive;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const keyboardMove = useRef(false);
   const current = data;
@@ -36,29 +34,19 @@ export function GenreBrowser({ title, lede }: { title: string; lede?: string }) 
   const selectedLabel = selected ? GENRE_LABEL[selected] ?? selected : "すべて";
   const unknownGenre = routeGenre != null && routeGenre !== "" && selectedGenre(kind, routeGenre) === null;
   const selectedItem = selectedId ? probedMap.get(selectedId) ?? shown.find((item) => item.boothId === selectedId) ?? null : null;
-  const preview = useLargePreview(previewOpen ? selectedItem : null, previewOpen && selectedItem != null);
   const tabStopId = selectedId ?? shownIds[0] ?? null;
-  const closePreview = () => setSelectedId(null);
+  const clearSelection = useCallback(() => setSelectedId(null), []);
+  const publishedItem = previewOpen ? selectedItem : null;
+
+  useEffect(() => {
+    publishPreview({ item: publishedItem, clear: clearSelection });
+  }, [publishPreview, publishedItem, clearSelection]);
+
+  useEffect(() => () => publishPreview(null), [publishPreview]);
 
   useEffect(() => {
     if (selectedId && !shownIds.includes(selectedId)) setSelectedId(null);
   }, [shownIds, selectedId]);
-
-  useEffect(() => {
-    const onResize = () => setWindowWidth(window.innerWidth);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
-
-  useEffect(() => {
-    const node = splitRef.current;
-    if (!node) return;
-    const measure = () => setSplitWidth(node.clientWidth);
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [previewOpen, narrowLayout, shown.length]);
 
   useEffect(() => {
     if (!keyboardMove.current || !selectedId) return;
@@ -110,16 +98,6 @@ export function GenreBrowser({ title, lede }: { title: string; lede?: string }) 
         );
       })}
     </div>
-  );
-
-  const pane = (
-    <PreviewPane
-      item={selectedItem}
-      largePath={preview.largePath}
-      phase={preview.phase}
-      onReveal={preview.reveal}
-      onClose={narrowLayout ? closePreview : undefined}
-    />
   );
 
   return (
@@ -192,8 +170,8 @@ export function GenreBrowser({ title, lede }: { title: string; lede?: string }) 
             className="button"
             type="button"
             aria-pressed={previewOpen}
-            aria-controls="asset-preview"
-            onClick={togglePreview}
+            aria-controls="right-panel"
+            onClick={panel.togglePreview}
           >
             プレビュー
           </button>
@@ -236,39 +214,12 @@ export function GenreBrowser({ title, lede }: { title: string; lede?: string }) 
         <p className="empty">「{selectedLabel}」の商品はまだありません。</p>
       ) : shown.length === 0 ? (
         <p className="empty">条件に合う商品はありません。</p>
-      ) : previewOpen && !narrowLayout ? (
-        <div
-          ref={splitRef}
-          className="split with-side"
-          style={{ ["--preview-width" as string]: `${previewWidth.width}px` }}
-        >
-          <div>
-            <p className="meta genre-result" role="status">
-              {selectedLabel} {shown.length} 件
-            </p>
-            {list}
-          </div>
-          <ResizeSeparator
-            label="プレビューの幅"
-            value={previewWidth.width}
-            min={previewWidth.min}
-            max={previewWidth.max}
-            grows="left"
-            onChange={previewWidth.resize}
-            onCommit={previewWidth.commit}
-            onReset={previewWidth.reset}
-          />
-          <div className="preview-column">{pane}</div>
-        </div>
       ) : (
         <>
           <p className="meta genre-result" role="status">
             {selectedLabel} {shown.length} 件
           </p>
           {list}
-          {previewOpen && narrowLayout && selectedItem && (
-            <PreviewOverlay onClose={closePreview}>{pane}</PreviewOverlay>
-          )}
         </>
       )}
     </section>

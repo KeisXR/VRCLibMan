@@ -18,6 +18,7 @@ import { AppUpdaterProvider, useStartupUpdateCheck } from "./useAppUpdater";
 import { SidebarUpdaterBadge } from "./components/SidebarUpdaterBadge";
 import type { BoothAccount, JobProgress, LibraryStats } from "./types";
 import { SidebarClassificationHint } from "./components/SidebarClassificationHint";
+import { RightPanelColumn, RightPanelProvider, useRightPanelState } from "./components/RightPanel";
 import { errorText } from "./ui";
 
 type Page = "avatars" | "avatar" | "assets" | "worlds" | "queue" | "import" | "settings" | "browser";
@@ -269,10 +270,11 @@ export default function App() {
         : "";
   const browseKind = route.page === "assets" ? "asset" : route.page === "worlds" ? "world" : null;
   const browseBase = browseKind === "asset" ? "#/assets" : "#/worlds";
-  const layout = useAppLayout(browseKind !== null);
+  const rightPanel = useRightPanelState(fail);
+  const layout = useAppLayout(browseKind !== null, rightPanel);
 
   const mainPane = (
-    <div className="main" ref={contentRef}>
+    <div className="main" ref={contentRef} hidden={layout.panelMaximized}>
       <div className="topbar">
         {error && <div className="banner error">{error}</div>}
         {notice && (
@@ -327,6 +329,7 @@ export default function App() {
   return (
     <AppUpdaterProvider>
     <ShellContext.Provider value={shell}>
+    <RightPanelProvider value={rightPanel}>
       {setupComplete === false && <SetupWizard onDone={() => { setSetupComplete(true); refresh(); }} />}
       <div className="app app-shell" style={layout.gridStyle}>
         <aside className="rail">
@@ -430,7 +433,14 @@ export default function App() {
         ) : (
           mainPane
         )}
+        <RightPanelColumn
+          panel={rightPanel}
+          docked={layout.panelDocked}
+          width={layout.panelWidth}
+          maxWidth={layout.panelMax}
+        />
       </div>
+    </RightPanelProvider>
     </ShellContext.Provider>
     </AppUpdaterProvider>
   );
