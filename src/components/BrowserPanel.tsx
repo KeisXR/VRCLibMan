@@ -122,7 +122,7 @@ function PanelMessage({ text, children }: { text: string; children?: ReactNode }
   );
 }
 
-/** The right panel's page view. Windows docks the pages here; other systems use the separate window. */
+/** The right panel's page view. Windows and macOS dock pages here; Linux uses the separate window. */
 export function BrowserPanelTab({
   overlay,
   unified = false,
@@ -157,7 +157,7 @@ export function BrowserPanelTab({
   if (!info) return <PanelMessage text="ブラウザを確認しています…" />;
   if (!info.panelSupported) {
     return (
-      <PanelMessage text="この環境では、ブラウザは別ウィンドウで開きます（右パネルへの表示は Windows で使えます）。">
+      <PanelMessage text="この環境では、ブラウザは別ウィンドウで開きます（右パネルへの表示は Windows と macOS で使えます）。">
         <button className="button primary" type="button" disabled={working} onClick={raiseWindow}>
           {info.open ? "ブラウザを前面に" : "別ウィンドウで開く"}
         </button>
