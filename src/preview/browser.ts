@@ -1,10 +1,23 @@
 import type {
   BrowserAction,
   BrowserBookmark,
+  BrowserHostKind,
+  BrowserPanelRect,
   BrowserState,
   BrowserTab,
 } from "../types";
 const listeners = new Set<() => void>();
+const panelListeners = new Set<() => void>();
+/** Preview stand-in for the "browser-panel-requested" event the app emits after docking. */
+export function onPreviewBrowserPanelRequested(listener: () => void) {
+  panelListeners.add(listener);
+  return () => {
+    panelListeners.delete(listener);
+  };
+}
+function requestPanel() {
+  for (const listener of panelListeners) listener();
+}
 function changed() {
   for (const listener of listeners) listener();
 }
@@ -21,6 +34,29 @@ interface PreviewTab extends BrowserTab {
 }
 let tabs: PreviewTab[] = [];
 let activeId: string | null = null;
+let host: BrowserHostKind | null = null;
+let preferWindow = false;
+let panelArea: { area: BrowserPanelRect | null; visible: boolean } = { area: null, visible: false };
+/** `?browserPanel=0` previews an OS without the docked browser (macOS and Linux today). */
+function panelSupported() {
+  return !(
+    typeof location !== "undefined" &&
+    new URLSearchParams(location.search).get("browserPanel") === "0"
+  );
+}
+/** The last rectangle the right panel reported, for checks in the browser preview. */
+export function previewBrowserPanelArea() {
+  return { area: panelArea.area ? { ...panelArea.area } : null, visible: panelArea.visible };
+}
+/** Same rule as `start_in_panel` in `src-tauri/src/browser_surface.rs`. */
+function startHost(): BrowserHostKind {
+  return panelSupported() && !preferWindow ? "panel" : "window";
+}
+function ensureHost() {
+  if (host) return;
+  host = startHost();
+  if (host === "panel") requestPanel();
+}
 let nextId = 1;
 const defaults = [
   { title: "BOOTH", url: "https://booth.pm/" },
@@ -103,15 +139,37 @@ export function previewBrowserState(): BrowserState {
     })),
     bookmarks: bookmarks.map((item) => ({ ...item })),
     busy: false,
+    host,
+    panelSupported: panelSupported(),
   };
 }
 export function previewBrowserAction(action: BrowserAction): BrowserState {
-  if (action.kind === "newTab") add(action.url);
-  else if (action.kind === "navigate") {
+  if (action.kind === "newTab") {
+    add(action.url);
+    ensureHost();
+  } else if (action.kind === "dock") {
+    if (!panelSupported())
+      throw new Error("この環境ではブラウザを右パネルに表示できません。別ウィンドウで開きます");
+    preferWindow = false;
+    if (!tabs.length) add();
+    host = "panel";
+    panelArea = { area: action.area, visible: action.area != null };
+    requestPanel();
+  } else if (action.kind === "undock") {
+    preferWindow = true;
+    if (!tabs.length) add();
+    host = "window";
+    panelArea = { area: null, visible: false };
+  } else if (action.kind === "panelArea") {
+    if (host === "panel")
+      panelArea = { area: action.area, visible: action.visible && action.area != null };
+  } else if (action.kind === "navigate") {
     const target = url(action.url);
     const tab = active();
-    if (!tab) add(target);
-    else {
+    if (!tab) {
+      add(target);
+      ensureHost();
+    } else {
       tab.entries = [...tab.entries.slice(0, tab.index + 1), target];
       tab.index++;
       update(tab);
@@ -126,6 +184,7 @@ export function previewBrowserAction(action: BrowserAction): BrowserState {
     tabs.splice(index, 1);
     if (activeId === action.tabId)
       activeId = tabs[Math.min(index, tabs.length - 1)]?.id ?? null;
+    if (!tabs.length) host = null;
   } else if (action.kind === "back" || action.kind === "forward") {
     const tab = active();
     if (tab) {
@@ -186,15 +245,26 @@ export function previewDeleteBookmark(target: string): BrowserState {
 }
 export function previewOpenBrowser() {
   if (!active()) add();
+  if (host === "panel") requestPanel();
+  ensureHost();
   changed();
 }
 export function previewCloseBrowser() {
   tabs = [];
   activeId = null;
+  host = null;
+  panelArea = { area: null, visible: false };
   changed();
+}
+/** Test helper: forget the session and the "open in its own window" choice. */
+export function resetPreviewBrowser() {
+  previewCloseBrowser();
+  preferWindow = false;
 }
 if (
   typeof location !== "undefined" &&
   new URLSearchParams(location.search).get("browserToolbar") === "1"
-)
+) {
   add();
+  host = "window";
+}

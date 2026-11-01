@@ -1283,7 +1283,7 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .exclusion-list .button { flex: 0 0 auto; }
 @media (max-width: 760px) { .exclusion-filters { grid-template-columns: 1fr; } }
 
-/* Browser controls are usable in their own window or inside a future docked panel. */
+/* Browser controls are used in their own window, on the browser page and in the right panel. */
 .browser-toolbar-window { overflow: hidden; }
 .browser-chrome { width: 100%; background: var(--bg); color: var(--text); font-size: 13px; }
 .browser-chrome.embedded { margin-top: 12px; border: 1px solid var(--line); border-radius: var(--radius-control); overflow: hidden; }
@@ -1296,18 +1296,40 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .browser-chrome .browser-window-controls button { display: grid; place-items: center; width: 46px; padding: 0; border-radius: 0; }
 .browser-window-controls svg { fill: none; stroke: currentColor; stroke-width: 1; }
 .browser-chrome .browser-window-controls .browser-window-close:hover:not(:disabled) { color: #fff; background: #c42b1c; }
-.browser-tabs { display: flex; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: thin; }
-.browser-tab { display: flex; align-items: center; flex: 0 1 210px; min-width: 95px; border-radius: 8px 8px 0 0; }
-.browser-tab.active { background: var(--surface); }
-.browser-tab [role=tab] { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; height: 36px; padding: 0 10px; text-align: left; background: none; }
-.browser-tab [role=tab] span:last-child { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.browser-tab-close { flex: 0 0 26px; padding: 0; height: 26px; background: none; }
+/* Browser tabs follow the right panel's pill tabs: one shape for every tab strip in the app. */
+.browser-tabs { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.browser-tab {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 1 200px;
+  min-width: 96px;
+  border-radius: var(--radius-pill);
+  color: var(--text-secondary);
+  transition: background-color var(--motion) ease, color var(--motion) ease;
+}
+.browser-tab:hover { background: var(--hover); color: var(--text); }
+.browser-tab.active { background: var(--surface); color: var(--text); font-weight: 650; box-shadow: var(--shadow); }
+.browser-chrome .browser-tab [role=tab] { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; height: 28px; padding: 0 4px 0 12px; text-align: left; background: transparent; color: inherit; font-weight: inherit; }
+.browser-chrome .browser-tab [role=tab]:hover:not(:disabled) { background: transparent; }
+.browser-tab-title { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.browser-tab-loading { flex: 0 0 10px; width: 10px; height: 10px; box-sizing: border-box; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: browser-tab-spin 800ms linear infinite; }
+@keyframes browser-tab-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .browser-tab-loading { animation: none; border-right-color: currentColor; opacity: .6; } }
+.browser-chrome .browser-tab-close { display: inline-grid; place-items: center; flex: 0 0 22px; width: 22px; height: 22px; margin-right: 4px; padding: 0; border-radius: var(--radius-pill); background: transparent; color: var(--text-secondary); opacity: 0; transition: background-color var(--motion) ease, color var(--motion) ease, opacity var(--motion) ease; }
+.browser-tab:hover .browser-tab-close,
+.browser-tab.active .browser-tab-close,
+.browser-chrome .browser-tab-close:focus-visible { opacity: 1; }
+.browser-chrome .browser-tab-close:hover:not(:disabled) { color: var(--text); }
+.browser-chrome .glyph { fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.browser-chrome .glyph.filled { fill: currentColor; }
+.browser-tabs-row .browser-new-tab { align-self: center; flex-basis: 28px; width: 28px; height: 28px; border-radius: var(--radius-pill); }
 .browser-navigation { display: flex; align-items: center; gap: 4px; height: 44px; padding: 4px 8px; box-sizing: border-box; background: var(--surface); }
 .browser-chrome button { appearance: none; border: 0; border-radius: 6px; background-color: transparent; box-shadow: none; cursor: pointer; white-space: nowrap; }
 .browser-chrome button:hover:not(:disabled) { background-color: var(--hover); }
 .browser-chrome .button.primary { background: var(--button); color: var(--button-text); }
 .browser-chrome button:disabled { cursor: default; opacity: .4; }
-.browser-icon { flex: 0 0 32px; height: 32px; padding: 0; font-size: 19px; background: none; }
+.browser-icon { display: inline-grid; place-items: center; flex: 0 0 32px; height: 32px; padding: 0; font-size: 19px; background: none; color: var(--text-secondary); }
+.browser-icon:hover:not(:disabled) { color: var(--text); }
 .browser-address { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 100px; }
 .browser-address input { width: 100%; min-width: 0; height: 32px; box-sizing: border-box; border: 1px solid var(--line); border-radius: 8px; background: var(--sunken); padding: 0 10px; }
 .browser-address button { height: 30px; padding: 0 10px; }
@@ -1326,6 +1348,16 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
   .browser-navigation > .browser-icon:nth-child(4) { display: none; }
 }
 @container (max-width: 360px) { .browser-address > button { display: none; } }
+/* Right panel browser tab: the controls, then the area the docked pages are placed over. */
+.right-panel-body.right-panel-body-browser { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.browser-panel { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.browser-chrome.panel { margin-top: 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; flex-shrink: 0; }
+.browser-chrome.panel .browser-address { min-width: 64px; }
+.browser-chrome.panel .browser-tabs-row { height: 40px; align-items: center; }
+.browser-panel-viewport { position: relative; flex: 1 1 auto; min-height: 0; display: grid; place-items: center; padding: var(--space-4); background: var(--surface); }
+.browser-panel-viewport .meta { margin: 0; max-width: 28em; text-align: center; font-size: 13px; }
+.browser-panel-message .row-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; }
+.right-panel-body-browser > .browser-panel-message { padding: var(--space-4) var(--space-3); }
 .app-updater { width: 100%; }
 .setting-control .app-updater {
   display: flex;

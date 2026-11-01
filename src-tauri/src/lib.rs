@@ -80,6 +80,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .on_window_event(|window, event| {
             presence::handle_main_close(window, event);
+            browser_surface::handle_window_event(window, event);
         })
         .setup(|app| {
             use tauri_plugin_deep_link::DeepLinkExt;
@@ -272,6 +273,7 @@ pub fn run() {
             commands::close_booth_browser,
             commands::booth_browser_log,
             commands::download_booth_file,
+            commands::open_local_path,
             commands::booth_account,
             commands::list_directory,
             commands::list_zip_entries,

@@ -829,8 +829,34 @@ pub async fn download_booth_file(
     booth_id: String,
     variation: String,
     filename: String,
-) -> Result<(), String> {
+) -> Result<String, String> {
     crate::browser::download_one_file(app, booth_id, variation, filename).await
+}
+
+/// スキャン済みファイルと、記録済みの商品ファイルだけを既定のアプリで開く。
+/// JS 側の opener に open-path 権限を足さず、Rust で登録済みのパスか確かめてから開く。
+#[tauri::command]
+pub async fn open_local_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let known = {
+            let state = app.state::<AppState>();
+            let connection = state
+                .db
+                .lock()
+                .map_err(|_| "データベースをロックできません".to_string())?;
+            db::is_known_local_path(&connection, &path)?
+        };
+        if !known {
+            return Err("ライブラリに登録されていない場所は開けません".to_string());
+        }
+        if std::fs::symlink_metadata(&path).is_err() {
+            return Err("ファイルが見つかりません。フォルダを調べ直してください".to_string());
+        }
+        tauri_plugin_opener::open_path(&path, None::<&str>)
+            .map_err(|_| "ファイルを開けませんでした".to_string())
+    })
+    .await
+    .map_err(|err| format!("ファイルを開けません: {err}"))?
 }
 
 #[tauri::command]
@@ -1727,6 +1753,15 @@ fn trusted_browser_controls(view: &tauri::Webview) -> Result<(), String> {
     }
 }
 
+/// Only the main window measures its own right panel.
+fn main_window_only(label: &str) -> Result<(), String> {
+    if label == crate::browser_surface::PANEL_WINDOW_LABEL {
+        Ok(())
+    } else {
+        Err("この画面からブラウザの表示場所は変えられません".into())
+    }
+}
+
 #[derive(serde::Deserialize)]
 #[serde(
     tag = "kind",
@@ -1744,6 +1779,31 @@ pub enum BrowserAction {
     Reload,
     Stop,
     ToolbarHeight { height: f64 },
+    /// Show the browser in the main window's right panel.
+    Dock { area: Option<PanelRect> },
+    /// Move the browser to its own window.
+    Undock,
+    /// The right panel's browser area, or None while the panel tab is not on screen.
+    PanelArea { area: Option<PanelRect>, visible: bool },
+}
+
+/// A rectangle in the main window, in CSS (logical) pixels.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PanelRect {
+    left: f64,
+    top: f64,
+    width: f64,
+    height: f64,
+}
+
+fn panel_rect(
+    rect: Option<PanelRect>,
+) -> Result<Option<crate::browser_surface::SurfaceArea>, String> {
+    rect.map(|rect| {
+        crate::browser_surface::SurfaceArea::from_panel(rect.left, rect.top, rect.width, rect.height)
+    })
+    .transpose()
 }
 
 #[tauri::command]
@@ -1762,6 +1822,7 @@ pub async fn browser_action(
     action: BrowserAction,
 ) -> Result<crate::browser_tabs::BrowserState, String> {
     trusted_browser_controls(&webview)?;
+    let label = webview.label().to_string();
     crate::browser::dispatch_ui(app, move |handle| {
         use crate::browser_surface as surface;
         match action {
@@ -1774,6 +1835,13 @@ pub async fn browser_action(
             BrowserAction::Reload => surface::reload(handle)?,
             BrowserAction::Stop => surface::stop(handle)?,
             BrowserAction::ToolbarHeight { height } => surface::toolbar_height(handle, height)?,
+            // The separate window's "パネルに戻す" sends no rectangle; the panel reports it next.
+            BrowserAction::Dock { area } => surface::dock(handle, panel_rect(area)?)?,
+            BrowserAction::Undock => surface::undock(handle)?,
+            BrowserAction::PanelArea { area, visible } => {
+                main_window_only(&label)?;
+                surface::panel_area(handle, panel_rect(area)?, visible)?
+            }
         }
         surface::state(handle)
     })

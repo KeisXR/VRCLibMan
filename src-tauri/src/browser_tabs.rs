@@ -129,6 +129,10 @@ pub struct BrowserState {
     pub active_id: Option<String>,
     pub bookmarks: Vec<Bookmark>,
     pub busy: bool,
+    /// Where the tabs are shown: "window" (separate window), "panel" (main window's right panel), or none.
+    pub host: Option<&'static str>,
+    /// This build can place the tabs in the main window's right panel.
+    pub panel_supported: bool,
 }
 
 pub struct TabSession {

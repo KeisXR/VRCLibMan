@@ -612,6 +612,8 @@ struct BoothFileStatus {
     filename: String,
     phase: String,
     message: String,
+    /// 完了時だけ、ライブラリへ移した先の絶対パス。それ以外は null。
+    path: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -830,15 +832,21 @@ fn emit_file_status(
     phase: &str,
     message: &str,
 ) {
+    emit_file_status_with_path(app, booth_id, variation, filename, phase, message, None);
+}
+
+fn emit_file_status_with_path(
+    app: &AppHandle,
+    booth_id: &str,
+    variation: &str,
+    filename: &str,
+    phase: &str,
+    message: &str,
+    path: Option<&std::path::Path>,
+) {
     let _ = app.emit(
         "booth-file-download",
-        BoothFileStatus {
-            booth_id: booth_id.to_string(),
-            variation: variation.to_string(),
-            filename: filename.to_string(),
-            phase: phase.to_string(),
-            message: message.to_string(),
-        },
+        file_status(booth_id, variation, filename, phase, message, path),
     );
     let (current, total) = if phase == "done" { (1, 1) } else { (0, 0) };
     let _ = app.emit(
@@ -850,6 +858,24 @@ fn emit_file_status(
             message: message.to_string(),
         },
     );
+}
+
+fn file_status(
+    booth_id: &str,
+    variation: &str,
+    filename: &str,
+    phase: &str,
+    message: &str,
+    path: Option<&std::path::Path>,
+) -> BoothFileStatus {
+    BoothFileStatus {
+        booth_id: booth_id.to_string(),
+        variation: variation.to_string(),
+        filename: filename.to_string(),
+        phase: phase.to_string(),
+        message: message.to_string(),
+        path: path.map(|path| path.display().to_string()),
+    }
 }
 
 struct ProbeTurn;
@@ -1005,7 +1031,7 @@ pub async fn download_one_file(
     booth_id: String,
     variation: String,
     filename: String,
-) -> Result<(), String> {
+) -> Result<String, String> {
     if library_walk_running() {
         return Err("ライブラリのインポート中です。終わってからダウンロードしてください".into());
     }
@@ -1098,18 +1124,19 @@ pub async fn download_one_file(
     .await
     .map_err(|err| format!("ファイルを移動できません: {err}"))?;
     match committed {
-        Ok(_) => {
-            emit_file_status(
+        Ok(placed) => {
+            emit_file_status_with_path(
                 &app,
                 &booth_id,
                 &variation,
                 &filename,
                 "done",
                 "ライブラリに移しました",
+                Some(&placed),
             );
             browser_log(&app, "ファイルをライブラリへ移しました");
             let _ = app.emit("library-changed", ());
-            Ok(())
+            Ok(placed.display().to_string())
         }
         Err(err) => {
             if err == db::BROWSER_LOGIN_MESSAGE {
@@ -2036,6 +2063,22 @@ mod tests {
             .unwrap();
         assert_eq!(unnamed, "2336028");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn finished_download_status_carries_the_library_path() {
+        let placed = std::path::Path::new("/lib/4242/pack.zip");
+        let done = serde_json::to_value(file_status("4242", "", "pack.zip", "done", "ライブラリに移しました", Some(placed))).unwrap();
+        assert_eq!(done["phase"], "done");
+        assert_eq!(done["boothId"], "4242");
+        assert_eq!(done["path"], placed.display().to_string());
+        let receiving = serde_json::to_value(file_status("4242", "", "pack.zip", "receiving", "ダウンロード中", None)).unwrap();
+        assert!(receiving["path"].is_null());
+        let production = include_str!("browser.rs").split("mod tests").next().unwrap();
+        let download = function_body(production, "fn download_one_file");
+        assert!(download.contains("Ok(placed) =>"));
+        assert!(download.contains("Some(&placed)"));
+        assert!(!download.contains("Ok(_) =>"));
     }
 
     #[test]

@@ -38,15 +38,27 @@ function decodePart(value: string): string {
   }
 }
 
+export interface NoticeAction {
+  label: string;
+  run: () => void;
+}
+
 interface Notice {
   message: string;
-  undo?: () => void;
+  action?: NoticeAction;
+}
+
+/** 関数だけを渡したときは、これまでどおり「元に戻す」として出す。 */
+export function noticeAction(action?: NoticeAction | (() => void)): NoticeAction | undefined {
+  if (!action) return undefined;
+  if (typeof action === "function") return { label: "元に戻す", run: action };
+  return action;
 }
 
 interface ShellValue {
   revision: number;
   refresh: () => void;
-  notify: (message: string, undo?: () => void) => void;
+  notify: (message: string, action?: NoticeAction | (() => void)) => void;
   fail: (message: string) => void;
   builtinBrowser: boolean;
   refreshAccount: () => void;
@@ -100,9 +112,9 @@ export default function App() {
   const contentRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(() => setRevision((value) => value + 1), []);
-  const notify = useCallback((message: string, undo?: () => void) => {
+  const notify = useCallback((message: string, action?: NoticeAction | (() => void)) => {
     setError(null);
-    setNotice({ message, undo });
+    setNotice({ message, action: noticeAction(action) });
   }, []);
   const fail = useCallback((message: string) => {
     setNotice(null);
@@ -261,7 +273,7 @@ export default function App() {
         : "";
   const browseKind = route.page === "assets" ? "asset" : route.page === "worlds" ? "world" : null;
   const browseBase = browseKind === "asset" ? "#/assets" : "#/worlds";
-  const rightPanel = useRightPanelState(fail);
+  const rightPanel = useRightPanelState(fail, { builtinBrowser });
   const layout = useAppLayout(browseKind !== null, rightPanel);
 
   const mainPane = (
@@ -271,17 +283,17 @@ export default function App() {
         {notice && (
           <div className="banner notice" role="status">
             <span>{notice.message}</span>
-            {notice.undo && (
+            {notice.action && (
               <button
                 className="button"
                 type="button"
                 onClick={() => {
-                  const undo = notice.undo;
+                  const action = notice.action;
                   setNotice(null);
-                  undo?.();
+                  action?.run();
                 }}
               >
-                元に戻す
+                {notice.action.label}
               </button>
             )}
           </div>

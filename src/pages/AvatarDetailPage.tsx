@@ -8,7 +8,12 @@ import { FileMark, Thumb, errorText } from "../ui";
 import { ExcludeProductButton } from "../components/ProductExclusions";
 import { UnityOpenButton } from "../components/UnityOpenDialog";
 import { isUnityOpenableName } from "../unityOpen";
-import { type RemoteProbeStatus, placeLabelForFile, useRemoteProductProbe } from "../remoteProductProbe";
+import {
+  type RemoteProbeStatus,
+  invalidateRemoteProbe,
+  placeLabelForFile,
+  useRemoteProductProbe,
+} from "../remoteProductProbe";
 
 export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?: string }) {
   const { revision, refresh, notify, fail } = useShell();
@@ -496,7 +501,7 @@ export function ItemCard({
             <ul className="file-list">
               {item.localFiles.map((file) => (
                 <li key={file.path}>
-                  <button type="button" onClick={() => void openLocal(file.path)}>
+                  <button type="button" onClick={() => void openLocal(file.path).catch((err: unknown) => fail(errorText(err)))}>
                     {file.isDir ? "フォルダ" : "ファイル"} {file.filename}
                   </button>
                   <span className="row-actions">
@@ -545,6 +550,7 @@ function DownloadFiles({
     let alive = true;
     void listenBoothFile((status) => {
       if (!alive || status.boothId !== item.boothId) return;
+      if (status.phase === "done") invalidateRemoteProbe(status.boothId);
       setLive(status);
     }).then((unlisten) => {
       stop = unlisten;
@@ -568,15 +574,20 @@ function DownloadFiles({
       message: "ダウンロード中",
     });
     try {
-      await api.downloadBoothFile(item.boothId, file.variation, file.filename);
+      const placed = await api.downloadBoothFile(item.boothId, file.variation, file.filename);
+      invalidateRemoteProbe(item.boothId);
       setLive({
         boothId: item.boothId,
         variation: file.variation,
         filename: file.filename,
         phase: "done",
         message: "ライブラリに移しました",
+        path: placed || null,
       });
-      notify("ファイルをライブラリに移しました");
+      notify(
+        "ファイルをライブラリに移しました",
+        placed ? { label: "保存先を開く", run: () => revealSaved(placed, fail) } : undefined,
+      );
       refresh();
     } catch (err) {
       const message = errorText(err);
@@ -611,6 +622,7 @@ function DownloadFiles({
       pull={pull}
       push={push}
       receive={receive}
+      reveal={(path) => revealSaved(path, fail)}
     />
   );
   return (
@@ -637,6 +649,22 @@ function DownloadFiles({
   );
 }
 
+function baseName(path: string): string {
+  return path.split(/[\\/]/).pop() ?? "";
+}
+
+/** 完了イベントが持つ移動先のパス。行の名前が実際のファイル名に変わった場合も拾う。 */
+export function finishedPath(live: BoothFileStatus | null, file: DownloadView): string | null {
+  if (!live || live.phase !== "done" || !live.path) return null;
+  if (live.variation !== file.variation) return null;
+  if (live.filename !== file.filename && baseName(live.path) !== file.filename) return null;
+  return live.path;
+}
+
+function revealSaved(path: string, fail: (message: string) => void) {
+  void revealInFolder(path).catch((err: unknown) => fail(`保存先を開けませんでした: ${errorText(err)}`));
+}
+
 function DownloadRow({
   file,
   item,
@@ -648,6 +676,7 @@ function DownloadRow({
   pull,
   push,
   receive,
+  reveal,
 }: {
   file: DownloadView;
   item: ItemView;
@@ -659,6 +688,7 @@ function DownloadRow({
   pull: (file: DownloadView) => void;
   push: (file: DownloadView) => void;
   receive: (file: DownloadView) => void;
+  reveal: (path: string) => void;
 }) {
   const { notify, fail } = useShell();
   const key = `${file.variation}:${file.filename}`;
@@ -669,7 +699,8 @@ function DownloadRow({
     (file.state === "missing" || live.phase === "error")
       ? live
       : null;
-  const offer = file.state === "missing" && canReceive;
+  const savedPath = file.state === "local" && file.localPath ? file.localPath : finishedPath(live, file);
+  const offer = file.state === "missing" && canReceive && !finishedPath(live, file);
   return (
     <li
       className={`download-row ${file.state}${offer ? " can-receive" : ""}`}
@@ -699,8 +730,14 @@ function DownloadRow({
             {receiving === key ? "ダウンロード中" : "ダウンロード"}
           </button>
         )}
-        {file.state === "local" && file.localPath && (
-          <button type="button" onClick={() => void revealInFolder(file.localPath || "")}>
+        {savedPath && (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              reveal(savedPath);
+            }}
+          >
             保存先を開く
           </button>
         )}

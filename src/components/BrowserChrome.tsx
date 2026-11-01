@@ -8,6 +8,17 @@ import {
 import type { BrowserAction, BrowserBookmark, BrowserState } from "../types";
 import { errorText } from "../ui";
 import { BrowserTitleBar } from "./BrowserTitleBar";
+import {
+  ArrowGlyph,
+  CloseGlyph,
+  DockGlyph,
+  HomeGlyph,
+  PlusGlyph,
+  PopOutGlyph,
+  ReloadGlyph,
+  StarGlyph,
+  StopGlyph,
+} from "./glyphs";
 
 const HOME = "https://accounts.booth.pm/library";
 const emptyState: BrowserState = {
@@ -16,17 +27,27 @@ const emptyState: BrowserState = {
   activeId: null,
   bookmarks: [],
   busy: false,
+  host: null,
+  panelSupported: false,
 };
 type BookmarkEdit = { originalUrl: string | null; title: string; url: string };
 
-/** Reusable controls: their state and actions do not depend on an external window or a dock. */
+/**
+ * Reusable controls for the separate browser window (default), the browser page (`embedded`)
+ * and the right panel (`panel`, which is embedded too). The pages themselves are native views
+ * that the app places next to these controls.
+ */
 export function BrowserChrome({
-  embedded = false,
+  embedded: embeddedProp = false,
+  panel = false,
   onImported,
 }: {
   embedded?: boolean;
+  /** Shown in the main window's right panel, above the docked pages. */
+  panel?: boolean;
   onImported?: () => void;
 }) {
+  const embedded = embeddedProp || panel;
   const [state, setState] = useState(emptyState);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
@@ -163,6 +184,8 @@ export function BrowserChrome({
     if (!embedded && isTauri()) return;
     function shortcut(event: KeyboardEvent) {
       if (!(event.ctrlKey || event.metaKey) || event.altKey || disabled) return;
+      // In the right panel the rest of the app keeps its keys; only focus in these controls counts.
+      if (panel && !controls.current?.contains(document.activeElement)) return;
       if (event.key.toLowerCase() === "l") {
         event.preventDefault();
         input.current?.focus();
@@ -183,7 +206,7 @@ export function BrowserChrome({
     }
     window.addEventListener("keydown", shortcut);
     return () => window.removeEventListener("keydown", shortcut);
-  }, [action, disabled, state.activeId, embedded]);
+  }, [action, disabled, state.activeId, embedded, panel]);
 
   async function saveBookmark() {
     if (!edit) return;
@@ -237,7 +260,7 @@ export function BrowserChrome({
 
   return (
     <div
-      className={embedded ? "browser-chrome embedded" : "browser-chrome"}
+      className={panel ? "browser-chrome embedded panel" : embedded ? "browser-chrome embedded" : "browser-chrome"}
       ref={controls}
     >
       <BrowserTitleBar embedded={embedded} onError={setError}>
@@ -279,30 +302,31 @@ export function BrowserChrome({
                   }
                 }}
               >
-                <span aria-hidden="true">{tab.loading ? "◌" : "◻"}</span>
-                <span>{tab.title || "新しいタブ"}</span>
+                {tab.loading && <span className="browser-tab-loading" aria-hidden="true" />}
+                <span className="browser-tab-title">{tab.title || "新しいタブ"}</span>
               </button>
               <button
                 className="browser-tab-close"
                 type="button"
                 disabled={disabled}
                 aria-label={`${tab.title || "このページ"}のタブを閉じる`}
+                title="タブを閉じる"
                 onClick={() => void action({ kind: "closeTab", tabId: tab.id })}
               >
-                ×
+                <CloseGlyph />
               </button>
             </div>
           ))}
         </div>
         <button
-          className="browser-icon"
+          className="browser-icon browser-new-tab"
           type="button"
           disabled={disabled || state.tabs.length >= 20}
           aria-label="新しいタブ"
           title="新しいタブ"
           onClick={() => void action({ kind: "newTab" })}
         >
-          ＋
+          <PlusGlyph />
         </button>
       </BrowserTitleBar>
       <div className="browser-navigation">
@@ -314,7 +338,7 @@ export function BrowserChrome({
           title="戻る"
           onClick={() => void action({ kind: "back" })}
         >
-          ←
+          <ArrowGlyph direction="back" />
         </button>
         <button
           className="browser-icon"
@@ -324,7 +348,7 @@ export function BrowserChrome({
           title="進む"
           onClick={() => void action({ kind: "forward" })}
         >
-          →
+          <ArrowGlyph direction="forward" />
         </button>
         <button
           className="browser-icon"
@@ -336,7 +360,7 @@ export function BrowserChrome({
             void action({ kind: active?.loading ? "stop" : "reload" })
           }
         >
-          {active?.loading ? "×" : "↻"}
+          {active?.loading ? <StopGlyph /> : <ReloadGlyph />}
         </button>
         <button
           className="browser-icon"
@@ -346,7 +370,7 @@ export function BrowserChrome({
           title="購入ライブラリ"
           onClick={() => void action({ kind: "navigate", url: HOME })}
         >
-          ⌂
+          <HomeGlyph />
         </button>
         <form
           className="browser-address"
@@ -397,9 +421,9 @@ export function BrowserChrome({
                 })
           }
         >
-          {bookmarked ? "★" : "☆"}
+          <StarGlyph filled={Boolean(bookmarked)} />
         </button>
-        {!embedded && (
+        {(!embedded || panel) && (
           <button
             className="browser-import"
             type="button"
@@ -408,6 +432,30 @@ export function BrowserChrome({
             onClick={() => void importPage()}
           >
             インポート
+          </button>
+        )}
+        {panel && (
+          <button
+            className="browser-icon browser-host-toggle"
+            type="button"
+            disabled={working}
+            aria-label="別ウィンドウで開く"
+            title="別ウィンドウで開く"
+            onClick={() => void action({ kind: "undock" })}
+          >
+            <PopOutGlyph />
+          </button>
+        )}
+        {!embedded && state.panelSupported && (
+          <button
+            className="browser-icon browser-host-toggle"
+            type="button"
+            disabled={working}
+            aria-label="パネルに戻す"
+            title="アプリの右パネルに戻す"
+            onClick={() => void action({ kind: "dock", area: null })}
+          >
+            <DockGlyph />
           </button>
         )}
       </div>
