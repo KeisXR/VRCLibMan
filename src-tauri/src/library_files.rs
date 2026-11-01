@@ -450,7 +450,7 @@ pub(crate) fn probe_file(path: &Path, timeout: Duration) -> Probe {
     .unwrap_or(Probe::Unreachable)
 }
 
-fn wait_for<T>(timeout: Duration, work: impl FnOnce() -> T + Send + 'static) -> Option<T>
+pub(crate) fn wait_for<T>(timeout: Duration, work: impl FnOnce() -> T + Send + 'static) -> Option<T>
 where
     T: Send + 'static,
 {

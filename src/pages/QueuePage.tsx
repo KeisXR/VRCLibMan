@@ -652,7 +652,7 @@ const FileEditor = memo(function FileEditor({
         <div className="meta">
           {file.isDir ? "フォルダ" : "ファイル"} ・ {formatBytes(file.size)}
         </div>
-        <button className="button" type="button" onClick={() => void openLocal(file.path)}>
+        <button className="button" type="button" onClick={() => void openLocal(file.path).catch((err: unknown) => onError(errorText(err)))}>
           開く
         </button>
       </div>

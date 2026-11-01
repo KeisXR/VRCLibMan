@@ -278,6 +278,44 @@ export interface RemoteSyncStatus {
   error: string | null;
 }
 
+/** 右パネル「ファイル」タブ。読み取り専用の一覧で、書き込み・削除・移動はしない。 */
+export type FileEntryKind = "dir" | "file" | "link";
+
+export interface FileEntry {
+  name: string;
+  kind: FileEntryKind;
+  /** バイト数。フォルダとリンクは null。 */
+  size: number | null;
+}
+
+export interface DirListing {
+  /** 解決済みのフォルダ（Windows の \\?\ は付けない）。 */
+  path: string;
+  parent: string | null;
+  /** 設定のライブラリフォルダ。存在するときだけ。 */
+  library: string | null;
+  /** 設定のリモートライブラリ。応答したときだけ。 */
+  remote: string | null;
+  insideLibrary: boolean;
+  entries: FileEntry[];
+  truncated: boolean;
+}
+
+export interface ZipEntry {
+  /** zip 内の / 区切りのパス。展開はしない。 */
+  path: string;
+  dir: boolean;
+  size: number;
+}
+
+export interface ZipListing {
+  path: string;
+  library: string | null;
+  remote: string | null;
+  entries: ZipEntry[];
+  truncated: boolean;
+}
+
 export interface StagedDownload {
   path: string;
   boothId: string;
@@ -420,6 +458,8 @@ export interface BoothFileStatus {
   filename: string;
   phase: "receiving" | "error" | "done";
   message: string;
+  /** 完了時だけ、ライブラリへ移した先の絶対パス。 */
+  path?: string | null;
 }
 
 export interface ManagedProduct {
@@ -524,4 +564,24 @@ export interface AppUpdateStatus {
   total: number | null;
   error: string | null;
   message: string | null;
+}
+
+/** "hub"：Unity Hub の記録、"folder"：インストール先のフォルダ、"manual"：「参照…」で指定 */
+export type UnityEditorSource = "hub" | "folder" | "manual";
+
+export interface UnityEditor {
+  /** 例：2022.3.22f1。パスから読めないときは空文字 */
+  version: string;
+  path: string;
+  source: UnityEditorSource;
+}
+
+export interface UnityStatus {
+  editors: UnityEditor[];
+  /** 保存している既定の Unity。未設定なら空文字 */
+  selectedPath: string;
+  /** 保存したパスに Unity 本体が見つからない */
+  selectedMissing: boolean;
+  hubFound: boolean;
+  searched: string[];
 }

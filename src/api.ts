@@ -37,10 +37,13 @@ import type {
   Settings,
   RemoteSyncStatus,
   StagedDownload,
+  DirListing,
+  ZipListing,
   ItemView,
   GenreKind,
   GenreProducts,
   CloudTestResult,
+  UnityStatus,
 } from "./types";
 
 export type ClassificationFeedbackScope = "other" | "unclassified" | "both";
@@ -193,6 +196,9 @@ export const api = {
   saveCloudApiKey: (key: string) => call<boolean>("save_cloud_api_key", { key }),
   deleteCloudApiKey: () => call<boolean>("delete_cloud_api_key"),
   testCloudClassifier: () => call<CloudTestResult>("test_cloud_classifier"),
+  unityEditors: () => call<UnityStatus>("unity_editors"),
+  /** 空文字で未設定に戻す。Unity 本体でないファイルは Rust 側で拒否する。 */
+  setUnityEditor: (path: string) => call<UnityStatus>("set_unity_editor", { path }),
   catalogInfo: () => call<CatalogInfo>("catalog_info"),
   refreshAvatarCatalog: () => call<CatalogRefresh>("refresh_avatar_catalog"),
   setupStatus: () => call<SetupStatus>("setup_status"),
@@ -208,13 +214,17 @@ export const api = {
   pullRemoteFile: (boothId: string, variation: string, filename: string) =>
     call<void>("pull_remote_file", { boothId, variation, filename }),
   downloadBoothFile: (boothId: string, variation: string, filename: string) =>
-    call<void>("download_booth_file", { boothId, variation, filename }),
+    call<string>("download_booth_file", { boothId, variation, filename }),
   pushRemoteFile: (boothId: string, variation: string, filename: string) =>
     call<void>("push_remote_file", { boothId, variation, filename }),
   cacheThumbnails: () => call<number>("cache_thumbnails"),
   cacheProductPreview: (boothId: string, download: boolean, reveal: boolean) =>
     call<string | null>("cache_product_preview", { boothId, download, reveal }),
   stagedDownloads: () => call<StagedDownload[]>("list_staged_downloads"),
+  /** 右パネルのファイルタブ。空のパスはライブラリフォルダ。読み取りのみ。 */
+  listDirectory: (path: string) => call<DirListing>("list_directory", { path }),
+  /** zip の中身を一覧だけ読む。展開しない。 */
+  listZipEntries: (path: string) => call<ZipListing>("list_zip_entries", { path }),
   routeStagedDownload: (path: string) => call<void>("route_staged_download", { path }),
   classificationFeedback: (scope: ClassificationFeedbackScope) =>
     call<string>("classification_feedback", { scope }),
@@ -284,6 +294,22 @@ export async function chooseFolder(): Promise<string | null> {
   return typeof selected === "string" ? selected : null;
 }
 
+/** Unity 本体を選ぶ。Windows は Unity.exe、Mac は Unity.app、Linux は Unity。 */
+export async function chooseUnityEditor(): Promise<string | null> {
+  if (!isTauri()) {
+    throw new Error("Unity の選択はデスクトップアプリで使えます");
+  }
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const windows = navigator.userAgent.includes("Windows");
+  const selected = await open({
+    directory: false,
+    multiple: false,
+    title: "Unity 本体を選ぶ",
+    ...(windows ? { filters: [{ name: "Unity", extensions: ["exe"] }] } : {}),
+  });
+  return typeof selected === "string" ? selected : null;
+}
+
 export async function openExternal(url: string): Promise<void> {
   if (!isTauri()) {
     window.open(url, "_blank", "noopener,noreferrer");
@@ -328,12 +354,9 @@ export async function openBoothLink(url: string): Promise<void> {
   });
 }
 
+/** スキャン済み・記録済みのファイルだけを Rust 側で確かめてから開く。 */
 export async function openLocal(path: string): Promise<void> {
-  if (!isTauri()) {
-    return;
-  }
-  const { openPath } = await import("@tauri-apps/plugin-opener");
-  await openPath(path);
+  await call<void>("open_local_path", { path });
 }
 
 export function listenBrowserChanged(onChanged: () => void): Promise<() => void> {

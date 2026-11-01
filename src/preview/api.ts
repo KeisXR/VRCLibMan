@@ -1,8 +1,9 @@
 import { previewBrowserState, previewBrowserAction, previewSaveBookmark, previewDeleteBookmark, previewOpenBrowser, previewCloseBrowser } from "./browser";
 import extensionManifest from "../../extension/manifest.json";
+import { previewListDirectory, previewListZip } from "./files";
 import { filePresence } from "../media";
 import { GENRE_FREE, GENRE_UNSET, genresForKind } from "../types";
-import type { ClassificationSnapshot, OwnedAvatarRestore, RegisterOwnedBodyResult, SnapshotLink } from "../types";
+import type { ClassificationSnapshot, OwnedAvatarRestore, RegisterOwnedBodyResult, SnapshotLink, UnityEditor, UnityStatus } from "../types";
 import type {
   AvatarCard,
   BrowserAction,
@@ -470,6 +471,11 @@ let previewRemoteProbeOutcome: PreviewRemoteProbeOutcome = "ok";
 if (typeof location !== "undefined") {
   const mode = new URLSearchParams(location.search).get("remoteProbe");
   if (mode === "fail" || mode === "timeout") previewRemoteProbeOutcome = mode;
+}
+
+/** テスト用。Rust の一覧と同じく、リモートを確認していない状態に戻す。 */
+export function resetPreviewRemoteCheck(): void {
+  store.remoteChecked = false;
 }
 
 export function previewRemoteProbeDownloads(boothId: string): DownloadView[] {
@@ -1727,6 +1733,24 @@ function previewCloudBaseUrl(value: string): string {
   return trimmed;
 }
 
+/** 見本の Unity 検出。Windows の既定インストール先と Unity Hub の記録を真似る。実在のファイルは見ない。 */
+const previewUnityEditors: UnityEditor[] = [
+  { version: "6000.0.33f1", path: "D:\\Unity\\Editors\\6000.0.33f1\\Editor\\Unity.exe", source: "hub" },
+  { version: "2022.3.22f1", path: "C:\\Program Files\\Unity\\Hub\\Editor\\2022.3.22f1\\Editor\\Unity.exe", source: "hub" },
+  { version: "2022.3.6f1", path: "C:\\Program Files\\Unity\\Hub\\Editor\\2022.3.6f1\\Editor\\Unity.exe", source: "folder" },
+];
+let previewUnitySelected = "";
+
+function previewUnityStatus(): UnityStatus {
+  return {
+    editors: previewUnityEditors.map((editor) => ({ ...editor })),
+    selectedPath: previewUnitySelected,
+    selectedMissing: false,
+    hubFound: true,
+    searched: ["C:\\Users\\you\\AppData\\Roaming\\UnityHub", "C:\\Program Files\\Unity\\Hub\\Editor", "D:\\Unity\\Editors"],
+  };
+}
+
 export async function dispatch<T>(command: string, args: Record<string, unknown>): Promise<T> {
   notePreviewCall(command);
   switch (command) {
@@ -2017,6 +2041,14 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
         defaultModel: "qwen3.5:9b",
         backend: store.settings.llmBackend,
       } as T;
+    case "unity_editors":
+      return previewUnityStatus() as T;
+    case "set_unity_editor": {
+      const path = String(args.path ?? "").trim();
+      if (path && !previewUnityEditors.some((editor) => editor.path === path)) throw new Error("Unity 本体（Unity.exe）を選んでください");
+      previewUnitySelected = path;
+      return previewUnityStatus() as T;
+    }
     case "cloud_key_status":
       return previewCloudKeySaved as T;
     case "save_cloud_api_key": {
@@ -2108,6 +2140,16 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       }
       row.state = "local";
       row.localPath = `${store.settings.libraryFolder}\\${boothId}\\${filename}`;
+      // Rust の再読み込みはリモートを確認しないので、画面は確認をやり直す。
+      store.remoteChecked = false;
+      return row.localPath as T;
+    }
+    case "open_local_path": {
+      const path = String(args.path ?? "");
+      const known =
+        store.downloads.some((item) => item.localPath === path) ||
+        store.files.some((item) => item.path === path);
+      if (!known) throw new Error("ライブラリに登録されていない場所は開けません");
       return undefined as T;
     }
     case "pull_remote_file": {
@@ -2241,6 +2283,14 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       desktopOnly();
     case "list_staged_downloads":
       return [] as T;
+    case "list_directory":
+      return previewListDirectory(
+        String(args.path ?? ""),
+        store.settings.libraryFolder,
+        store.settings.remoteLibraryFolder,
+      ) as T;
+    case "list_zip_entries":
+      return previewListZip(String(args.path ?? ""), store.settings.libraryFolder, store.settings.remoteLibraryFolder) as T;
     default:
       throw new Error(`未対応の操作です: ${command}`);
   }
