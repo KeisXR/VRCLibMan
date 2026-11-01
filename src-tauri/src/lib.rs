@@ -68,6 +68,12 @@ pub fn run() {
             presence::show_main_later(app);
         }));
     }
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.on_web_content_process_terminate(|webview| {
+            browser::note_probe_process_terminated(webview.label());
+        });
+    }
     builder
         .plugin(
             tauri_plugin_autostart::Builder::new()

@@ -959,9 +959,7 @@ fn build_browser_window(
     slot: u64,
     position: Option<(f64, f64)>,
 ) -> Result<(Window, String), String> {
-    if let Some(probe) = app.get_webview_window("booth-probe") {
-        let _ = probe.destroy();
-    }
+    crate::browser::release_probe_for_displayed_browser(app);
     let label = browser_tabs::window_label_for(slot);
     let toolbar = browser_tabs::toolbar_label_for(slot);
     let mut builder = WindowBuilder::new(app, &label)
@@ -1133,9 +1131,7 @@ fn open_panel(app: &AppHandle, area: Option<SurfaceArea>) -> Result<(), String> 
     let main = app
         .get_window(PANEL_WINDOW_LABEL)
         .ok_or("メインウィンドウが見つかりません")?;
-    if let Some(probe) = app.get_webview_window("booth-probe") {
-        let _ = probe.destroy();
-    }
+    crate::browser::release_probe_for_displayed_browser(app);
     ensure_panel_live(area, area.is_some());
     if let Err(error) = checked_url(app, browser::LIBRARY_URL).and_then(|url| mount_tab(app, PANEL_HOST_ID, &main, url))
     {
