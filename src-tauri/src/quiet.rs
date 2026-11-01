@@ -54,6 +54,8 @@ pub fn account_script() -> &'static str {
         || nav.getAttribute("data-user-pixiv-id")
         || "";
     }
+    var root = document.documentElement;
+    var marker = root ? String(root.dataset.vrclibmanProbe || "") : "";
     return {
       ready: status === "in" || status === "out",
       status: status,
@@ -61,10 +63,11 @@ pub fn account_script() -> &'static str {
       displayName: status === "in" ? name : "",
       pixivId: status === "in" ? String(pixiv || "") : "",
       avatarUrl: status === "in" ? String(thumb || "") : "",
-      href: String(location.href || "")
+      href: String(location.href || ""),
+      fresh: marker !== "1"
     };
   } catch (error) {
-    return { ready: false, status: "error", loggedIn: false, displayName: "", pixivId: "", avatarUrl: "", href: "" };
+    return { ready: false, status: "error", loggedIn: false, displayName: "", pixivId: "", avatarUrl: "", href: "", fresh: false };
   }
 })()"##
 }
@@ -87,6 +90,24 @@ pub(crate) enum AccountPoll {
     Ready(BoothAccount),
     /// 年齢確認、または期限まで決まらなかった読み取り。ログイン済みにも未ログインにもしない。
     Stop,
+}
+
+/// 確認用 WebView を読み直す前に付けた印が残っていれば、まだ古い文書。
+/// 印の項目が無い読み取りは、表示中のタブや初回の読み込みとして新しい文書扱い。
+pub fn account_document_is_fresh(raw: &str) -> bool {
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(raw) else {
+        return false;
+    };
+    if let serde_json::Value::String(inner) = value {
+        let Ok(parsed) = serde_json::from_str(&inner) else {
+            return false;
+        };
+        value = parsed;
+    }
+    match value.get("fresh").and_then(|item| item.as_bool()) {
+        Some(fresh) => fresh,
+        None => true,
+    }
 }
 
 pub fn parse_account_eval(raw: &str) -> Result<BoothAccount, String> {
@@ -754,7 +775,24 @@ mod tests {
         assert!(script.contains("data-user-thumbnail-url"));
         assert!(script.contains("status = \"out\""));
         assert!(script.contains("status: \"error\""));
+        assert!(script.contains("vrclibmanProbe"));
+        assert!(script.contains("fresh: marker !== \"1\""));
+        assert!(script.contains("fresh: false"));
         assert!(!script.contains("document.cookie"));
+    }
+
+    #[test]
+    fn account_document_marker_keeps_a_stale_page_out_of_a_fresh_read() {
+        let stale = r#"{"status":"in","fresh":false,"loggedIn":true,"displayName":"テスト利用者","href":"https://accounts.booth.pm/library"}"#;
+        assert!(!account_document_is_fresh(stale));
+        let wrapped = serde_json::to_string(stale).unwrap();
+        assert!(!account_document_is_fresh(&wrapped));
+        assert!(account_document_is_fresh(
+            r#"{"status":"in","fresh":true,"loggedIn":true}"#
+        ));
+        assert!(account_document_is_fresh(r#"{"status":"pending"}"#));
+        assert!(!account_document_is_fresh("not-json"));
+        assert!(!account_document_is_fresh("\"not-json\""));
     }
 
     fn reading(raw: &str) -> AccountReading {
