@@ -96,8 +96,9 @@ pub fn prefer_listing(category: Category, title: &str, description: &str) -> Opt
     let title_l = crate::normalize::nfkc(title).to_lowercase();
     let body_l = crate::normalize::nfkc(description).to_lowercase();
     let text = format!("{title_l}\n{body_l}");
-    if crate::compat::conversion_profile_title(&title_l)
-        || crate::compat::mochifitter_title(&title_l)
+    if category == Category::Other
+        && (crate::compat::conversion_profile_title(&title_l)
+            || crate::compat::mochifitter_title(&title_l))
     {
         return Some(validate(category, Some("tool_editor")));
     }
@@ -128,8 +129,7 @@ pub fn prefer_listing(category: Category, title: &str, description: &str) -> Opt
         return Some("outfit".into());
     }
     if category == Category::World
-        && (crate::compat::world_placement(&text)
-            || text.contains("udon")
+        && (text.contains("udon")
             || text.contains("ギミック")
             || text.contains("gimmick")
             || text.contains("asmr")
@@ -143,6 +143,8 @@ pub fn prefer_listing(category: Category, title: &str, description: &str) -> Opt
 fn title_expression(title: &str) -> bool {
     const WORDS: &[&str] = &[
         "表情",
+        "アニメーション",
+        "animation",
         "シェイプキー",
         "shapekey",
         "shape key",
@@ -199,6 +201,9 @@ pub fn classify_title_gap(category: Category, title: &str, description: &str) ->
         } else if has(&["テクスチャ", "マテリアル", "material"]) || title_has(&["スイッチ"])
         {
             "texture_material"
+        } else if crate::compat::world_placement(&text) {
+            // Placement fills a missing type, after furniture, shaders, and other assets.
+            "world_gimmick"
         } else if has(&["ワールド", "world"]) {
             "world"
         } else {
