@@ -1512,22 +1512,10 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 /* 既定の Unity のパス。選択欄の下に右寄せで置き、長いパスは折り返す */
 .setting-control > p.unity-path { margin: var(--space-2) 0 0; text-align: right; overflow-wrap: anywhere; font-size: 12px; }
 
-/* 線のアクセント（朱）: 面は塗らず、選択・見出し・進捗・フォーカスに細い線だけ */
-:root { --line-accent: #a6361f; --line-selection: rgba(166, 54, 31, 0.55); }
+/* 選択は中立色の全周枠。朱色は進捗とフォーカスに使う。 */
+:root { --line-accent: #a6361f; --selection-outline: #7c808b; }
 @media (prefers-color-scheme: dark) {
-  :root { --line-accent: #d97757; --line-selection: rgba(217, 119, 87, 0.65); }
-}
-.nav-link, .genre-link { position: relative; }
-.nav-link.active::before, .genre-link.active::before {
-  content: "";
-  position: absolute;
-  left: 2px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 3px;
-  height: 55%;
-  border-radius: 2px;
-  background: var(--line-accent);
+  :root { --line-accent: #d97757; --selection-outline: #73737c; }
 }
 .track span { background: var(--line-accent); }
 .field input:focus, .field select:focus, .field textarea:focus,
@@ -1536,27 +1524,11 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
   border-color: var(--line-accent);
   box-shadow: 0 0 0 1px var(--line-accent);
 }
-.page-head h1::before {
-  content: "";
-  display: inline-block;
-  width: 4px;
-  height: 0.82em;
-  border-radius: 2px;
-  background: var(--line-accent);
-  margin-right: 10px;
+.nav-link.active, .genre-link.active, .tab.active,
+.right-panel-tab.active, .browser-tab.active, .item.selected {
+  box-shadow: inset 0 0 0 1px var(--selection-outline);
 }
-.settings-section > header h2::before {
-  content: "";
-  display: inline-block;
-  width: 3px;
-  height: 0.85em;
-  border-radius: 2px;
-  background: var(--line-accent);
-  margin-right: 8px;
-}
-.item.selected { box-shadow: inset 3px 0 0 var(--line-accent), inset 0 0 0 1px var(--line-selection); }
-.tab.active { box-shadow: inset 0 -2px 0 var(--line-accent); }
-.choice-row:has(input:checked), .scope-choices label:has(input:checked) { border-color: var(--line-selection); }
+.choice-row:has(input:checked), .scope-choices label:has(input:checked) { border-color: var(--selection-outline); }
 
 /* キーボードのフォーカスは影だけに頼らず、同じ太さにする。 */
 input:focus-visible, select:focus-visible, textarea:focus-visible {
