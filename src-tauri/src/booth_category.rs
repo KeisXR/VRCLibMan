@@ -33,6 +33,15 @@ pub fn settle(category_id: Option<i64>, category_name: &str, tags: &[String]) ->
     settle_name(category_name, tags)
 }
 
+/// Software and 3Dツール are a coarse bucket. Title text may move a row out of them.
+/// Outfit, hair, and the other specific categories are not coarse.
+pub fn is_coarse_tool(category_id: Option<i64>, category_name: &str) -> bool {
+    if matches!(category_id, Some(201 | 215)) {
+        return true;
+    }
+    matches!(name_kind(category_name), Some(NameKind::Tool))
+}
+
 /// `Unknown` means neither the id nor the name is in the rule table.
 /// Callers log that once. Do not invent an id for it.
 pub fn category_rule(category_id: Option<i64>, category_name: &str) -> CategoryRule {
