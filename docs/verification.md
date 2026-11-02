@@ -1,5 +1,18 @@
 # 検証記録
 
+## Linux の内蔵ブラウザを右パネルへ組み込み（2026-11-02）
+
+対象は main `9a4c938` からの `feat/linux-browser-panel` の差分。Debian 13 / Linux x86_64、Rust 1.99.1、Node.js 24、GTK 3.24、WebKitGTK 2.54、仮想 X11 とソフトウェア描画で確認した。GTK / WebKit の開発ファイルは作業領域に展開した。実行時には、その WebKit ヘルパーを見つけられるよう探索先を調整した検証専用ライブラリを使用しており、製品のコード・配布物には含めていない。
+
+- `npm test` は127件成功、`npm run build` は成功。`CHROME_PATH=/usr/bin/chromium npm run test:tab-click` はライト・ダークの8件成功。
+- `cargo test --locked --features tauri/custom-protocol --manifest-path src-tauri/Cargo.toml --lib` は353件成功、2件ignore（既存のフィードバック確認と、明示実行するネイティブ確認）。
+- `linux_browser_panel_native` を `GDK_SCALE=1` と `2` でそれぞれ明示実行し、両方成功。実 Tauri / GTK / WebKit で、メイン画面が縮まないこと、CSS 矩形とネイティブ表示域の一致、パネル内外の実クリック、重なるダイアログの操作、サイズ変更、複数タブ、別窓との3往復、単一タブの移動、メインへのフォーカス復帰後のショートカット、履歴、閉じる操作を確認した。同じページの JavaScript 状態・合成 Cookie・sessionStorage の保持と、メイン画面との Cookie 分離も確認した。ローカル HTTP の合成ページと隔離 XDG ディレクトリだけを使用し、BOOTH への通信や実アカウントは使っていない。
+- 実 React コンポーネントを読み込むレイアウト用 fixture を WebKitGTK で直接表示し、1908×1044・1440×900・1100×700、最大化の切替、タブの非表示・復帰で、DOM の表示域と通知矩形の一致、縦横の充填、操作バーの配置を確認した。
+
+既存の `npm run test:browser-layout` は、この環境の WebKitWebDriver と MiniBrowser のセッション確立でタイムアウトし、アプリの操作に進めなかった。上記の直接 WebKitGTK 確認で補完し、既存の CI テストは残した。新しいネイティブ確認も Linux CI の両 CPU で100%・200%を実行する。
+
+GNOME / KDE の実デスクトップ、Wayland、GPU 描画、aarch64、署名済み AppImage、BOOTH の実ログインは未確認。Windows / macOS でも今回の差分の実機確認はしていない。仮想 X11 の成功を配布先での実機検証済みとは扱わない。
+
 ## Linux の常駐とログイン時起動（2026-11-02）
 
 対象は main `9a4c938` を基準にした `feat/linux-background-tray` の変更。Debian 13 x86_64、Rust 1.99.1、Node.js 24、GTK 3.24 / WebKitGTK 2.54、Chromium で確認した。実ユーザーの DB・ログイン・Cookie は使わず、一時 DB と専用の設定ディレクトリを使用した。

@@ -55,6 +55,28 @@ Linux のアプリデータは `$XDG_DATA_HOME/app.vrclibman.desktop`（未設�
 
 Ubuntu / Mint、Fedora、Arch 系の GNOME / KDE、X11 / Wayland は実機確認の対象です。ビルド成功だけではこれらの環境での動作確認済みとはしません。aarch64 もデスクトップ Linux が対象であり、個別の GPU・ボードの動作は別途確認します。
 
+## Linux のネイティブ右パネル確認
+
+Linux の右パネルは、メイン WebView を GtkOverlay の主子にして全面に残し、ページを重ね合わせる子として配置します。別窓では従来の GtkLayout を使います。別窓への移動ではパネル用の余白・配置を戻し、キーとリサイズのハンドラはビューごとに一度だけ登録します。
+
+表示・再配置の変更時には `dbus`、`xdotool`、`xvfb`、`xauth` を用意し、実 Tauri / GTK / WebKit のテストを実行します。既定の Rust テストでは無視され、Linux の CI で100%・200%の両倍率を実行します。合成ページと隔離した保存先を使い、BOOTH のログインや購入履歴は使いません。
+
+```sh
+native_root="$(mktemp -d)"
+mkdir -p "$native_root"/{data,config,cache,run}
+chmod 700 "$native_root/run"
+xvfb-run -a -s '-screen 0 3800x2400x24' dbus-run-session -- env \
+  VRCLIBMAN_NATIVE_TEST_DIR="$native_root" GDK_BACKEND=x11 GDK_SCALE=1 \
+  XDG_DATA_HOME="$native_root/data" XDG_CONFIG_HOME="$native_root/config" \
+  XDG_CACHE_HOME="$native_root/cache" XDG_RUNTIME_DIR="$native_root/run" \
+  LIBGL_ALWAYS_SOFTWARE=1 WEBKIT_DISABLE_DMABUF_RENDERER=1 \
+  cargo test --locked --manifest-path src-tauri/Cargo.toml --lib \
+    --features tauri/custom-protocol linux_browser_panel_native -- --ignored --test-threads=1
+rm -rf "$native_root"
+```
+
+実行前に `npm run build` が必要です。`GDK_SCALE=2` でも別の一時保存先で確認します。名前が `native_root` の一時ディレクトリだけを削除してください。仮想 X11 の成功を Wayland や各デスクトップ・GPU の実機確認とは扱いません。
+
 ## Windows ビルドの高速化
 
 GitHub Actions の Windows x64 ジョブは、Rust ツールチェーンに同梱される LLD (`rust-lld.exe`) をリンクに使用します。
@@ -126,7 +148,7 @@ BOOTH へのアクセス間隔は 1000 / 500 / 250ms から選び、未知の値
 
 内蔵ブラウザはメイン画面とは別の WebView データストアでログイン状態を保持します。商品情報の読み込みには拡張と同じ解析を使い、一般サイトの DOM はインポートしません。
 
-利用者向けの推奨は内蔵ブラウザです。実装の初期選択は拡張機能のため、セットアップで内蔵ブラウザを選ぶ手順を案内します。Windows / macOS では右パネルのページタブと複数の別ウィンドウを併用でき、Linux は別窓だけです。ページタブは終了時に閉じ、ブックマークは保存します。
+利用者向けの推奨は内蔵ブラウザです。実装の初期選択は拡張機能のため、セットアップで内蔵ブラウザを選ぶ手順を案内します。Windows / macOS / Linux では右パネルのページタブと複数の別ウィンドウを併用できます。ページタブは終了時に閉じ、ブックマークは保存します。
 
 取得した商品の自動登録は既定オンです。本人が開いた対応する購入完了ページと、本人がクリックしたダウンロードの保存完了から商品を登録します。ファイルは一意な `Downloads/VRCLibMan-*` へ保存し、商品・バリエーションを一意に特定できたものだけ結び付けます。自動整理オンなら既存のステージング検査を通してライブラリへ移し、オフなら保存先に置いたまま登録します。初回の分類先は利用者が確認し、保留した分類待ちは再起動後も残します。
 

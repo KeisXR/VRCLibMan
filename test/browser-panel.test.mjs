@@ -248,7 +248,7 @@ test("the docked browser keeps BOOTH addresses out of settings and follows the b
   // Closing the panel hides docked pages. It does not end their session.
   assert.doesNotMatch(panel, /closeBoothBrowser/);
   assert.match(panel, /unified/);
-  assert.match(browserPanel, /Windows と macOS で使えます/);
+  assert.match(browserPanel, /この環境では、ブラウザは別ウィンドウで開きます/);
   assert.match(browserPanel, /kind: "panelArea", area: null, visible: false/);
   assert.doesNotMatch(browserPanel, /closeTab|closeBoothBrowser/);
   // A press under 6px stays a click. Pointer capture starts only after the drag threshold.
