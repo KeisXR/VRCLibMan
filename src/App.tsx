@@ -27,6 +27,7 @@ import {
 import { SidebarClassificationHint } from "./components/SidebarClassificationHint";
 import { RightPanelColumn, RightPanelProvider, useRightPanelState } from "./components/RightPanel";
 import { errorText } from "./ui";
+import { BrowserAutoClassification } from "./components/BrowserAutoClassification";
 import { ErrorBanner, NoticeBanner } from "./components/NoticeBanner";
 import type { NoticeAction, NotifyOptions } from "./notice";
 import { noticeAction, useBanners } from "./useBanners";
@@ -306,6 +307,7 @@ export default function App() {
     <AppUpdaterProvider>
     <ShellContext.Provider value={shell}>
     <RightPanelProvider value={rightPanel}>
+      <BrowserAutoClassification />
       {setupComplete === false && <SetupWizard onDone={() => { setSetupComplete(true); refresh(); }} />}
       <div className="app app-shell" style={layout.gridStyle}>
         <aside className="rail">

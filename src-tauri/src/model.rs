@@ -331,6 +331,8 @@ pub struct Settings {
     pub builtin_browser: bool,
     /// Invert light pages in the in-app browser. Images, video, and canvas stay original.
     pub browser_force_dark: bool,
+    #[serde(default = "default_browser_auto_register")]
+    pub browser_auto_register: bool,
     /// `external` (system browser) or `builtin` (in-app browser tab).
     pub booth_link_target: String,
     pub remote_library_folder: String,
@@ -367,6 +369,8 @@ pub struct SettingsInput {
     pub builtin_browser: bool,
     #[serde(default)]
     pub browser_force_dark: bool,
+    #[serde(default = "default_browser_auto_register")]
+    pub browser_auto_register: bool,
     #[serde(default = "default_booth_link_target")]
     pub booth_link_target: String,
     #[serde(default)]
@@ -405,6 +409,10 @@ pub struct SettingsInput {
     pub unload_ollama_after_classification: bool,
 }
 
+fn default_browser_auto_register() -> bool {
+    true
+}
+
 fn default_unload_ollama_after_classification() -> bool {
     true
 }
@@ -418,6 +426,7 @@ pub struct SettingsPatch {
     pub library_folder: Option<String>,
     pub builtin_browser: Option<bool>,
     pub browser_force_dark: Option<bool>,
+    pub browser_auto_register: Option<bool>,
     pub booth_link_target: Option<String>,
     pub remote_library_folder: Option<String>,
     pub remote_auto_sync: Option<bool>,
@@ -456,6 +465,7 @@ impl SettingsPatch {
                 .unwrap_or(current.library_folder),
             builtin_browser: self.builtin_browser.unwrap_or(current.builtin_browser),
             browser_force_dark: self.browser_force_dark.unwrap_or(current.browser_force_dark),
+            browser_auto_register: self.browser_auto_register.unwrap_or(current.browser_auto_register),
             booth_link_target: self
                 .booth_link_target
                 .clone()

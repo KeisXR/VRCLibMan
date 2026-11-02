@@ -3,6 +3,7 @@ mod booth_category;
 mod booth_detail;
 mod browser;
 mod browser_dark;
+mod browser_auto;
 mod browser_url;
 #[cfg(target_os = "linux")]
 mod browser_linux;
@@ -230,6 +231,8 @@ pub fn run() {
             commands::set_unity_editor,
             commands::update_product,
             commands::move_product_genre,
+            commands::browser_auto_pending,
+            commands::browser_auto_finish,
             commands::restore_product_classification,
             commands::unpin_product_classification,
             commands::register_owned_body,

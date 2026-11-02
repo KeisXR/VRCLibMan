@@ -407,6 +407,7 @@ pub fn save_settings(
                 library_folder: settings.library_folder,
                 builtin_browser: settings.builtin_browser,
                 browser_force_dark: settings.browser_force_dark,
+                browser_auto_register: settings.browser_auto_register,
                 booth_link_target: settings.booth_link_target,
                 remote_library_folder: settings.remote_library_folder,
                 remote_auto_sync: settings.remote_auto_sync,
@@ -2122,4 +2123,25 @@ mod browser_action_tests {
         )
         .is_err());
     }
+}
+
+#[tauri::command]
+pub fn browser_auto_pending(
+    state: State<'_, AppState>,
+) -> Result<Vec<db::BrowserAutoItem>, String> {
+    let connection = db(&state)?;
+    db::browser_auto_pending(&connection)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn browser_auto_finish(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    boothId: String,
+) -> Result<(), String> {
+    let mut connection = db(&state)?;
+    db::browser_auto_finish(&mut connection, &boothId)?;
+    let _ = app.emit("library-changed", ());
+    Ok(())
 }
