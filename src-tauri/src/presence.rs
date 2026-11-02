@@ -4,11 +4,10 @@ use tauri::{AppHandle, Manager, Runtime};
 
 pub(crate) const AUTOSTART_ARG: &str = "--vrclibman-autostart";
 pub(crate) const MAIN_WINDOW: &str = "main";
-#[cfg(any(windows, target_os = "macos"))]
 const TRAY_ID: &str = "vrclibman";
 
 pub(crate) fn background_supported() -> bool {
-    cfg!(any(windows, target_os = "macos"))
+    cfg!(any(windows, target_os = "macos", target_os = "linux"))
 }
 
 /// What closing the main window should do.
@@ -41,8 +40,7 @@ pub(crate) fn autostart_should_enable(background_mode: bool, launch_at_login: bo
 }
 
 pub(crate) fn launched_by_login_item<S: AsRef<str>>(args: impl IntoIterator<Item = S>) -> bool {
-    args.into_iter()
-        .any(|arg| arg.as_ref() == AUTOSTART_ARG)
+    args.into_iter().any(|arg| arg.as_ref() == AUTOSTART_ARG)
 }
 
 /// A windowless start is only for a login launch while background mode is on.
@@ -60,11 +58,61 @@ pub(crate) fn remember_background<R: Runtime>(app: &AppHandle<R>, enabled: bool)
 }
 
 pub(crate) fn background_mode_enabled<R: Runtime>(app: &AppHandle<R>) -> bool {
+    can_background(background_requested(app), tray_ready(app))
+}
+
+pub(crate) fn background_requested<R: Runtime>(app: &AppHandle<R>) -> bool {
     background_supported()
         && app
             .try_state::<crate::AppState>()
             .map(|state| state.background_mode.load(Ordering::SeqCst))
             .unwrap_or(false)
+}
+
+fn can_background(requested: bool, ready: bool) -> bool {
+    requested && ready
+}
+
+fn tray_ready<R: Runtime>(app: &AppHandle<R>) -> bool {
+    #[cfg(target_os = "linux")]
+    if !crate::presence_linux::host_available() || !crate::presence_linux::tray_visible() {
+        return false;
+    }
+    app.tray_by_id(TRAY_ID).is_some()
+}
+
+pub(crate) fn start(
+    app: &AppHandle,
+    background_mode: bool,
+    launch_at_login: bool,
+) -> Result<(), String> {
+    if let Err(error) = sync_login_item(
+        app,
+        autostart_should_enable(background_mode, launch_at_login),
+    ) {
+        eprintln!("{error}");
+    }
+    let login_launch = launched_by_login_item(std::env::args());
+    #[cfg(target_os = "linux")]
+    {
+        crate::presence_linux::start(app.clone(), login_launch);
+        // An ordinary launch never waits for the desktop's tray service.
+        if !background_mode || !login_launch {
+            show_main_window(app)?;
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        if background_mode {
+            if let Err(error) = ensure_tray(app) {
+                eprintln!("{error}");
+            }
+        }
+        if should_open_window_on_start(background_mode_enabled(app), login_launch) {
+            show_main_window(app)?;
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn show_main_later<R: Runtime>(app: &AppHandle<R>) {
@@ -157,44 +205,72 @@ pub(crate) fn apply_presence<R: Runtime>(
     launch_at_login: bool,
 ) -> Result<(), String> {
     let (background_mode, launch_at_login) = normalize_presence(background_mode, launch_at_login);
-    let login = sync_login_item(
+    // Establish a recovery path before enabling windowless login launch.
+    if background_mode {
+        #[cfg(target_os = "linux")]
+        let waiting_for_host =
+            background_requested(app) && !crate::presence_linux::host_available();
+        #[cfg(not(target_os = "linux"))]
+        let waiting_for_host = false;
+        // A saved preference survives a missing host; in that state the user
+        // must still be able to turn off login launch without a tray error.
+        if !waiting_for_host {
+            ensure_tray(app)?;
+        }
+    } else {
+        // Turning off the only recovery path must not leave an invisible process.
+        if background_mode_enabled(app) {
+            show_main_window(app)?;
+        }
+        remove_tray(app);
+    }
+    sync_login_item(
         app,
         autostart_should_enable(background_mode, launch_at_login),
-    );
-    let tray = if background_mode {
-        ensure_tray(app)
-    } else {
-        remove_tray(app);
-        Ok(())
-    };
-    login?;
-    tray
+    )
 }
 
 pub(crate) fn sync_login_item<R: Runtime>(app: &AppHandle<R>, enabled: bool) -> Result<(), String> {
     let enabled = background_supported() && enabled;
-    use tauri_plugin_autostart::ManagerExt;
-    let manager = app.autolaunch();
-    let current = manager
-        .is_enabled()
-        .map_err(|_| "ログイン項目を確認できません".to_string())?;
-    if current == enabled {
-        return Ok(());
+    #[cfg(target_os = "linux")]
+    {
+        return crate::presence_linux::sync_login_item(app, enabled);
     }
-    let result = if enabled {
-        manager.enable()
-    } else {
-        manager.disable()
-    };
-    result.map_err(|_| "ログイン項目を更新できません".to_string())
+    #[cfg(not(target_os = "linux"))]
+    {
+        use tauri_plugin_autostart::ManagerExt;
+        let manager = app.autolaunch();
+        let current = manager
+            .is_enabled()
+            .map_err(|_| "ログイン項目を確認できません".to_string())?;
+        if current == enabled {
+            return Ok(());
+        }
+        let result = if enabled {
+            manager.enable()
+        } else {
+            manager.disable()
+        };
+        result.map_err(|_| "ログイン項目を更新できません".to_string())
+    }
 }
 
-#[cfg(any(windows, target_os = "macos"))]
 pub(crate) fn ensure_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     use tauri::menu::{Menu, MenuItem};
     use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 
-    if app.tray_by_id(TRAY_ID).is_some() {
+    #[cfg(target_os = "linux")]
+    if !crate::presence_linux::host_available() {
+        return Err("トレイの表示先が見つかりません。GNOME では AppIndicator 対応の拡張を有効にしてください。ウィンドウを表示して動作します".into());
+    }
+    if let Some(_tray) = app.tray_by_id(TRAY_ID) {
+        #[cfg(target_os = "linux")]
+        {
+            _tray
+                .set_visible(true)
+                .map_err(|_| "トレイを表示できません".to_string())?;
+            crate::presence_linux::set_tray_visible(true);
+        }
         return Ok(());
     }
     let open = MenuItem::with_id(app, "tray-open", "開く", true, None::<&str>)
@@ -234,7 +310,7 @@ pub(crate) fn ensure_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> 
     {
         builder = builder.icon(menu_bar_icon()).icon_as_template(true);
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     {
         builder = if let Some(icon) = app.default_window_icon() {
             builder.icon(icon.clone())
@@ -245,23 +321,25 @@ pub(crate) fn ensure_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> 
     builder
         .build(app)
         .map_err(|_| "トレイを出せませんでした".to_string())?;
+    #[cfg(target_os = "linux")]
+    crate::presence_linux::set_tray_visible(true);
     Ok(())
 }
 
-#[cfg(not(any(windows, target_os = "macos")))]
-pub(crate) fn ensure_tray<R: Runtime>(_app: &AppHandle<R>) -> Result<(), String> {
-    Ok(())
-}
-
-#[cfg(any(windows, target_os = "macos"))]
 pub(crate) fn remove_tray<R: Runtime>(app: &AppHandle<R>) {
+    #[cfg(target_os = "linux")]
+    {
+        // libappindicator 0.9 retains its exported D-Bus object after drop. Keep
+        // one native indicator and reuse it rather than colliding on its path.
+        crate::presence_linux::set_tray_visible(false);
+        if let Some(tray) = app.tray_by_id(TRAY_ID) {
+            let _ = tray.set_visible(false);
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
     drop(app.remove_tray_by_id(TRAY_ID));
 }
 
-#[cfg(not(any(windows, target_os = "macos")))]
-pub(crate) fn remove_tray<R: Runtime>(_app: &AppHandle<R>) {}
-
-#[cfg(any(windows, target_os = "macos"))]
 fn menu_bar_icon() -> tauri::image::Image<'static> {
     const N: u32 = 22;
     let mut rgba = vec![0u8; (N * N * 4) as usize];
@@ -310,7 +388,10 @@ mod tests {
 
         assert_eq!(app.windows().len(), window_count);
         assert!(app.get_webview(MAIN_WINDOW).is_some());
-        assert_eq!(app.get_webview("booth-tab-1").unwrap().window().label(), MAIN_WINDOW);
+        assert_eq!(
+            app.get_webview("booth-tab-1").unwrap().window().label(),
+            MAIN_WINDOW
+        );
     }
 
     #[test]
@@ -361,20 +442,20 @@ mod tests {
         assert!(!launched_by_login_item(["VRCLibMan", "--other"]));
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
-    fn linux_never_starts_or_remains_windowless_even_with_stale_settings() {
-        assert!(!background_supported());
-        for background_mode in [false, true] {
-            for launch_at_login in [false, true] {
-                assert_eq!(
-                    normalize_presence(background_mode, launch_at_login),
-                    (false, false)
-                );
-                assert!(!autostart_should_enable(background_mode, launch_at_login));
-                assert!(should_open_window_on_start(background_mode, launch_at_login));
-                assert_eq!(decide_close(background_mode), CloseDecision::Quit);
-            }
+    fn a_missing_recovery_path_opens_login_launch_and_does_not_keep_the_process() {
+        // Startup and close handling must receive effective readiness, never
+        // just the persisted preference to run in the background.
+        for requested in [false, true] {
+            let ready = can_background(requested, false);
+            assert!(!ready);
+            assert!(should_open_window_on_start(ready, true));
+            assert_eq!(decide_close(ready), CloseDecision::Quit);
         }
+        assert!(!can_background(false, true));
+        let ready = can_background(true, true);
+        assert!(ready);
+        assert!(!should_open_window_on_start(ready, true));
+        assert_eq!(decide_close(ready), CloseDecision::DestroyWindowKeepProcess);
     }
 }

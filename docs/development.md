@@ -44,14 +44,14 @@ Ubuntu のビルド環境には次を導入します。
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y build-essential curl wget file pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf xdg-utils desktop-file-utils
+sudo apt-get install -y build-essential curl wget file pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf xdg-utils desktop-file-utils dbus
 npm ci
 npm run tauri build
 ```
 
 Linux では `src-tauri/tauri.linux.conf.json` を自動で読み込み、AppImage を生成します。成果物は `src-tauri/target/release/bundle/appimage/`（`--target` 指定時はそのターゲット配下）です。更新用の署名設定は [配布とアプリ内更新](updater.md) を参照してください。CI では `APPIMAGE_EXTRACT_AND_RUN=1` を使ってビルドツールを展開実行します。これは配布先で FUSE が不要になる設定ではありません。
 
-Linux のアプリデータは `$XDG_DATA_HOME/app.vrclibman.desktop`（未設定時は `~/.local/share/app.vrclibman.desktop`）です。ダウンロード先は XDG ユーザーディレクトリの設定を読み、保存元の厳密なパス検査は維持します。Linux の常駐とログイン時起動はトレイ対応が整うまで無効です。URL 関連付けの登録に失敗してもアプリを起動でき、起動中のアプリには拡張から送信できます。
+Linux のアプリデータは `$XDG_DATA_HOME/app.vrclibman.desktop`（未設定時は `~/.local/share/app.vrclibman.desktop`）です。ダウンロード先は XDG ユーザーディレクトリの設定を読み、保存元の厳密なパス検査は維持します。Linux の常駐は Tauri のトレイと libayatana-appindicator を使います。GIO でセッション D-Bus の `org.kde.StatusNotifierWatcher` と `IsStatusNotifierHostRegistered` を非同期・タイムアウト付きで確認し、表示先がある場合だけ窓なしで常駐します。確認は2秒ごと、1回の上限は2秒です。表示先が失われた場合は窓を再表示し、戻ったときはトレイを再表示します。保存した希望設定は保持します。ログイン時起動は `$XDG_CONFIG_HOME/autostart/VRCLibMan.desktop`（未設定なら `~/.config/autostart`）へ配布 AppImage の外側のパスを登録します。依存先の auto-launch 0.6 が XDG_CONFIG_HOME を無視するため、Linux ではこのファイルだけを直接管理します。パスの特殊文字をエスケープし、一時ファイルから置き換えます。GNOME では AppIndicator 対応の拡張が必要になる場合があります。URL 関連付けの登録に失敗してもアプリを起動でき、起動中のアプリには拡張から送信できます。
 
 Ubuntu / Mint、Fedora、Arch 系の GNOME / KDE、X11 / Wayland は実機確認の対象です。ビルド成功だけではこれらの環境での動作確認済みとはしません。aarch64 もデスクトップ Linux が対象であり、個別の GPU・ボードの動作は別途確認します。
 

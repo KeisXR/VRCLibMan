@@ -232,7 +232,7 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
               </button>
             </div>
             <p className="meta">
-              オフにすると、ウィンドウを閉じたときにアプリも終了します。オンにすると、トレイ（Windows）またはメニューバー（macOS）から開き直せます。
+              オフにすると、ウィンドウを閉じたときにアプリも終了します。オンにすると、トレイ（Windows・Linux）またはメニューバー（macOS）から開き直せます。
             </p>
             <p>PC へのログイン時にバックグラウンドで起動しますか？</p>
             <div className="row-actions">
@@ -253,7 +253,7 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
               </button>
             </div>
             <p className="meta">
-              バックグラウンド動作がオンのときに選べます。起動後はトレイまたはメニューバーから開けます。
+              バックグラウンド動作がオンのときに選べます。起動後はトレイまたはメニューバーから開けます。Linux でトレイを利用できないときは、ウィンドウを表示します。
             </p>
             {message && <p className="meta">{message}</p>}
             <div className="row-actions">

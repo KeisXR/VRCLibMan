@@ -374,19 +374,51 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         });
         await route("#/import");
         await route("#/settings");
-        await wait(() => text().includes("Linux 版ではバックグラウンド動作とログイン時の起動は利用できません"));
+        await wait(() => text().includes("この環境ではバックグラウンド動作とログイン時の起動は利用できません"));
         for (const label of ["バックグラウンドで動作", "ログイン時に起動"]) {
           assert.equal(presenceSwitch(label).disabled, true);
           assert.equal(presenceSwitch(label).checked, false);
         }
         assert.ok(text().includes("ウィンドウを閉じるとアプリも終了します"));
-        assert.ok(!text().includes("トレイ（Windows）またはメニューバー（macOS）"));
+        assert.ok(!text().includes("トレイ（Windows・Linux）またはメニューバー（macOS）"));
       } finally {
         api.settings = originalSettings;
         await route("#/import");
         await route("#/settings");
         await wait(() => presenceSwitch("バックグラウンドで動作")?.disabled === false);
       }
+    });
+
+    await t.test("supported background settings save login launch only while background is enabled", async () => {
+      await route("#/settings");
+      const control = (label) => [...document.querySelectorAll(".setting-row")]
+        .find((row) => row.querySelector("strong")?.textContent === label)
+        ?.querySelector('input[type="checkbox"]');
+      const change = async (label, checked) => {
+        const node = control(label);
+        assert.ok(node && !node.disabled);
+        const props = Object.keys(node).find((key) => key.startsWith("__reactProps$"));
+        await act(async () => {
+          node.checked = checked;
+          node[props].onChange({ target: node, currentTarget: node });
+          await delay();
+        });
+      };
+      await wait(() => control("バックグラウンドで動作")?.disabled === false);
+      await change("バックグラウンドで動作", false);
+      await wait(async () => !(await api.settings()).backgroundMode);
+      assert.equal(control("ログイン時に起動").disabled, true);
+      await change("バックグラウンドで動作", true);
+      await wait(async () => (await api.settings()).backgroundMode);
+      assert.equal(control("ログイン時に起動").disabled, false);
+      await change("ログイン時に起動", true);
+      await wait(async () => (await api.settings()).launchAtLogin);
+      await change("バックグラウンドで動作", false);
+      await wait(async () => {
+        const saved = await api.settings();
+        return !saved.backgroundMode && !saved.launchAtLogin;
+      });
+      assert.equal(control("ログイン時に起動").checked, false);
     });
 
     await t.test("debug export copies classification feedback without secrets", async () => {
