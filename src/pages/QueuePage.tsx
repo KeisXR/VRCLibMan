@@ -197,7 +197,7 @@ export function QueuePage() {
   const visible = loadedKind === kind;
 
   return (
-    <section>
+    <section className="queue-page">
       <div className="page-head">
         <div>
           <h1>確認</h1>
