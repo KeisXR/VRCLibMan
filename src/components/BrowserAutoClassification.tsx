@@ -1,15 +1,18 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { SyntheticEvent } from "react";
 import { api, isTauri } from "../api";
 import { useShell } from "../App";
+import { postponeShown, promptOpen, reconcilePostponed, showsResume } from "../browserAutoPrompt";
 import { GENRE_LABEL, genresForKind } from "../types";
 import type { GenreKind } from "../types";
 import { errorText } from "../ui";
 
 type Item = { boothId: string; title: string };
+
 export function BrowserAutoClassification() {
   const { revision, refresh, fail, notify } = useShell();
   const [items, setItems] = useState<Item[]>([]);
-  const [deferred, setDeferred] = useState(false);
+  const [postponedIds, setPostponedIds] = useState<readonly string[]>([]);
   const [kind, setKind] = useState<GenreKind | "avatar">("asset");
   const [genre, setGenre] = useState("outfit");
   const [name, setName] = useState("");
@@ -17,25 +20,54 @@ export function BrowserAutoClassification() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   const dialog = useRef<HTMLDialogElement>(null);
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
   const current = items[0];
+  const itemIds = items.map((item) => item.boothId);
+  const open = promptOpen(itemIds, postponedIds);
+
   useEffect(() => {
     let alive = true;
     void api.browserAutoPending().then(value => { if (alive) setItems(value); }, err => { if (alive) fail(errorText(err)); });
     return () => { alive = false; };
   }, [revision, reload, fail]);
+
   useEffect(() => {
     if (!isTauri()) return;
-    let alive = true; let stop = () => {};
+    let alive = true;
+    let stop = () => {};
     void import("@tauri-apps/api/event").then(({ listen }) => listen("browser-auto-pending", () => {
-      if (alive) setReload(v => v + 1);
+      if (alive) setReload(value => value + 1);
     })).then(unlisten => { if (alive) stop = unlisten; else unlisten(); });
     return () => { alive = false; stop(); };
   }, []);
-  useEffect(() => { setKind("asset"); setGenre("outfit"); setName(""); setSaveError(null); }, [current?.boothId]);
+
   useEffect(() => {
-    if (current && !deferred) { if (!dialog.current?.open) dialog.current?.showModal(); }
-    else if (dialog.current?.open) dialog.current.close();
-  }, [current, deferred]);
+    setPostponedIds((prev) => reconcilePostponed(prev, items.map((item) => item.boothId)));
+  }, [items]);
+
+  useEffect(() => { setKind("asset"); setGenre("outfit"); setName(""); setSaveError(null); }, [current?.boothId]);
+
+  useLayoutEffect(() => {
+    const element = dialog.current;
+    if (!element) return;
+    if (open) {
+      if (!element.open) element.showModal();
+    } else if (element.open) element.close();
+  }, [open]);
+
+  function postpone() {
+    const ids = itemsRef.current.map((item) => item.boothId);
+    if (ids.length === 0) return;
+    setPostponedIds((prev) => postponeShown(prev, ids));
+  }
+
+  function onDialogClose(event: SyntheticEvent<HTMLDialogElement>) {
+    // 取り外されたダイアログの close では後回しにしない（開発時の二重マウントなど）。
+    if (!event.currentTarget.isConnected) return;
+    postpone();
+  }
+
   async function save() {
     if (!current || busy) return;
     setBusy(true);
@@ -50,9 +82,17 @@ export function BrowserAutoClassification() {
       notify("分類を確定しました"); refresh();
     } catch (err) { setSaveError(errorText(err)); fail(errorText(err)); } finally { setBusy(false); }
   }
+
   return <>
-    {items.length > 0 && deferred && <button type="button" className="button browser-auto-resume" onClick={() => setDeferred(false)}>取得した商品の分類（{items.length}件）</button>}
-    <dialog ref={dialog} className="browser-auto-dialog" aria-labelledby="browser-auto-title" onCancel={event => { event.preventDefault(); if (!busy) setDeferred(true); }}>
+    {showsResume(itemIds, postponedIds) && <button type="button" className="button browser-auto-resume" onClick={() => setPostponedIds([])}>取得した商品の分類（{items.length}件）</button>}
+    <dialog
+      ref={dialog}
+      className="browser-auto-dialog"
+      aria-labelledby="browser-auto-title"
+      closedby="closerequest"
+      onCancel={event => { event.preventDefault(); if (!busy) postpone(); }}
+      onClose={onDialogClose}
+    >
       {current && <>
         <h2 id="browser-auto-title">取得した商品の分類</h2><p>{current.title}</p>
         <p className="meta">残り{items.length}件。分類先を選んで確定すると、以後の再ダウンロードでは確認しません。</p>
@@ -62,8 +102,8 @@ export function BrowserAutoClassification() {
         {kind === "avatar" ? <label className="field"><span>アバター名（自動で決まらない場合）</span><input disabled={busy} value={name} onChange={event => setName(event.target.value)} /></label>
           : <label className="field"><span>分類先</span><select disabled={busy} value={genre} onChange={event => setGenre(event.target.value)}>{genresForKind(kind).map(value => <option key={value} value={value}>{GENRE_LABEL[value] ?? value}</option>)}</select></label>}
         {saveError && <p className="banner error" role="alert">{saveError}</p>}
-        <div className="row-actions"><button className="button primary" type="button" disabled={busy} onClick={() => void save()}>{busy ? "保存中…" : "分類を確定"}</button><button type="button" className="button" disabled={busy} onClick={() => setDeferred(true)}>後で分類する</button></div>
-        <p className="meta">後回しにしても登録は残ります。「取得した商品の分類」から再開できます。</p>
+        <div className="row-actions"><button className="button primary" type="button" disabled={busy} onClick={() => void save()}>{busy ? "保存中…" : "分類を確定"}</button><button type="button" className="button" disabled={busy} onClick={postpone}>後で分類する</button></div>
+        <p className="meta">後回しにしても登録は残ります。新しい商品が届くと確認を開き直し、それまでは「取得した商品の分類」から再開できます。</p>
       </>}
     </dialog>
   </>;

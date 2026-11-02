@@ -1,19 +1,45 @@
 <!doctype html><html lang="ja"><head><meta charset="UTF-8"><title>取得商品の分類テスト</title></head><body><div id="root"></div>
 <script type="module">
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ShellProvider } from '/src/App.tsx';
 import { BrowserAutoClassification } from '/src/components/BrowserAutoClassification.tsx';
 import { api } from '/src/api.ts';
 import '/src/styles.css';
-const fixture = window.autoFixture = { ready: false, error: null, pending: [{boothId:'123456',title:'見本の衣装'}, {boothId:'234567',title:'見本のワールド'}], saved:[], failNext:false };
-api.browserAutoPending = async () => fixture.pending;
+const fixture = window.autoFixture = {
+  ready: false,
+  error: null,
+  pending: [{boothId:'123456', title:'見本の衣装'}, {boothId:'234567', title:'見本のワールド'}],
+  saved: [],
+  failNext: false,
+  holdSave: false,
+  releaseSave: () => {},
+  bump: () => {},
+  fetches: 0,
+};
+api.browserAutoPending = async () => { fixture.fetches += 1; return fixture.pending.slice(); };
 api.moveProductGenre = async (id, kind, genre) => {
-  if (fixture.failNext) { fixture.failNext=false; throw new Error('保存失敗の見本'); }
-  fixture.saved.push({id,kind,genre});
+  if (fixture.failNext) { fixture.failNext = false; throw new Error('保存失敗の見本'); }
+  if (fixture.holdSave) await new Promise(resolve => { fixture.releaseSave = resolve; });
+  fixture.saved.push({id, kind, genre});
 };
 api.browserAutoFinish = async id => { fixture.pending = fixture.pending.filter(item => item.boothId !== id); };
-const shell = { revision:0, refresh:()=>{}, notify:()=>{}, fail: message => { fixture.lastError=message; }, builtinBrowser:true, refreshAccount:()=>{}, workInProgress:false };
-createRoot(document.getElementById('root')).render(React.createElement(React.StrictMode, null, React.createElement(ShellProvider, {value:shell}, React.createElement(BrowserAutoClassification))));
-fixture.ready=true;
+function Harness() {
+  const [revision, setRevision] = useState(0);
+  useEffect(() => {
+    fixture.bump = () => setRevision(value => value + 1);
+    fixture.ready = true;
+  }, []);
+  const shell = {
+    revision,
+    refresh: () => setRevision(value => value + 1),
+    notify: () => {},
+    fail: message => { fixture.lastError = message; },
+    builtinBrowser: true,
+    refreshAccount: () => {},
+    workInProgress: false,
+  };
+  return React.createElement(ShellProvider, { value: shell }, React.createElement(BrowserAutoClassification));
+}
+createRoot(document.getElementById('root')).render(React.createElement(React.StrictMode, null, React.createElement(Harness)));
 </script></body></html>
