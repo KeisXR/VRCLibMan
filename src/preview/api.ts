@@ -148,6 +148,7 @@ const store: Store = {
     libraryFolder: "C:\\Assets",
     builtinBrowser: false,
     browserForceDark: false,
+    browserAutoRegister: true,
     boothLinkTarget: "external",
     remoteAutoSync: false,
     remoteLibraryFolder: "\\\\nas\\vrclibman",
@@ -2340,6 +2341,8 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     case "cache_thumbnails":
     case "route_staged_download":
       desktopOnly();
+    case "browser_auto_pending": return [] as T;
+    case "browser_auto_finish": return undefined as T;
     case "list_staged_downloads":
       return [] as T;
     case "list_directory":

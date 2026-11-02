@@ -367,6 +367,7 @@ fn ensure_ready(connection: &Connection) -> Result<u32, String> {
         ("library_folder", ""),
         ("builtin_browser", "0"),
         ("browser_force_dark", "0"),
+        ("browser_auto_register", "1"),
         ("booth_link_target", "external"),
         ("booth_page_interval_ms", "1000"),
         ("remote_library_folder", ""),
@@ -446,6 +447,7 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
         library_folder: setting(connection, "library_folder")?.unwrap_or_default(),
         builtin_browser: setting(connection, "builtin_browser")?.as_deref() == Some("1"),
         browser_force_dark: setting(connection, "browser_force_dark")?.as_deref() == Some("1"),
+        browser_auto_register: setting(connection, "browser_auto_register")?.as_deref() != Some("0"),
         booth_link_target: normalize_booth_link_target(
             &setting(connection, "booth_link_target")?.unwrap_or_else(|| "external".into()),
         ),
@@ -586,6 +588,7 @@ fn save_settings_values(
         "confidence_threshold",
         &input.confidence_threshold.clamp(0.0, 1.0).to_string(),
     )?;
+    set_setting(connection, "browser_auto_register", if input.browser_auto_register { "1" } else { "0" })?;
     set_setting(connection, "library_folder", input.library_folder.trim())?;
     set_setting(
         connection,
@@ -7554,6 +7557,7 @@ mod tests {
                 library_folder: String::new(),
                 builtin_browser: false,
                 browser_force_dark: false,
+                browser_auto_register: true,
                 booth_link_target: "external".into(),
                 remote_library_folder: String::new(),
                 remote_auto_sync: false,
@@ -7819,6 +7823,7 @@ mod tests {
                 library_folder: String::new(),
                 builtin_browser: true,
                 browser_force_dark: false,
+                browser_auto_register: true,
                 booth_link_target: "external".into(),
                 remote_library_folder: String::new(),
                 remote_auto_sync: false,
@@ -9288,6 +9293,7 @@ mod tests {
                 library_folder: String::new(),
                 builtin_browser: false,
                 browser_force_dark: false,
+                browser_auto_register: true,
                 booth_link_target: "external".into(),
                 remote_library_folder: String::new(),
                 remote_auto_sync: false,
@@ -9318,6 +9324,7 @@ mod tests {
                 library_folder: library.display().to_string(),
                 builtin_browser: false,
                 browser_force_dark: false,
+                browser_auto_register: true,
                 booth_link_target: "external".into(),
                 remote_library_folder: String::new(),
                 remote_auto_sync: false,
@@ -9443,6 +9450,7 @@ mod tests {
                 library_folder: library.display().to_string(),
                 builtin_browser: browser,
                 browser_force_dark: false,
+                browser_auto_register: true,
                 booth_link_target: "external".into(),
                 remote_library_folder: String::new(),
                 remote_auto_sync: false,
@@ -9715,6 +9723,7 @@ mod tests {
             library_folder: String::new(),
             builtin_browser: false,
             browser_force_dark: false,
+            browser_auto_register: true,
             booth_link_target: "external".into(),
             remote_library_folder: String::new(),
             remote_auto_sync: false,
@@ -9916,6 +9925,7 @@ mod tests {
                 library_folder: library.display().to_string(),
                 builtin_browser: false,
                 browser_force_dark: false,
+                browser_auto_register: true,
                 booth_link_target: "external".into(),
                 remote_library_folder: String::new(),
                 remote_auto_sync: false,
@@ -11225,5 +11235,196 @@ mod tests {
         let jobs = products_for_extract(&connection, ExtractTarget::All).unwrap();
         assert!(jobs.iter().any(|job| job.booth_id == "1004" && job.is_adult));
         assert!(jobs.iter().filter(|job| job.booth_id != "1004").all(|job| !job.is_adult));
+    }
+}
+
+// Sparse checkout metadata must not erase descriptions, links, or manual classification.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct BrowserAutoItem {
+    pub booth_id: String,
+    pub title: String,
+}
+
+pub(crate) fn browser_auto_register(
+    connection: &mut Connection,
+    product: &serde_json::Value,
+) -> Result<Option<String>, String> {
+    let saved = settings(connection)?;
+    if !saved.builtin_browser || !saved.browser_auto_register {
+        return Ok(None);
+    }
+    let id = product
+        .get("boothId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if !crate::library_files::valid_booth_id(id) {
+        return Err("商品IDを特定できません".into());
+    }
+    if product_excluded(connection, id)? {
+        return Ok(None);
+    }
+    let exists = connection
+        .query_row(
+            "SELECT COUNT(*) FROM products WHERE booth_id = ?1",
+            [id],
+            |r| r.get::<_, i64>(0),
+        )
+        .sql()?
+        != 0;
+    if !exists {
+        import_export_json(
+            connection,
+            &crate::browser::export_json(serde_json::json!([product])),
+        )?;
+    }
+    let seen = format!("browser_auto_seen:{id}");
+    if setting(connection, &seen)?.is_none() {
+        let p = require_product(connection, id)?;
+        if !p.user_confirmed && !classification_pinned(&p) {
+            set_setting(connection, &format!("browser_auto_pending:{id}"), "1")?;
+            connection
+                .execute(
+                    "UPDATE products SET needs_review = 1 WHERE booth_id = ?1",
+                    [id],
+                )
+                .sql()?;
+        }
+        set_setting(connection, &seen, "1")?;
+    }
+    Ok(Some(id.to_string()))
+}
+
+pub(crate) fn browser_auto_pending(
+    connection: &Connection,
+) -> Result<Vec<BrowserAutoItem>, String> {
+    let saved = settings(connection)?;
+    if !saved.builtin_browser || !saved.browser_auto_register {
+        return Ok(vec![]);
+    }
+    let mut query = connection.prepare(
+        "SELECT booth_id, title FROM products p WHERE EXISTS
+         (SELECT 1 FROM settings s WHERE s.key = 'browser_auto_pending:' || p.booth_id AND s.value = '1') AND user_confirmed = 0 AND NOT (category_locked = 1 AND genre_locked = 1) ORDER BY booth_id"
+    ).sql()?;
+    let rows = query
+        .query_map([], |r| {
+            Ok(BrowserAutoItem {
+                booth_id: r.get(0)?,
+                title: r.get(1)?,
+            })
+        })
+        .sql()?;
+    let mut items = vec![];
+    for row in rows {
+        let item = row.sql()?;
+        if !product_excluded(connection, &item.booth_id)? {
+            items.push(item);
+        }
+    }
+    Ok(items)
+}
+
+pub(crate) fn browser_auto_finish(connection: &mut Connection, id: &str) -> Result<(), String> {
+    let p = require_product(connection, id)?;
+    if !p.user_confirmed && !classification_pinned(&p) {
+        return Err("分類先を選んでから確定してください".into());
+    }
+    connection
+        .execute(
+            "DELETE FROM settings WHERE key = ?1",
+            [format!("browser_auto_pending:{id}")],
+        )
+        .sql()?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod browser_auto_tests {
+    use super::*;
+    fn enabled_db() -> Connection {
+        let c = open_memory().unwrap();
+        set_setting(&c, "builtin_browser", "1").unwrap();
+        c
+    }
+    fn product(id: &str) -> serde_json::Value {
+        serde_json::json!({"boothId": id, "title": "見本の衣装", "description": "対応する衣装の見本"})
+    }
+    #[test]
+    fn default_enabled_and_off_prevents_registration() {
+        let mut c = enabled_db();
+        assert!(settings(&c).unwrap().browser_auto_register);
+        update_settings(
+            &mut c,
+            &SettingsPatch {
+                browser_auto_register: Some(false),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            browser_auto_register(&mut c, &product("123456")).unwrap(),
+            None
+        );
+        assert!(require_product(&c, "123456").is_err());
+        update_settings(
+            &mut c,
+            &SettingsPatch {
+                browser_auto_register: Some(true),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            browser_auto_register(&mut c, &product("123456")).unwrap(),
+            Some("123456".into())
+        );
+        assert_eq!(browser_auto_pending(&c).unwrap().len(), 1);
+    }
+    #[test]
+    fn duplicate_checkout_and_redownload_keep_one_pending_item() {
+        let mut c = enabled_db();
+        browser_auto_register(&mut c, &product("123456")).unwrap();
+        browser_auto_register(&mut c, &product("123456")).unwrap();
+        assert_eq!(browser_auto_pending(&c).unwrap().len(), 1);
+        assert!(browser_auto_finish(&mut c, "123456").is_err());
+        move_product_genre(&mut c, "123456", "asset", "outfit").unwrap();
+        browser_auto_finish(&mut c, "123456").unwrap();
+        browser_auto_register(&mut c, &product("123456")).unwrap();
+        assert!(browser_auto_pending(&c).unwrap().is_empty());
+    }
+    #[test]
+    fn sparse_metadata_preserves_existing_details_and_manual_classification() {
+        let mut c = enabled_db();
+        import_export_json(
+            &mut c,
+            &crate::browser::export_json(serde_json::json!([product("123456")])),
+        )
+        .unwrap();
+        move_product_genre(&mut c, "123456", "asset", "hair").unwrap();
+        browser_auto_register(
+            &mut c,
+            &serde_json::json!({"boothId":"123456", "title":"短い名前"}),
+        )
+        .unwrap();
+        let p = require_product(&c, "123456").unwrap();
+        assert_eq!(p.description_snippet, "対応する衣装の見本");
+        assert_eq!(p.genre.as_deref(), Some("hair"));
+        assert!(browser_auto_pending(&c).unwrap().is_empty());
+    }
+    #[test]
+    fn pending_survives_reopening_and_disabled_settings_hide_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.sqlite");
+        {
+            let mut c = open(&path).unwrap();
+            set_setting(&c, "builtin_browser", "1").unwrap();
+            browser_auto_register(&mut c, &product("123456")).unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(browser_auto_pending(&c).unwrap().len(), 1);
+        set_setting(&c, "browser_auto_register", "0").unwrap();
+        assert!(browser_auto_pending(&c).unwrap().is_empty());
+        set_setting(&c, "browser_auto_register", "1").unwrap();
+        assert_eq!(browser_auto_pending(&c).unwrap().len(), 1);
     }
 }

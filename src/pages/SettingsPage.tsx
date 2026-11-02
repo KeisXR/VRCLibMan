@@ -360,6 +360,11 @@ export function SettingsPage() {
               </SettingRow>
             )}
             {settings.builtinBrowser && (
+              <SettingRow label="取得したアセットの自動登録" help="購入完了・ダウンロード完了を検知して登録し、初回に分類先を確認します。ファイルの移動は自動整理の設定に従います。">
+                <label className="switch-label"><input type="checkbox" checked={settings.browserAutoRegister} onChange={(e) => changeSettings({ browserAutoRegister: e.target.checked })} />有効にする</label>
+              </SettingRow>
+            )}
+            {settings.builtinBrowser && (
               <details className="settings-details">
                 <summary>強制ダークモードについて</summary>
                 <p>開いているページにはすぐに反映されます。設定を変えたあと別のページへ移ると、読み込みが終わるまで元の色が一瞬見えることがあります。そのときはそのページを再読み込みすると、すぐに暗い表示になります。再起動は要りません。</p>

@@ -172,6 +172,8 @@ export const api = {
   boothBrowserLog: () => call<BrowserDiagnostic>("booth_browser_log"),
   importExport: (json: string) => call<ImportReport>("import_export", { json }),
   updateProduct: (update: ProductUpdate) => call<void>("update_product", { update }),
+  browserAutoPending: () => call<{ boothId: string; title: string }[]>("browser_auto_pending"),
+  browserAutoFinish: (boothId: string) => call<void>("browser_auto_finish", { boothId }),
   moveProductGenre: (boothId: string, kind: GenreKind, genre: string) =>
     call<ClassificationSnapshot>("move_product_genre", { boothId, kind, genre }),
   restoreProductClassification: (snapshot: ClassificationSnapshot) =>

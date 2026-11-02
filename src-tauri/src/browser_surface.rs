@@ -719,6 +719,7 @@ fn mount_tab(app: &AppHandle, host_id: &str, window: &Window, url: Url) -> Resul
         .initialization_script_for_all_frames(browser_dark::force_dark_script(
             browser_dark::enabled(),
         ))
+        .initialization_script(&crate::browser_auto::initialization_script())
         .on_navigation(move |url| {
             if url.as_str() == "about:blank" {
                 return true;
@@ -750,6 +751,7 @@ fn mount_tab(app: &AppHandle, host_id: &str, window: &Window, url: Url) -> Resul
                 ),
             );
             if !loading {
+                crate::browser_auto::page_loaded(&view, payload.url());
                 let _ = view.eval(browser_dark::force_dark_script(browser_dark::enabled()));
                 refresh_history(&view);
                 if !browser::library_walk_running()
@@ -785,7 +787,12 @@ fn mount_tab(app: &AppHandle, host_id: &str, window: &Window, url: Url) -> Resul
             }
             tauri::webview::NewWindowResponse::Deny
         })
-        .on_download(|_, event| browser::handle_booth_download(event));
+        .on_download(|view, mut event| {
+            if !browser::download_job_armed() {
+                crate::browser_auto::handle_download(&view, &mut event);
+            }
+            browser::handle_booth_download(event)
+        });
     #[cfg(not(target_os = "macos"))]
     {
         let root = browser::local_data_dir(app)?;
