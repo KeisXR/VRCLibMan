@@ -14,6 +14,7 @@ import { AppUpdater } from "../components/AppUpdater";
 import { ClassificationFeedback } from "../components/ClassificationFeedback";
 import { OllamaMemoryControls } from "../components/OllamaMemoryControls";
 import { CloudClassifierSettings } from "../components/CloudClassifierSettings";
+import { AssetUpdates } from "../components/AssetUpdates";
 import { UnitySettings } from "../components/UnitySettings";
 
 const emptyAvatar = {
@@ -295,7 +296,7 @@ export function SettingsPage() {
       {settings && (
         <div className="settings-layout">
           <nav className="settings-nav" aria-label="設定の項目">
-            {[["settings-library", "ライブラリ"], ["settings-unity", "Unity"], ["settings-startup", "起動と常駐"], ["settings-booth", "BOOTH"], ["settings-classify", "分類モデル"], ["settings-data", "データ"]].map(([id, label]) => (
+            {[["settings-library", "ライブラリ"], ["settings-unity", "Unity"], ["settings-startup", "起動と常駐"], ["settings-asset-updates", "更新候補"], ["settings-booth", "BOOTH"], ["settings-classify", "分類モデル"], ["settings-data", "データ"]].map(([id, label]) => (
               <button key={id} type="button" onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" })}>{label}</button>
             ))}
           </nav>
@@ -335,6 +336,8 @@ export function SettingsPage() {
             </SettingRow>
             {settings.backgroundSupported && <details className="settings-details"><summary>起動と常駐について詳しく</summary><p>オフにすると、ウィンドウを閉じたときにアプリも終了します。オンにすると、トレイ（Windows・Linux）またはメニューバー（macOS）から再表示・終了できます。</p><p>「ログイン時に起動」を有効にすると、ウィンドウを表示せずに起動します。バックグラウンド動作をオフにすると、ログイン時の起動もオフになります。</p><p>Linux はトレイのメニューから「開く」「終了」を選びます。GNOME では AppIndicator 対応の拡張が必要になる場合があります。トレイを利用できないときはウィンドウを表示し、閉じると終了します。</p></details>}
           </section>
+
+          <AssetUpdates />
 
           <section className="settings-section" id="settings-booth">
             <header><h2>BOOTH の読み込み方</h2><p>拡張機能・内蔵ブラウザ・併用を選びます。</p></header>

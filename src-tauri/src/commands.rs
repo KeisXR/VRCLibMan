@@ -2145,3 +2145,29 @@ pub fn browser_auto_finish(
     let _ = app.emit("library-changed", ());
     Ok(())
 }
+
+#[tauri::command]
+pub fn asset_update_status(view: tauri::Webview, state: State<'_, AppState>) -> Result<crate::asset_updates::Status, String> {
+    if view.label() != "main" {
+        return Err("この画面からアセットの更新を確認する権限がありません".into());
+    }
+    let connection = db(&state)?;
+    crate::asset_updates::status(&connection)
+}
+
+#[tauri::command]
+pub fn configure_asset_updates(view: tauri::Webview, state: State<'_, AppState>, input: crate::asset_updates::Configure) -> Result<crate::asset_updates::Status, String> {
+    if view.label() != "main" {
+        return Err("この画面からアセットの更新を確認する権限がありません".into());
+    }
+    let mut connection = db(&state)?;
+    crate::asset_updates::configure(&mut connection, input)
+}
+
+#[tauri::command]
+pub async fn check_asset_updates(view: tauri::Webview, app: AppHandle) -> Result<crate::asset_updates::Status, String> {
+    if view.label() != "main" {
+        return Err("この画面からアセットの更新を確認する権限がありません".into());
+    }
+    crate::asset_updates::check(&app, true).await
+}

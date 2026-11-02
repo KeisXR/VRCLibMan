@@ -1,3 +1,4 @@
+mod asset_updates;
 mod apple_fm;
 mod booth_category;
 mod booth_detail;
@@ -176,6 +177,7 @@ pub fn run() {
                 }
             }
             crate::remote_sync::start(app.handle());
+            crate::asset_updates::start(app.handle());
             if let Ok(cache) = app.path().app_cache_dir() {
                 // 「Unityで開く」で取り出した古いパッケージを消す。名前はログに出さない。
                 std::thread::spawn(move || {
@@ -280,6 +282,9 @@ pub fn run() {
             commands::booth_browser_log,
             commands::download_booth_file,
             commands::fetch_free_files,
+            commands::asset_update_status,
+            commands::configure_asset_updates,
+            commands::check_asset_updates,
             commands::open_local_path,
             commands::booth_account,
             commands::list_directory,
