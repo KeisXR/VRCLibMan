@@ -46,11 +46,11 @@ pub fn title_fill_category(title: &str, description: &str, model: Category) -> O
     if avatar_package(&folded) {
         return Some(Category::Avatar);
     }
-    if has_world_prop(&folded) || world_placement(&folded) || gpu_particle(&folded) {
+    if has_world_prop(&folded) || world_placement(&folded) {
         return Some(Category::World);
     }
     if !avatar_gimmick_title(title)
-        && (world_placement(description) || gpu_particle(description))
+        && world_placement(description)
         && !matches!(model, Category::Avatar | Category::Outfit | Category::Hair)
     {
         return Some(Category::World);
@@ -173,10 +173,7 @@ fn has_world_prop(lower: &str) -> bool {
 }
 
 fn world_side_title(lower: &str) -> bool {
-    world_strength(lower) >= 1
-        || has_world_prop(lower)
-        || world_placement(lower)
-        || gpu_particle(lower)
+    world_strength(lower) >= 1 || has_world_prop(lower) || world_placement(lower)
 }
 
 /// The title names an avatar gimmick. World placement in the same title stays a world.
@@ -207,7 +204,7 @@ pub fn world_placement(text: &str) -> bool {
     PHRASES.iter().any(|phrase| lower.contains(phrase))
 }
 
-/// World-side GPU particle volumes, not an avatar particle gimmick.
+/// GPU particle wording chooses a genre only after the world category is established.
 pub fn gpu_particle(text: &str) -> bool {
     let lower = nfkc(text).to_lowercase();
     const PHRASES: &[&str] = &[
@@ -342,8 +339,9 @@ pub fn world_hint_overrides(
     model: Category,
     confidence: f64,
 ) -> bool {
+    let described = nfkc(description).to_lowercase();
     // 「お試しワールド」やワールドURLだけでは、アバターギミックをワールドにしない。
-    if avatar_gimmick_title(title) && !world_placement(title) && !world_placement(description) {
+    if avatar_gimmick_title(title) && !explicit_world_use(&described) {
         return false;
     }
     let title_strength = world_strength(title);
@@ -357,7 +355,6 @@ pub fn world_hint_overrides(
     if title_strength == 1 {
         return true;
     }
-    let described = nfkc(description).to_lowercase();
     let weak_model = matches!(
         model,
         Category::Gimmick | Category::Other | Category::Accessory | Category::World
@@ -382,8 +379,10 @@ fn world_strength(text: &str) -> u8 {
     }
 }
 
-fn strong_world(lower: &str) -> bool {
-    if lower.contains("udon") || lower.contains("skybox") {
+/// Direct world use, rather than a sample-world URL next to unrelated shader wording.
+/// The caller passes normalized lowercase text.
+fn explicit_world_use(lower: &str) -> bool {
+    if lower.contains("udon") || lower.contains("skybox") || world_placement(lower) {
         return true;
     }
     const MARKED: &[&str] = &[
@@ -392,8 +391,23 @@ fn strong_world(lower: &str) -> bool {
         "ワールドシェーダ",
         "ワールドプレハブ",
         "ワールドプロップ",
+        "world prefab",
+        "worldprefab",
+        "world shader",
+        "worldshader",
+        "worldgimmick",
+        "world prop",
+        "worldprop",
+        "world tool",
+        "worldtool",
+        "for world",
+        "for vrchat world",
     ];
-    if MARKED.iter().any(|phrase| lower.contains(phrase)) {
+    MARKED.iter().any(|phrase| lower.contains(phrase))
+}
+
+fn strong_world(lower: &str) -> bool {
+    if explicit_world_use(lower) {
         return true;
     }
     let worldish = has_world_word(lower)
@@ -438,7 +452,7 @@ pub fn category_for_listed_product(title: &str, description: &str) -> Category {
         return Category::World;
     }
     if avatar_gimmick_title(title) {
-        if world_placement(description) {
+        if explicit_world_use(&nfkc(description).to_lowercase()) {
             return Category::World;
         }
         return Category::Gimmick;
@@ -463,7 +477,7 @@ pub fn category_for_listed_product(title: &str, description: &str) -> Category {
     if editor_tool_title(title) || mochifitter_title(title) {
         return Category::Other;
     }
-    if gpu_particle(description) || world_placement(description) {
+    if explicit_world_use(&nfkc(description).to_lowercase()) {
         return Category::World;
     }
     if outfit_description(description) {
@@ -1099,11 +1113,7 @@ fn classify_text(text: &str, allow_broad: bool) -> Category {
     if has(&["オリジナル3dモデル"]) || avatar_package(&lower) {
         return Category::Avatar;
     }
-    if world_strength(text) >= 2
-        || has_world_prop(&lower)
-        || world_placement(&lower)
-        || gpu_particle(&lower)
-    {
+    if world_strength(text) >= 2 || has_world_prop(&lower) || world_placement(&lower) {
         return Category::World;
     }
     if has(&[

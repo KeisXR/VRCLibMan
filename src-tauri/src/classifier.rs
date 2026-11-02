@@ -5,7 +5,9 @@
 /// the same way as the longer official names. Ids 157, 142, and 6 stay unsettled.
 /// 7: world placement, avatar gimmicks, outfits, stickers, and conversion profiles
 /// beat incidental words. Coarse tool/software categories yield when the text says so.
-pub const CLASSIFIER_VERSION: i32 = 7;
+/// 8: keep explicit world use, wearable compatibility, specific world asset genres,
+/// avatar GPU particles, and title animations on their intended classification paths.
+pub const CLASSIFIER_VERSION: i32 = 8;
 
 /// Title and description decide the label. Shop names are not features.
 pub fn classify_listing(
@@ -230,7 +232,7 @@ mod tests {
             classify_listing("無関係な題", "Phone Shop", ""),
             (Category::Other, "other".into())
         );
-        assert_eq!(CLASSIFIER_VERSION, 7);
+        assert_eq!(CLASSIFIER_VERSION, 8);
     }
 
     #[test]

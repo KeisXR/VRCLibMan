@@ -16,6 +16,9 @@ use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+#[cfg(test)]
+mod classification_regressions;
+
 const SCHEMA: &str = "
 CREATE TABLE products (
     booth_id TEXT PRIMARY KEY,
@@ -1461,8 +1464,8 @@ fn apply_extraction_inner(
                     &existing.description_snippet,
                 )
             };
-            // A product-type phrase wins over tags. Tags then win when the genre fits.
-            // A BOOTH settlement keeps its genre when neither applies. Title phrases fill the rest.
+            // A product-type phrase wins over tags. A BOOTH settlement has already
+            // consulted tags; keep its selected genre, including a coarse-tool text override.
             let selected = if title_fill {
                 preferred
                     .clone()
@@ -1471,8 +1474,8 @@ fn apply_extraction_inner(
                     .or_else(|| extraction.genre.clone())
             } else {
                 preferred
-                    .or(from_tags)
                     .or_else(|| extraction.genre.clone())
+                    .or(from_tags)
                     .or(from_title)
             };
             crate::genre::validate(category, selected.as_deref())
