@@ -30,6 +30,8 @@ mod model;
 mod normalize;
 mod ollama;
 mod presence;
+#[cfg(target_os = "linux")]
+mod presence_linux;
 mod preview_image;
 mod quiet;
 mod resolve;
@@ -184,20 +186,8 @@ pub fn run() {
                     );
                 });
             }
-            let _ = presence::sync_login_item(
-                app.handle(),
-                presence::autostart_should_enable(background_mode, launch_at_login),
-            );
-            if background_mode {
-                let _ = presence::ensure_tray(app.handle());
-            }
-            if presence::should_open_window_on_start(
-                background_mode,
-                presence::launched_by_login_item(std::env::args()),
-            ) {
-                presence::show_main_window(app.handle())
-                    .map_err(|err| std::io::Error::other(err))?;
-            }
+            presence::start(app.handle(), background_mode, launch_at_login)
+                .map_err(std::io::Error::other)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

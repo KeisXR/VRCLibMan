@@ -9880,13 +9880,13 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn linux_settings_ignore_stored_background_flags_and_cannot_enable_them() {
+    fn linux_settings_preserve_background_preferences_without_a_desktop_host() {
         let connection = open_memory().unwrap();
         set_setting(&connection, "background_mode", "1").unwrap();
         set_setting(&connection, "launch_at_login", "1").unwrap();
         let saved = settings(&connection).unwrap();
-        assert!(!saved.background_supported);
-        assert!(!saved.background_mode && !saved.launch_at_login);
+        assert!(saved.background_supported);
+        assert!(saved.background_mode && saved.launch_at_login);
         let saved = update_settings(
             &connection,
             &SettingsPatch {
@@ -9896,14 +9896,14 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(!saved.background_mode && !saved.launch_at_login);
+        assert!(saved.background_mode && saved.launch_at_login);
         assert_eq!(
             setting(&connection, "background_mode").unwrap().as_deref(),
-            Some("0")
+            Some("1")
         );
         assert_eq!(
             setting(&connection, "launch_at_login").unwrap().as_deref(),
-            Some("0")
+            Some("1")
         );
     }
 

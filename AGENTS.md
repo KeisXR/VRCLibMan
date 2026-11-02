@@ -101,7 +101,7 @@ VRCLibMan を変更するときは、このファイルを先に読む。実装�
 - Linux は実機未検証のテスト版として、各リリースで両 CPU の AppImage をビルド・署名し、通常 Release に添付する。README と毎回の Release 本文に、配布先での起動・各機能・アプリ内更新が未検証であることを明記する。Linux の実機確認は公開の必須条件にしないが、成果物・署名の必須チェックは維持する。
 - Linux は glibc 系デスクトップの x86_64 / aarch64 を対象に、Ubuntu 22.04 / ubuntu-22.04-arm のネイティブランナーで AppImage を作る。`tauri.linux.conf.json` は AppImage だけを指定する。クロスパッケージ化はしない。実機確認の対象は Ubuntu / Mint・Fedora・Arch 系、GNOME / KDE、X11 / Wayland で、ビルド成功を実機検証済みとは扱わない。
 - 共通の下書き Release に Windows / Mac / Linux 両 CPU の成果物を載せる。集約する `latest.json` は `windows-x86_64`、`darwin-aarch64`、`linux-x86_64-appimage`、`linux-aarch64-appimage` の全4対象を必須とし、ファイル・署名の欠落を許可しない。AppImage は通常の `.AppImage` と `.AppImage.sig` を使い、更新のためにユーザー所有の書き換え可能な場所へ置く。
-- `settings.background_supported` は保存項目ではなくプラットフォームの能力を返す。Linux はトレイ未対応のため常駐とログイン起動を無効にし、旧設定が真でも通常の窓を開き、閉じたら終了する。Windows / Mac の常駐は維持する。
+- `settings.background_supported` は保存項目ではなくプラットフォームの能力を返し、Linux も対応する。保存した常駐の希望と実行中の可否を分け、トレイが準備できた場合だけ窓なしで常駐する。Linux は `presence_linux.rs` がセッション D-Bus の StatusNotifierWatcher の所有者と表示ホストを、2秒間隔・上限2秒の非同期処理で確認する。表示先なし・タイムアウト・トレイ作成失敗では窓を表示し、閉じると終了する。表示先の消失・所有者変更ではトレイを再表示し、復帰経路を失ったらメイン画面を開く。希望設定は消さない。Linux の復帰はトレイメニューの「開く」を使い、クリックイベントには依存しない。ログイン時起動は外側の AppImage パスを XDG の autostart に登録する。Windows / Mac も起動時のトレイ作成失敗では窓を表示する。
 - Linux のダウンロード先は `dirs::download_dir()` で XDG の設定を読み、未設定ならホーム配下の `Downloads` に戻す。相対パス・親ディレクトリ成分を拒否し、移動前の既知の保存元・商品ID・シンボリックリンクの検査は緩めない。
 - Linux の URL 関連付けは `update-desktop-database` / `xdg-mime` の欠落や失敗でアプリ全体を終了させない。起動中のアプリへの拡張送信と JSON のインポートは使える。Windows の開発用登録は既存どおりである。
 

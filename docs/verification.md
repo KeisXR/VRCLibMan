@@ -13,6 +13,22 @@
 
 GNOME / KDE の実デスクトップ、Wayland、GPU 描画、aarch64、署名済み AppImage、BOOTH の実ログインは未確認。Windows / macOS でも今回の差分の実機確認はしていない。仮想 X11 の成功を配布先での実機検証済みとは扱わない。
 
+## Linux の常駐とログイン時起動（2026-11-02）
+
+対象は main `9a4c938` を基準にした `feat/linux-background-tray` の変更。Debian 13 x86_64、Rust 1.99.1、Node.js 24、GTK 3.24 / WebKitGTK 2.54、Chromium で確認した。実ユーザーの DB・ログイン・Cookie は使わず、一時 DB と専用の設定ディレクトリを使用した。
+
+- `cargo test --locked --manifest-path src-tauri/Cargo.toml --lib` は355件成功、既存の1件ignore。専用の `dbus-daemon` で、表示ホストなし・表示ホストの有無の変化・Watcher の所有者交代を確認した。
+- GIO が実際に `.desktop` を読み込み、空白・引用符・ドル・バッククォート・バックスラッシュ・パーセント・等号を含む見本 AppImage パスを起動して、引数が正確に渡ることを確認した。移動先への更新、無効化、他の自動起動項目を残すこと、不正なパスの拒否も確認した。
+- `npm test` は128件成功、`npm run build` 成功。main の更新チェック修正 `9a4c938` を取り込んだ後にもフル実行した。
+- `npm run dev` と実 Chromium で設定画面のチェックボックスをクリックし、常駐オン・ログイン時起動オンの保存、常駐オフによるログイン時起動の解除、Linux の説明表示、ページエラーがないことを確認した。
+- `cargo build --locked --manifest-path src-tauri/Cargo.toml --features tauri/custom-protocol` 成功。Xvfb 上の実 Tauri アプリと専用の D-Bus / 合成 StatusNotifierWatcher を使い、トレイなしのログイン起動では窓を表示し、閉じると終了コード0で終了することを確認した。保存した常駐・ログイン時起動の希望は維持された。トレイの一時画像を保存できない状態を作り、ネイティブのトレイ作成失敗でも窓を表示して終了できることを確認した。
+- 表示ホストありのログイン起動では窓なしでトレイを登録し、実際の D-Bus メニューの「開く」でメイン画面を表示、「閉じる」で窓を破棄して常駐、「開く」で再作成、「終了」で終了コード0になることを確認した。常駐中も認証付きのローカル受信口が応答した。
+- 表示ホストの消失で窓が戻り、復旧と Watcher 所有者の交代後にも常駐とメニュー操作が再開できた。ログイン時に表示先が遅れて現れた場合は、先に表示した窓を勝手に閉じずトレイを有効にした。自動起動ファイルが `XDG_CONFIG_HOME` 配下に作られ、外側 AppImage の見本パスを指すことも確認した。
+
+この環境は GTK/WebKit を作業領域の sysroot に展開しているため、ネイティブ確認時だけ WebKit ライブラリのコピーにある補助プロセスの探索先を作業領域へ合わせた。配布物やリポジトリ内のバイナリにはこの調整を行っていない。
+
+GNOME / KDE の実デスクトップでのアイコン表示と実ログイン、Wayland、aarch64、署名付き配布 AppImage そのものの自動起動は未確認。合成 Watcher と仮想 X11 の成功を、それらの実機確認として扱わない。Windows / macOS の実機再確認も行っていない。
+
 ## 内蔵ブラウザの購入・ダウンロード自動登録（2026-11-02）
 
 対象は `1c75305`（main `b6dbc7c` 上の `feat/browser-auto-register`）。Debian 13 / Linux x86_64、Node.js 24、Rust 1.99.1で確認した。RustのGTK/WebKit開発ファイルは作業領域に展開し、pkg-configとライブラリ探索先をその領域に向けた。
