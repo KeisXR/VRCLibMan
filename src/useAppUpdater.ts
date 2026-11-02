@@ -1,4 +1,4 @@
-import { createContext, createElement, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, createElement, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { appUpdater, isTauri, listenUpdaterChanged } from "./api";
 import type { AppUpdateStatus } from "./types";
 
@@ -9,6 +9,7 @@ function acceptStatus(current: AppUpdateStatus | null, next: AppUpdateStatus): A
 function useAppUpdaterState() {
   const [status, setStatus] = useState<AppUpdateStatus | null>(null);
   const [pending, setPending] = useState(false);
+  const pendingRef = useRef(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -33,7 +34,9 @@ function useAppUpdaterState() {
   }, []);
 
   const run = useCallback(async (operation: () => Promise<AppUpdateStatus>) => {
-    if (pending) return;
+    // Guard synchronously without changing the callbacks used by the startup effect.
+    if (pendingRef.current) return;
+    pendingRef.current = true;
     setPending(true);
     setError("");
     try {
@@ -42,9 +45,10 @@ function useAppUpdaterState() {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
+      pendingRef.current = false;
       setPending(false);
     }
-  }, [pending]);
+  }, []);
 
   const check = useCallback((manual = true) => run(() => appUpdater.check(manual)), [run]);
 
@@ -68,8 +72,10 @@ export function useAppUpdater(): UpdaterValue {
 
 export function useStartupUpdateCheck(enabled: boolean) {
   const { check } = useAppUpdater();
+  const checked = useRef(false);
   useEffect(() => {
-    if (!enabled || !isTauri()) return;
+    if (!enabled || !isTauri() || checked.current) return;
+    checked.current = true;
     void check(false);
   }, [enabled, check]);
 }

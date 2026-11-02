@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { parseHTML } from "linkedom";
 import { createServer } from "vite";
+import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 
 test("updater requires explicit download and restart, survives stale status, and permits retries", async () => {
   const { window } = parseHTML(
@@ -153,6 +154,77 @@ test("updater requires explicit download and restart, survives stale status, and
     assert.equal(installs, 2, "installation failure can be retried");
   } finally {
     await act(() => root.unmount());
+    await server.close();
+  }
+});
+
+test("startup checks once across pending changes, failures and StrictMode; manual checks still work", async () => {
+  const { window } = parseHTML('<html><body><div id="root"></div></body></html>');
+  for (const name of ["window", "document", "HTMLElement", "Event", "CustomEvent", "EventTarget"]) {
+    Object.defineProperty(globalThis, name, { configurable: true, writable: true, value: window[name] });
+  }
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  mockIPC(() => undefined, { shouldMockEvents: true });
+  const { act, createElement, StrictMode } = await import("react");
+  const { createRoot } = await import("react-dom/client");
+  const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  const root = createRoot(document.getElementById("root"));
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
+  try {
+    const { appUpdater } = await server.ssrLoadModule("/src/api.ts");
+    const { AppUpdaterProvider, useAppUpdater, useStartupUpdateCheck } = await server.ssrLoadModule("/src/useAppUpdater.ts");
+    const idle = { revision: 0, phase: "idle", version: null, notes: null, downloaded: 0, total: null, error: null, message: null };
+    appUpdater.status = async () => idle;
+    let updater;
+    function Probe({ enabled }) {
+      updater = useAppUpdater();
+      useStartupUpdateCheck(enabled);
+      return null;
+    }
+    const render = (key, enabled) => root.render(createElement(StrictMode, null,
+      createElement(AppUpdaterProvider, { key }, createElement(Probe, { enabled }))));
+
+    for (const outcome of ["current", "available", "idle", "reject"]) {
+      const calls = [];
+      let complete;
+      appUpdater.check = (manual) => {
+        calls.push(manual);
+        return new Promise((resolve, reject) => {
+          complete = () => outcome === "reject"
+            ? reject(new Error("通信失敗"))
+            : resolve({ ...idle, revision: calls.length, phase: outcome });
+        });
+      };
+      await act(async () => { render(outcome, true); await tick(); });
+      assert.deepEqual(calls, [false], "StrictMode starts one automatic check");
+      assert.equal(updater.pending, true);
+      await act(async () => { complete(); await tick(); });
+      assert.equal(updater.pending, false);
+      assert.deepEqual(calls, [false], `${outcome} does not trigger another automatic check`);
+      await act(async () => { render(outcome, false); await tick(); });
+      await act(async () => { render(outcome, true); await tick(); });
+      assert.deepEqual(calls, [false], "re-enabling does not repeat the startup check");
+
+      await act(async () => {
+        void updater.check(true);
+        void updater.check(true);
+        await tick();
+      });
+      assert.deepEqual(calls, [false, true], "manual retry is allowed, concurrent calls are ignored");
+      await act(async () => { complete(); await tick(); });
+      assert.equal(updater.pending, false);
+      assert.deepEqual(calls, [false, true], "manual completion does not restart the startup check");
+    }
+    await act(async () => { render("disabled", false); await tick(); });
+    let checks = 0;
+    appUpdater.check = async () => { checks++; return idle; };
+    await act(async () => { render("disabled", false); await tick(); });
+    assert.equal(checks, 0, "disabled startup does not check");
+    await act(async () => { render("disabled", true); await tick(); });
+    assert.equal(checks, 1, "settings loaded after mount can enable the startup check");
+  } finally {
+    await act(() => root.unmount());
+    clearMocks();
     await server.close();
   }
 });
