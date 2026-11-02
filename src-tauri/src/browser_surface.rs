@@ -26,9 +26,9 @@ const MAX_PANEL_EDGE: f64 = 16384.0;
 
 /// The docked page is a child webview of the main window.
 /// Windows uses WebView2. macOS uses the same rectangle, hide, and reparent path.
-/// Linux stays a separate window until the Gtk layout is confirmed on a real machine.
+/// Linux uses a GtkOverlay with the main webview as its full-size primary child.
 pub const fn panel_supported() -> bool {
-    cfg!(any(windows, target_os = "macos"))
+    cfg!(any(windows, target_os = "macos", target_os = "linux"))
 }
 
 /// The user moved a page to its own window in this session, so a later empty open uses a window.
@@ -710,6 +710,10 @@ fn close_webviews(app: &AppHandle, ids: &[String]) {
 }
 
 fn mount_tab(app: &AppHandle, host_id: &str, window: &Window, url: Url) -> Result<String, String> {
+    #[cfg(target_os = "linux")]
+    if window.label() == PANEL_WINDOW_LABEL {
+        crate::browser_linux::prepare_panel(app)?;
+    }
     let id = surface().session.add(host_id, &url)?;
     let navigation_app = app.clone();
     let navigation_id = id.clone();
@@ -1116,6 +1120,9 @@ pub fn handle_window_event(window: &Window, event: &tauri::WindowEvent) {
         return;
     }
     match event {
+        tauri::WindowEvent::Focused(true) => {
+            surface().session.focus_host(PANEL_HOST_ID);
+        }
         // A child webview's autoresizing mask does not follow the panel rectangle.
         // Put the last CSS rectangle back until the page measures a new one.
         // Resizing or a scale change does not close pages.
@@ -1258,6 +1265,10 @@ pub fn open(app: &AppHandle) -> Result<(), String> {
 }
 
 fn reparent_tab(app: &AppHandle, tab_id: &str, target: &Window) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    if target.label() == PANEL_WINDOW_LABEL {
+        crate::browser_linux::prepare_panel(app)?;
+    }
     let zoom = surface()
         .session
         .tabs
@@ -1983,7 +1994,7 @@ mod tests {
         assert!(!start_in_panel(false, false, true));
         assert!(!start_in_panel(true, true, true));
         assert!(!start_in_panel(true, false, false));
-        assert_eq!(panel_supported(), cfg!(any(windows, target_os = "macos")));
+        assert_eq!(panel_supported(), cfg!(any(windows, target_os = "macos", target_os = "linux")));
         assert_eq!(HostKind::Window.name(), "window");
         assert_eq!(HostKind::Panel.name(), "panel");
     }
@@ -2109,3 +2120,7 @@ mod tests {
         assert!(!body.contains("age_verification"));
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "browser_surface/native_tests.rs"]
+mod native_tests;

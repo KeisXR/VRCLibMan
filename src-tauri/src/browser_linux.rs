@@ -133,7 +133,7 @@ fn install_resize_handlers(view: &webkit2gtk::WebView) {
 }
 
 fn shortcut(key: gtk::gdk::keys::Key, state: gtk::gdk::ModifierType) -> Option<&'static str> {
-    use gtk::gdk::{keys::constants, ModifierType as M};
+    use gtk::gdk::{ModifierType as M, keys::constants};
     let state = state
         & (M::SHIFT_MASK
             | M::CONTROL_MASK
@@ -176,8 +176,7 @@ fn install_shortcuts(view: &webkit2gtk::WebView, app: &AppHandle, _host_label: &
             return Propagation::Proceed;
         };
         // The key arrives on the focused page. Act on that host, not the window this view was created in.
-        if browser_surface::host_window(&app)
-            .is_none_or(|host| !host.is_focused().unwrap_or(false))
+        if browser_surface::host_window(&app).is_none_or(|host| !host.is_focused().unwrap_or(false))
         {
             return Propagation::Proceed;
         }
@@ -186,8 +185,73 @@ fn install_shortcuts(view: &webkit2gtk::WebView, app: &AppHandle, _host_label: &
     });
 }
 
+/// Keep the main webview filling the host. Pages are native overlay children,
+/// rather than another expanding GtkBox row that would shrink the main UI.
+pub fn prepare_panel(app: &AppHandle) -> Result<(), String> {
+    let main = app
+        .get_webview(crate::presence::MAIN_WINDOW)
+        .ok_or("メイン画面が見つかりません")?;
+    let (send, receive) = std::sync::mpsc::channel();
+    main.with_webview(move |native| {
+        use gtk::prelude::*;
+        let child = native.inner();
+        let result = (|| {
+            let parent = child.parent().ok_or("メイン画面の表示先がありません")?;
+            if parent.is::<gtk::Overlay>() {
+                return Ok(());
+            }
+            let container = parent
+                .downcast::<gtk::Box>()
+                .map_err(|_| "メイン画面の表示先を変更できません")?;
+            let overlay = gtk::Overlay::new();
+            overlay.set_hexpand(true);
+            overlay.set_vexpand(true);
+            container.remove(&child);
+            overlay.add(&child);
+            container.pack_start(&overlay, true, true, 0);
+            overlay.show();
+            Ok::<_, &str>(())
+        })();
+        let _ = send.send(result.map_err(str::to_string));
+    })
+    .map_err(|error| error.to_string())?;
+    receive
+        .recv()
+        .map_err(|_| "メイン画面の配置を確認できません".to_string())?
+}
+
+fn install_view_handlers(child: &webkit2gtk::WebView, app: &AppHandle, host_label: &str) {
+    use gtk::prelude::*;
+    // Reparenting returns the same view to a GtkBox. Install native callbacks
+    // once per view, so repeated docking does not multiply handlers.
+    let style = child.style_context();
+    if !style.has_class("vrclibman-browser-handlers") {
+        style.add_class("vrclibman-browser-handlers");
+        install_resize_handlers(child);
+        install_shortcuts(child, app, host_label);
+    }
+}
+
+fn place_panel_view(child: &webkit2gtk::WebView, overlay: &gtk::Overlay, area: SurfaceArea) {
+    use gtk::prelude::*;
+    if child.parent().as_ref() != Some(overlay.upcast_ref()) {
+        if let Some(parent) = child
+            .parent()
+            .and_then(|parent| parent.downcast::<gtk::Container>().ok())
+        {
+            parent.remove(child);
+        }
+        overlay.add_overlay(child);
+    }
+    child.set_halign(gtk::Align::Start);
+    child.set_valign(gtk::Align::Start);
+    child.set_margin_start(area.left as i32);
+    child.set_margin_top(area.top as i32);
+    child.set_size_request(area.width.max(1.0) as i32, area.height.max(1.0) as i32);
+}
+
 /// Tauri places Linux child views in a GtkBox, where WebView bounds are ignored.
-/// A shared canvas gives them the same host-relative coordinates as other platforms.
+/// Panels use the main GtkOverlay; separate windows keep their shared GtkLayout.
 pub fn set_view_bounds(
     view: &Webview,
     area: SurfaceArea,
@@ -197,18 +261,42 @@ pub fn set_view_bounds(
     use gtk::prelude::*;
     let app = view.app_handle().clone();
     let host_label = view.window().label().to_string();
+    let (send, receive) = std::sync::mpsc::channel();
     view.with_webview(move |native| {
         let child = native.inner();
+        install_view_handlers(&child, &app, &host_label);
+        if !fill_host {
+            let overlay = app
+                .get_window(&host_label)
+                .and_then(|window| window.default_vbox().ok())
+                .and_then(|container| {
+                    container
+                        .children()
+                        .into_iter()
+                        .find_map(|widget| widget.downcast::<gtk::Overlay>().ok())
+                });
+            let result = if let Some(overlay) = overlay {
+                place_panel_view(&child, &overlay, area);
+                Ok(())
+            } else {
+                Err("ブラウザの表示先が見つかりません".to_string())
+            };
+            let _ = send.send(result);
+            return;
+        }
+        // Panel offsets and alignments must not survive a move to a separate
+        // window, where GtkLayout positions the toolbar and page explicitly.
+        child.set_margin_start(0);
+        child.set_margin_top(0);
+        child.set_halign(gtk::Align::Fill);
+        child.set_valign(gtk::Align::Fill);
         let Some(parent) = child.parent() else {
+            let _ = send.send(Err("ブラウザの表示先がありません".into()));
             return;
         };
         let canvas = if let Ok(canvas) = parent.clone().downcast::<gtk::Layout>() {
             canvas
         } else if let Ok(container) = parent.downcast::<gtk::Box>() {
-            install_resize_handlers(&child);
-            // GtkMenuItem accelerators require visible ancestors, even when the
-            // accelerator group remains installed. Handle browser keys on each view.
-            install_shortcuts(&child, &app, &host_label);
             let existing = container
                 .children()
                 .into_iter()
@@ -236,6 +324,7 @@ pub fn set_view_bounds(
             canvas.put(&child, area.left as i32, area.top as i32);
             canvas
         } else {
+            let _ = send.send(Err("ブラウザの表示先を変更できません".into()));
             return;
         };
         let width = if fill_host && canvas.allocated_width() > 1 {
@@ -257,8 +346,12 @@ pub fn set_view_bounds(
         child.set_size_request(width, height);
         canvas.move_(&child, x, y);
         child.size_allocate(&gtk::Allocation::new(x, y, width, height));
+        let _ = send.send(Ok(()));
     })
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    receive
+        .recv()
+        .map_err(|_| "ブラウザの配置を確認できません".to_string())?
 }
 
 #[cfg(test)]
@@ -266,7 +359,7 @@ mod tests {
     use super::*;
     #[test]
     fn browser_shortcuts_require_their_exact_modifiers() {
-        use gtk::gdk::{keys::constants as K, ModifierType as M};
+        use gtk::gdk::{ModifierType as M, keys::constants as K};
         assert_eq!(shortcut(K::t, M::CONTROL_MASK), Some("browser-new-tab"));
         assert_eq!(
             shortcut(K::l, M::CONTROL_MASK | M::LOCK_MASK),
@@ -282,8 +375,14 @@ mod tests {
         }
         assert_eq!(shortcut(K::c, M::CONTROL_MASK), None);
         assert_eq!(shortcut(K::equal, M::CONTROL_MASK), Some("browser-zoom-in"));
-        assert_eq!(shortcut(K::plus, M::CONTROL_MASK | M::SHIFT_MASK), Some("browser-zoom-in"));
-        assert_eq!(shortcut(K::KP_Subtract, M::CONTROL_MASK), Some("browser-zoom-out"));
+        assert_eq!(
+            shortcut(K::plus, M::CONTROL_MASK | M::SHIFT_MASK),
+            Some("browser-zoom-in")
+        );
+        assert_eq!(
+            shortcut(K::KP_Subtract, M::CONTROL_MASK),
+            Some("browser-zoom-out")
+        );
         assert_eq!(shortcut(K::_0, M::CONTROL_MASK), Some("browser-zoom-reset"));
         assert_eq!(shortcut(K::minus, M::CONTROL_MASK | M::MOD1_MASK), None);
     }
