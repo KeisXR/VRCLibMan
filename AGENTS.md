@@ -361,6 +361,7 @@ Mac の内蔵ブラウザは `data_directory` を使わない。固定の 16 バ
 | `src-tauri/src/browser_dark.rs` | 内蔵ブラウザの強制ダークモード。表示用ページだけに CSS を入れる |
 | `src/components/BrowserPanel.tsx` | 右パネルの「ブラウザ」タブ。表示域を測って渡す |
 | `src/browserPanel.ts` | 表示域の丸めと、重なり・ドラッグで隠す判定 |
+| `docs/right-panel.md` | 右パネルの実装とデザインの詳しい説明（タブ、ネイティブページの配置、OS差、過去の不具合） |
 | `src/pages` | 画面 |
 | `src/preview/api.ts` | ブラウザ見本 |
 | `extension` | Booth 書き出し |
