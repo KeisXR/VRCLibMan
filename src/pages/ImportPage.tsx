@@ -401,7 +401,7 @@ export function ImportPage() {
         </section>
         <section className="settings-section">
           <header>
-            <h2>2. 分類</h2>
+            <h2 id="import-classification">2. 分類</h2>
             <p>BOOTHのカテゴリとタグで決まる商品は先に分類し、決まらない商品だけ分類モデルへ渡します。</p>
           </header>
           <SettingRow
@@ -478,7 +478,7 @@ export function ImportPage() {
         </section>
         <section className="settings-section">
           <header>
-            <h2>3. 手元のファイル</h2>
+            <h2 id="import-existing-files">3. 手元のファイル</h2>
             <p>
               ライブラリのフォルダを調べ、ダウンロード済みのファイルを商品と結び付けます。
             </p>

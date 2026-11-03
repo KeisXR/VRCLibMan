@@ -154,7 +154,7 @@ export function BoothImportSettings({
             [
               "browser",
               "アプリの内蔵ブラウザ",
-              "アプリの別ウィンドウで BOOTH にログインします。拡張は不要で、ログイン状態はアプリ専用の保存場所に残ります。",
+              "アプリの右パネルで BOOTH にログインします。拡張は不要で、ログイン状態はアプリ専用に保存されます。",
             ],
             [
               "both",
@@ -234,7 +234,7 @@ export function BoothImportSettings({
         <div className="import-guidance">
           <h3>内蔵ブラウザで読み込む</h3>
           <p>
-            ブラウザ画面から別ウィンドウを開き、BOOTH にログインして商品情報を読み込みます。
+            ブラウザ画面から BOOTH を開き、ログインして商品情報を取得します。
           </p>
           <a
             className="button"

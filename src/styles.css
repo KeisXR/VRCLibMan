@@ -1591,3 +1591,19 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .asset-update-list li { border-top: 1px solid var(--border); padding-top: 12px; }
 .asset-updates select { max-width: 100%; min-width: 0; }
 .asset-update-list p { margin: 6px 0; }
+
+/* The guide stays available while the app's own screens remain interactive. */
+.setup-guide {
+  position: fixed;
+  z-index: 30;
+  left: 16px;
+  bottom: 16px;
+  width: min(420px, calc(100vw - 32px));
+  max-height: min(75vh, 720px);
+  overflow: auto;
+}
+.setup-guide-card { margin: 0; padding: 20px; border-radius: var(--radius-lg); box-shadow: 0 12px 36px #0004; }
+.setup-guide-card h1 { margin: 0 0 var(--space-3); font-size: 21px; }
+.setup-guide-card p { margin: 0 0 var(--space-3); }
+.setup-guide-toggle { float: right; margin: -4px 0 8px 8px; }
+.setup-guide .row-actions { clear: both; }

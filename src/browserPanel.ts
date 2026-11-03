@@ -16,6 +16,7 @@ export const BROWSER_PANEL_COVER_SELECTORS = [
   ".avatar-add-panel",
   ".preview-overlay",
   ".setup-screen",
+  ".setup-guide",
 ] as const;
 
 export const BROWSER_PANEL_COVER_SELECTOR = BROWSER_PANEL_COVER_SELECTORS.join(",");
