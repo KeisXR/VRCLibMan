@@ -13,6 +13,8 @@ static RUNNING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 struct Watch {
     automatic: bool,
     #[serde(default)]
+    all_products: bool,
+    #[serde(default)]
     retry_after: Option<i64>,
     generation: u64,
     rows: Vec<Row>,
@@ -39,6 +41,8 @@ struct Snapshot {
 #[serde(rename_all = "camelCase")]
 pub struct Status {
     automatic: bool,
+    all_products: bool,
+    total_products: usize,
     running: bool,
     rows: Vec<RowStatus>,
 }
@@ -57,15 +61,57 @@ struct RowStatus {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Configure {
     automatic: Option<bool>,
+    all_products: Option<bool>,
     booth_id: Option<String>,
     enabled: Option<bool>,
     acknowledge: Option<bool>,
 }
-fn load(c: &Connection) -> Result<Watch, String> {
-    match db::setting(c, KEY)? {
-        Some(raw) => serde_json::from_str(&raw).map_err(|_| "更新確認の設定を読めません".into()),
-        None => Ok(Watch::default()),
+fn products(c: &Connection) -> Result<std::collections::BTreeMap<String, String>, String> {
+    let mut q = c.prepare("SELECT p.booth_id, p.title FROM products p WHERE NOT EXISTS (SELECT 1 FROM product_exclusions e WHERE e.booth_id = p.booth_id) ORDER BY p.booth_id")
+        .map_err(|_| "商品を確認できません")?;
+    let rows = q
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        .map_err(|_| "商品を確認できません")?;
+    let mut result = std::collections::BTreeMap::new();
+    for row in rows {
+        let (id, title) = row.map_err(|_| "商品を確認できません")?;
+        if booth_detail::item_json_url(&id).is_ok() {
+            result.insert(id, title);
+        }
     }
+    Ok(result)
+}
+fn new_row(id: String) -> Row {
+    Row {
+        booth_id: id,
+        enabled: true,
+        generation: 0,
+        attempted_at: None,
+        checked_at: None,
+        error: None,
+        baseline: None,
+        latest: None,
+    }
+}
+fn include_products(w: &mut Watch, ids: impl Iterator<Item = String>) {
+    let mut known: std::collections::HashSet<_> =
+        w.rows.iter().map(|r| r.booth_id.clone()).collect();
+    for id in ids {
+        if known.insert(id.clone()) {
+            w.rows.push(new_row(id));
+        }
+    }
+}
+fn load(c: &Connection) -> Result<Watch, String> {
+    let mut w: Watch = match db::setting(c, KEY)? {
+        Some(raw) => serde_json::from_str(&raw).map_err(|_| "更新確認の設定を読めません")?,
+        None => Watch::default(),
+    };
+    // Whole-library consent includes later imports. Existing disabled rows remain exceptions.
+    if w.all_products {
+        include_products(&mut w, products(c)?.into_keys());
+    }
+    Ok(w)
 }
 fn save(c: &mut Connection, w: &Watch) -> Result<(), String> {
     db::set_setting(
@@ -98,18 +144,12 @@ fn changes(row: &Row) -> Vec<String> {
 }
 pub fn status(c: &Connection) -> Result<Status, String> {
     let w = load(c)?;
+    let titles = products(c)?;
     let mut rows = Vec::new();
     for row in w.rows {
-        if !active(c, &row.booth_id)? {
+        let Some(title) = titles.get(&row.booth_id).cloned() else {
             continue;
-        }
-        let title = c
-            .query_row(
-                "SELECT title FROM products WHERE booth_id = ?1",
-                [&row.booth_id],
-                |r| r.get(0),
-            )
-            .map_err(|_| "商品を確認できません")?;
+        };
         rows.push(RowStatus {
             changes: changes(&row),
             revision: row.generation,
@@ -122,12 +162,30 @@ pub fn status(c: &Connection) -> Result<Status, String> {
     }
     Ok(Status {
         automatic: w.automatic,
+        all_products: w.all_products,
+        total_products: titles.len(),
         running: RUNNING.try_lock().is_err(),
         rows,
     })
 }
 pub fn configure(c: &mut Connection, input: Configure) -> Result<Status, String> {
     let mut w = load(c)?;
+    if input.all_products.is_some()
+        && (input.booth_id.is_some() || input.enabled.is_some() || input.acknowledge.is_some())
+    {
+        return Err("全体設定と商品ごとの設定は別々に変更してください".into());
+    }
+    if let Some(all) = input.all_products {
+        if all {
+            include_products(&mut w, products(c)?.into_keys());
+        }
+        w.all_products = all;
+        w.generation += 1;
+        for row in &mut w.rows {
+            row.enabled = all;
+            row.generation += 1;
+        }
+    }
     if let Some(id) = input.booth_id {
         booth_detail::item_json_url(&id)?;
         if !active(c, &id)? {
@@ -142,19 +200,7 @@ pub fn configure(c: &mut Connection, input: Configure) -> Result<Status, String>
                 row.baseline = row.latest.clone();
             }
         } else if input.enabled == Some(true) {
-            if w.rows.len() >= 500 {
-                return Err("更新確認の対象は500件までです".into());
-            }
-            w.rows.push(Row {
-                booth_id: id,
-                enabled: true,
-                generation: 0,
-                attempted_at: None,
-                checked_at: None,
-                error: None,
-                baseline: None,
-                latest: None,
-            });
+            w.rows.push(new_row(id));
         }
     } else if input.enabled.is_some() || input.acknowledge.is_some() {
         return Err("商品を選んでください".into());
@@ -447,6 +493,7 @@ mod tests {
             &mut c,
             Configure {
                 automatic: Some(true),
+                all_products: None,
                 booth_id: Some("424242".into()),
                 enabled: Some(true),
                 acknowledge: None,
@@ -464,6 +511,7 @@ mod tests {
             &mut c,
             Configure {
                 automatic: None,
+                all_products: None,
                 booth_id: Some("424242".into()),
                 enabled: None,
                 acknowledge: Some(true),
@@ -484,5 +532,106 @@ mod tests {
             .unwrap();
         assert!(status(&c).unwrap().rows.is_empty());
         assert!(!active(&c, "424242").unwrap());
+    }
+    fn library() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch("CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT); CREATE TABLE products(booth_id TEXT PRIMARY KEY,title TEXT); CREATE TABLE product_exclusions(booth_id TEXT PRIMARY KEY,excluded_at TEXT); INSERT INTO products VALUES('424242','既存商品'),('434343','除外商品'); INSERT INTO product_exclusions VALUES('434343','t');").unwrap();
+        c
+    }
+    fn config(all: Option<bool>, id: Option<&str>, enabled: Option<bool>) -> Configure {
+        Configure {
+            all_products: all,
+            automatic: None,
+            booth_id: id.map(str::to_string),
+            enabled,
+            acknowledge: None,
+        }
+    }
+    #[test]
+    fn whole_library_includes_later_imports_preserves_exceptions_and_skips_exclusions() {
+        let mut c = library();
+        configure(&mut c, config(Some(true), None, None)).unwrap();
+        assert_eq!(status(&c).unwrap().total_products, 1);
+        c.execute("INSERT INTO products VALUES('444444','追加商品')", [])
+            .unwrap();
+        assert_eq!(status(&c).unwrap().rows.len(), 2);
+        configure(&mut c, config(None, Some("444444"), Some(false))).unwrap();
+        let saved = load(&c).unwrap();
+        assert!(saved.all_products);
+        assert!(
+            !saved
+                .rows
+                .iter()
+                .find(|r| r.booth_id == "444444")
+                .unwrap()
+                .enabled
+        );
+        assert!(saved.rows.iter().all(|r| r.booth_id != "434343"));
+        assert_eq!(
+            status(&c)
+                .unwrap()
+                .rows
+                .iter()
+                .filter(|r| r.enabled)
+                .count(),
+            1
+        );
+    }
+    #[test]
+    fn bulk_revocation_cancels_old_results_preserves_baselines_and_stops_future_enrollment() {
+        let mut c = library();
+        configure(&mut c, config(Some(true), None, None)).unwrap();
+        let mut w = load(&c).unwrap();
+        record(&mut w.rows[0], Ok(snapshot("v1")));
+        record(&mut w.rows[0], Ok(snapshot("v2")));
+        let generation = w.generation;
+        save(&mut c, &w).unwrap();
+        configure(&mut c, config(Some(false), None, None)).unwrap();
+        c.execute("INSERT INTO products VALUES('444444','追加商品')", [])
+            .unwrap();
+        let off = load(&c).unwrap();
+        assert_eq!(off.rows.len(), 1);
+        assert!(!off.rows[0].enabled);
+        assert_eq!(changes(&off.rows[0]), vec!["商品説明の変更"]);
+        assert!(!allowed(&off, &off.rows[0], generation, true));
+        configure(&mut c, config(Some(true), None, None)).unwrap();
+        let on = load(&c).unwrap();
+        assert_eq!(on.rows.len(), 2);
+        assert!(on.rows.iter().all(|r| r.enabled));
+        assert!(!allowed(&on, &on.rows[0], generation, true));
+        assert_eq!(changes(&on.rows[0]), vec!["商品説明の変更"]);
+    }
+    #[test]
+    fn whole_library_has_no_five_hundred_item_limit() {
+        let mut c = library();
+        let tx = c.transaction().unwrap();
+        for id in 100000..101000 {
+            tx.execute("INSERT INTO products VALUES(?1,'商品')", [id.to_string()])
+                .unwrap();
+        }
+        tx.execute("INSERT INTO products VALUES('bad-id','不正なID')", [])
+            .unwrap();
+        tx.commit().unwrap();
+        let s = configure(&mut c, config(Some(true), None, None)).unwrap();
+        assert_eq!(s.total_products, 1001);
+        assert_eq!(s.rows.len(), 1001);
+        assert!(s.rows.iter().all(|r| r.enabled));
+        assert_eq!(load(&c).unwrap().rows.len(), 1001);
+    }
+    #[test]
+    fn legacy_consent_is_not_widened_and_ambiguous_bulk_changes_are_rejected() {
+        let mut c = library();
+        configure(&mut c, config(None, Some("424242"), Some(true))).unwrap();
+        let raw = db::setting(&c, KEY)
+            .unwrap()
+            .unwrap()
+            .replace("\"allProducts\":false,", "");
+        db::set_setting(&c, KEY, &raw).unwrap();
+        let legacy = status(&c).unwrap();
+        assert!(!legacy.all_products);
+        assert!(!legacy.automatic);
+        assert_eq!(legacy.rows.len(), 1);
+        assert!(configure(&mut c, config(Some(true), Some("424242"), Some(false))).is_err());
+        assert_eq!(db::setting(&c, KEY).unwrap().unwrap(), raw);
     }
 }

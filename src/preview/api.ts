@@ -1770,14 +1770,30 @@ function previewUnityStatus(): UnityStatus {
   };
 }
 
-let assetWatch: AssetUpdateStatus = { automatic: false, running: false, rows: [] };
+let assetWatch: AssetUpdateStatus = { automatic: false, allProducts: false, totalProducts: 0, running: false, rows: [] };
+function enrollAssetProducts() {
+  assetWatch.totalProducts = activeProducts().length;
+  if (assetWatch.allProducts) for (const p of activeProducts()) {
+    if (!assetWatch.rows.some((r) => r.boothId === p.boothId)) assetWatch.rows.push({ boothId: p.boothId, title: p.title, enabled: true, checkedAt: null, error: null, changes: [], revision: 0 });
+  }
+}
+function assetWatchStatus() {
+  enrollAssetProducts();
+  return structuredClone({ ...assetWatch, rows: assetWatch.rows.filter((r) => activeProducts().some((p) => p.boothId === r.boothId)) });
+}
 
 export async function dispatch<T>(command: string, args: Record<string, unknown>): Promise<T> {
   notePreviewCall(command);
   switch (command) {
-    case "asset_update_status": return structuredClone(assetWatch) as T;
+    case "asset_update_status": return assetWatchStatus() as T;
     case "configure_asset_updates": {
       const input = args.input as AssetUpdateConfigure;
+      enrollAssetProducts();
+      if (input.allProducts !== undefined) {
+        assetWatch.allProducts = input.allProducts;
+        enrollAssetProducts();
+        for (const row of assetWatch.rows) { row.enabled = input.allProducts; row.revision++; }
+      }
       if (input.automatic !== undefined) assetWatch.automatic = input.automatic;
       if (input.boothId) {
         let row = assetWatch.rows.find((r) => r.boothId === input.boothId);
@@ -1792,11 +1808,11 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
           if (input.acknowledge) { row.changes = []; row.revision++; }
         }
       }
-      return structuredClone(assetWatch) as T;
+      return assetWatchStatus() as T;
     }
     case "check_asset_updates":
       assetWatch.rows.forEach((r) => { if (r.enabled) { const first = !r.checkedAt; r.checkedAt = new Date().toISOString(); if (!first) r.changes = ["商品説明の変更"]; } });
-      return structuredClone(assetWatch) as T;
+      return assetWatchStatus() as T;
 
     case "updater_status":
       return previewUpdaterStatus as T;

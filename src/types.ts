@@ -672,10 +672,13 @@ export interface AssetUpdateRow {
 }
 export interface AssetUpdateStatus {
   automatic: boolean;
+  allProducts: boolean;
+  totalProducts: number;
   running: boolean;
   rows: AssetUpdateRow[];
 }
 export interface AssetUpdateConfigure {
+  allProducts?: boolean;
   automatic?: boolean;
   boothId?: string;
   enabled?: boolean;
