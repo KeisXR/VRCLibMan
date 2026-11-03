@@ -95,7 +95,7 @@ export function BrowserAutoClassification() {
     >
       {current && <>
         <h2 id="browser-auto-title">取得した商品の分類</h2><p>{current.title}</p>
-        <p className="meta">残り{items.length}件。分類先を選んで確定すると、以後の再ダウンロードでは確認しません。</p>
+        <p className="meta">残り{items.length}件。確定すると、再ダウンロード時の確認を省略します。</p>
         <label className="field"><span>種類</span><select autoFocus disabled={busy} value={kind} onChange={event => {
           const next = event.target.value as typeof kind; setKind(next); setGenre(next === "world" ? "world" : "outfit");
         }}><option value="asset">アセット</option><option value="world">ワールド</option><option value="avatar">アバター本体</option></select></label>
@@ -103,7 +103,7 @@ export function BrowserAutoClassification() {
           : <label className="field"><span>分類先</span><select disabled={busy} value={genre} onChange={event => setGenre(event.target.value)}>{genresForKind(kind).map(value => <option key={value} value={value}>{GENRE_LABEL[value] ?? value}</option>)}</select></label>}
         {saveError && <p className="banner error" role="alert">{saveError}</p>}
         <div className="row-actions"><button className="button primary" type="button" disabled={busy} onClick={() => void save()}>{busy ? "保存中…" : "分類を確定"}</button><button type="button" className="button" disabled={busy} onClick={postpone}>後で分類する</button></div>
-        <p className="meta">後回しにしても登録は残ります。新しい商品が届くと確認を開き直し、それまでは「取得した商品の分類」から再開できます。</p>
+        <p className="meta">後回しにしても商品は登録されたままです。新しい商品が届くと再表示します。左下の「取得した商品の分類」からも再開できます。</p>
       </>}
     </dialog>
   </>;

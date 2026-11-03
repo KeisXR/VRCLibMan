@@ -681,7 +681,7 @@ function PanelBody({ panel, overlay }: { panel: RightPanelValue; overlay: boolea
     return (
       <div className="right-panel-body" id="right-panel-body">
         <div className="right-panel-empty">
-          <p className="meta">タブがありません。＋から追加できます。</p>
+          <p className="meta">タブがありません。</p>
           <button className="button" type="button" onClick={() => panel.openKind("preview")}>
             プレビューを開く
           </button>

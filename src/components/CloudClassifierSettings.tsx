@@ -98,7 +98,7 @@ export function CloudClassifierSettings({
           {keySaved && <button className="button danger" type="button" disabled={pending} onClick={() => void deleteKey()}>削除</button>}
         </div>
       </SettingRow>
-      <SettingRow label="接続テスト" help="保存したキーで接続先のモデル一覧を取得します。商品の情報は送りません。">
+      <SettingRow label="接続状態" help="保存したキーで接続先のモデル一覧を取得します。商品の情報は送りません。">
         <div className="inline-control">
           <button className="button" type="button" disabled={testing} onClick={() => void test()}>{testing ? "確認中…" : "接続テスト"}</button>
           <span className={result && !result.ok ? "meta warn-text" : "meta"} role="status">{result ? (result.ok ? result.message : `${result.kind}：${result.message}`) : "未確認"}</span>

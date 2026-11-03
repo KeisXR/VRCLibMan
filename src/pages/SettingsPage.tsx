@@ -310,12 +310,12 @@ export function SettingsPage() {
               <div className="inline-control"><input value={settings.remoteLibraryFolder} placeholder="リモートのフォルダ" onChange={(e) => changeSettings({ remoteLibraryFolder: e.target.value, remoteAutoSync: false }, 300)} onBlur={flushSettings} /><button className="button" type="button" onClick={() => void chooseFolder().then((path) => { if (path) changeSettings({ remoteLibraryFolder: path, remoteAutoSync: false }); }, (err: unknown) => fail(errorText(err)))}>選ぶ</button></div>
             </SettingRow>
             <SettingRow label="リモートへ自動同期" help="アプリ起動中、登録済みの手元のファイルを約1分ごとにリモートへコピーします。">
-              <label className="switch-label"><input type="checkbox" checked={settings.remoteAutoSync} disabled={!settings.remoteLibraryFolder.trim()} onChange={(e) => changeSettings({ remoteAutoSync: e.target.checked })} />有効にする</label>
+              <label className="switch-label"><input aria-label="リモートへ自動同期" type="checkbox" checked={settings.remoteAutoSync} disabled={!settings.remoteLibraryFolder.trim()} onChange={(e) => changeSettings({ remoteAutoSync: e.target.checked })} /></label>
             </SettingRow>
             {settings.remoteAutoSync && <div className="section-body"><p className="meta" role="status">{remoteSync?.running ? `同期中（${remoteSync.copied} 件コピー済み）` : remoteSync?.error ? `同期を再試行します: ${remoteSync.error}` : remoteSync?.lastCompletedAt ? `最終確認: ${new Date(remoteSync.lastCompletedAt).toLocaleString("ja-JP")}（${remoteSync.copied} 件コピー、${remoteSync.skipped} 件は同名ファイルあり）` : "同期を待っています"}</p></div>}
             <details className="settings-details"><summary>リモートライブラリについて</summary><p>自動同期は既定でオフです。オンにすると、登録済みのファイルをリモートの商品IDフォルダへコピーします。保存先を変更すると自動同期はオフになります。除外した商品と未登録のファイルは対象外です。同名ファイルは上書きせず、ローカルとリモートのファイルを削除しません。</p><p>接続できないときは後で再試行します。オフにしても、処理中の1件は完了する場合があります。リモートから取得する場合は「ローカルへコピー」を使ってください。</p></details>
             <SettingRow label="ダウンロードを自動整理" help="自分でダウンロードしたファイルだけを商品別にライブラリへ移動します。">
-              <label className="switch-label"><input type="checkbox" checked={settings.routeDownloads} onChange={(e) => void changeRouting(e.target.checked)} />有効にする</label>
+              <label className="switch-label"><input aria-label="ダウンロードを自動整理" type="checkbox" checked={settings.routeDownloads} onChange={(e) => void changeRouting(e.target.checked)} /></label>
             </SettingRow>
             <details className="settings-details"><summary>自動整理について詳しく</summary><p>有効にするには、移動先のライブラリフォルダが必要です。拡張機能や内蔵ブラウザでダウンロードしたファイルを、ダウンロードフォルダの VRCLibMan 以下から商品別に移動します。</p><p>ほかの場所にあるファイルは移動しません。内蔵ブラウザからのダウンロードも、選んだ1件ずつ行います。</p></details>
           </section>
@@ -329,10 +329,10 @@ export function SettingsPage() {
             <header><h2>起動と常駐</h2><p>ウィンドウを閉じた後の動作を設定します。</p></header>
             {!settings.backgroundSupported && <div className="section-body"><p>この環境ではバックグラウンド動作とログイン時の起動は利用できません。ウィンドウを閉じるとアプリも終了します。</p></div>}
             <SettingRow label="バックグラウンドで動作" help="ウィンドウを閉じても、商品情報の受信・自動整理・リモートへの自動同期を続けます。">
-              <label className="switch-label"><input type="checkbox" checked={settings.backgroundSupported && settings.backgroundMode} disabled={!settings.backgroundSupported} onChange={(e) => { const enabled = e.target.checked; changeSettings({ backgroundMode: enabled, launchAtLogin: enabled ? settings.launchAtLogin : false }); }} />有効にする</label>
+              <label className="switch-label"><input aria-label="バックグラウンドで動作" type="checkbox" checked={settings.backgroundSupported && settings.backgroundMode} disabled={!settings.backgroundSupported} onChange={(e) => { const enabled = e.target.checked; changeSettings({ backgroundMode: enabled, launchAtLogin: enabled ? settings.launchAtLogin : false }); }} /></label>
             </SettingRow>
             <SettingRow label="ログイン時に起動" help="バックグラウンド動作が有効な場合だけ使用できます。">
-              <label className="switch-label"><input type="checkbox" checked={settings.backgroundSupported && settings.launchAtLogin} disabled={!settings.backgroundSupported || !settings.backgroundMode} onChange={(e) => changeSettings({ launchAtLogin: e.target.checked })} />有効にする</label>
+              <label className="switch-label"><input aria-label="ログイン時に起動" type="checkbox" checked={settings.backgroundSupported && settings.launchAtLogin} disabled={!settings.backgroundSupported || !settings.backgroundMode} onChange={(e) => changeSettings({ launchAtLogin: e.target.checked })} /></label>
             </SettingRow>
             {settings.backgroundSupported && <details className="settings-details"><summary>起動と常駐について詳しく</summary><p>オフにすると、ウィンドウを閉じたときにアプリも終了します。オンにすると、トレイ（Windows・Linux）またはメニューバー（macOS）から再表示・終了できます。</p><p>「ログイン時に起動」を有効にすると、ウィンドウを表示せずに起動します。バックグラウンド動作をオフにすると、ログイン時の起動もオフになります。</p><p>Linux はトレイのメニューから「開く」「終了」を選びます。GNOME では AppIndicator 対応の拡張が必要になる場合があります。トレイを利用できないときはウィンドウを表示し、閉じると終了します。</p></details>}
           </section>
@@ -353,18 +353,17 @@ export function SettingsPage() {
             {settings.builtinBrowser && (
               <SettingRow label="強制ダークモード" help="ライトテーマのページの背景を暗くし、文字は明るくします。画像・動画・キャンバスは元の色のままです。右パネルと別ウィンドウの両方に、再起動なしで反映されます。">
                 <label className="switch-label">
-                  <input
+                  <input aria-label="強制ダークモード"
                     type="checkbox"
                     checked={settings.browserForceDark}
                     onChange={(e) => changeSettings({ browserForceDark: e.target.checked })}
                   />
-                  有効にする
                 </label>
               </SettingRow>
             )}
             {settings.builtinBrowser && (
               <SettingRow label="取得したアセットの自動登録" help="購入完了・ダウンロード完了を検知して登録し、初回に分類先を確認します。ファイルの移動は自動整理の設定に従います。">
-                <label className="switch-label"><input type="checkbox" checked={settings.browserAutoRegister} onChange={(e) => changeSettings({ browserAutoRegister: e.target.checked })} />有効にする</label>
+                <label className="switch-label"><input aria-label="取得したアセットの自動登録" type="checkbox" checked={settings.browserAutoRegister} onChange={(e) => changeSettings({ browserAutoRegister: e.target.checked })} /></label>
               </SettingRow>
             )}
             {settings.builtinBrowser && (
@@ -400,12 +399,11 @@ export function SettingsPage() {
               <>
                 <SettingRow label="分類後にモデルをアンロード" help="分類の終了・中断・失敗のあと、選択中のモデルをメモリから外します。Ollama 自体は止めません。">
                   <label className="switch-label">
-                    <input
+                    <input aria-label="分類後にモデルをアンロード"
                       type="checkbox"
                       checked={settings.unloadOllamaAfterClassification}
                       onChange={(e) => changeSettings({ unloadOllamaAfterClassification: e.target.checked })}
                     />
-                    有効にする
                   </label>
                 </SettingRow>
                 <SettingRow label="読み込み状態" help="同じ PC のほかのアプリが同じモデルを使っている場合も影響します。">
@@ -447,12 +445,11 @@ export function SettingsPage() {
             </SettingRow>
             <SettingRow label="起動時にアップデートを確認" help="配布版の起動時に、GitHub へ1回だけ更新を確認します。オフのときは手動の「更新を確認」だけです。">
               <label className="switch-label">
-                <input
+                <input aria-label="起動時にアップデートを確認"
                   type="checkbox"
                   checked={settings.checkUpdateOnStartup}
                   onChange={(e) => changeSettings({ checkUpdateOnStartup: e.target.checked })}
                 />
-                有効にする
               </label>
             </SettingRow>
             <SettingRow label="アプリの更新" help="公開済みの配布版を確認して、アプリ内で更新します。ライブラリと設定は引き継ぎます。">

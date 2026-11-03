@@ -164,7 +164,7 @@ export function SetupWizard({ onDone, onRefresh }: { onDone: () => void; onRefre
     <div className={guided ? "setup-guide" : "setup-screen"}>
       <div className={guided ? "setup-guide-card panel" : "setup-card panel"}>
         <p className="meta">{guided ? `使い方ガイド · ${step === "library" ? "3" : step === "classify" ? "4" : step === "manual" ? "5" : "6"} / 6` : "初回セットアップ"}</p>
-        {guided && <button className="setup-guide-toggle button" type="button" onClick={() => setCollapsed(!collapsed)} aria-expanded={!collapsed}>{collapsed ? "案内を開く" : "小さくする"}</button>}
+        {guided && <button className="setup-guide-toggle button" type="button" onClick={() => setCollapsed(!collapsed)} aria-expanded={!collapsed}>{collapsed ? "案内を開く" : "折りたたむ"}</button>}
         {(!guided || !collapsed) && <>
         <h1>
           {step === "intro" ? "VRCLibMan へようこそ" : step === "model" ? "分類用のモデル" : step === "extension" ? "BOOTH の読み込み方" : guided ? guideTitles[step] : "終了と起動の設定"}
@@ -246,11 +246,10 @@ export function SetupWizard({ onDone, onRefresh }: { onDone: () => void; onRefre
             </ol>
           </>}
           <p className="meta">購入・ギフト・無料ダウンロードの商品情報を取得します。ファイルはダウンロードしません。</p>
-          <p className="meta">取得済みの場合や、あとで取得する場合は「スキップ」を選びます。</p>
+          <p className="meta">商品情報はあとからでも取得できます。</p>
           <div className="row-actions">
             <button className="button" type="button" onClick={() => setStep("extension")}>戻る</button>
             {browserEnabled && <button className="button" type="button" onClick={() => { window.location.hash = "#/browser"; }}>ブラウザ画面へ</button>}
-            <button className="button" type="button" onClick={() => guide("classify")}>スキップ</button>
             <button className="button primary" type="button" onClick={() => guide("classify")}>次へ</button>
           </div>
         </>}
@@ -275,8 +274,8 @@ export function SetupWizard({ onDone, onRefresh }: { onDone: () => void; onRefre
             <li>取り込み方法を選び、「選択した ○ 件を取り込む」を押します。</li>
           </ol>
           <p className="meta">「元の場所のまま登録」はファイルを移動しません。「ライブラリへコピー」は元のファイルを残してコピーします。</p>
-          <p className="meta">照合には BOOTH の商品・ファイル情報が必要です。ファイルがない場合や、あとで登録する場合は「スキップ」を選びます。</p>
-          <div className="row-actions"><button className="button" type="button" onClick={() => guide("manual")}>戻る</button><button className="button" type="button" onClick={() => guide("files")}>ファイル登録画面へ</button><button className="button" type="button" onClick={() => setStep("presence")}>スキップ</button><button className="button primary" type="button" onClick={() => setStep("presence")}>次へ</button></div>
+          <p className="meta">照合には BOOTH の商品・ファイル情報が必要です。ファイルの登録はあとからでも行えます。</p>
+          <div className="row-actions"><button className="button" type="button" onClick={() => guide("manual")}>戻る</button><button className="button" type="button" onClick={() => guide("files")}>ファイル登録画面へ</button><button className="button primary" type="button" onClick={() => setStep("presence")}>次へ</button></div>
         </>}
         {step === "presence" && (
           <>
