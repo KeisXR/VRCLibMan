@@ -384,6 +384,7 @@ fn ensure_ready(connection: &Connection) -> Result<u32, String> {
         ("unload_ollama_after_classification", "1"),
         ("classification_dismissed_version", "0"),
         ("ui_rail_width", "232"),
+        ("ui_rail_collapsed", "0"),
         ("ui_genre_width", "200"),
         ("preview_pane", "0"),
         ("preview_pane_width", "300"),
@@ -478,6 +479,7 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(232),
         ),
+        ui_rail_collapsed: setting(connection, "ui_rail_collapsed")?.as_deref() == Some("1"),
         ui_genre_width: crate::model::clamp_ui_genre_width(
             setting(connection, "ui_genre_width")?
                 .and_then(|value| value.parse().ok())
@@ -650,6 +652,11 @@ fn save_settings_values(
         connection,
         "ui_rail_width",
         &crate::model::clamp_ui_rail_width(input.ui_rail_width).to_string(),
+    )?;
+    set_setting(
+        connection,
+        "ui_rail_collapsed",
+        if input.ui_rail_collapsed { "1" } else { "0" },
     )?;
     set_setting(
         connection,
@@ -7705,6 +7712,7 @@ mod tests {
                 unload_ollama_after_classification: true,
                 classification_dismissed_version: 0,
                 ui_rail_width: 232,
+                ui_rail_collapsed: false,
                 ui_genre_width: 200,
                 preview_pane: false,
                 preview_pane_width: 300,
@@ -7747,6 +7755,40 @@ mod tests {
         let status = setup_status(&paired).unwrap();
         assert_eq!(status.default_model, "qwen3.5:9b");
         assert_eq!(status.model, "qwen3.5:9b");
+    }
+
+    #[test]
+    fn rail_collapsed_defaults_off_and_keeps_other_layout_settings() {
+        let connection = open_memory().unwrap();
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 7);
+        assert!(!settings(&connection).unwrap().ui_rail_collapsed);
+        let saved = update_settings(
+            &connection,
+            &crate::model::SettingsPatch {
+                ui_rail_collapsed: Some(true),
+                ..crate::model::SettingsPatch::default()
+            },
+        )
+        .unwrap();
+        assert!(saved.ui_rail_collapsed);
+        assert_eq!(saved.ui_rail_width, 232);
+        let widened = update_settings(
+            &connection,
+            &crate::model::SettingsPatch {
+                ui_rail_width: Some(300),
+                ..crate::model::SettingsPatch::default()
+            },
+        )
+        .unwrap();
+        assert!(widened.ui_rail_collapsed);
+        assert_eq!(widened.ui_rail_width, 300);
+        connection
+            .execute("DELETE FROM settings WHERE key = 'ui_rail_collapsed'", [])
+            .unwrap();
+        assert!(!settings(&connection).unwrap().ui_rail_collapsed);
     }
 
     #[test]
@@ -7971,6 +8013,7 @@ mod tests {
                 unload_ollama_after_classification: true,
                 classification_dismissed_version: 0,
                 ui_rail_width: 232,
+                ui_rail_collapsed: false,
                 ui_genre_width: 200,
                 preview_pane: false,
                 preview_pane_width: 300,
@@ -9441,6 +9484,7 @@ mod tests {
                 unload_ollama_after_classification: true,
                 classification_dismissed_version: 0,
                 ui_rail_width: 232,
+                ui_rail_collapsed: false,
                 ui_genre_width: 200,
                 preview_pane: false,
                 preview_pane_width: 300,
@@ -9472,6 +9516,7 @@ mod tests {
                 unload_ollama_after_classification: true,
                 classification_dismissed_version: 0,
                 ui_rail_width: 232,
+                ui_rail_collapsed: false,
                 ui_genre_width: 200,
                 preview_pane: false,
                 preview_pane_width: 300,
@@ -9598,6 +9643,7 @@ mod tests {
                 unload_ollama_after_classification: true,
                 classification_dismissed_version: 0,
                 ui_rail_width: 232,
+                ui_rail_collapsed: false,
                 ui_genre_width: 200,
                 preview_pane: false,
                 preview_pane_width: 300,
@@ -9871,6 +9917,7 @@ mod tests {
                 unload_ollama_after_classification: true,
                 classification_dismissed_version: 0,
             ui_rail_width: 232,
+            ui_rail_collapsed: false,
             ui_genre_width: 200,
             preview_pane: false,
             preview_pane_width: 300,
@@ -10073,6 +10120,7 @@ mod tests {
                 unload_ollama_after_classification: true,
                 classification_dismissed_version: 0,
                 ui_rail_width: 232,
+                ui_rail_collapsed: false,
                 ui_genre_width: 200,
                 preview_pane: false,
                 preview_pane_width: 300,

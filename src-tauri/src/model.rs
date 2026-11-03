@@ -348,6 +348,8 @@ pub struct Settings {
     pub launch_at_login: bool,
     pub classification_dismissed_version: i32,
     pub ui_rail_width: u32,
+    /// Left sidebar shows icons only.
+    pub ui_rail_collapsed: bool,
     pub ui_genre_width: u32,
     pub preview_pane: bool,
     pub preview_pane_width: u32,
@@ -393,6 +395,8 @@ pub struct SettingsInput {
     pub classification_dismissed_version: i32,
     #[serde(default = "default_ui_rail_width")]
     pub ui_rail_width: u32,
+    #[serde(default)]
+    pub ui_rail_collapsed: bool,
     #[serde(default = "default_ui_genre_width")]
     pub ui_genre_width: u32,
     #[serde(default = "default_preview_pane")]
@@ -438,6 +442,7 @@ pub struct SettingsPatch {
     pub launch_at_login: Option<bool>,
     pub classification_dismissed_version: Option<i32>,
     pub ui_rail_width: Option<u32>,
+    pub ui_rail_collapsed: Option<bool>,
     pub ui_genre_width: Option<u32>,
     #[serde(default)]
     pub preview_pane: Option<bool>,
@@ -488,6 +493,7 @@ impl SettingsPatch {
                 .classification_dismissed_version
                 .unwrap_or(current.classification_dismissed_version),
             ui_rail_width: self.ui_rail_width.unwrap_or(current.ui_rail_width),
+            ui_rail_collapsed: self.ui_rail_collapsed.unwrap_or(current.ui_rail_collapsed),
             ui_genre_width: self.ui_genre_width.unwrap_or(current.ui_genre_width),
             preview_pane: self.preview_pane.unwrap_or(current.preview_pane),
             preview_pane_width: clamp_preview_pane_width(

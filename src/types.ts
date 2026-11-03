@@ -263,6 +263,8 @@ export interface Settings {
   unloadOllamaAfterClassification: boolean;
   classificationDismissedVersion: number;
   uiRailWidth: number;
+  /** 左サイドバーをアイコンだけの細い列にする。幅 uiRailWidth は開いたときの値として残す。 */
+  uiRailCollapsed: boolean;
   uiGenreWidth: number;
   /** アセットとワールドの大きい画像欄。列幅と同じく設定に残す。 */
   previewPane: boolean;

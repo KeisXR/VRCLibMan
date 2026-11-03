@@ -335,6 +335,7 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
                             .unload_ollama_after_classification,
                         classification_dismissed_version: settings.classification_dismissed_version,
                         ui_rail_width: settings.ui_rail_width,
+                        ui_rail_collapsed: settings.ui_rail_collapsed,
                         ui_genre_width: settings.ui_genre_width,
                         preview_pane: settings.preview_pane,
                         preview_pane_width: settings.preview_pane_width,

@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import { fitRightPanelWidth, rightPanelMaxWidth, RIGHT_PANEL_SEPARATOR } from "./rightPanel";
 import {
   UI_GENRE_AUTO_COLLAPSE_PX,
   UI_GENRE_WIDTH,
+  UI_RAIL_COLLAPSED_WIDTH,
   UI_RAIL_WIDTH,
   clampGenreWidth,
   clampRailWidth,
@@ -18,6 +19,8 @@ export interface PanelLayoutInput {
 
 export function useAppLayout(browseGenre: boolean, panel: PanelLayoutInput = { open: false, maximized: false, width: 0 }) {
   const [railWidth, setRailWidth] = useState(UI_RAIL_WIDTH.default);
+  const [railCollapsed, setRailCollapsedState] = useState(false);
+  const railToggled = useRef(false);
   const [genreWidth, setGenreWidth] = useState(UI_GENRE_WIDTH.default);
   const [windowWidth, setWindowWidth] = useState(
     typeof window !== "undefined" ? window.innerWidth : 1280,
@@ -26,6 +29,7 @@ export function useAppLayout(browseGenre: boolean, panel: PanelLayoutInput = { o
   useEffect(() => {
     void api.settings().then((settings) => {
       setRailWidth(clampRailWidth(settings.uiRailWidth));
+      if (!railToggled.current) setRailCollapsedState(settings.uiRailCollapsed === true);
       setGenreWidth(clampGenreWidth(settings.uiGenreWidth));
     });
   }, []);
@@ -43,9 +47,9 @@ export function useAppLayout(browseGenre: boolean, panel: PanelLayoutInput = { o
   const panelDocked = panel.open && !narrow;
 
   const leftColumns = useMemo(() => {
-    const rail = clampRailWidth(railWidth) + 6;
+    const rail = (railCollapsed ? UI_RAIL_COLLAPSED_WIDTH : clampRailWidth(railWidth)) + 6;
     return genreVisible ? rail + clampGenreWidth(genreWidth) + 6 : rail;
-  }, [railWidth, genreWidth, genreVisible]);
+  }, [railWidth, railCollapsed, genreWidth, genreVisible]);
   const panelMax = rightPanelMaxWidth(windowWidth, leftColumns);
   const panelWidth = panelDocked ? fitRightPanelWidth(panel.width, windowWidth, leftColumns) : 0;
   const panelMaximized = panelDocked && panel.maximized;
@@ -57,13 +61,22 @@ export function useAppLayout(browseGenre: boolean, panel: PanelLayoutInput = { o
         railWidth,
         genreWidth,
         genreVisible,
+        railCollapsed,
       ),
-    [windowWidth, railWidth, genreWidth, genreVisible, panelDocked, panelMaximized, panelWidth],
+    [windowWidth, railWidth, railCollapsed, genreWidth, genreVisible, panelDocked, panelMaximized, panelWidth],
   );
 
   const persistRail = useCallback((value: number) => {
     const next = clampRailWidth(value);
     void api.updateSettings({ uiRailWidth: next });
+  }, []);
+
+  // The width does not animate: the docked browser page is a native view placed from the DOM,
+  // so the new columns are applied in one frame and the panel re-measures right after.
+  const setRailCollapsed = useCallback((next: boolean) => {
+    railToggled.current = true;
+    setRailCollapsedState(next);
+    void api.updateSettings({ uiRailCollapsed: next }).catch(() => undefined);
   }, []);
 
   const persistGenre = useCallback((value: number) => {
@@ -89,6 +102,8 @@ export function useAppLayout(browseGenre: boolean, panel: PanelLayoutInput = { o
 
   return {
     railWidth: fitted.rail,
+    railCollapsed,
+    setRailCollapsed,
     genreWidth: fitted.genre,
     genreVisible,
     narrow,

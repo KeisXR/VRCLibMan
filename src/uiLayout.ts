@@ -1,4 +1,6 @@
 export const UI_RAIL_WIDTH = { min: 180, max: 360, default: 232 };
+/** Width of the icon-only left sidebar. It is fixed and not resizable. */
+export const UI_RAIL_COLLAPSED_WIDTH = 60;
 export const UI_GENRE_WIDTH = { min: 160, max: 320, default: 200 };
 export const UI_LIST_MIN_WIDTH = 480;
 export const UI_GENRE_AUTO_COLLAPSE_PX = 1000;
@@ -12,14 +14,23 @@ export function clampGenreWidth(value: number): number {
   return Math.round(Math.min(UI_GENRE_WIDTH.max, Math.max(UI_GENRE_WIDTH.min, value)));
 }
 
-/** Shrink rail and genre proportionally so the list keeps at least UI_LIST_MIN_WIDTH. */
+/**
+ * Shrink rail and genre proportionally so the list keeps at least UI_LIST_MIN_WIDTH.
+ * A collapsed rail keeps its fixed icon width; only the genre column gives way.
+ */
 export function fitBrowseWidths(
   windowWidth: number,
   rail: number,
   genre: number,
   genreVisible: boolean,
+  railCollapsed = false,
 ): { rail: number; genre: number } {
   const separators = genreVisible ? 12 : 6;
+  if (railCollapsed) {
+    if (!genreVisible) return { rail: UI_RAIL_COLLAPSED_WIDTH, genre: 0 };
+    const room = windowWidth - UI_LIST_MIN_WIDTH - UI_RAIL_COLLAPSED_WIDTH - separators;
+    return { rail: UI_RAIL_COLLAPSED_WIDTH, genre: clampGenreWidth(Math.min(clampGenreWidth(genre), room)) };
+  }
   let nextRail = clampRailWidth(rail);
   let nextGenre = genreVisible ? clampGenreWidth(genre) : 0;
   const minTotal = UI_LIST_MIN_WIDTH + nextRail + nextGenre + separators;
