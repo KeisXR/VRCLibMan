@@ -15,9 +15,6 @@ const ACCENT = /var\(--line-(?:accent|selection)\)/;
 
 // 朱で面を塗ってよいもの（例外）。
 const FILL_ALLOWLIST = [".track span"];
-// 未マージの PR で入る予定の下線。共通の下線部品へ移したら消す。
-// ここに載っている選択子だけは、ブロック外・片側の影でも失敗にしない。
-const PENDING_MIGRATION = [".chip-bar-item.active"];
 
 /** コメントを同じ長さの空白に置き換え、位置を保ったまま規則を拾う。 */
 function parseRules(source) {
@@ -57,7 +54,6 @@ const blockStart = css.indexOf(START);
 const blockEnd = css.indexOf(END);
 const rules = parseRules(css);
 const inBlock = (rule) => rule.start > blockStart && rule.start < blockEnd;
-const pending = (rule) => rule.selectors.every((s) => PENDING_MIGRATION.includes(s));
 const accentDecls = rules.flatMap((rule) =>
   rule.decls.filter((d) => ACCENT.test(d.value) || /^--line-(?:accent|selection)$/.test(d.prop)).map((d) => ({ rule, ...d })),
 );
@@ -87,7 +83,7 @@ test("accent block exists once and the rule is stated in it", () => {
 });
 
 test("(a) --line-accent / --line-selection are only defined and used inside the accent block", () => {
-  const outside = accentDecls.filter((d) => !inBlock(d.rule) && !pending(d.rule));
+  const outside = accentDecls.filter((d) => !inBlock(d.rule));
   assert.deepEqual(
     outside.map((d) => `${d.rule.selector} { ${d.prop}: ${d.value} }`),
     [],
@@ -96,7 +92,7 @@ test("(a) --line-accent / --line-selection are only defined and used inside the 
 });
 
 test("(b) the accent is never a one-sided inset shadow (only a full ring)", () => {
-  for (const d of accentDecls.filter((x) => x.prop === "box-shadow" && !pending(x.rule))) {
+  for (const d of accentDecls.filter((x) => x.prop === "box-shadow")) {
     for (const shadow of splitShadows(d.value).filter((s) => ACCENT.test(s))) {
       const lengths = shadow
         .replace(ACCENT, "")

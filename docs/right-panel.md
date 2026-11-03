@@ -464,7 +464,8 @@ interface RightPanelTab { id: string; kind: RightPanelKind | "web"; tabId?: stri
 
 ### 6.3 重ね表示（狭い窓）
 
-- 窓幅が 1000px 未満（`UI_GENRE_AUTO_COLLAPSE_PX` と同じ値）なら `narrow` です。このとき `panelDocked = open && !narrow` は false になります。
+- 窓幅が 1000px 未満（`src/uiLayout.ts` の `UI_PANEL_OVERLAY_PX`）なら `narrow` です。このとき `panelDocked = open && !narrow` は false になります。
+- 列の幅は `computeAppLayout`（`src/uiLayout.ts`）がまとめて決めます。パネルの幅を先に決め、一覧が 480px を切るならジャンル列をやめてチップ帯にし、パネルの幅をもう一度決めます（[デザインガイドの狭い窓](design/README.md#狭い窓)）。860px 以下でサイドバーがアイコンだけになるのは重ね表示のときだけなので、列のパネルと同時には起きません。
 - `PanelOverlay` は `document.body` へのポータルです（`.preview-overlay.right-panel-overlay`）。
   - 通常は `role="dialog"` と `aria-modal` を付けます。
   - 開いたら閉じるボタンにフォーカスします。

@@ -278,16 +278,54 @@ a.drag-over {
   margin-bottom: var(--space-4);
   flex-shrink: 0;
 }
-.genre-mobile-picker {
+/* 一行のチップ帯。狭い幅のジャンルなど、一覧の上に固定して横にスクロールする選択肢（src/components/ChipBar.tsx） */
+.chip-bar {
   position: sticky;
-  top: 0;
+  top: var(--topbar-height, 8px);
   z-index: 3;
+  flex-shrink: 0;
   margin: 0 0 var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
+  background: var(--bg);
+  box-shadow: 0 1px 0 var(--line);
 }
+.chip-bar-track {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) 2px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+}
+.chip-bar-item {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 13px;
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color var(--motion) ease, color var(--motion) ease, box-shadow var(--motion) ease;
+}
+.chip-bar-item:hover { background: var(--hover); color: var(--text); text-decoration: none; }
+.chip-bar-item.active {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 650;
+  box-shadow: var(--shadow); /* 朱の直線の下線は「線のアクセント」の集約ブロック */
+}
+.chip-bar-item.drag-over { background: var(--hover); color: var(--text); box-shadow: inset 0 0 0 1px var(--line); }
+.chip-bar-count { font-size: 12px; font-weight: 400; color: var(--faint); font-variant-numeric: tabular-nums; }
+.chip-bar-item.active .chip-bar-count { color: var(--text-secondary); }
+.chip-bar-sep { flex: 0 0 auto; width: 1px; height: 18px; margin: 0 var(--space-1); background: var(--line); }
+.chip-bar-kicker { flex: 0 0 auto; padding: 0 4px; font-size: 12px; font-weight: 650; color: var(--faint); }
 .nav-link {
   display: flex;
   justify-content: flex-start;
@@ -1253,17 +1291,8 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .density-roomy .panel { padding: 24px; margin-bottom: 20px; }
 .density-roomy .form-grid { gap: 20px 16px; }
 
+/* 860px 以下でも列の並びは変えない。左サイドバーは useAppLayout がアイコン表示にする（保存はしない） */
 @media (max-width: 860px) {
-  .app {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto minmax(0, 1fr);
-  }
-  .rail { gap: var(--space-3); max-height: 42vh; overflow: visible; }
-  .rail nav { flex-direction: row; flex-wrap: wrap; }
-  .rail.collapsed nav .nav-link { padding: 8px 10px; }
-  .rail-status { display: none; }
-  .rail-foot { margin-top: 0; }
-  .rail-foot:not(:has(.account-pill)) { display: none; }
   .split, .knowledge, .form-grid { grid-template-columns: 1fr; }
   .content, .density-roomy .content { padding: var(--space-4); }
   .banner, .progress { margin-left: var(--space-4); margin-right: var(--space-4); }
@@ -1403,9 +1432,6 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .model-pull-control { margin-top: var(--space-2); }
 .app-version { font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
 .import-page .setting-copy p { overflow-wrap: anywhere; }
-@media (max-width: 860px) {
-  .rail-foot:not(:has(.account-pill)) { display: block; }
-}
 .settings-status { position: sticky; bottom: var(--space-3); z-index: 2; margin: var(--space-3) 0; padding: 10px 14px; border-radius: var(--radius-control); background: var(--surface); box-shadow: var(--shadow); }
 .knowledge-section { padding-bottom: var(--space-4); }
 .debug-section > summary {
@@ -1667,7 +1693,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 
 /* 部品3: 直線の下線（角丸の内側の平らな部分にだけ置く。要素の角丸には沿わない。端の丸みは縦棒と同じ） */
 .tab.active { position: relative; box-shadow: none; }
+.chip-bar-item.active { position: relative; }
 .tab.active::after,
+.chip-bar-item.active::after,
 .settings-nav button[aria-current]::after {
   content: "";
   position: absolute;

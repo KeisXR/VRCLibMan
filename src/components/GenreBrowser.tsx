@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ItemCard } from "../pages/AvatarDetailPage";
-import { GENRE_FREE, GENRE_LABEL, GENRE_UNSET, genresForKind } from "../types";
-import type { GenreKind } from "../types";
+import { GENRE_FREE, GENRE_LABEL, GENRE_UNSET } from "../types";
 import { useGenreBrowse } from "../genreBrowseContext";
-import { filterItems, genreHref, selectedGenre } from "../genreBrowseUtils";
+import { filterItems, selectedGenre } from "../genreBrowseUtils";
 import { useRemoteProductProbe } from "../remoteProductProbe";
 import { isPreviewMoveKey, nextPreviewId, previewKeysBlocked } from "../previewPane";
-import { GenreTarget } from "./GenreColumn";
+import { GenreChipBar } from "./GenreChipBar";
 import { useRightPanel } from "./RightPanel";
 
 const NOUN: Record<string, string> = { asset: "アセット", world: "ワールド" };
@@ -14,7 +13,7 @@ const NOUN: Record<string, string> = { asset: "アセット", world: "ワール�
 export { filterItems, genreHref, selectedGenre } from "../genreBrowseUtils";
 
 export function GenreBrowser({ title, lede }: { title: string; lede?: string }) {
-  const { kind, basePath, routeGenre, selected, data, error, narrowLayout, reload, draggingId, setDraggingId, moveProduct } = useGenreBrowse();
+  const { kind, routeGenre, selected, data, error, genreBar, reload, setDraggingId } = useGenreBrowse();
   const [filter, setFilter] = useState("");
   const panel = useRightPanel();
   const { publishPreview } = panel;
@@ -102,64 +101,7 @@ export function GenreBrowser({ title, lede }: { title: string; lede?: string }) 
 
   return (
     <section className="genre-browser">
-      {narrowLayout && (
-        <details className="genre-mobile-picker">
-          <summary>ジャンル：{selectedLabel}</summary>
-          <nav className="genre-mobile-nav" aria-label="ジャンル（狭い画面）">
-            <GenreTarget href={genreHref(basePath, null)} label="すべて" active={selected === null} onDropId={() => undefined} />
-            {genresForKind(kind).map((value) => (
-              <GenreTarget
-                key={value}
-                href={genreHref(basePath, value)}
-                label={GENRE_LABEL[value] ?? value}
-                count={data?.counts[value] ?? 0}
-                showCount={false}
-                active={selected === value}
-                dropGenre={value}
-                onDropId={(boothId) => {
-                  setDraggingId(null);
-                  void moveProduct(boothId, kind, value);
-                }}
-              />
-            ))}
-            <GenreTarget
-              href={genreHref(basePath, GENRE_FREE)}
-              label={GENRE_LABEL[GENRE_FREE]}
-              count={data?.counts[GENRE_FREE] ?? 0}
-              showCount={false}
-              active={selected === GENRE_FREE}
-              onDropId={() => undefined}
-            />
-            {(data?.counts[GENRE_UNSET] ?? 0) > 0 || selected === GENRE_UNSET ? (
-              <GenreTarget
-                href={genreHref(basePath, GENRE_UNSET)}
-                label={GENRE_LABEL[GENRE_UNSET]}
-                active={selected === GENRE_UNSET}
-                onDropId={() => undefined}
-              />
-            ) : null}
-            {draggingId && (
-              <div className="genre-rail-other">
-                <p className="genre-rail-kicker">{kind === "world" ? "アセット" : "ワールド"}</p>
-                {genresForKind(kind === "world" ? "asset" : "world").map((value) => {
-                  const across: GenreKind = kind === "world" ? "asset" : "world";
-                  return (
-                    <GenreTarget
-                      key={value}
-                      label={GENRE_LABEL[value] ?? value}
-                      dropGenre={value}
-                      onDropId={(boothId) => {
-                        setDraggingId(null);
-                        void moveProduct(boothId, across, value);
-                      }}
-                    />
-                  );
-                })}
-              </div>
-            )}
-          </nav>
-        </details>
-      )}
+      {genreBar && <GenreChipBar />}
       <div className="page-head genre-list-head">
         <div>
           <h1>{title}</h1>

@@ -1,15 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
-import { fitRightPanelWidth, rightPanelMaxWidth, RIGHT_PANEL_SEPARATOR } from "./rightPanel";
-import {
-  UI_GENRE_AUTO_COLLAPSE_PX,
-  UI_GENRE_WIDTH,
-  UI_RAIL_COLLAPSED_WIDTH,
-  UI_RAIL_WIDTH,
-  clampGenreWidth,
-  clampRailWidth,
-  fitBrowseWidths,
-} from "./uiLayout";
+import { RIGHT_PANEL_SEPARATOR } from "./rightPanel";
+import { UI_GENRE_WIDTH, UI_RAIL_WIDTH, clampGenreWidth, clampRailWidth, computeAppLayout } from "./uiLayout";
 
 export interface PanelLayoutInput {
   open: boolean;
@@ -17,14 +9,18 @@ export interface PanelLayoutInput {
   width: number;
 }
 
+/** The window width, or 1280 where there is none to measure (server rendering, DOM stubs). */
+function currentWindowWidth() {
+  const width = typeof window !== "undefined" ? window.innerWidth : NaN;
+  return Number.isFinite(width) && width > 0 ? width : 1280;
+}
+
 export function useAppLayout(browseGenre: boolean, panel: PanelLayoutInput = { open: false, maximized: false, width: 0 }) {
   const [railWidth, setRailWidth] = useState(UI_RAIL_WIDTH.default);
   const [railCollapsed, setRailCollapsedState] = useState(false);
   const railToggled = useRef(false);
   const [genreWidth, setGenreWidth] = useState(UI_GENRE_WIDTH.default);
-  const [windowWidth, setWindowWidth] = useState(
-    typeof window !== "undefined" ? window.innerWidth : 1280,
-  );
+  const [windowWidth, setWindowWidth] = useState(currentWindowWidth);
 
   useEffect(() => {
     void api.settings().then((settings) => {
@@ -35,36 +31,28 @@ export function useAppLayout(browseGenre: boolean, panel: PanelLayoutInput = { o
   }, []);
 
   useEffect(() => {
-    const onResize = () => setWindowWidth(window.innerWidth);
+    const onResize = () => setWindowWidth(currentWindowWidth());
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  // Narrow windows show a genre picker above the list instead of the column,
-  // and the right panel over the page instead of beside it.
-  const narrow = windowWidth < UI_GENRE_AUTO_COLLAPSE_PX;
-  const genreVisible = browseGenre && !narrow;
-  const panelDocked = panel.open && !narrow;
-
-  const leftColumns = useMemo(() => {
-    const rail = (railCollapsed ? UI_RAIL_COLLAPSED_WIDTH : clampRailWidth(railWidth)) + 6;
-    return genreVisible ? rail + clampGenreWidth(genreWidth) + 6 : rail;
-  }, [railWidth, railCollapsed, genreWidth, genreVisible]);
-  const panelMax = rightPanelMaxWidth(windowWidth, leftColumns);
-  const panelWidth = panelDocked ? fitRightPanelWidth(panel.width, windowWidth, leftColumns) : 0;
-  const panelMaximized = panelDocked && panel.maximized;
-
-  const fitted = useMemo(
+  // See computeAppLayout: icon rail at 860px or less (not saved), the genre column only when
+  // the list keeps 480px, and the right panel over the page below 1000px.
+  const layout = useMemo(
     () =>
-      fitBrowseWidths(
-        panelDocked && !panelMaximized ? windowWidth - panelWidth - RIGHT_PANEL_SEPARATOR : windowWidth,
+      computeAppLayout({
+        windowWidth,
         railWidth,
-        genreWidth,
-        genreVisible,
         railCollapsed,
-      ),
-    [windowWidth, railWidth, railCollapsed, genreWidth, genreVisible, panelDocked, panelMaximized, panelWidth],
+        genreWidth,
+        browseGenre,
+        panelOpen: panel.open,
+        panelMaximized: panel.maximized,
+        panelStoredWidth: panel.width,
+      }),
+    [windowWidth, railWidth, railCollapsed, genreWidth, browseGenre, panel.open, panel.maximized, panel.width],
   );
+  const { genreVisible, panelDocked, panelMaximized, panelWidth } = layout;
 
   const persistRail = useCallback((value: number) => {
     const next = clampRailWidth(value);
@@ -85,8 +73,8 @@ export function useAppLayout(browseGenre: boolean, panel: PanelLayoutInput = { o
   }, []);
 
   const gridStyle = useMemo(() => {
-    const cols: string[] = [`${fitted.rail}px`, "6px"];
-    if (genreVisible) cols.push(`${fitted.genre}px`, "6px");
+    const cols: string[] = [`${layout.rail}px`, "6px"];
+    if (genreVisible) cols.push(`${layout.genre}px`, "6px");
     if (panelMaximized) cols.push("minmax(0, 1fr)");
     else {
       cols.push("minmax(0, 1fr)");
@@ -94,23 +82,28 @@ export function useAppLayout(browseGenre: boolean, panel: PanelLayoutInput = { o
     }
     return {
       gridTemplateColumns: cols.join(" "),
-      ["--sidebar-width" as string]: `${fitted.rail}px`,
-      ["--genre-width" as string]: `${fitted.genre}px`,
+      ["--sidebar-width" as string]: `${layout.rail}px`,
+      ["--genre-width" as string]: `${layout.genre}px`,
       ["--right-panel-width" as string]: `${panelWidth}px`,
     };
-  }, [fitted, genreVisible, panelDocked, panelMaximized, panelWidth]);
+  }, [layout, genreVisible, panelDocked, panelMaximized, panelWidth]);
 
   return {
-    railWidth: fitted.rail,
-    railCollapsed,
+    railWidth: layout.rail,
+    /** Icons only on screen (saved as closed, or a narrow window). */
+    railCollapsed: layout.railCollapsed,
+    /** The saved state; the toggle flips this one. */
+    railCollapsedSaved: railCollapsed,
+    railAuto: layout.railAuto,
     setRailCollapsed,
-    genreWidth: fitted.genre,
+    genreWidth: layout.genre,
     genreVisible,
-    narrow,
+    genreBar: layout.genreBar,
+    narrow: layout.narrow,
     panelDocked,
     panelMaximized,
     panelWidth,
-    panelMax,
+    panelMax: layout.panelMax,
     gridStyle,
     setRailWidth,
     setGenreWidth,
