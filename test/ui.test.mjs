@@ -350,6 +350,8 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       const box = () => row().querySelector('input[type="checkbox"]');
       assert.equal(box().checked, false);
       assert.equal(box().getAttribute("aria-label"), "強制ダークモード");
+      const autoRegister = settingRow("取得したアセットの自動登録");
+      assert.equal(autoRegister.querySelector('input[type="checkbox"]').getAttribute("aria-label"), "取得したアセットの自動登録");
       assert.match(row().textContent, /画像・動画・キャンバスは元の色のまま/);
       assert.match(row().textContent, /右パネルと別ウィンドウ/);
       assert.match(row().textContent, /再起動なし/);

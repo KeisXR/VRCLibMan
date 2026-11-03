@@ -358,7 +358,6 @@ export function SettingsPage() {
                     checked={settings.browserForceDark}
                     onChange={(e) => changeSettings({ browserForceDark: e.target.checked })}
                   />
-                  
                 </label>
               </SettingRow>
             )}
@@ -405,7 +404,6 @@ export function SettingsPage() {
                       checked={settings.unloadOllamaAfterClassification}
                       onChange={(e) => changeSettings({ unloadOllamaAfterClassification: e.target.checked })}
                     />
-                    
                   </label>
                 </SettingRow>
                 <SettingRow label="読み込み状態" help="同じ PC のほかのアプリが同じモデルを使っている場合も影響します。">
@@ -452,7 +450,6 @@ export function SettingsPage() {
                   checked={settings.checkUpdateOnStartup}
                   onChange={(e) => changeSettings({ checkUpdateOnStartup: e.target.checked })}
                 />
-                
               </label>
             </SettingRow>
             <SettingRow label="アプリの更新" help="公開済みの配布版を確認して、アプリ内で更新します。ライブラリと設定は引き継ぎます。">
