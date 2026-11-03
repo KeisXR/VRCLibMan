@@ -148,7 +148,7 @@ export function BrowserPage({ enabled }: { enabled: boolean }) {
                 })
               }
             >
-              今開いているページをインポート
+              このページをインポート
             </button>
             <button
               className="button"

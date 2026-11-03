@@ -175,10 +175,12 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         await click(button("次へ", document.querySelector(".setup-screen")));
         await wait(() => document.querySelector(".setup-guide"));
         assert.ok(document.querySelector(".setup-guide").textContent.includes("拡張機能を選択"));
-        await click(button("スキップ", document.querySelector(".setup-guide")));
+        assert.equal(button("スキップ", document.querySelector(".setup-guide")), undefined);
         await click(button("次へ", document.querySelector(".setup-guide")));
         await click(button("次へ", document.querySelector(".setup-guide")));
-        await click(button("スキップ", document.querySelector(".setup-guide")));
+        await click(button("次へ", document.querySelector(".setup-guide")));
+        assert.equal(button("スキップ", document.querySelector(".setup-guide")), undefined);
+        await click(button("次へ", document.querySelector(".setup-guide")));
         await click(button("あとで設定する"));
         await wait(() => !document.querySelector(".setup-screen"));
       },
@@ -316,6 +318,22 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       assert.equal(document.documentElement.classList.contains("theme-liquid"), false);
     });
 
+    await t.test("settings toggles expose accessible names without redundant labels", async () => {
+      await route("#/settings");
+      for (const label of [
+        "リモートへ自動同期", "ダウンロードを自動整理", "バックグラウンドで動作",
+        "ログイン時に起動", "分類後にモデルをアンロード", "起動時にアップデートを確認",
+      ]) {
+        const row = [...document.querySelectorAll(".setting-row")].find(
+          (row) => row.querySelector("strong")?.textContent === label,
+        );
+        assert.ok(row, `Missing setting: ${label}`);
+        const checkbox = row.querySelector('input[type="checkbox"]');
+        assert.equal(checkbox?.getAttribute("aria-label"), label);
+        assert.equal(row.querySelector(".switch-label")?.textContent.trim(), "");
+      }
+    });
+
     await t.test("force dark mode is off until the built-in browser is enabled", async () => {
       const settingRow = (label) =>
         [...document.querySelectorAll(".setting-row")].find(
@@ -331,6 +349,7 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       const row = () => settingRow("強制ダークモード");
       const box = () => row().querySelector('input[type="checkbox"]');
       assert.equal(box().checked, false);
+      assert.equal(box().getAttribute("aria-label"), "強制ダークモード");
       assert.match(row().textContent, /画像・動画・キャンバスは元の色のまま/);
       assert.match(row().textContent, /右パネルと別ウィンドウ/);
       assert.match(row().textContent, /再起動なし/);

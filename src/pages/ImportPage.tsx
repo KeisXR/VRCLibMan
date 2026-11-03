@@ -499,7 +499,7 @@ export function ImportPage() {
               フォルダを調べる
             </button>
           </SettingRow>
-          <SettingRow label="ダウンロード済みファイルを登録" help="Downloads や別のフォルダを選び、BOOTH の配布ファイル名と照合します。元の場所に登録します。">
+          <SettingRow label="ダウンロード済みファイルを登録" help="Downloads などのフォルダを選び、BOOTH の配布ファイル名と照合します。登録方法は照合後に選べます。">
             <button className="button" type="button" disabled={busy} onClick={() => void findExisting()}>取り込み元を選ぶ</button>
           </SettingRow>
           {existingPreview && <div className="panel">
@@ -562,10 +562,7 @@ export function ImportPage() {
           </header>
           <details className="settings-details">
             <summary>JSON ファイルから読み込む</summary>
-            <p>
-              拡張機能で保存した JSON ファイルを読み込みます。
-            </p>{" "}
-            <div
+                        <div
               className={over ? "drop over" : "drop"}
               onDragOver={(event) => {
                 event.preventDefault();
@@ -627,8 +624,7 @@ export function ImportPage() {
                   .finally(() => setBusy(false));
               }}
             >
-              <h2 style={{ marginTop: 0 }}>ライブラリにない無料商品</h2>
-              <p className="meta">
+                            <p className="meta">
                 商品 URL を登録します。商品情報は自動取得しません。商品名や説明を読み込むには、拡張機能から商品ページを送ってください。
               </p>
               <label className="field">

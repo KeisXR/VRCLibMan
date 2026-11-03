@@ -29,7 +29,7 @@ export function SidebarUpdaterBadge({ onOpenSettings }: { onOpenSettings: () => 
   else if (phase === "available" && version) label = `v${version} に更新できます`;
   else if (phase === "downloading")
     label = `ダウンロード中 ${formatBytes(status.downloaded)}${total ? ` / ${formatBytes(total)}` : ""}`;
-  else if (phase === "ready" && version) label = `v${version} の準備ができました（設定で再起動）`;
+  else if (phase === "ready" && version) label = `v${version} 更新準備完了`;
   else return null;
 
   async function dismiss() {

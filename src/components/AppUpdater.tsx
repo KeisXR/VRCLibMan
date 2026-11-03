@@ -52,7 +52,7 @@ export function AppUpdater({
                 ? `v${status?.version} の準備ができました`
                 : phase === "installing"
                   ? "更新を適用中…"
-                  : "「更新を確認」を押すと、新しいバージョンを確認できます。";
+                  : "更新未確認";
 
   return (
     <div className="app-updater" id="settings-app-update">
