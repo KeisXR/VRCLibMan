@@ -101,15 +101,34 @@
   }
 }
 
-/* ---- 線のアクセント（朱）と選択枠（src/styles.css 1515〜1519 行） ----
+/* ---- 線のアクセント（朱）と選択枠（src/styles.css「線のアクセント」ブロック） ----
  * 面は塗らず、選択・見出し・進捗・フォーカスに細い線だけ使う。
+ * 曲線（角丸の辺に沿って曲がる線）にアクセントを付けない。許すのは全周の枠、
+ * 直線の縦棒（端の角丸 2px は例外）、角丸の内側に置く両端が四角い直線の下線だけ。進捗バーは例外。
  * --selection-outline は商品カードと確認画面のタブの 1px 中立色の全周枠。 */
-:root { --line-accent: #a6361f; --line-selection: rgba(166, 54, 31, 0.55); --selection-outline: #7c808b; }
+:root {
+  --line-accent: #a6361f;
+  --line-selection: rgba(166, 54, 31, 0.55);
+  --selection-outline: #7c808b;
+  --accent-line: 2px;        /* 下線の太さ */
+  --accent-bar: 3px;         /* 縦棒の幅（ナビ・設定見出し） */
+  --accent-bar-lg: 4px;      /* 縦棒の幅（ページ見出し） */
+  --accent-inset: var(--radius-sm); /* 下線の左右の余白。角丸の半径以上にして曲線に触れない */
+  --accent-offset: 3px;      /* 下線の下端からの位置 */
+}
 @media (prefers-color-scheme: dark) {
   :root { --line-accent: #d97757; --line-selection: rgba(217, 119, 87, 0.65); --selection-outline: #73737c; }
 }
 
-/* ---- 任意: 土台の決まり（src/styles.css 86〜95 行・1565〜1568 行） ----
+/* 直線の下線の書き方（例: 選択中のタブ）。left/right は角丸の内側、両端は四角。
+ * .tab.active { position: relative; }
+ * .tab.active::after {
+ *   content: ""; position: absolute; pointer-events: none;
+ *   left: var(--accent-inset); right: var(--accent-inset); bottom: var(--accent-offset);
+ *   height: var(--accent-line); border-radius: 0; background: var(--line-accent);
+ * } */
+
+/* ---- 任意: 土台の決まり（src/styles.css 86〜95 行と「線のアクセント」ブロックのフォーカス） ----
  * 変数ではないが方針の一部なので、そのまま使えるように写している。不要なら消してよい。 */
 :focus-visible {
   outline: 2px solid var(--text);
