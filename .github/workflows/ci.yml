@@ -81,6 +81,10 @@ jobs:
           WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS: '1'
         run: xvfb-run -a -s '-screen 0 2000x1200x24' npm run test:browser-layout
 
+      - name: test native macOS browser panel
+        if: runner.os == 'macOS'
+        run: swift test/macos-browser-panel-layout.swift
+
       # The native Apple Silicon helper targets the macOS 27.2 SDK, which is not
       # installed on macos-latest. Tests use the repository's Intel fallback helper.
       - uses: dtolnay/rust-toolchain@stable
