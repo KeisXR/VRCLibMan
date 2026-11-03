@@ -16,6 +16,7 @@ import { OllamaMemoryControls } from "../components/OllamaMemoryControls";
 import { CloudClassifierSettings } from "../components/CloudClassifierSettings";
 import { AssetUpdates } from "../components/AssetUpdates";
 import { UnitySettings } from "../components/UnitySettings";
+import { SettingsNav } from "../components/SettingsNav";
 
 const emptyAvatar = {
   id: "",
@@ -295,11 +296,7 @@ export function SettingsPage() {
 
       {settings && (
         <div className="settings-layout">
-          <nav className="settings-nav" aria-label="設定の項目">
-            {[["settings-library", "ライブラリ"], ["settings-unity", "Unity"], ["settings-startup", "起動と常駐"], ["settings-asset-updates", "更新候補"], ["settings-booth", "BOOTH"], ["settings-classify", "分類モデル"], ["settings-data", "データ"]].map(([id, label]) => (
-              <button key={id} type="button" onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" })}>{label}</button>
-            ))}
-          </nav>
+          <SettingsNav />
           <div className="settings-sections">
           <section className="settings-section" id="settings-library">
             <header><h2>ライブラリとダウンロード</h2><p>ファイルの保存先と自動整理を設定します。</p></header>
@@ -473,6 +470,24 @@ export function SettingsPage() {
             </details>
           </section>
 
+          <section className="settings-section knowledge-section" id="settings-knowledge">
+            <header><h2>対応表を編集</h2><p>アバターの別名と共通素体を編集します。</p></header>
+            <div className="knowledge">
+              <div><input className="search" value={filter} placeholder="対応表を検索" onChange={(e) => setFilter(e.target.value)} /><p className="meta">{knowledge?.avatars.length ?? 0} 件中 {avatars.length} 件を表示</p><div className="list">{avatars.map((record) => <button key={record.id} className={record.id === avatar.id ? "selected" : ""} type="button" onClick={() => selectAvatar(record)}>{record.displayName}{record.isBuiltin ? " ・初期" : ""}</button>)}</div><h2>素体</h2><div className="list">{(knowledge?.baseBodies ?? []).map((record) => <button key={record.id} type="button" onClick={() => setBody(record)}>{record.displayName}</button>)}</div></div>
+              <div className="stack">
+                <div className="panel"><h2>{avatar.id ? "アバターを編集" : "アバターを追加"}</h2><label className="field"><span>表示名</span><input value={avatar.displayName} onChange={(e) => setAvatar({ ...avatar, displayName: e.target.value })} /></label><label className="field"><span>別名（カンマ区切り）</span><input value={avatar.aliases} onChange={(e) => setAvatar({ ...avatar, aliases: e.target.value })} /></label><label className="field"><span>素体</span><select value={avatar.baseBody} onChange={(e) => setAvatar({ ...avatar, baseBody: e.target.value })}><option value="">なし</option>{(knowledge?.baseBodies ?? []).map((record: BaseBody) => <option key={record.id} value={record.id}>{record.displayName}</option>)}</select></label><label className="field"><span>メモ</span><textarea value={avatar.notes} onChange={(e) => setAvatar({ ...avatar, notes: e.target.value })} /></label><div className="row-actions"><button className="button primary" type="button" onClick={() => void saveAvatar()}>保存</button><button className="button" type="button" onClick={() => setAvatar(emptyAvatar)}>新規</button><button className="button danger" type="button" disabled={!avatar.id || avatar.builtin} onClick={() => void removeAvatar()}>削除</button></div></div>
+                <div className="panel"><h2>{body.id ? "素体を編集" : "素体を追加"}</h2><label className="field"><span>表示名</span><input value={body.displayName} onChange={(e) => setBody({ ...body, displayName: e.target.value })} /></label><label className="field"><span>根拠のメモ</span><textarea value={body.note} onChange={(e) => setBody({ ...body, note: e.target.value })} /></label><div className="row-actions"><button className="button primary" type="button" onClick={() => void saveBody()}>保存</button><button className="button" type="button" onClick={() => setBody({ id: "", displayName: "", note: "" })}>新規</button><button className="button danger" type="button" disabled={!body.id} onClick={() => void removeBody()}>削除</button></div></div>
+              </div>
+            </div>
+          </section>
+
+          <details className="settings-section debug-section" id="settings-debug">
+            <summary>
+              <span className="debug-summary-title">デバッグ</span>
+              <span className="debug-summary-help">分類ルールの改善に渡すデータです。普段は閉じておきます。</span>
+            </summary>
+            <ClassificationFeedback />
+          </details>
           </div>
         </div>
       )}
@@ -480,24 +495,6 @@ export function SettingsPage() {
       {status && <p className="settings-status">{status}</p>}
       {settings?.llmBackend === "ollama" && ollamaStatus && <p className="settings-status">{ollamaStatus}</p>}
 
-      <section className="settings-section knowledge-section">
-        <header><h2>対応表を編集</h2><p>アバターの別名と共通素体を編集します。</p></header>
-        <div className="knowledge">
-          <div><input className="search" value={filter} placeholder="対応表を検索" onChange={(e) => setFilter(e.target.value)} /><p className="meta">{knowledge?.avatars.length ?? 0} 件中 {avatars.length} 件を表示</p><div className="list">{avatars.map((record) => <button key={record.id} className={record.id === avatar.id ? "selected" : ""} type="button" onClick={() => selectAvatar(record)}>{record.displayName}{record.isBuiltin ? " ・初期" : ""}</button>)}</div><h2>素体</h2><div className="list">{(knowledge?.baseBodies ?? []).map((record) => <button key={record.id} type="button" onClick={() => setBody(record)}>{record.displayName}</button>)}</div></div>
-          <div className="stack">
-            <div className="panel"><h2>{avatar.id ? "アバターを編集" : "アバターを追加"}</h2><label className="field"><span>表示名</span><input value={avatar.displayName} onChange={(e) => setAvatar({ ...avatar, displayName: e.target.value })} /></label><label className="field"><span>別名（カンマ区切り）</span><input value={avatar.aliases} onChange={(e) => setAvatar({ ...avatar, aliases: e.target.value })} /></label><label className="field"><span>素体</span><select value={avatar.baseBody} onChange={(e) => setAvatar({ ...avatar, baseBody: e.target.value })}><option value="">なし</option>{(knowledge?.baseBodies ?? []).map((record: BaseBody) => <option key={record.id} value={record.id}>{record.displayName}</option>)}</select></label><label className="field"><span>メモ</span><textarea value={avatar.notes} onChange={(e) => setAvatar({ ...avatar, notes: e.target.value })} /></label><div className="row-actions"><button className="button primary" type="button" onClick={() => void saveAvatar()}>保存</button><button className="button" type="button" onClick={() => setAvatar(emptyAvatar)}>新規</button><button className="button danger" type="button" disabled={!avatar.id || avatar.builtin} onClick={() => void removeAvatar()}>削除</button></div></div>
-            <div className="panel"><h2>{body.id ? "素体を編集" : "素体を追加"}</h2><label className="field"><span>表示名</span><input value={body.displayName} onChange={(e) => setBody({ ...body, displayName: e.target.value })} /></label><label className="field"><span>根拠のメモ</span><textarea value={body.note} onChange={(e) => setBody({ ...body, note: e.target.value })} /></label><div className="row-actions"><button className="button primary" type="button" onClick={() => void saveBody()}>保存</button><button className="button" type="button" onClick={() => setBody({ id: "", displayName: "", note: "" })}>新規</button><button className="button danger" type="button" disabled={!body.id} onClick={() => void removeBody()}>削除</button></div></div>
-          </div>
-        </div>
-      </section>
-
-      <details className="settings-section debug-section">
-        <summary>
-          <span className="debug-summary-title">デバッグ</span>
-          <span className="debug-summary-help">分類ルールの改善に渡すデータです。普段は閉じておきます。</span>
-        </summary>
-        <ClassificationFeedback />
-      </details>
     </section>
   );
 }

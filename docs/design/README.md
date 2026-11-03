@@ -84,8 +84,8 @@ VRCLibMan の見た目の決まりを、ほかのプロジェクトへ持ち出�
 | 部品 | 書き方 | 今の使いどころ |
 | --- | --- | --- |
 | 1. 全周の枠 | `border-color`、`box-shadow: 0 0 0 1px`、`outline` で外周すべてを同じ線で囲む。角丸でも全周なら許す | 入力欄のフォーカス、`.rail-icon-button.attention`、選択中の選択肢（`.choice-row`・`.scope-choices`） |
-| 2. 直線の縦棒 | `::before` の棒（幅 `--accent-bar`、端の丸み `--accent-cap`） | `.nav-link.active`・`.genre-link.active`（左端、高さ 55%、`left: 2px`）、`.page-head h1`（`--accent-bar-lg`、0.82em）、`.settings-section > header h2`（0.85em） |
-| 3. 直線の下線 | `::after` の直線。`left` / `right` は `--accent-inset`、`bottom` は `--accent-offset`、高さ `--accent-line`、端の丸み `--accent-cap`（縦棒と同じ 2px）。要素の角丸には沿わない独立した直線 | `.tab.active` |
+| 2. 直線の縦棒 | `::before` の棒（幅 `--accent-bar`、端の丸み `--accent-cap`） | `.nav-link.active`・`.genre-link.active`（左端、高さ 55%、`left: 2px`）、`.page-head h1`（`--accent-bar-lg`、0.82em）、`.settings-section > header h2`（0.85em）、設定のカテゴリ一覧 `.settings-nav button[aria-current]`（広い幅） |
+| 3. 直線の下線 | `::after` の直線。`left` / `right` は `--accent-inset`、`bottom` は `--accent-offset`、高さ `--accent-line`、端の丸み `--accent-cap`（縦棒と同じ 2px）。要素の角丸には沿わない独立した直線 | `.tab.active`、設定のカテゴリ一覧 `.settings-nav button[aria-current]`（帯のとき） |
 
 - 例外: 進捗バー `.track span` は角丸の溝の中を朱で塗ります（今のまま）。縦棒と下線の端の丸み（2px まで）も曲線に数えません。
 - しないこと: 角丸の要素に `inset 0 -2px 0 var(--line-accent)` などの片側だけの影を付ける、`border-left` などの片側の枠を朱にする、縦棒や下線の端を 2px より丸くする、疑似要素でない要素の面を朱で塗る。
@@ -217,6 +217,17 @@ VRCLibMan の見た目の決まりを、ほかのプロジェクトへ持ち出�
 
 - 節はカード（角丸 24px、`--surface`、`--shadow`）。見出しの前に朱の棒（幅 3px、高さ 0.85em）。
 - 行は「説明（左）｜操作（右寄せ）」の2列で、行の下に `1px solid var(--line)`。狭い幅では1列にします（コンテナクエリ 600px / 800px）。
+
+#### 設定のカテゴリ一覧（`.settings-nav`）
+
+- 部品は `src/components/SettingsNav.tsx`、項目と並びは `src/settingsNav.ts` の `SETTINGS_NAV_ITEMS`。ライブラリ・Unity・起動と常駐・更新候補・BOOTH・分類モデル・データ・対応表を編集・デバッグの 9 つで、画面の節の並びと同じです。節の `id`（`settings-unity`、`settings-asset-updates` など）は他の画面からの移動先なので変えません。`settings-app-update` は「データ」の中にあります。
+- 「対応表を編集」（`settings-knowledge`）と「デバッグ」（`settings-debug`、閉じた `<details>`）も一覧と同じ列に置きます。一覧から「デバッグ」を押すと開いてから移動します。
+- 広い幅: 左の縦の列（168px）で、上に固定（`position: sticky; top: 0`）。今いるカテゴリはサイドバーと同じ示し方（`--surface`＋650＋`--shadow`＋左端の朱の直線の縦棒。[部品2](#線のアクセントの部品)）。
+- 設定ページの幅が 800px 以下（コンテナクエリ。窓幅ではないので、左サイドバーの開閉や右パネルの有無に関係なく、設定ページの実幅で決まる）: 上に固定した1行の帯にします。折り返さず横にスクロールし、地は `--bg`、下に `1px` の `--line`。今いるカテゴリは影を消し、`.tab.active` と同じ朱の直線の下線（[部品3](#線のアクセントの部品)、両端は 2px の丸み）にします。縦棒は出しません。帯からはみ出していれば帯の中で見える位置へ寄せます。
+- 帯で見出しが隠れないよう、帯の高さ（`--settings-nav-h`、部品が測る）＋12px を `scroll-margin-top` にします。他の画面から `scrollIntoView` で来たときも同じです。
+- 今いるカテゴリは `aria-current="location"`。スクロール位置から、見出しが帯の下＋32px か表示域の上 1/4 のどちらか下の線より上にある最後の節にし、末尾まで来たら最後の節にします。押したカテゴリは移動が終わるまで固定します。
+- 押すとその節へなめらかに移動し、`prefers-reduced-motion: reduce` ではすぐ移動します。
+- 内容が広いときの縦の列は、狭いときの帯と同じ部品です。インポート画面などの別の帯（`.chip-bar` 系）とは今は別の実装で、見た目を揃える余地があります。
 - 選択肢の行 `.choice-row`: `1px solid var(--line)`、角丸 `--radius-control`。選択中は枠を `--line-selection`、地を `--surface-secondary`。
 
 ### ダイアログ・重ね表示

@@ -17,7 +17,7 @@ const ACCENT = /var\(--line-(?:accent|selection)\)/;
 const FILL_ALLOWLIST = [".track span"];
 // 未マージの PR で入る予定の下線。共通の下線部品へ移したら消す。
 // ここに載っている選択子だけは、ブロック外・片側の影でも失敗にしない。
-const PENDING_MIGRATION = [".settings-nav button[aria-current]", ".chip-bar-item.active"];
+const PENDING_MIGRATION = [".chip-bar-item.active"];
 
 /** コメントを同じ長さの空白に置き換え、位置を保ったまま規則を拾う。 */
 function parseRules(source) {

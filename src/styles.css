@@ -1286,9 +1286,12 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .setting-copy { padding-top: 6px; }
 .settings-section { scroll-margin-top: 12px; }
 .settings-layout { display: grid; grid-template-columns: 168px minmax(0, 1fr); gap: 20px; align-items: start; }
-.settings-nav { position: sticky; top: 0; display: flex; flex-direction: column; gap: 2px; }
-.settings-nav button { text-align: left; padding: 8px 12px; border: 0; border-radius: 10px; background: transparent; color: var(--text-secondary); font: inherit; font-size: 13px; cursor: pointer; }
+/* 設定のカテゴリ一覧。広い幅は左の縦の列、狭い幅（下の @container 800px）は上に固定した1行の帯。
+   今いるカテゴリは aria-current（SettingsNav.tsx）。詳しくは docs/design/README.md の「設定画面」。 */
+.settings-nav { position: sticky; top: 0; z-index: 3; display: flex; flex-direction: column; gap: 2px; }
+.settings-nav button { position: relative; flex: 0 0 auto; text-align: left; padding: 8px 12px; border: 0; border-radius: 10px; background: transparent; color: var(--text-secondary); font: inherit; font-size: 13px; white-space: nowrap; cursor: pointer; }
 .settings-nav button:hover { background: var(--hover); color: var(--text); }
+.settings-nav button[aria-current] { background: var(--surface); color: var(--text); font-weight: 650; box-shadow: var(--shadow); } /* 朱の縦棒・下線は「線のアクセント」の集約ブロック */
 .setting-copy strong { display: block; font-size: 14px; font-weight: 650; }
 .setting-copy p { margin: 3px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
 .setting-control { min-width: 0; }
@@ -1404,8 +1407,7 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
   .rail-foot:not(:has(.account-pill)) { display: block; }
 }
 .settings-status { position: sticky; bottom: var(--space-3); z-index: 2; margin: var(--space-3) 0; padding: 10px 14px; border-radius: var(--radius-control); background: var(--surface); box-shadow: var(--shadow); }
-.knowledge-section { margin-top: var(--space-4); padding-bottom: var(--space-4); }
-.debug-section { margin-top: var(--space-4); }
+.knowledge-section { padding-bottom: var(--space-4); }
 .debug-section > summary {
   padding: var(--space-4) var(--space-5);
   cursor: pointer;
@@ -1457,8 +1459,6 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .knowledge-section .knowledge { padding: var(--space-4) var(--space-5) 0; }
 @media (max-width: 760px) {
   .setting-row { grid-template-columns: 1fr; gap: var(--space-2); }
-  .settings-layout { grid-template-columns: 1fr; }
-  .settings-nav { position: static; flex-direction: row; flex-wrap: wrap; }
   .setting-control, .switch-label { justify-content: flex-start; }
   .inline-control { justify-content: flex-start; flex-wrap: wrap; }
   .scope-choices { justify-content: flex-start; }
@@ -1633,8 +1633,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .choice-row:has(input:checked), .scope-choices label:has(input:checked) { border-color: var(--line-selection); }
 
 /* 部品2: 直線の縦棒（端の丸み --accent-cap は曲線に含めない） */
-.nav-link, .genre-link { position: relative; }
-.nav-link.active::before, .genre-link.active::before {
+.nav-link, .genre-link, .settings-nav button { position: relative; }
+.nav-link.active::before, .genre-link.active::before,
+.settings-nav button[aria-current]::before {
   content: "";
   position: absolute;
   left: 2px;
@@ -1666,7 +1667,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 
 /* 部品3: 直線の下線（角丸の内側の平らな部分にだけ置く。要素の角丸には沿わない。端の丸みは縦棒と同じ） */
 .tab.active { position: relative; box-shadow: none; }
-.tab.active::after {
+.tab.active::after,
+.settings-nav button[aria-current]::after {
   content: "";
   position: absolute;
   left: var(--accent-inset);
@@ -1676,6 +1678,13 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   border-radius: var(--accent-cap);
   background: var(--line-accent);
   pointer-events: none;
+}
+
+/* 設定のカテゴリ一覧: 広い幅は縦棒（部品2）、上に固定した帯（設定ページ 800px 以下）は下線（部品3） */
+.settings-nav button[aria-current]::after { content: none; }
+@container (max-width: 800px) {
+  .settings-nav button[aria-current]::before { content: none; }
+  .settings-nav button[aria-current]::after { content: ""; }
 }
 
 /* 例外: 進捗バーは丸い溝の中を朱で塗る */
@@ -1690,8 +1699,23 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 
 .settings-page { container-type: inline-size; }
 @container (max-width: 800px) {
-  .settings-layout { grid-template-columns: 1fr; }
-  .settings-nav { position: static; flex-direction: row; flex-wrap: wrap; }
+  .settings-layout { grid-template-columns: 1fr; gap: var(--space-3); }
+  /* 折り返さずに横へスクロールする1行の帯。スクロールしても上に残す。 */
+  .settings-nav {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    gap: var(--space-1);
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: thin;
+    padding: var(--space-2) 0;
+    background: var(--bg);
+    box-shadow: 0 1px 0 var(--line);
+  }
+  .settings-nav button { padding: 6px 12px; }
+  .settings-nav button[aria-current] { box-shadow: none; } /* 帯では影を消し、朱の直線の下線にする（集約ブロック） */
+  /* 帯の下に見出しが隠れないよう、帯の高さ（SettingsNav.tsx が測る）だけ余白を取る。 */
+  .settings-layout [id^="settings-"] { scroll-margin-top: calc(var(--settings-nav-h, 48px) + var(--space-3)); }
   .knowledge-section .knowledge { grid-template-columns: minmax(0, 1fr); }
 }
 @container (max-width: 600px) {
