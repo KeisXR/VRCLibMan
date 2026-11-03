@@ -2173,15 +2173,13 @@ pub async fn check_asset_updates(view: tauri::Webview, app: AppHandle) -> Result
 }
 
 #[tauri::command]
-pub async fn preview_existing_import(view: tauri::Webview, state: State<'_, AppState>, path: String) -> Result<crate::existing_import::Preview, String> {
+pub async fn preview_existing_import(view: tauri::Webview, app: AppHandle, path: String) -> Result<crate::existing_import::Preview, String> {
     trusted_updater(&view)?;
-    let connection = db(&state)?;
-    crate::existing_import::preview(&connection, Path::new(&path))
+    let rows={let state=app.state::<AppState>(); let connection=db(&state)?; crate::existing_import::catalog(&connection)?};
+    tauri::async_runtime::spawn_blocking(move || crate::existing_import::preview(rows, Path::new(&path))).await.map_err(|_|"フォルダを調べられません")?
 }
-
 #[tauri::command]
-pub async fn register_existing_import(view: tauri::Webview, state: State<'_, AppState>, path: String, selections: Vec<crate::existing_import::Selection>) -> Result<u32, String> {
+pub async fn register_existing_import(view: tauri::Webview, app: AppHandle, path: String, selections: Vec<crate::existing_import::Selection>, copy: bool) -> Result<crate::existing_import::Report, String> {
     trusted_updater(&view)?;
-    let mut connection = db(&state)?;
-    crate::existing_import::register(&mut connection, Path::new(&path), selections)
+    tauri::async_runtime::spawn_blocking(move || crate::existing_import::register(&app,Path::new(&path),selections,copy)).await.map_err(|_|"取り込みを実行できません")?
 }
