@@ -112,6 +112,7 @@ export default function App() {
   const [checkUpdateOnStartup, setCheckUpdateOnStartup] = useState(false);
   const route = useMemo(() => parseRoute(hash), [hash]);
   const contentRef = useRef<HTMLDivElement>(null);
+  const topbarRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(() => setRevision((value) => value + 1), []);
 
@@ -128,6 +129,18 @@ export default function App() {
   }, [hash]);
 
   useEffect(() => onRefresh(refresh), [refresh]);
+
+  // Sticky chip bars (.chip-bar) sit just under the sticky banners; publish their height.
+  useEffect(() => {
+    const pane = contentRef.current;
+    const bar = topbarRef.current;
+    if (!pane || !bar || typeof ResizeObserver === "undefined") return;
+    const update = () => pane.style.setProperty("--topbar-height", `${Math.ceil(bar.getBoundingClientRect().height)}px`);
+    const observer = new ResizeObserver(update);
+    observer.observe(bar);
+    update();
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -284,7 +297,7 @@ export default function App() {
 
   const mainPane = (
     <div className="main" ref={contentRef} hidden={layout.panelMaximized}>
-      <div className="topbar">
+      <div className="topbar" ref={topbarRef}>
         {error && <ErrorBanner key={error.id} error={error} onDismiss={dismissError} />}
         {notice && <NoticeBanner key={notice.id} notice={notice} onDismiss={dismissNotice} onAction={runNoticeAction} />}
         {progress && (
@@ -325,13 +338,19 @@ export default function App() {
       <BrowserAutoClassification />
       {setupComplete === false && <SetupWizard onRefresh={refresh} onDone={() => { setSetupComplete(true); refresh(); }} />}
       <div className="app app-shell" style={layout.gridStyle}>
-        <aside className={collapsed ? "rail collapsed" : "rail"} data-collapsed={collapsed ? "true" : "false"}>
+        <aside
+          className={collapsed ? "rail collapsed" : "rail"}
+          data-collapsed={collapsed ? "true" : "false"}
+          data-auto-collapsed={layout.railAuto ? "true" : undefined}
+        >
           <div className="brand">
             <span className="brand-lockup">
               <BrandMark />
               {/* Wordmark image outlined from Urbanist Black 900; see docs/design/README.md. */}
               <span className="brand-wordmark" role="img" aria-label="VRCLibMan" title="VRCLibMan" />
             </span>
+            {/* A narrow window shows icons only without touching the saved state, so the toggle is hidden. */}
+            {!layout.railAuto && (
             <button
               type="button"
               className="rail-toggle"
@@ -343,6 +362,7 @@ export default function App() {
             >
               <SidebarToggleIcon collapsed={collapsed} />
             </button>
+            )}
           </div>
           <nav id="main-sidebar-nav" aria-label="メイン">
             {navItems.map((item) => (
@@ -413,7 +433,7 @@ export default function App() {
             kind={browseKind}
             genre={route.genre ?? null}
             basePath={browseBase}
-            narrowLayout={layout.narrow}
+            genreBar={layout.genreBar}
           >
             {layout.genreVisible && (
               <GenreColumn />

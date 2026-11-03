@@ -107,7 +107,7 @@ VRCLibMan の見た目の決まりを、ほかのプロジェクトへ持ち出�
 
 - 内容の余白: `var(--space-6) var(--space-6) 64px`。最大幅は `--content-max`（1120px）＋左右の余白。
 - サイドバーの幅: `--sidebar-width`（232px）。閉じたときは `--sidebar-collapsed-width`（60px）。
-- 幅 860px 以下では内容の余白を `--space-4` にし、サイドバーを上に並べます。
+- 幅 860px 以下では内容の余白を `--space-4` にします。サイドバーは上に並べず、列のままアイコンだけにします（[狭い窓](#狭い窓)）。
 
 ## 角丸
 
@@ -188,6 +188,51 @@ VRCLibMan の見た目の決まりを、ほかのプロジェクトへ持ち出�
 - ジャンルナビゲーションは別の列なので、閉じても今までどおり出ます。サイドバーにジャンルの小分けは入れません。
 - 状態は設定 `ui_rail_collapsed`（既定オフ）に保存し、次回の起動でも同じ状態で開きます。
 - 幅は動きを付けずに切り替えます。右パネルのネイティブ WebView の矩形が途中でずれないようにするためです（[右パネル](../right-panel.md)）。
+
+#### 狭い窓
+
+列の幅は `src/uiLayout.ts` の `computeAppLayout` が窓幅から決めます（`src/useAppLayout.tsx` がグリッドに入れます）。
+
+| 窓幅 | 左サイドバー | ジャンル |
+| --- | --- | --- |
+| 861px 以上 | 保存した状態（開く / 閉じる）。開いていて一覧が 480px を切りそうなら、ジャンル列と一緒に最小幅（180px / 160px）まで比例して縮めます | 一覧が 480px 以上残れば列、残らなければチップ帯 |
+| 860px 以下 | その場だけアイコンのみ（60px）。`ui_rail_collapsed` には保存しません。開閉ボタンは出しません | 同上 |
+
+- ジャンル列を出すかどうかは、実際の幅で決めます。サイドバー（開閉と保存した幅）、保存したジャンル列の幅（`ui_genre_width`、最小 160px まで縮めて計算）、列になった右パネルの幅、区切り 6px を引いて、一覧に `UI_LIST_MIN_WIDTH`（480px）が残るなら列にします。
+  - 右パネルを出していないと、861px 以上では列、860px 以下では 712px 以上で列になります（60 + 6 + 160 + 6 + 480）。
+  - 右パネルが列になっている（1000px 以上）ときは、パネルの幅を先に決め、そのうえで残りを判定します。たとえば 1100px でパネル 300px なら、ジャンルはチップ帯になります。
+  - 窓幅 1000px 未満の右パネルは重ね表示なので（[右パネル §6.3](../right-panel.md#63-重ね表示狭い窓)）、判定に入れません。
+- 窓幅を戻すと、保存した状態のサイドバーに戻ります。
+- 幅は動きを付けずに切り替えます（グリッドに `transition` を付けない）。右パネルのネイティブ WebView の矩形が途中でずれないようにするためです。
+
+### チップ帯
+
+ひとつの行に選択肢を並べる帯です。入りきらない分は横にスクロールし、ページを縦にスクロールしても上（`.topbar` の下）に残ります。狭い窓のジャンル（`GenreChipBar`）で使い、ほかの節の切り替え（設定の目次など）にも使えるよう汎用にしています。
+
+| クラス | 役割 |
+| --- | --- |
+| `.chip-bar` | 外枠の `<nav>`。`position: sticky`、`top: var(--topbar-height, 8px)`、`z-index: 3`、地 `--bg`、下に `0 1px 0 var(--line)` |
+| `.chip-bar-track` | 中の行。`display: flex`、`gap: var(--space-1)`、`overflow-x: auto` |
+| `.chip-bar-item` | 1つの選択肢（`<a>` か `<button>`）。13px、角丸 `--radius-sm`、地なし、文字 `--text-secondary`。ホバーで `--hover` |
+| `.chip-bar-item.active` | 選択中。地 `--surface`、文字 `--text`、650、`box-shadow: var(--shadow), inset 0 -2px 0 var(--line-accent)`（`.tab.active` と同じ朱の下線）。`aria-current` も付けます |
+| `.chip-bar-item.drag-over` | ドラッグ中に重なった選択肢 |
+| `.chip-bar-label` / `.chip-bar-count` | 名前と件数。件数は 12px、`--faint`、等幅数字 |
+| `.chip-bar-sep` / `.chip-bar-kicker` | まとまりの区切り線（1px × 18px）と小見出し（12px、650、`--faint`） |
+
+- 部品は `src/components/ChipBar.tsx` の `ChipBar` です。`label`（`aria-label`）、`activeKey`（選択が変わったら選択中の項目が見えるよう横にだけスクロール）、`className`（追加のクラス）を受け取り、子に `.chip-bar-item` を並べます。
+
+```tsx
+<ChipBar label="設定の目次" activeKey={current} className="settings-chip-bar">
+  {sections.map((s) => (
+    <a key={s.id} href={`#${s.id}`} className={s.id === current ? "chip-bar-item active" : "chip-bar-item"} aria-current={s.id === current ? "location" : undefined}>
+      <span className="chip-bar-label">{s.label}</span>
+    </a>
+  ))}
+</ChipBar>
+```
+
+- `--topbar-height` は `App.tsx` が `.topbar` の高さを測って `.main` に入れます。`.main` の外で使うときは `top` を上書きしてください。
+- ジャンルのチップ帯は、列と同じリンク・件数・ドロップ先です。「未設定」は件数があるか選択中のときだけ出します。商品をドラッグ中は区切りの後ろにもう一方の種類（アセット / ワールド）のジャンルを出します。
 
 ### 設定画面
 

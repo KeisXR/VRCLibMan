@@ -1,9 +1,16 @@
+import { RIGHT_PANEL_SEPARATOR, fitRightPanelWidth, rightPanelMaxWidth } from "./rightPanel";
+
 export const UI_RAIL_WIDTH = { min: 180, max: 360, default: 232 };
 /** Width of the icon-only left sidebar. It is fixed and not resizable. */
 export const UI_RAIL_COLLAPSED_WIDTH = 60;
 export const UI_GENRE_WIDTH = { min: 160, max: 320, default: 200 };
 export const UI_LIST_MIN_WIDTH = 480;
-export const UI_GENRE_AUTO_COLLAPSE_PX = 1000;
+/** Windows this wide or narrower show the left sidebar as icons only, without saving it. */
+export const UI_RAIL_AUTO_COLLAPSE_PX = 860;
+/** Windows narrower than this show the right panel over the page instead of as a column. */
+export const UI_PANEL_OVERLAY_PX = 1000;
+/** Grid separator column beside the rail and the genre column. */
+export const UI_SEPARATOR_PX = 6;
 export const UI_RESIZE_STEP_PX = 16;
 
 export function clampRailWidth(value: number): number {
@@ -43,4 +50,95 @@ export function fitBrowseWidths(
   nextRail = clampRailWidth(slack * railShare);
   nextGenre = clampGenreWidth(slack - nextRail);
   return { rail: nextRail, genre: nextGenre };
+}
+
+export interface AppLayoutInput {
+  windowWidth: number;
+  /** Saved sidebar width (`ui_rail_width`). */
+  railWidth: number;
+  /** Saved open/closed state (`ui_rail_collapsed`). */
+  railCollapsed: boolean;
+  /** Saved genre column width (`ui_genre_width`). */
+  genreWidth: number;
+  /** The page lists assets or worlds by genre. */
+  browseGenre: boolean;
+  panelOpen: boolean;
+  panelMaximized: boolean;
+  /** Saved right panel width (`preview_pane_width`). */
+  panelStoredWidth: number;
+}
+
+export interface AppLayout {
+  /** The window is too narrow for the open sidebar; it shows icons only for now. */
+  railAuto: boolean;
+  /** Icons only on screen: saved as closed, or `railAuto`. */
+  railCollapsed: boolean;
+  rail: number;
+  genre: number;
+  /** The genre column is shown beside the list. */
+  genreVisible: boolean;
+  /** The genre column does not fit; a one-line chip bar above the list replaces it. */
+  genreBar: boolean;
+  /** The right panel shows over the page (window narrower than `UI_PANEL_OVERLAY_PX`). */
+  narrow: boolean;
+  panelDocked: boolean;
+  panelMaximized: boolean;
+  panelWidth: number;
+  panelMax: number;
+  /** Width left for the list column (CSS px). */
+  listWidth: number;
+}
+
+/**
+ * Columns for the current window. The genre column is shown only when the list keeps
+ * `UI_LIST_MIN_WIDTH` beside the rail, the genre column and a docked right panel, all at the
+ * widths they would really get; otherwise the page shows the genre chip bar instead.
+ * Saved widths and the saved sidebar state are never changed here.
+ */
+export function computeAppLayout(input: AppLayoutInput): AppLayout {
+  const windowWidth = input.windowWidth;
+  const railAuto = windowWidth <= UI_RAIL_AUTO_COLLAPSE_PX;
+  const railCollapsed = input.railCollapsed || railAuto;
+  const narrow = windowWidth < UI_PANEL_OVERLAY_PX;
+  const panelDocked = input.panelOpen && !narrow;
+  const panelMaximized = panelDocked && input.panelMaximized;
+  const railColumn = (railCollapsed ? UI_RAIL_COLLAPSED_WIDTH : clampRailWidth(input.railWidth)) + UI_SEPARATOR_PX;
+
+  const attempt = (withGenre: boolean) => {
+    const leftColumns = withGenre ? railColumn + clampGenreWidth(input.genreWidth) + UI_SEPARATOR_PX : railColumn;
+    const panelMax = rightPanelMaxWidth(windowWidth, leftColumns);
+    const panelWidth = panelDocked ? fitRightPanelWidth(input.panelStoredWidth, windowWidth, leftColumns) : 0;
+    const room = panelDocked && !panelMaximized ? windowWidth - panelWidth - RIGHT_PANEL_SEPARATOR : windowWidth;
+    const fitted = fitBrowseWidths(room, input.railWidth, input.genreWidth, withGenre, railCollapsed);
+    const listWidth = room - fitted.rail - UI_SEPARATOR_PX - (withGenre ? fitted.genre + UI_SEPARATOR_PX : 0);
+    return { panelMax, panelWidth, fitted, listWidth };
+  };
+
+  const base = { railAuto, railCollapsed, narrow, panelDocked, panelMaximized };
+  if (input.browseGenre) {
+    const wide = attempt(true);
+    if (wide.listWidth >= UI_LIST_MIN_WIDTH) {
+      return {
+        ...base,
+        rail: wide.fitted.rail,
+        genre: wide.fitted.genre,
+        genreVisible: true,
+        genreBar: false,
+        panelWidth: wide.panelWidth,
+        panelMax: wide.panelMax,
+        listWidth: wide.listWidth,
+      };
+    }
+  }
+  const plain = attempt(false);
+  return {
+    ...base,
+    rail: plain.fitted.rail,
+    genre: 0,
+    genreVisible: false,
+    genreBar: input.browseGenre,
+    panelWidth: plain.panelWidth,
+    panelMax: plain.panelMax,
+    listWidth: plain.listWidth,
+  };
 }

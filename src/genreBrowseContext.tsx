@@ -13,7 +13,8 @@ interface GenreBrowseContextValue {
   selected: string | null;
   data: GenreProducts | null;
   error: string | null;
-  narrowLayout: boolean;
+  /** The genre column does not fit; the page shows the genre chip bar. */
+  genreBar: boolean;
   reload: () => void;
   draggingId: string | null;
   setDraggingId: (id: string | null) => void;
@@ -26,13 +27,13 @@ export function GenreBrowseProvider({
   kind,
   genre,
   basePath,
-  narrowLayout,
+  genreBar,
   children,
 }: {
   kind: GenreKind;
   genre: string | null;
   basePath: string;
-  narrowLayout: boolean;
+  genreBar: boolean;
   children: React.ReactNode;
 }) {
   const { revision } = useShell();
@@ -69,13 +70,13 @@ export function GenreBrowseProvider({
       selected,
       data,
       error,
-      narrowLayout,
+      genreBar,
       reload: () => setAttempt((value) => value + 1),
       draggingId,
       setDraggingId,
       moveProduct,
     }),
-    [kind, basePath, genre, selected, data, error, narrowLayout, draggingId, moveProduct],
+    [kind, basePath, genre, selected, data, error, genreBar, draggingId, moveProduct],
   );
 
   return <GenreBrowseContext.Provider value={value}>{children}</GenreBrowseContext.Provider>;

@@ -35,6 +35,8 @@ export function GenreTarget({
   active,
   dropGenre,
   className,
+  labelClassName = "genre-link-label",
+  countClassName = "genre-link-count",
   showCount = true,
   onDropId,
 }: {
@@ -44,6 +46,8 @@ export function GenreTarget({
   active?: boolean;
   dropGenre?: string | null;
   className?: string;
+  labelClassName?: string;
+  countClassName?: string;
   showCount?: boolean;
   onDropId: (boothId: string) => void;
 }) {
@@ -56,8 +60,8 @@ export function GenreTarget({
   const handlers = dropProps(dropGenre ?? null, setOver, onDropId);
   const body = (
     <>
-      <span className="genre-link-label" title={label}>{label}</span>
-      {showCount && count !== undefined && <span className="genre-link-count">{count}</span>}
+      <span className={labelClassName} title={label}>{label}</span>
+      {showCount && count !== undefined && <span className={countClassName}>{count}</span>}
     </>
   );
   if (!href) {
