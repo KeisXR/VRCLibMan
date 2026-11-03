@@ -203,6 +203,8 @@ export const api = {
     call<void>("merge_avatars", { fromId, intoId }),
   restoreSeed: () => call<number>("restore_seed"),
   reresolve: () => call<number>("reresolve"),
+  previewExistingImport: (path: string) => call<ExistingImportPreview>("preview_existing_import", { path }),
+  registerExistingImport: (path: string, selections: ExistingImportSelection[], copy: boolean) => call<{ registered: number; errors: string[] }>("register_existing_import", { path, selections, copy }),
   scanLibrary: (path: string) => call<ScanReport>("scan_library", { path }),
   classificationStatus: () => call<ClassificationStatus>("classification_status"),
   extractProducts: (target: ExtractTarget) => call<ExtractReport>("extract_products", { target }),
@@ -407,3 +409,8 @@ export async function listenBrowserControlEvents(onFocus: () => void, onError: (
   const [focus, error] = await Promise.all([listen("browser-focus-address", onFocus), listen<string>("browser-operation-error", (event) => onError(event.payload))]);
   return () => { focus(); error(); };
 }
+
+export interface ExistingImportChoice { boothId: string; title: string; variation: string; filename: string; sizeBytes: number | null; registered: boolean }
+export interface ExistingImportEntry { path: string; filename: string; size: number; status: "matched" | "review" | "unmatched" | "registered"; choices: ExistingImportChoice[] }
+export interface ExistingImportPreview { entries: ExistingImportEntry[]; truncated: boolean }
+export interface ExistingImportSelection { path: string; boothId: string; variation: string; filename: string; size: number }

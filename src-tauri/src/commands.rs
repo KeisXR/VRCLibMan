@@ -2171,3 +2171,15 @@ pub async fn check_asset_updates(view: tauri::Webview, app: AppHandle) -> Result
     }
     crate::asset_updates::check(&app, true).await
 }
+
+#[tauri::command]
+pub async fn preview_existing_import(view: tauri::Webview, app: AppHandle, path: String) -> Result<crate::existing_import::Preview, String> {
+    trusted_updater(&view)?;
+    let rows={let state=app.state::<AppState>(); let connection=db(&state)?; crate::existing_import::catalog(&connection)?};
+    tauri::async_runtime::spawn_blocking(move || crate::existing_import::preview(rows, Path::new(&path))).await.map_err(|_|"フォルダを調べられません")?
+}
+#[tauri::command]
+pub async fn register_existing_import(view: tauri::Webview, app: AppHandle, path: String, selections: Vec<crate::existing_import::Selection>, copy: bool) -> Result<crate::existing_import::Report, String> {
+    trusted_updater(&view)?;
+    tauri::async_runtime::spawn_blocking(move || crate::existing_import::register(&app,Path::new(&path),selections,copy)).await.map_err(|_|"取り込みを実行できません")?
+}

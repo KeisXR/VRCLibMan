@@ -28,6 +28,7 @@ mod library_walk;
 mod local_import;
 mod extension_status;
 mod extension_delivery;
+mod existing_import;
 mod matching;
 mod model;
 mod normalize;
@@ -242,6 +243,8 @@ pub fn run() {
             commands::restore_seed,
             commands::reresolve,
             commands::scan_library,
+            commands::preview_existing_import,
+            commands::register_existing_import,
             commands::classification_status,
             commands::extract_products,
             commands::cancel_extract,

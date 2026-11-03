@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { ExistingImportPreview } from "../api";
 import {
   api,
   chooseFolder,
@@ -54,6 +55,11 @@ function StaleReclassifyRow({ busy, onExtract }: { busy: boolean; onExtract: () 
 export function ImportPage() {
   const { revision, refresh, notify, fail, builtinBrowser } = useShell();
   const [libraryFolder, setLibraryFolder] = useState("");
+  const [existingRoot, setExistingRoot] = useState("");
+  const [existingPreview, setExistingPreview] = useState<ExistingImportPreview | null>(null);
+  const [selectedExisting, setSelectedExisting] = useState<Record<string, number>>({});
+  const [existingCopy, setExistingCopy] = useState(false);
+  const [existingLimit, setExistingLimit] = useState(50);
   const [over, setOver] = useState(false);
   const [extractAfter, setExtractAfter] = useState(isTauri());
   const [report, setReport] = useState<ImportReport | null>(null);
@@ -168,6 +174,44 @@ export function ImportPage() {
     } catch (err) {
       fail(errorText(err));
     }
+  }
+
+  async function findExisting() {
+    try {
+      const path = isTauri() ? await chooseFolder() : "/見本/Downloads";
+      if (!path) return;
+      setBusy(true);
+      setExistingPreview(null);
+      const result = await api.previewExistingImport(path);
+      setExistingRoot(path);
+      setExistingPreview(result);
+      const chosen: Record<string, number> = {};
+      const targets = new Set<string>();
+      for (const e of result.entries) {
+        const c = e.choices[0];
+        if (e.status !== "matched" || !c) continue;
+        const key = JSON.stringify([c.boothId, c.variation, c.filename]);
+        if (!targets.has(key)) { chosen[e.path] = 0; targets.add(key); }
+      }
+      setSelectedExisting(chosen);
+      setExistingLimit(50);
+    } catch (err) { fail(errorText(err)); } finally { setBusy(false); }
+  }
+
+  async function registerExisting() {
+    if (!existingPreview) return;
+    const selections = existingPreview.entries.flatMap((e) => {
+      const c = e.choices[selectedExisting[e.path]];
+      return c ? [{ path: e.path, boothId: c.boothId, variation: c.variation, filename: c.filename, size: e.size }] : [];
+    });
+    try {
+      setBusy(true);
+      const result = await api.registerExistingImport(existingRoot, selections, existingCopy);
+      notify(`${result.registered} 件を登録しました${result.errors.length ? `（${result.errors.length} 件失敗）` : ""}`, undefined, { persist: result.errors.length > 0 });
+      if (result.errors.length) { fail(result.errors.join("\n")); return; }
+      setExistingPreview(null);
+      refresh();
+    } catch (err) { fail(errorText(err)); } finally { setBusy(false); }
   }
 
   async function scan() {
@@ -455,6 +499,37 @@ export function ImportPage() {
               フォルダを調べる
             </button>
           </SettingRow>
+          <SettingRow label="ダウンロード済みファイルを登録" help="Downloads や別のフォルダを選び、BOOTH の配布ファイル名と照合します。元の場所に登録します。">
+            <button className="button" type="button" disabled={busy} onClick={() => void findExisting()}>取り込み元を選ぶ</button>
+          </SettingRow>
+          {existingPreview && <div className="panel">
+            <h3>照合結果</h3>
+            <p className="meta">{existingRoot} ・{existingPreview.entries.length} 件 {existingPreview.truncated && "（上限に達したため途中です）"}</p>
+            <p>配布ファイル名・サイズで照合しました。要確認のファイルは商品を選択してください。バージョン表記は保持し、ブラウザの連番だけを補助的に除いています。</p>
+            {existingPreview.entries.length === 0 && <p>対象ファイルはありません。商品・ファイル情報を先にBOOTHから読み込んでください。</p>}
+            <ul className="file-list">{existingPreview.entries.slice(0, existingLimit).map((entry) => <li key={entry.path}>
+              <div>
+                <strong>{entry.filename}</strong> — {entry.status === "matched" ? "一致" : entry.status === "registered" ? "登録済み" : entry.status === "review" ? "要確認" : "候補なし"}
+                <p className="meta">{entry.path} ・{entry.size.toLocaleString()} bytes</p>
+                {entry.choices.length > 0 && <select aria-label={`${entry.filename} の商品`} disabled={busy} value={selectedExisting[entry.path] ?? -1} onChange={(event) => setSelectedExisting((prev) => {
+                  const next = { ...prev }; const value = Number(event.target.value);
+                  if (value < 0) delete next[entry.path]; else next[entry.path] = value;
+                  return next;
+                })}>
+                  <option value={-1}>取り込まない</option>
+                  {entry.choices.map((c, i) => <option key={i} value={i} disabled={c.registered || (c.sizeBytes != null && c.sizeBytes !== entry.size)}>
+                    {c.title} / {c.variation || "通常"} / {c.filename}{c.registered ? "（登録済み）" : c.sizeBytes != null && c.sizeBytes !== entry.size ? "（サイズ不一致）" : ""}
+                  </option>)}
+                </select>}
+              </div>
+            </li>)}</ul>
+            {existingLimit < existingPreview.entries.length && <button type="button" onClick={() => setExistingLimit((n) => n + 50)}>さらに50件表示</button>}
+            <label className="field"><span>取り込み方法</span><select value={existingCopy ? "copy" : "register"} disabled={busy} onChange={(e) => setExistingCopy(e.target.value === "copy")}>
+              <option value="register">元の場所のまま登録</option><option value="copy" disabled={!libraryFolder}>ライブラリへコピー（元のファイルを残す）</option>
+            </select></label>
+            {existingCopy && <p className="meta">コピー先: {libraryFolder}。同名ファイルは上書きしません。</p>}
+            <button className="button primary" type="button" disabled={busy || Object.keys(selectedExisting).length === 0} onClick={() => void registerExisting()}>{busy ? "取り込み中…" : `選択した ${Object.keys(selectedExisting).length} 件を取り込む`}</button>
+          </div>}
           {staged.length > 0 && (
             <div className="panel">
               <h2>ダウンロードフォルダに残っているファイル</h2>

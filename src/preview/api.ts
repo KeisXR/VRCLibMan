@@ -2050,6 +2050,13 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       return store.products.length as T;
     case "cancel_extract":
       return undefined as T;
+    case "preview_existing_import":
+      return { truncated: false, entries: [
+        { path: "/見本/Downloads/outfit_v1.zip", filename: "outfit_v1.zip", size: 4, status: "matched", choices: [{ boothId: "123456", title: "見本の衣装", variation: "通常", filename: "outfit_v1.zip", sizeBytes: 4, registered: false }] },
+        { path: "/見本/Downloads/hair (1).zip", filename: "hair (1).zip", size: 8, status: "review", choices: [{ boothId: "123457", title: "見本の髪", variation: "", filename: "hair.zip", sizeBytes: null, registered: false }] },
+      ] } as T;
+    case "register_existing_import":
+      return { registered: (args.selections as unknown[]).length, errors: [] } as T;
     case "scan_library":
     case "classification_status": {
       const classifierVersion = 6;
