@@ -204,7 +204,7 @@ export const api = {
   restoreSeed: () => call<number>("restore_seed"),
   reresolve: () => call<number>("reresolve"),
   previewExistingImport: (path: string) => call<ExistingImportPreview>("preview_existing_import", { path }),
-  registerExistingImport: (path: string, selections: ExistingImportSelection[]) => call<number>("register_existing_import", { path, selections }),
+  registerExistingImport: (path: string, selections: ExistingImportSelection[], copy: boolean) => call<{ registered: number; errors: string[] }>("register_existing_import", { path, selections, copy }),
   scanLibrary: (path: string) => call<ScanReport>("scan_library", { path }),
   classificationStatus: () => call<ClassificationStatus>("classification_status"),
   extractProducts: (target: ExtractTarget) => call<ExtractReport>("extract_products", { target }),
@@ -410,6 +410,7 @@ export async function listenBrowserControlEvents(onFocus: () => void, onError: (
   return () => { focus(); error(); };
 }
 
-export interface ExistingImportEntry { path: string; filename: string; size: number; status: "matched" | "review" | "unmatched" | "registered"; boothId: string | null; title: string | null; variation: string | null; originalFilename: string | null }
+export interface ExistingImportChoice { boothId: string; title: string; variation: string; filename: string; sizeBytes: number | null; registered: boolean }
+export interface ExistingImportEntry { path: string; filename: string; size: number; status: "matched" | "review" | "unmatched" | "registered"; choices: ExistingImportChoice[] }
 export interface ExistingImportPreview { entries: ExistingImportEntry[]; truncated: boolean }
 export interface ExistingImportSelection { path: string; boothId: string; variation: string; filename: string; size: number }
