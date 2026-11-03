@@ -28,11 +28,13 @@ final class PanelProbe: NSObject, WKNavigationDelegate {
         window.titlebarAppearsTransparent = false
         let parent = NSView(frame: window.contentView!.frame)
         window.contentView = parent
-        main = WKWebView(frame: parent.bounds)
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        main = WKWebView(frame: parent.bounds, configuration: configuration)
         main.autoresizingMask = [.width, .height]
         main.navigationDelegate = self
         parent.addSubview(main)
-        page = WKWebView(frame: NSRect(x: 0, y: 0, width: 1, height: 1))
+        page = WKWebView(frame: NSRect(x: 0, y: 0, width: 1, height: 1), configuration: configuration)
         parent.addSubview(page)
         page.isHidden = true
         page.loadHTMLString("""
