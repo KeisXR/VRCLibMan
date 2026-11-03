@@ -1,5 +1,14 @@
 # 検証記録
 
+## 更新画面テストのVite切断を再検証（2026-11-03）
+
+対象は PR #133 の `f816eae` に対するテスト初期化の修正。Linux x86_64、Node.js 24.19.0、Vite SSRと合成DOMで確認。実アカウント・BOOTH通信は使用していない。
+
+- 通常の単独実行は今回3回とも成功したが、見本APIの変換を一時的なViteプラグインで1500ms遅らせると、画面の検証完了後も見本APIの読み込みが残り、サーバー終了で同じ `transport was disconnected` を再現した。
+- `test/updater.test.mjs` のブラウザ用fixtureで、マウント前に `/src/preview/api.ts` の読み込み完了を待つ。固定時間の待機追加や例外の握り潰しはしていない。アプリ本体の更新処理は変更していない。
+- 同じ1500ms遅延条件でも、読み込み完了後にサーバーが閉じて2件成功。通常の単独実行は修正後も3回連続成功。標準の並列 `npm test` は142件成功、失敗・skipなし。
+- 修正前のPRコミットのCI（[run 41576562946](https://github.com/KeisXR/VRCLibMan/actions/runs/41576562946)）は、frontend、Windows/macOS/Linux両CPUのRust、macOSネイティブ配置を含む全6ジョブ成功。ローカルの読み込み速度に依存するテスト終了の競合として扱う。
+
 ## 外部ブラウザ拡張の連携強化（2026-11-03）
 
 対象は main `8838ce24c07bc8f7a28ecba03d7f0f8144d95b53` からの未コミット差分。拡張をv0.1.16に更新。Linux x86_64、Node.js 24.19.0、作業領域のRust/GTK/WebKit開発環境とChromiumで確認。実アカウント・実BOOTHへの通信は使っていない。
