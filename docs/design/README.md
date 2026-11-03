@@ -193,6 +193,17 @@ VRCLibMan の見た目の決まりを、ほかのプロジェクトへ持ち出�
 
 - 節はカード（角丸 24px、`--surface`、`--shadow`）。見出しの前に朱の棒（幅 3px、高さ 0.85em）。
 - 行は「説明（左）｜操作（右寄せ）」の2列で、行の下に `1px solid var(--line)`。狭い幅では1列にします（コンテナクエリ 600px / 800px）。
+
+#### 設定のカテゴリ一覧（`.settings-nav`）
+
+- 部品は `src/components/SettingsNav.tsx`、項目と並びは `src/settingsNav.ts` の `SETTINGS_NAV_ITEMS`。ライブラリ・Unity・起動と常駐・更新候補・BOOTH・分類モデル・データ・対応表を編集・デバッグの 9 つで、画面の節の並びと同じです。節の `id`（`settings-unity`、`settings-asset-updates` など）は他の画面からの移動先なので変えません。`settings-app-update` は「データ」の中にあります。
+- 「対応表を編集」（`settings-knowledge`）と「デバッグ」（`settings-debug`、閉じた `<details>`）も一覧と同じ列に置きます。一覧から「デバッグ」を押すと開いてから移動します。
+- 広い幅: 左の縦の列（168px）で、上に固定（`position: sticky; top: 0`）。今いるカテゴリはサイドバーと同じ示し方（`--surface`＋650＋`--shadow`＋左端の朱の棒 3px）。
+- 設定ページの幅が 800px 以下（コンテナクエリ。窓幅ではないので、左サイドバーの開閉や右パネルの有無に関係なく、設定ページの実幅で決まる）: 上に固定した1行の帯にします。折り返さず横にスクロールし、地は `--bg`、下に `1px` の `--line`。今いるカテゴリは `.tab.active` と同じ下の朱の線（`inset 0 -2px 0 var(--line-accent)`）で、帯からはみ出していれば帯の中で見える位置へ寄せます。
+- 帯で見出しが隠れないよう、帯の高さ（`--settings-nav-h`、部品が測る）＋12px を `scroll-margin-top` にします。他の画面から `scrollIntoView` で来たときも同じです。
+- 今いるカテゴリは `aria-current="location"`。スクロール位置から、見出しが帯の下＋32px か表示域の上 1/4 のどちらか下の線より上にある最後の節にし、末尾まで来たら最後の節にします。押したカテゴリは移動が終わるまで固定します。
+- 押すとその節へなめらかに移動し、`prefers-reduced-motion: reduce` ではすぐ移動します。
+- 内容が広いときの縦の列は、狭いときの帯と同じ部品です。インポート画面などの別の帯（`.chip-bar` 系）とは今は別の実装で、見た目を揃える余地があります。
 - 選択肢の行 `.choice-row`: `1px solid var(--line)`、角丸 `--radius-control`。選択中は枠を `--line-selection`、地を `--surface-secondary`。
 
 ### ダイアログ・重ね表示
