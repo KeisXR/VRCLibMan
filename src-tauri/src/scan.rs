@@ -298,13 +298,15 @@ mod tests {
     fn existing_import_scans_only_packages_case_insensitively() {
         let root = TempDir::new();
         fs::create_dir_all(root.0.join("衣装")).unwrap();
-        for name in ["pack.zip", "PACK.ZIP", "衣装/model.unitypackage", "MODEL.UnityPackage",
+        for name in ["pack.zip", "upper.ZIP", "衣装/model.unitypackage", "MODEL.UnityPackage",
                      "texture.psd", "model.fbx", "body.vrm", "archive.7z", "archive.rar",
                      "pack.zip.part", "pack.zip.exe", "readme.txt"] {
             fs::write(root.0.join(name), b"test").unwrap();
         }
         let result = scan_import_packages(&root.0).unwrap();
-        assert_eq!(result.entries.len(), 4);
+        let mut names: Vec<_> = result.entries.iter().map(|entry| entry.filename.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(names, ["MODEL.UnityPackage", "model.unitypackage", "pack.zip", "upper.ZIP"]);
         assert!(result.entries.iter().all(|entry| !entry.is_dir && is_import_package(Path::new(&entry.path))));
         assert!(!result.truncated);
         // The general library scan keeps its existing broader asset support.
