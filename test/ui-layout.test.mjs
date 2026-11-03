@@ -94,7 +94,11 @@ test("app layout: icon rail at 860px or less, genre column only while the list k
     assert.doesNotMatch(css, /transition:[^;]*grid-template-columns/);
     assert.match(css, /\.chip-bar \{[^}]*position: sticky;[^}]*top: var\(--topbar-height/);
     assert.match(css, /\.chip-bar-track \{[^}]*overflow-x: auto;/);
-    assert.match(css, /\.chip-bar-item\.active \{[^}]*inset 0 -2px 0 var\(--line-accent\)/);
+    // 選択中のチップは「線のアクセント」ブロックの共通の直線の下線（::after）。片側の影は使わない。
+    assert.doesNotMatch(css, /\.chip-bar-item\.active \{[^}]*inset 0 -2px 0 var\(--line-accent\)/);
+    const accent = css.slice(css.indexOf("==== 線のアクセント（朱）"), css.indexOf("==== 線のアクセントここまで"));
+    assert.match(accent, /\.chip-bar-item\.active \{ position: relative; \}/);
+    assert.match(accent, /\.chip-bar-item\.active::after,[^{]*\{[^}]*left: var\(--accent-inset\);[^}]*border-radius: var\(--accent-cap\);[^}]*background: var\(--line-accent\)/);
     for (const file of ["../src/components/GenreBrowser.tsx", "../src/components/GenreChipBar.tsx"]) {
       assert.doesNotMatch(readFileSync(new URL(file, import.meta.url), "utf8"), /genre-mobile/);
     }

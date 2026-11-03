@@ -311,6 +311,29 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       },
     );
 
+    await t.test("settings nav lists every section, including the knowledge editor and debug, and keeps anchors", async () => {
+      await route("#/settings");
+      await wait(() => document.querySelector(".settings-nav") && document.querySelector("#settings-data"));
+      const nav = document.querySelector(".settings-layout > .settings-nav");
+      assert.ok(nav, "nav sits in the settings layout");
+      const buttons = [...nav.querySelectorAll("button")];
+      assert.deepEqual(buttons.map((node) => node.textContent), ["ライブラリ", "Unity", "起動と常駐", "更新候補", "BOOTH", "分類モデル", "データ", "対応表を編集", "デバッグ"]);
+      for (const node of buttons) {
+        const target = document.getElementById(node.dataset.target);
+        assert.ok(target, `section exists: ${node.dataset.target}`);
+        assert.ok(target.closest(".settings-sections"), `section is inside the nav's layout: ${node.dataset.target}`);
+      }
+      for (const id of ["settings-unity", "settings-asset-updates", "settings-app-update"]) assert.ok(document.getElementById(id), `anchor kept: ${id}`);
+      assert.equal(nav.querySelectorAll("[aria-current]").length, 1);
+      const debug = document.getElementById("settings-debug");
+      assert.equal(debug.tagName, "DETAILS");
+      assert.ok(!debug.hasAttribute("open"));
+      await click(buttons.find((node) => node.textContent === "デバッグ"));
+      assert.ok(debug.hasAttribute("open"), "jumping to debug opens it");
+      assert.equal(nav.querySelector("[aria-current]").textContent, "デバッグ");
+      debug.removeAttribute("open");
+    });
+
     await t.test("settings use the standard design without a design section", async () => {
       await route("#/settings");
       assert.equal(document.querySelector("#settings-design"), null);
