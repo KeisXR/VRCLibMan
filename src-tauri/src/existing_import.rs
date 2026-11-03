@@ -45,7 +45,7 @@ pub fn preview(rows: Vec<Choice>, root: &Path) -> Result<Preview, String> {
     let outcome = scan::scan_folder(&root)?;
     let mut names: HashMap<String, Vec<Choice>> = HashMap::new();
     for mut row in rows {
-        row.registered = row.local_path.as_deref().is_some_and(|p| Path::new(p).is_file());
+        row.registered = row.local_path.is_some();
         names.entry(row.filename.clone()).or_default().push(row);
     }
     let mut entries = Vec::new();
@@ -109,7 +109,13 @@ pub fn register(app: &AppHandle,root: &Path,selections: Vec<Selection>,copy: boo
         let result=(|| {
             if !targets.insert((s.booth_id.clone(),s.variation.clone(),s.filename.clone())) || !paths.insert(s.path.clone()) { return Err("同じ商品ファイルには1件だけ選択してください".into()); }
             let source=source(&root,&s)?;
-            {let c=state.db.lock().map_err(|_|"登録情報を読めません")?; validate(&catalog(&c)?,&s)?;}
+            {let c=state.db.lock().map_err(|_|"登録情報を読めません")?;
+                let rows=catalog(&c)?;
+                validate(&rows,&s)?;
+                if rows.iter().any(|row|row.booth_id==s.booth_id && row.variation==s.variation && row.filename==s.filename && row.local_path.is_some()) {
+                    return Err("登録済みの保存先を保持しました".into());
+                }
+            }
             let dest=if copy {
                 // Existing helper writes through a temporary file and never overwrites.
                 if !library_files::push_missing_file(&source,Path::new(&library),&s.booth_id,&s.filename)? { return Err("コピー先に同名のファイルがあります。既存ファイルは保持しました".into()); }
