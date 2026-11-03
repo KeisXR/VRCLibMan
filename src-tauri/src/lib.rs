@@ -26,6 +26,8 @@ mod library_files;
 mod remote_sync;
 mod library_walk;
 mod local_import;
+mod extension_status;
+mod extension_delivery;
 mod matching;
 mod model;
 mod normalize;

@@ -1,5 +1,16 @@
 # 検証記録
 
+## 外部ブラウザ拡張の連携強化（2026-11-03）
+
+対象は main `8838ce24c07bc8f7a28ecba03d7f0f8144d95b53` からの未コミット差分。拡張をv0.1.16に更新。Linux x86_64、Node.js 24.19.0、作業領域のRust/GTK/WebKit開発環境とChromiumで確認。実アカウント・実BOOTHへの通信は使っていない。
+
+- JavaScriptの全スイートは `node --test --test-concurrency=1` で142件成功。追加したWorkerの11件は、明示的な1件取得、元のクリック照合、未送信通知の永続化、Worker再起動、HTTPエラー、ペアリング変更、同じ通知IDでの再送、HTML拒否、キャンセル・中断を確認。既存の並列実行ではVite SSRのtransport切断が1件発生し、該当テスト単独と全体の直列実行では成功した。
+- `cargo test --offline --manifest-path src-tauri/Cargo.toml --lib` は360件成功、既存の2件ignore。新規テストは、状態照会の認証境界、登録と所持の区別、共通素体と髪の出し分け、ID件数制限、改名後のファイルID・バリエーション維持、通知の重複受信、起動時の先行回収との照合と誤照合拒否を確認。
+- `npm run test:extension-ui` 相当のChromium試験で、商品カードの表示、対応未確認を残す絞り込み、接続失敗時の表示復帰、再接続、実ポップアップのファイルボタンへのポインター入力を確認。ローカルViteと合成DOM・拡張APIの見本だけを使用した。実拡張を読み込んだ認証試験ではない。
+- `npm run build`、`node scripts/stage-extension.mjs`、`git diff --check` は成功。
+
+BOOTHの実ログイン・認証リダイレクト・期限付きURL、Chrome/Edgeに実際に読み込んだ拡張での取得、Windows/macOSのファイル移動は未検証。未登録商品の対応判定は行わず、保存記録の表示は現時点のファイル存在を保証しない。先行ツールのコード・素材と新規の実行時依存ライブラリは取り込んでいない。
+
 ## Mac右パネルのブックマークが隠れる問題の再検証（2026-11-03）
 
 対象は main の `5a39bcec947b40be8653e6c10b3a8b96086c06f0` からの `fix/macos-panel-native-geometry`。0.2.3で開いた直後から隠れるという報告を受け、以前のクリップ処理だけでは解消しないことを確認した。

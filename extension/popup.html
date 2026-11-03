@@ -7,7 +7,7 @@
   </head>
   <body>
     <h1>VRCLibMan</h1>
-    <p>BOOTHの商品情報をVRCLibManへ送ります。</p>
+    <p>BOOTHの商品情報を送り、選んだファイルを取得します。</p>
     <p id="link-status" role="status">接続を確認しています</p>
     <details id="connection-settings" open>
       <summary>接続設定</summary>
@@ -16,6 +16,16 @@
         <input id="token" type="text" autocomplete="off" spellcheck="false" />
       </label>
       <button id="save-token" class="secondary" type="button">コードを保存して接続を確認</button>
+    </details>
+    <details id="browser-downloads" open>
+      <summary>このページのファイルを取得</summary>
+      <p class="hint">普段のブラウザのログインを使います。取得するファイルを1件ずつ選んでください。</p>
+      <div id="download-files"></div>
+    </details>
+    <details>
+      <summary>アプリへの未送信通知 <span id="pending-count"></span></summary>
+      <p id="delivery-status" class="hint"></p>
+      <button id="retry-deliveries" class="secondary" type="button">接続して再送する</button>
     </details>
     <button id="export" type="button">このページを送る</button>
     <button id="export-all" class="secondary" type="button">ライブラリをすべて送る</button>
@@ -55,11 +65,12 @@
         <p>本拡張には、利用者の情報を開発者へ送信する機能はありません。</p>
         <p>操作した BOOTH ページの商品情報・購入情報を、同じ PC の VRCLibMan に送ります。アプリへ送れない場合は JSON ファイルとして保存します。</p>
         <p>ページの読み込みや商品説明の補完で BOOTH に通信します。パスワードや Cookie はアプリへ送りません。</p>
-        <p>ペアリングコードと設定はブラウザ内に保存し、拡張の削除で消せます。書き出した JSON とアプリに送った情報は、拡張を削除しても残ります。</p>
+        <p>ペアリングコードと設定、取得中の商品・ファイル情報、未送信通知（保存パスを含む）をブラウザ内に保存し、拡張の削除で消せます。書き出した JSON とアプリに送った情報は、拡張を削除しても残ります。</p>
       </details>
     </footer>
     <script src="extract.js"></script>
     <script src="request-policy.js"></script>
+    <script src="companion.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>

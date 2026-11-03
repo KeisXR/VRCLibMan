@@ -19,7 +19,11 @@
   }
 
   function boothHost(value) {
-    return /https?:\/\/([^/\s]+\.)?booth\.pm\//i.test(String(value || ""));
+    try {
+      const url = new URL(String(value || ""));
+      return url.protocol === "https:" && !url.username && !url.password && !url.port
+        && /(^|\.)booth\.pm$/.test(url.hostname);
+    } catch { return false; }
   }
 
   function isBoothAsset(item) {

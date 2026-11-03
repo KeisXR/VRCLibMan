@@ -1194,10 +1194,12 @@ test("extension popup displays manifest version and sends it only on local reque
     chrome: {
       runtime: { getManifest: () => manifest },
       storage: {
+        onChanged: { addListener() {} },
         local: {
           get: async () => ({
             pairingToken: "DUMMY-CODE",
             routeDownloads: false,
+            pendingDeliveries: [], downloadIntents: [], deliveryError: "",
           }),
           set: async () => {},
         },
