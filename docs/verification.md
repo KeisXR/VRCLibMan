@@ -1,5 +1,17 @@
 # 検証記録
 
+## Mac右パネルのブックマークが隠れる問題の再検証（2026-11-03）
+
+対象は main の `5a39bcec947b40be8653e6c10b3a8b96086c06f0` からの `fix/macos-panel-native-geometry`。0.2.3で開いた直後から隠れるという報告を受け、以前のクリップ処理だけでは解消しないことを確認した。
+
+- Mac CIのAppKit/WKWebViewで、親NSViewが600pt、JSの `innerHeight` と `contentLayoutRect` が568ptになることを実測した。Tauriの通常タイトルバーもFullSizeContentViewを有効にするため、親全体の高さを使った変換ではページが32pt上にずれる。ブックマーク行も32ptで、ページに覆われる。
+- 実際のNSWindowへマウスイベントを送り、ページ非表示ならブックマークを押せるが旧配置でページを表示すると押せないことを再現した。新配置は `contentLayoutRect` をページの親座標へ変換して基準にする。固定のタイトルバー高や画面倍率は加えない。
+- [MacネイティブCI（a5b5911）](https://github.com/KeisXR/VRCLibMan/actions/runs/41563824753) は成功。標準タイトルバー、3種類のウィンドウサイズ、同じWKWebViewを別窓へ移して戻した後の全ケースで、旧配置による操作不能と、新配置でブックマーク・ページ内ボタンの両方が操作できることを確認した。Swiftが本体と共通のRust座標変換を呼ぶ。Tauri製品版全体や利用者のMacの実行確認とは区別する。
+- Linux x86_64で `npm test` は131件成功、`npm run build` 成功。`cargo test --offline --locked --manifest-path src-tauri/Cargo.toml --lib` は365件成功、既存の2件ignore。
+- macOSのRustライブラリCIも成功し、Objective-C経由の配置処理をコンパイルできることを確認した。別ウィンドウのoverlayタイトルバー、Windows、Linuxの配置経路は変更していない。
+
+以前の「タイトルバーの補正は不要」という前提を訂正した。丸めとクリップは維持するが、原点の差はそれだけでは解決しない。
+
 ## アセットの公開情報による更新候補（2026-11-03）
 
 対象は `d6da223` からの作業ツリーの変更。Linux x86_64 のクラウド環境、Rust 1.99.1、Node.js 24、Chromium の見本画面で確認した。実ユーザーのDB・Cookie・ログインは使用していない。

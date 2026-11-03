@@ -119,6 +119,19 @@ npm run test:tab-click
 
 ヘッドレスの Chromium に実際のポインター入力を送り、固定タブとページタブのクリック切替、閾値未満の揺れ、ドラッグ後のクリックを確認します。WebView2 と同じエンジンのクリックの宛先を検証します。
 
+## macOSのネイティブ配置テスト
+
+MacのWKWebViewは、通常のタイトルバーでもDOMの原点と親NSViewの原点が異なります。右パネルの配置を変えたら、次も実行します（RustとSwiftが必要です）。
+
+```sh
+native_case="$(mktemp -d)"
+rustc test/fixtures/macos-panel-frame.rs -o "$native_case/macos-panel-frame"
+swift test/macos-browser-panel-layout.swift "$native_case/macos-panel-frame"
+rm -rf "$native_case"
+```
+
+本体と同じRustの座標変換を使い、実際のAppKit/WKWebViewにマウス入力を送ります。修正前の配置ではブックマークボタンがページに隠れて押せなくなることと、修正後はブックマークとページの両方を操作できることを確認します。サイズ変更と別ウィンドウへの移動・復帰も対象です。ログインやネットワーク、アプリのDBは使いません。CIの `native macOS browser panel` ジョブでも実行します。
+
 ## 構成と保存先
 
 フロントエンドは React / TypeScript、デスクトップ部分は Tauri v2 / Rust です。インポート、正規化、ファイル照合、名前解決、分類結果の保存、SQLite を Rust が担当します。

@@ -14,6 +14,18 @@ permissions:
   contents: read
 
 jobs:
+  macos-browser-panel:
+    name: native macOS browser panel
+    runs-on: macos-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: test native macOS browser panel
+        run: |
+          rustc test/fixtures/macos-panel-frame.rs -o "$RUNNER_TEMP/macos-panel-frame"
+          swift test/macos-browser-panel-layout.swift "$RUNNER_TEMP/macos-panel-frame"
+
   frontend:
     name: frontend
     runs-on: ubuntu-latest
