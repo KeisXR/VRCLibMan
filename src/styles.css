@@ -1597,8 +1597,8 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
  * 面は塗らず、選択・見出し・進捗・フォーカスに細い線だけ使う。
  * 曲線（角丸の辺に沿って曲がる線）にアクセントを付けない。許すのは次の3部品だけ:
  *   1. 全周の枠   … 角丸でも外周すべてを同じ線で囲むもの
- *   2. 直線の縦棒 … ::before の棒。端の小さな丸み（角丸 2px）は曲線に含めない
- *   3. 直線の下線 … ::after の 2px の直線。角丸の内側の平らな部分にだけ置き、両端は四角
+ *   2. 直線の縦棒 … ::before の棒。端の小さな丸み（--accent-cap = 2px）は曲線に含めない
+ *   3. 直線の下線 … ::after の 2px の直線。角丸の内側の平らな部分にだけ置く独立した線で、両端は縦棒と同じく丸い（2px まで）
  * 例外: 進捗バー（.track span）は丸い溝の中を朱で塗る。
  * 画面に足すときは、該当する部品のセレクタ一覧に選択中のセレクタを並べる。
  * 詳細: docs/design/README.md「線のアクセント」 */
@@ -1611,6 +1611,7 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
   --accent-bar-lg: 4px;      /* 縦棒の幅（ページ見出し） */
   --accent-inset: var(--radius-sm); /* 下線の左右の余白。角丸の半径以上にして曲線に触れない */
   --accent-offset: 3px;      /* 下線の下端からの位置 */
+  --accent-cap: 2px;         /* 縦棒と下線の端の丸み。--accent-line と同じ値で、2px まで */
 }
 @media (prefers-color-scheme: dark) {
   :root { --line-accent: #d97757; --line-selection: rgba(217, 119, 87, 0.65); --selection-outline: #73737c; }
@@ -1631,7 +1632,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 }
 .choice-row:has(input:checked), .scope-choices label:has(input:checked) { border-color: var(--line-selection); }
 
-/* 部品2: 直線の縦棒（端の角丸 2px は例外として許す） */
+/* 部品2: 直線の縦棒（端の丸み --accent-cap は曲線に含めない） */
 .nav-link, .genre-link { position: relative; }
 .nav-link.active::before, .genre-link.active::before {
   content: "";
@@ -1641,7 +1642,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   transform: translateY(-50%);
   width: var(--accent-bar);
   height: 55%;
-  border-radius: 2px;
+  border-radius: var(--accent-cap);
   background: var(--line-accent);
 }
 .page-head h1::before {
@@ -1649,7 +1650,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   display: inline-block;
   width: var(--accent-bar-lg);
   height: 0.82em;
-  border-radius: 2px;
+  border-radius: var(--accent-cap);
   background: var(--line-accent);
   margin-right: 10px;
 }
@@ -1658,12 +1659,12 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   display: inline-block;
   width: var(--accent-bar);
   height: 0.85em;
-  border-radius: 2px;
+  border-radius: var(--accent-cap);
   background: var(--line-accent);
   margin-right: 8px;
 }
 
-/* 部品3: 直線の下線（角丸の内側の平らな部分にだけ置く） */
+/* 部品3: 直線の下線（角丸の内側の平らな部分にだけ置く。要素の角丸には沿わない。端の丸みは縦棒と同じ） */
 .tab.active { position: relative; box-shadow: none; }
 .tab.active::after {
   content: "";
@@ -1672,7 +1673,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   right: var(--accent-inset);
   bottom: var(--accent-offset);
   height: var(--accent-line);
-  border-radius: 0;
+  border-radius: var(--accent-cap);
   background: var(--line-accent);
   pointer-events: none;
 }

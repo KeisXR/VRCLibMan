@@ -104,7 +104,7 @@
 /* ---- 線のアクセント（朱）と選択枠（src/styles.css「線のアクセント」ブロック） ----
  * 面は塗らず、選択・見出し・進捗・フォーカスに細い線だけ使う。
  * 曲線（角丸の辺に沿って曲がる線）にアクセントを付けない。許すのは全周の枠、
- * 直線の縦棒（端の角丸 2px は例外）、角丸の内側に置く両端が四角い直線の下線だけ。進捗バーは例外。
+ * 直線の縦棒と、角丸の内側に置く独立した直線の下線だけ。縦棒と下線の両端は丸くてよい（--accent-cap、2px まで）。進捗バーは例外。
  * --selection-outline は商品カードと確認画面のタブの 1px 中立色の全周枠。 */
 :root {
   --line-accent: #a6361f;
@@ -115,17 +115,18 @@
   --accent-bar-lg: 4px;      /* 縦棒の幅（ページ見出し） */
   --accent-inset: var(--radius-sm); /* 下線の左右の余白。角丸の半径以上にして曲線に触れない */
   --accent-offset: 3px;      /* 下線の下端からの位置 */
+  --accent-cap: 2px;         /* 縦棒と下線の端の丸み。--accent-line と同じ値で、2px まで */
 }
 @media (prefers-color-scheme: dark) {
   :root { --line-accent: #d97757; --line-selection: rgba(217, 119, 87, 0.65); --selection-outline: #73737c; }
 }
 
-/* 直線の下線の書き方（例: 選択中のタブ）。left/right は角丸の内側、両端は四角。
+/* 直線の下線の書き方（例: 選択中のタブ）。left/right は角丸の内側、両端は縦棒と同じ丸み。
  * .tab.active { position: relative; }
  * .tab.active::after {
  *   content: ""; position: absolute; pointer-events: none;
  *   left: var(--accent-inset); right: var(--accent-inset); bottom: var(--accent-offset);
- *   height: var(--accent-line); border-radius: 0; background: var(--line-accent);
+ *   height: var(--accent-line); border-radius: var(--accent-cap); background: var(--line-accent);
  * } */
 
 /* ---- 任意: 土台の決まり（src/styles.css 86〜95 行と「線のアクセント」ブロックのフォーカス） ----

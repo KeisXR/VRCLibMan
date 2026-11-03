@@ -29,7 +29,7 @@ VRCLibMan の見た目の決まりを、ほかのプロジェクトへ持ち出�
 4. **状態色は文字色。** good / warn / danger は文字の色として使い、背景は塗りません。
 5. **OS に合わせる。** フォントは OS の UI フォント、ダークモードは OS 設定、動きは OS の「動きを減らす」に従います。
 6. **キーボードで使える。** フォーカス枠は常に 2px で見えるようにします。
-7. **曲線に沿ってアクセントを付けない。** 朱の線が角丸の辺に沿って曲がる付け方（角丸の要素への `inset 0 -2px 0` の下線の影、`border-left` などの片側の枠）はしません。許すのは、外周すべてを囲む全周の枠と、曲線に触れない直線だけです。縦棒の端の小さな丸み（角丸 2px）と進捗バーは例外です（[線のアクセントの部品](#線のアクセントの部品)）。
+7. **曲線に沿ってアクセントを付けない。** 朱の線が角丸の辺に沿って曲がる付け方（角丸の要素への `inset 0 -2px 0` の下線の影、`border-left` などの片側の枠）はしません。許すのは、外周すべてを囲む全周の枠と、曲線に触れない直線だけです。縦棒と下線の両端は丸くてよく（`--accent-cap`、2px まで。要素の角丸には沿わせない独立した線にする）、進捗バーは例外です（[線のアクセントの部品](#線のアクセントの部品)）。
 
 ## 色
 
@@ -75,6 +75,7 @@ VRCLibMan の見た目の決まりを、ほかのプロジェクトへ持ち出�
 | `--accent-bar-lg` | `4px` | 縦棒の幅（ページ見出し） |
 | `--accent-inset` | `var(--radius-sm)` | 直線の下線の左右の余白。角丸の半径以上にして、曲がる部分に触れない |
 | `--accent-offset` | `3px` | 直線の下線の、要素の下端からの位置 |
+| `--accent-cap` | `2px` | 縦棒と下線の端の丸み（`--accent-line` と同じ値。2px まで） |
 
 #### 線のアクセントの部品
 
@@ -83,11 +84,11 @@ VRCLibMan の見た目の決まりを、ほかのプロジェクトへ持ち出�
 | 部品 | 書き方 | 今の使いどころ |
 | --- | --- | --- |
 | 1. 全周の枠 | `border-color`、`box-shadow: 0 0 0 1px`、`outline` で外周すべてを同じ線で囲む。角丸でも全周なら許す | 入力欄のフォーカス、`.rail-icon-button.attention`、選択中の選択肢（`.choice-row`・`.scope-choices`） |
-| 2. 直線の縦棒 | `::before` の棒（幅 `--accent-bar`、端の角丸 2px まで） | `.nav-link.active`・`.genre-link.active`（左端、高さ 55%、`left: 2px`）、`.page-head h1`（`--accent-bar-lg`、0.82em）、`.settings-section > header h2`（0.85em） |
-| 3. 直線の下線 | `::after` の直線。`left` / `right` は `--accent-inset`、`bottom` は `--accent-offset`、高さ `--accent-line`、`border-radius: 0` | `.tab.active` |
+| 2. 直線の縦棒 | `::before` の棒（幅 `--accent-bar`、端の丸み `--accent-cap`） | `.nav-link.active`・`.genre-link.active`（左端、高さ 55%、`left: 2px`）、`.page-head h1`（`--accent-bar-lg`、0.82em）、`.settings-section > header h2`（0.85em） |
+| 3. 直線の下線 | `::after` の直線。`left` / `right` は `--accent-inset`、`bottom` は `--accent-offset`、高さ `--accent-line`、端の丸み `--accent-cap`（縦棒と同じ 2px）。要素の角丸には沿わない独立した直線 | `.tab.active` |
 
-- 例外: 進捗バー `.track span` は角丸の溝の中を朱で塗ります（今のまま）。縦棒の端の丸みも曲線に数えません。
-- しないこと: 角丸の要素に `inset 0 -2px 0 var(--line-accent)` などの片側だけの影を付ける、`border-left` などの片側の枠を朱にする、`::after` の下線に角丸を付ける、疑似要素でない要素の面を朱で塗る。
+- 例外: 進捗バー `.track span` は角丸の溝の中を朱で塗ります（今のまま）。縦棒と下線の端の丸み（2px まで）も曲線に数えません。
+- しないこと: 角丸の要素に `inset 0 -2px 0 var(--line-accent)` などの片側だけの影を付ける、`border-left` などの片側の枠を朱にする、縦棒や下線の端を 2px より丸くする、疑似要素でない要素の面を朱で塗る。
 - `test/accent-rule.test.mjs` が、ブロックの外での朱の使用、片側の影、片側の枠、下線の角丸を見つけると失敗します。
 
 ### 決め打ちの色（変数になっていないもの）
@@ -183,7 +184,7 @@ VRCLibMan の見た目の決まりを、ほかのプロジェクトへ持ち出�
 ### タブ
 
 - `.tab`: 地なし、文字 `--text-secondary`、角丸 `--radius-sm`、`padding: 6px 12px`。ホバーで `--hover`。
-- 選択中 `.tab.active`: 地 `--surface`、文字 `--text`、650、影なし。下に朱の直線の下線（`::after`、幅は左右 `--accent-inset` を空けた残り、下端から `--accent-offset`、太さ `--accent-line`、両端は四角）。角丸の曲がる部分には線を掛けません。
+- 選択中 `.tab.active`: 地 `--surface`、文字 `--text`、650、影なし。下に朱の直線の下線（`::after`、幅は左右 `--accent-inset` を空けた残り、下端から `--accent-offset`、太さ `--accent-line`、両端は縦棒と同じ 2px の丸み）。角丸の曲がる部分には線を掛けません。
 - 確認画面だけは例外で、選択中のタブを `inset 0 0 0 1px var(--selection-outline)` の全周枠にし、朱の下線とページ見出しの棒は出しません。
 - 右パネルと内蔵ブラウザのタブ: 選択中は `--surface`＋650＋`--shadow`（朱の線なし）。閉じる × はホバー中・選択中・フォーカス中だけ見せます。
 
@@ -196,7 +197,7 @@ VRCLibMan の見た目の決まりを、ほかのプロジェクトへ持ち出�
 ### サイドバー・ジャンルナビゲーション
 
 - 行 `.nav-link` / `.genre-link`: 文字 `--text-secondary`、角丸 `--radius-sm`。ホバーで `--hover`。
-- 選択中: 地 `--surface`、文字 `--text`、650、`--shadow`、左端に朱の直線の縦棒（幅 `--accent-bar` = 3px、高さ 55%、端の角丸 2px、`left: 2px`）。ボタンの角丸には沿わせません。
+- 選択中: 地 `--surface`、文字 `--text`、650、`--shadow`、左端に朱の直線の縦棒（幅 `--accent-bar` = 3px、高さ 55%、端の丸み `--accent-cap` = 2px、`left: 2px`）。ボタンの角丸には沿わせません。
 - 件数ゼロのジャンルは `--faint`。
 - 下部のアカウントカード: 高さ 52px 以上、角丸 `--radius`、`1px solid var(--border)`、`--shadow`、丸いアバター 34px。
 

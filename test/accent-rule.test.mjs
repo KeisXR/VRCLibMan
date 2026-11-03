@@ -1,6 +1,6 @@
 // 線のアクセント（朱）の決まりを styles.css で確かめる。
 // 決まり: 曲線（角丸の辺に沿って曲がる線）にアクセントを付けない。許すのは全周の枠、
-// 直線の縦棒（::before、端の角丸 2px までは例外）、直線の下線（::after、角丸 0）だけ。
+// 直線の縦棒（::before）、直線の下線（::after）だけ。どちらも端の丸みは 2px まで（例外）。
 // 進捗バー（.track span）は例外。詳細は docs/design/README.md「線のアクセント」。
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -122,20 +122,27 @@ test("(c) the accent is never a one-sided border", () => {
   );
 });
 
-test("(d) accent fills are straight lines: ::after underline has radius 0, ::before bar ends stay small", () => {
+/** 縦棒・下線の端の丸みが 2px 以内か。var(--accent-cap) は定義の値で見る。 */
+function smallCap(radius) {
+  if (radius === undefined) return true;
+  const resolved = radius === "var(--accent-cap)" ? css.match(/--accent-cap:\s*([^;]+);/)?.[1].trim() : radius;
+  return /^(?:0|(?:[0-1](?:\.\d+)?|2(?:\.0+)?)px)$/.test(resolved ?? "");
+}
+
+test("(d) accent fills are straight lines whose ends are rounded at most 2px", () => {
   const fills = accentDecls.filter((d) => d.prop === "background" || d.prop === "background-color");
   for (const d of fills) {
     const radius = d.rule.decls.find((x) => x.prop === "border-radius")?.value;
     if (d.rule.selectors.every((s) => FILL_ALLOWLIST.includes(s))) continue; // 進捗バー（例外）
     if (d.rule.selectors.every((s) => s.endsWith("::after"))) {
-      assert.equal(radius, "0", `${d.rule.selector}: 下線の両端は四角（border-radius: 0）`);
+      assert.ok(smallCap(radius), `${d.rule.selector}: 下線の端の丸みは縦棒と同じ 2px まで: ${radius}`);
       for (const side of ["left", "right"]) {
         const v = d.rule.decls.find((x) => x.prop === side)?.value;
         if (v !== undefined) assert.match(v, /--accent-inset/, `${d.rule.selector}: 下線は角丸の内側（--accent-inset）から引く`);
       }
     } else if (d.rule.selectors.every((s) => s.endsWith("::before"))) {
       // 縦棒の端の小さな丸みは曲線に含めない（例外）。2px を超える丸みは認めない。
-      assert.ok(radius === undefined || /^(?:0|[0-2](?:\.\d+)?px)$/.test(radius), `${d.rule.selector}: 縦棒の端の角丸は 2px まで`);
+      assert.ok(smallCap(radius), `${d.rule.selector}: 縦棒の端の丸みは 2px まで: ${radius}`);
     } else {
       assert.fail(`${d.rule.selector}: 朱で面を塗らない（直線の縦棒・下線の疑似要素か、進捗バーだけ）`);
     }
@@ -152,7 +159,7 @@ test("tab underline is the straight ::after line, not a curved shadow", () => {
 });
 
 test("tokens.css carries the same accent variables", () => {
-  for (const name of ["--line-accent", "--line-selection", "--selection-outline", "--accent-line", "--accent-bar", "--accent-bar-lg", "--accent-inset", "--accent-offset"]) {
+  for (const name of ["--line-accent", "--line-selection", "--selection-outline", "--accent-line", "--accent-bar", "--accent-bar-lg", "--accent-inset", "--accent-offset", "--accent-cap"]) {
     const value = (source) => source.match(new RegExp(`${name}:\\s*([^;]+);`))?.[1].trim();
     assert.ok(value(tokens), `tokens.css に ${name} がある`);
     assert.equal(value(tokens), value(css), `${name} の値が styles.css と同じ`);
