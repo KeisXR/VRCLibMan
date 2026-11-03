@@ -30,11 +30,12 @@ const PATHS: Record<NavIconName, ReactNode> = {
       <path d="M3 5.4 9 8.6l6-3.2M9 8.6v7.2" />
     </>
   ),
-  // A globe.
+  // A landscape, mountains and a sun: places to visit. No frame and no globe, so it does not
+  // read as the browser.
   worlds: (
     <>
-      <circle cx="9" cy="9" r="6.6" />
-      <path d="M2.4 9h13.2M9 2.4c1.9 1.9 2.8 4.1 2.8 6.6S10.9 13.7 9 15.6C7.1 13.7 6.2 11.5 6.2 9S7.1 4.3 9 2.4z" />
+      <circle cx="12.6" cy="5.4" r="1.9" />
+      <path d="M1.8 14.6 6.4 7.4l3.3 5 1.9-2.6 4.6 4.8z" />
     </>
   ),
   // A tray with a check: items to review.
