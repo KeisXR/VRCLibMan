@@ -7,9 +7,9 @@ import type { ReactNode } from "react";
 
 export type NavIconName = "avatars" | "assets" | "worlds" | "queue" | "import" | "settings" | "browser";
 
-function Icon({ children }: { children: ReactNode }) {
+function Icon({ children, className = "nav-icon" }: { children: ReactNode; className?: string }) {
   return (
-    <svg className="nav-icon" width="18" height="18" viewBox="0 0 18 18" aria-hidden="true" focusable="false">
+    <svg className={className} width="18" height="18" viewBox="0 0 18 18" aria-hidden="true" focusable="false">
       {children}
     </svg>
   );
@@ -72,6 +72,18 @@ const PATHS: Record<NavIconName, ReactNode> = {
 
 export function NavIcon({ name }: { name: NavIconName }) {
   return <Icon>{PATHS[name]}</Icon>;
+}
+
+/** The app mark: three spines on a shelf, one leaning, for a library of avatars and parts. */
+export function BrandMark() {
+  return (
+    <Icon className="nav-icon brand-mark">
+      <path d="M2.6 15.4h12.8" />
+      <rect x="3.6" y="3.4" width="2.8" height="12" rx=".8" />
+      <rect x="7.6" y="5.4" width="2.8" height="10" rx=".8" />
+      <path d="m11.2 6.3 2.6-.7 2.3 9.1-2.6.7z" />
+    </Icon>
+  );
 }
 
 /** The sidebar itself, with an arrow showing which way the toggle moves it. */

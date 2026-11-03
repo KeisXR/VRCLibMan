@@ -26,7 +26,7 @@ import {
   type AccountSnapshot,
 } from "./accountStatus";
 import { SidebarClassificationHint } from "./components/SidebarClassificationHint";
-import { NavIcon, SidebarToggleIcon, type NavIconName } from "./components/navIcons";
+import { BrandMark, NavIcon, SidebarToggleIcon, type NavIconName } from "./components/navIcons";
 import { RightPanelColumn, RightPanelProvider, useRightPanelState } from "./components/RightPanel";
 import { errorText } from "./ui";
 import { BrowserAutoClassification } from "./components/BrowserAutoClassification";
@@ -327,7 +327,11 @@ export default function App() {
       <div className="app app-shell" style={layout.gridStyle}>
         <aside className={collapsed ? "rail collapsed" : "rail"} data-collapsed={collapsed ? "true" : "false"}>
           <div className="brand">
-            <strong className="brand-name">VRCLibMan</strong>
+            <span className="brand-lockup">
+              <BrandMark />
+              {/* Wordmark image outlined from Urbanist Black 900; see docs/design/README.md. */}
+              <span className="brand-wordmark" role="img" aria-label="VRCLibMan" title="VRCLibMan" />
+            </span>
             <button
               type="button"
               className="rail-toggle"

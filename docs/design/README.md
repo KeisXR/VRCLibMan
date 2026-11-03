@@ -92,6 +92,7 @@ VRCLibMan の見た目の決まりを、ほかのプロジェクトへ持ち出�
 | 一覧の小見出し `.group h2` | 13px | `--faint`、650、`letter-spacing: 0.02em` |
 
 表示の詰め具合は画面ごとにクラスで変えています。アバター・アセット・ワールド・確認画面は `density-compact`（見出し 26px、カード角丸 `--radius-sm`、画像 48px）、設定は `density-roomy`（内容の余白 48px）です。
+- ブランド名は画像ロゴ（Urbanist Black 900 相当）。文字をパスにした `src/assets/brand/vrclibman-wordmark.svg` を文字色のマスクで塗ります。フォントは同梱せず、ほかの文字は OS の UI フォントのままです（作り方は `scripts/make-brand-wordmark.py`）。
 
 ## 余白
 
@@ -178,6 +179,7 @@ VRCLibMan の見た目の決まりを、ほかのプロジェクトへ持ち出�
 
 #### 左サイドバーの開閉
 
+- 上端は本棚のマーク（`BrandMark`）と画像ロゴです。閉じるとマークと開閉ボタンだけを縦に並べます。
 - 各項目に線のアイコン（`src/components/navIcons.tsx`、18px、線幅 1.5、`aria-hidden`）を付けます。絵文字や外部のアイコン集は使いません。
 - ブランド名の右の `.rail-toggle`（32px、角丸 `--radius-sm`）で開閉します。`aria-expanded` と `aria-controls` を持ち、名前は「サイドバーを閉じる」/「サイドバーを開く」です。
 - 閉じると幅は `--sidebar-collapsed-width`（60px、`src/uiLayout.ts` の `UI_RAIL_COLLAPSED_WIDTH` と同じ値）で固定し、幅の調整ハンドルは出しません。開くと利用者が決めた幅に戻ります。

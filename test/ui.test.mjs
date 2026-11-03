@@ -875,6 +875,10 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       }
       assert.ok(rail().querySelector(".rail-status"));
       assert.ok(separator());
+      const wordmark = () => rail().querySelector(".brand .brand-wordmark");
+      assert.equal(wordmark().getAttribute("role"), "img");
+      assert.equal(wordmark().getAttribute("aria-label"), "VRCLibMan");
+      assert.equal(rail().querySelector(".brand svg.brand-mark")?.getAttribute("aria-hidden"), "true");
 
       await click(toggle());
       await wait(() => rail().classList.contains("collapsed"));
@@ -892,6 +896,9 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       assert.match(rail().querySelector('a[href="#/queue"]').getAttribute("title"), /^確認（\d+）$/);
       assert.equal(rail().querySelector(".rail-status"), null);
       assert.equal(separator(), null);
+      // The mark stays; the wordmark is hidden by CSS but keeps naming the app.
+      assert.ok(rail().querySelector(".brand svg.brand-mark"));
+      assert.equal(wordmark().getAttribute("aria-label"), "VRCLibMan");
       // The genre column is separate from the rail and keeps working.
       assert.ok(document.querySelector('.genre-rail-nav a[href="#/assets"]'));
       await route("#/worlds");

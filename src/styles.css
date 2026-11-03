@@ -120,7 +120,19 @@ a:hover { text-decoration: underline; }
   box-shadow: inset 2px 0 0 var(--sidebar), inset -1px 0 0 var(--sidebar), 3px 0 0 var(--sidebar);
 }
 .brand { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); min-width: 0; padding: 0 var(--space-1) 0 var(--space-3); flex-shrink: 0; }
-.brand strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
+.brand-lockup { display: flex; align-items: center; gap: var(--space-2); min-width: 0; color: var(--text); }
+.brand-mark { flex-shrink: 0; }
+/* ブランド名は Urbanist Black 900 をパス化した画像。マスクにして文字色で塗るのでダークでも追従する */
+.brand-wordmark {
+  display: block;
+  flex: 0 1 auto;
+  min-width: 0;
+  width: 93px;
+  height: 13px;
+  background-color: currentColor;
+  -webkit-mask: url("./assets/brand/vrclibman-wordmark.svg") left center / contain no-repeat;
+  mask: url("./assets/brand/vrclibman-wordmark.svg") left center / contain no-repeat;
+}
 /* 左サイドバーの開閉。幅は動かさない（右パネルのネイティブページが DOM の矩形に合わせて置かれるため） */
 .rail-toggle {
   flex: 0 0 auto;
@@ -346,10 +358,10 @@ a.drag-over {
 }
 /* 閉じた左サイドバー: アイコンだけの細い列。名前は視覚的に隠してリンクの名前として残す */
 .rail.collapsed { padding: var(--space-5) var(--space-2); gap: var(--space-4); }
-.rail.collapsed .brand { justify-content: center; padding: 0; }
-.rail.collapsed .brand-name { display: none; }
+.rail.collapsed .brand { flex-direction: column; justify-content: center; gap: var(--space-2); padding: 0; }
 .rail.collapsed nav { padding: var(--space-1); }
 .rail.collapsed .nav-link { justify-content: center; padding: 8px 0; }
+.rail.collapsed .brand-wordmark,
 .rail.collapsed .nav-label,
 .rail.collapsed .count,
 .account-pill.compact .account-text,

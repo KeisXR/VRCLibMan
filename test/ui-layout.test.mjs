@@ -23,6 +23,12 @@ test("ui layout width helpers clamp and fit list minimum", async () => {
     assert.ok(UI_RAIL_COLLAPSED_WIDTH >= 56 && UI_RAIL_COLLAPSED_WIDTH <= 64);
     const css = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
     const tokens = readFileSync(new URL("../docs/design/tokens.css", import.meta.url), "utf8");
+    // The wordmark is outlined glyphs, not text that needs a bundled font.
+    const wordmark = readFileSync(new URL("../src/assets/brand/vrclibman-wordmark.svg", import.meta.url), "utf8");
+    assert.match(wordmark, /<path d="M/);
+    assert.match(wordmark, /fill="currentColor"/);
+    assert.doesNotMatch(wordmark, /<text|@font-face|font-family|\.woff/);
+    assert.doesNotMatch(css, /@font-face|font-family:[^;]*Urbanist/);
     for (const source of [css, tokens]) {
       assert.match(source, new RegExp(`--sidebar-collapsed-width: ${UI_RAIL_COLLAPSED_WIDTH}px;`));
     }
