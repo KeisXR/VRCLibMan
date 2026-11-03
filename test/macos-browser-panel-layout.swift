@@ -28,7 +28,7 @@ final class PanelProbe: NSObject, WKNavigationDelegate {
         <div class="browser-panel" style="height:100dvh;width:400px;margin-left:auto">
           <div class="browser-chrome embedded panel">
             <div class="browser-navigation">Address</div>
-            <div class="browser-tools"><div class="browser-bookmarks"><button id="bookmark">Bookmark</button></div></div>
+            <div class="browser-tools"><div class="browser-bookmarks"><button id="bookmark" onclick="window.bookmarkClicks=(window.bookmarkClicks||0)+1">Bookmark</button></div></div>
           </div>
           <div id="panel" class="browser-panel-viewport"></div>
         </div>
@@ -51,7 +51,7 @@ final class PanelProbe: NSObject, WKNavigationDelegate {
         main.evaluateJavaScript("""
         (() => {const r = document.getElementById('panel').getBoundingClientRect();
         const b = document.getElementById('bookmark').getBoundingClientRect();
-        return {innerWidth, innerHeight, top:r.top, left:r.left, width:r.width, height:r.height, bookmarkTop:b.top, bookmarkBottom:b.bottom};})()
+        return {innerWidth, innerHeight, top:r.top, left:r.left, width:r.width, height:r.height, bookmarkLeft:b.left, bookmarkRight:b.right, bookmarkTop:b.top, bookmarkBottom:b.bottom};})()
         """) { value, error in
             guard let metrics = value as? [String: Any] else {
                 fputs("Missing DOM geometry: \(String(describing: error))\n", stderr)
@@ -68,9 +68,54 @@ final class PanelProbe: NSObject, WKNavigationDelegate {
             print("native parent.frame=\(parent.frame) main.frame=\(self.main.frame) main.bounds=\(self.main.bounds)")
             print("native layout=\(self.window.contentLayoutRect) main.safeArea=\(self.main.safeAreaInsets) parent.safeArea=\(parent.safeAreaInsets)")
             print("native page.frame=\(self.page.frame)")
-            exit(0)
+            self.checkBookmark(metrics: metrics, candidates: [
+                self.window.contentLayoutRect.maxY,
+                parent.frame.height
+            ], index: 0)
         }
     }
+    func click(_ point: NSPoint) {
+        let location = page.superview!.convert(point, to: nil)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            let event = NSEvent.mouseEvent(with: type, location: location, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+            window.sendEvent(event)
+        }
+    }
+
+    func checkBookmark(metrics: [String: Any], candidates: [CGFloat], index: Int) {
+        guard index < candidates.count else {
+            fputs("Could not locate HTML bookmark with native pointer input\n", stderr)
+            exit(1)
+        }
+        let number = { (key: String) -> CGFloat in (metrics[key] as! NSNumber).doubleValue }
+        let x = (number("bookmarkLeft") + number("bookmarkRight")) / 2
+        let center = (number("bookmarkTop") + number("bookmarkBottom")) / 2
+        let point = NSPoint(x: x, y: candidates[index] - center)
+        page.isHidden = true
+        click(point)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            self.main.evaluateJavaScript("window.bookmarkClicks||0") { value, _ in
+                guard (value as? NSNumber)?.intValue == 1 else {
+                    self.checkBookmark(metrics: metrics, candidates: candidates, index: index + 1)
+                    return
+                }
+                print("Bookmark is clickable without native page at \(point), reference top=\(candidates[index])")
+                self.page.isHidden = false
+                self.click(point)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                    self.main.evaluateJavaScript("window.bookmarkClicks||0") { value, _ in
+                        let clicks = (value as? NSNumber)?.intValue ?? 0
+                        print("Bookmark clicks after showing native page: \(clicks)")
+                        // Diagnostic stage: record the original native placement before fixing it.
+                        exit(0)
+                    }
+                }
+            }
+        }
+    }
+
 }
 
 let application = NSApplication.shared
