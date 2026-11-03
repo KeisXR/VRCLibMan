@@ -23,14 +23,19 @@ test("active settings section follows the scroll position", async () => {
 
 test("narrow settings nav stays as a sticky one-line bar with an accent underline", () => {
   const css = readFileSync("src/styles.css", "utf8");
-  const narrow = css.slice(css.indexOf("@container (max-width: 800px)"));
+  const narrow = css.slice(css.lastIndexOf("@container (max-width: 800px)"));
   const block = narrow.slice(0, narrow.indexOf("\n}\n"));
   assert.doesNotMatch(css, /\.settings-nav\s*\{[^}]*position:\s*static/, "the nav never loses sticky");
   assert.match(css, /\.settings-nav\s*\{[^}]*position:\s*sticky;\s*top:\s*0/);
   assert.match(block, /\.settings-nav\s*\{[^}]*flex-direction:\s*row;[^}]*flex-wrap:\s*nowrap;[^}]*overflow-x:\s*auto;[^}]*background:\s*var\(--bg\)/);
-  assert.match(block, /\.settings-nav button\[aria-current\]\s*\{\s*box-shadow:\s*inset 0 -2px 0 var\(--line-accent\)/);
+  assert.match(block, /\.settings-nav button\[aria-current\]\s*\{\s*box-shadow:\s*none/, "the bar drops the card shadow");
+  assert.doesNotMatch(css, /inset 0 -2px 0 var\(--line-accent\)/, "no one-sided shadow underline");
   assert.match(block, /scroll-margin-top:\s*calc\(var\(--settings-nav-h/);
-  assert.match(css, /\.settings-nav button\[aria-current\]::before\s*\{[^}]*background:\s*var\(--line-accent\)/, "wide list marks the current section with the accent bar");
+  // 朱は「線のアクセント」ブロックの共通部品: 広い幅は縦棒（::before）、帯は直線の下線（::after）。
+  const accent = css.slice(css.indexOf("==== 線のアクセント（朱）"), css.indexOf("==== 線のアクセントここまで"));
+  assert.match(accent, /\.settings-nav button\[aria-current\]::before\s*\{[^}]*background:\s*var\(--line-accent\)/, "wide list marks the current section with the accent bar");
+  assert.match(accent, /\.settings-nav button\[aria-current\]::after\s*\{[^}]*left:\s*var\(--accent-inset\);[^}]*border-radius:\s*var\(--accent-cap\);[^}]*background:\s*var\(--line-accent\)/, "bar uses the shared straight underline");
+  assert.match(accent, /@container \(max-width: 800px\)\s*\{\s*\.settings-nav button\[aria-current\]::before\s*\{\s*content:\s*none;\s*\}\s*\.settings-nav button\[aria-current\]::after\s*\{\s*content:\s*"";/);
   const page = readFileSync("src/pages/SettingsPage.tsx", "utf8");
   assert.match(page, /<SettingsNav \/>/);
   assert.match(page, /id="settings-knowledge"/);

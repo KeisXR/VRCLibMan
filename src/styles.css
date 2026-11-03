@@ -391,7 +391,7 @@ a.drag-over {
 }
 .rail-icon-button:hover { background: var(--hover); color: var(--text); text-decoration: none; }
 .rail-icon-button:disabled { opacity: 0.6; cursor: default; }
-.rail-icon-button.attention { border-color: var(--line-accent); color: var(--text); }
+.rail-icon-button.attention { color: var(--text); } /* 朱の全周枠は「線のアクセント」の集約ブロック */
 .rail-icon-button.faint { color: var(--faint); }
 .rail-fixed-separator { cursor: default; pointer-events: none; }
 .account-pill.compact { justify-content: center; width: 44px; min-height: 44px; padding: 4px; border-radius: var(--radius-pill); }
@@ -1291,17 +1291,7 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .settings-nav { position: sticky; top: 0; z-index: 3; display: flex; flex-direction: column; gap: 2px; }
 .settings-nav button { position: relative; flex: 0 0 auto; text-align: left; padding: 8px 12px; border: 0; border-radius: 10px; background: transparent; color: var(--text-secondary); font: inherit; font-size: 13px; white-space: nowrap; cursor: pointer; }
 .settings-nav button:hover { background: var(--hover); color: var(--text); }
-.settings-nav button[aria-current] { background: var(--surface); color: var(--text); font-weight: 650; box-shadow: var(--shadow); }
-.settings-nav button[aria-current]::before {
-  content: "";
-  position: absolute;
-  left: 2px;
-  top: 22.5%;
-  width: 3px;
-  height: 55%;
-  border-radius: 2px;
-  background: var(--line-accent);
-}
+.settings-nav button[aria-current] { background: var(--surface); color: var(--text); font-weight: 650; box-shadow: var(--shadow); } /* 朱の縦棒・下線は「線のアクセント」の集約ブロック */
 .setting-copy strong { display: block; font-size: 14px; font-weight: 650; }
 .setting-copy p { margin: 3px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
 .setting-control { min-width: 0; }
@@ -1603,60 +1593,110 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 /* 既定の Unity のパス。選択欄の下に右寄せで置き、長いパスは折り返す */
 .setting-control > p.unity-path { margin: var(--space-2) 0 0; text-align: right; overflow-wrap: anywhere; font-size: 12px; }
 
-/* 線のアクセント（朱）: 面は塗らず、選択・見出し・進捗・フォーカスに細い線だけ */
-:root { --line-accent: #a6361f; --line-selection: rgba(166, 54, 31, 0.55); --selection-outline: #7c808b; }
+/* ==== 線のアクセント（朱）: 指定はこのブロックだけ ====
+ * 面は塗らず、選択・見出し・進捗・フォーカスに細い線だけ使う。
+ * 曲線（角丸の辺に沿って曲がる線）にアクセントを付けない。許すのは次の3部品だけ:
+ *   1. 全周の枠   … 角丸でも外周すべてを同じ線で囲むもの
+ *   2. 直線の縦棒 … ::before の棒。端の小さな丸み（--accent-cap = 2px）は曲線に含めない
+ *   3. 直線の下線 … ::after の 2px の直線。角丸の内側の平らな部分にだけ置く独立した線で、両端は縦棒と同じく丸い（2px まで）
+ * 例外: 進捗バー（.track span）は丸い溝の中を朱で塗る。
+ * 画面に足すときは、該当する部品のセレクタ一覧に選択中のセレクタを並べる。
+ * 詳細: docs/design/README.md「線のアクセント」 */
+:root {
+  --line-accent: #a6361f;
+  --line-selection: rgba(166, 54, 31, 0.55);
+  --selection-outline: #7c808b;
+  --accent-line: 2px;        /* 下線の太さ */
+  --accent-bar: 3px;         /* 縦棒の幅（ナビ・設定見出し） */
+  --accent-bar-lg: 4px;      /* 縦棒の幅（ページ見出し） */
+  --accent-inset: var(--radius-sm); /* 下線の左右の余白。角丸の半径以上にして曲線に触れない */
+  --accent-offset: 3px;      /* 下線の下端からの位置 */
+  --accent-cap: 2px;         /* 縦棒と下線の端の丸み。--accent-line と同じ値で、2px まで */
+}
 @media (prefers-color-scheme: dark) {
   :root { --line-accent: #d97757; --line-selection: rgba(217, 119, 87, 0.65); --selection-outline: #73737c; }
 }
-.nav-link, .genre-link { position: relative; }
-.nav-link.active::before, .genre-link.active::before {
-  content: "";
-  position: absolute;
-  left: 2px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 3px;
-  height: 55%;
-  border-radius: 2px;
-  background: var(--line-accent);
-}
-.track span { background: var(--line-accent); }
+
+/* 部品1: 全周の枠 */
+.rail-icon-button.attention { border-color: var(--line-accent); }
 .field input:focus, .field select:focus, .field textarea:focus,
 .setting-control > input:focus, .setting-control > select:focus,
 .inline-control > input:focus, .inline-control > select:focus {
   border-color: var(--line-accent);
   box-shadow: 0 0 0 1px var(--line-accent);
 }
+/* キーボードのフォーカスは影だけに頼らず、同じ太さにする。 */
+input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--line-accent);
+  outline-offset: 2px;
+}
+.choice-row:has(input:checked), .scope-choices label:has(input:checked) { border-color: var(--line-selection); }
+
+/* 部品2: 直線の縦棒（端の丸み --accent-cap は曲線に含めない） */
+.nav-link, .genre-link, .settings-nav button { position: relative; }
+.nav-link.active::before, .genre-link.active::before,
+.settings-nav button[aria-current]::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: var(--accent-bar);
+  height: 55%;
+  border-radius: var(--accent-cap);
+  background: var(--line-accent);
+}
 .page-head h1::before {
   content: "";
   display: inline-block;
-  width: 4px;
+  width: var(--accent-bar-lg);
   height: 0.82em;
-  border-radius: 2px;
+  border-radius: var(--accent-cap);
   background: var(--line-accent);
   margin-right: 10px;
 }
 .settings-section > header h2::before {
   content: "";
   display: inline-block;
-  width: 3px;
+  width: var(--accent-bar);
   height: 0.85em;
-  border-radius: 2px;
+  border-radius: var(--accent-cap);
   background: var(--line-accent);
   margin-right: 8px;
 }
-.item.selected { box-shadow: inset 0 0 0 1px var(--selection-outline); }
-.tab.active { box-shadow: inset 0 -2px 0 var(--line-accent); }
-/* 確認画面のタブは全周枠、見出しは文字だけにする。 */
-.queue-page .tab.active { box-shadow: inset 0 0 0 1px var(--selection-outline); }
-.queue-page .page-head h1::before { content: none; }
-.choice-row:has(input:checked), .scope-choices label:has(input:checked) { border-color: var(--line-selection); }
 
-/* キーボードのフォーカスは影だけに頼らず、同じ太さにする。 */
-input:focus-visible, select:focus-visible, textarea:focus-visible {
-  outline: 2px solid var(--line-accent);
-  outline-offset: 2px;
+/* 部品3: 直線の下線（角丸の内側の平らな部分にだけ置く。要素の角丸には沿わない。端の丸みは縦棒と同じ） */
+.tab.active { position: relative; box-shadow: none; }
+.tab.active::after,
+.settings-nav button[aria-current]::after {
+  content: "";
+  position: absolute;
+  left: var(--accent-inset);
+  right: var(--accent-inset);
+  bottom: var(--accent-offset);
+  height: var(--accent-line);
+  border-radius: var(--accent-cap);
+  background: var(--line-accent);
+  pointer-events: none;
 }
+
+/* 設定のカテゴリ一覧: 広い幅は縦棒（部品2）、上に固定した帯（設定ページ 800px 以下）は下線（部品3） */
+.settings-nav button[aria-current]::after { content: none; }
+@container (max-width: 800px) {
+  .settings-nav button[aria-current]::before { content: none; }
+  .settings-nav button[aria-current]::after { content: ""; }
+}
+
+/* 例外: 進捗バーは丸い溝の中を朱で塗る */
+.track span { background: var(--line-accent); }
+
+/* 朱を使わない選択: 商品カードと確認画面のタブは中立色の全周枠、確認画面の見出しは文字だけ */
+.item.selected { box-shadow: inset 0 0 0 1px var(--selection-outline); }
+.queue-page .tab.active { box-shadow: inset 0 0 0 1px var(--selection-outline); }
+.queue-page .tab.active::after { content: none; }
+.queue-page .page-head h1::before { content: none; }
+/* ==== 線のアクセントここまで ==== */
+
 .settings-page { container-type: inline-size; }
 @container (max-width: 800px) {
   .settings-layout { grid-template-columns: 1fr; gap: var(--space-3); }
@@ -1673,8 +1713,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
     box-shadow: 0 1px 0 var(--line);
   }
   .settings-nav button { padding: 6px 12px; }
-  .settings-nav button[aria-current] { box-shadow: inset 0 -2px 0 var(--line-accent); }
-  .settings-nav button[aria-current]::before { content: none; }
+  .settings-nav button[aria-current] { box-shadow: none; } /* 帯では影を消し、朱の直線の下線にする（集約ブロック） */
   /* 帯の下に見出しが隠れないよう、帯の高さ（SettingsNav.tsx が測る）だけ余白を取る。 */
   .settings-layout [id^="settings-"] { scroll-margin-top: calc(var(--settings-nav-h, 48px) + var(--space-3)); }
   .knowledge-section .knowledge { grid-template-columns: minmax(0, 1fr); }
