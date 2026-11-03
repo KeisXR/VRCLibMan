@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { ExistingImportPreview } from "../api";
 import {
   api,
   chooseFolder,
@@ -54,6 +55,9 @@ function StaleReclassifyRow({ busy, onExtract }: { busy: boolean; onExtract: () 
 export function ImportPage() {
   const { revision, refresh, notify, fail, builtinBrowser } = useShell();
   const [libraryFolder, setLibraryFolder] = useState("");
+  const [existingRoot, setExistingRoot] = useState("");
+  const [existingPreview, setExistingPreview] = useState<ExistingImportPreview | null>(null);
+  const [selectedExisting, setSelectedExisting] = useState<string[]>([]);
   const [over, setOver] = useState(false);
   const [extractAfter, setExtractAfter] = useState(isTauri());
   const [report, setReport] = useState<ImportReport | null>(null);
@@ -168,6 +172,31 @@ export function ImportPage() {
     } catch (err) {
       fail(errorText(err));
     }
+  }
+
+  async function findExisting() {
+    try {
+      const path = await chooseFolder();
+      if (!path) return;
+      setBusy(true);
+      setExistingPreview(null);
+      const result = await api.previewExistingImport(path);
+      setExistingRoot(path);
+      setExistingPreview(result);
+      setSelectedExisting(result.entries.filter((e) => e.status === "matched").map((e) => e.path));
+    } catch (err) { fail(errorText(err)); } finally { setBusy(false); }
+  }
+
+  async function registerExisting() {
+    if (!existingPreview) return;
+    const selections = existingPreview.entries.filter((e) => selectedExisting.includes(e.path) && e.status === "matched" && e.boothId && e.originalFilename).map((e) => ({ path: e.path, boothId: e.boothId!, variation: e.variation ?? "", filename: e.originalFilename!, size: e.size }));
+    try {
+      setBusy(true);
+      const count = await api.registerExistingImport(existingRoot, selections);
+      notify(`${count} 件を登録しました`);
+      setExistingPreview(null);
+      refresh();
+    } catch (err) { fail(errorText(err)); } finally { setBusy(false); }
   }
 
   async function scan() {
@@ -455,6 +484,22 @@ export function ImportPage() {
               フォルダを調べる
             </button>
           </SettingRow>
+          <SettingRow label="ダウンロード済みファイルを登録" help="Downloads や別のフォルダを選び、BOOTH の配布ファイル名と照合します。元の場所に登録します。">
+            <button className="button" type="button" disabled={busy} onClick={() => void findExisting()}>取り込み元を選ぶ</button>
+          </SettingRow>
+          {existingPreview && <div className="panel">
+            <h3>照合結果</h3>
+            <p className="meta">{existingRoot} {existingPreview.truncated && "（上限に達したため途中です）"}</p>
+            <p className="meta">一致したファイルを選んで登録します。サイズが異なる場合や候補が複数ある場合は要確認です。</p>
+            <ul className="file-list">{existingPreview.entries.map((entry) => <li key={entry.path}>
+              <label>
+                {entry.status === "matched" && <input type="checkbox" checked={selectedExisting.includes(entry.path)} onChange={(event) => setSelectedExisting((prev) => event.target.checked ? [...prev, entry.path] : prev.filter((p) => p !== entry.path))} />}
+                {entry.filename} — {entry.status === "matched" ? `一致: ${entry.title}` : entry.status === "registered" ? `登録済み: ${entry.title}` : entry.status === "review" ? "要確認（同名の候補が複数、またはサイズが異なります）" : "候補なし"}
+                <span className="meta"> {entry.path}</span>
+              </label>
+            </li>)}</ul>
+            <button className="button primary" type="button" disabled={busy || selectedExisting.length === 0} onClick={() => void registerExisting()}>選択した {selectedExisting.length} 件を登録</button>
+          </div>}
           {staged.length > 0 && (
             <div className="panel">
               <h2>ダウンロードフォルダに残っているファイル</h2>
