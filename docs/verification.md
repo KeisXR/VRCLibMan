@@ -31,6 +31,9 @@ BOOTHの実ログイン・認証リダイレクト・期限付きURL、Chrome/Ed
 - macOSのRustライブラリCIも成功し、Objective-C経由の配置処理をコンパイルできることを確認した。別ウィンドウのoverlayタイトルバー、Windows、Linuxの配置経路は変更していない。
 
 以前の「タイトルバーの補正は不要」という前提を訂正した。丸めとクリップは維持するが、原点の差はそれだけでは解決しない。
+## アセット更新候補の全商品一括設定（2026-11-03）
+
+対象は `78f8327` を基準にした作業ツリーの変更。Linux x86_64、Rust 1.99.1、Node.js 24、Chromiumの見本画面で検証した。`npm run build`、`npm test` 131件、`dbus-run-session -- cargo test --manifest-path src-tauri/Cargo.toml --lib` 366件が成功（2件ignore）。Rustの追加テストで1,001件、後から追加された商品、個別の例外、除外商品、一括解除と実行中の結果の無効化、旧設定の保持を確認した。Chromiumでは全体許可、個別除外、全体解除を操作確認した。実BOOTHへの大量確認、実際の経過時間、Windows/macOSは未確認。
 
 ## アセットの公開情報による更新候補（2026-11-03）
 
