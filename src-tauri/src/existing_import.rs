@@ -42,7 +42,7 @@ fn browser_name(name: &str) -> Option<String> {
 }
 pub fn preview(rows: Vec<Choice>, root: &Path) -> Result<Preview, String> {
     let root = checked_root(root)?;
-    let outcome = scan::scan_folder(&root)?;
+    let outcome = scan::scan_import_packages(&root)?;
     let mut names: HashMap<String, Vec<Choice>> = HashMap::new();
     for mut row in rows {
         row.registered = row.local_path.is_some();
@@ -66,6 +66,9 @@ fn checked_root(root: &Path) -> Result<PathBuf,String> {
 }
 fn source(root: &Path, s: &Selection) -> Result<PathBuf,String> {
     let path=Path::new(&s.path);
+    if !scan::is_import_package(path) || !scan::is_import_package(Path::new(&s.filename)) {
+        return Err("取り込める形式は ZIP と Unitypackage だけです".into());
+    }
     let relative=path.strip_prefix(root).map_err(|_|"取り込み元の外にあるファイルです")?;
     let mut current=root.to_path_buf();
     for part in relative.components() {
@@ -141,6 +144,18 @@ mod tests {
         (dir,c)
     }
     fn selection(root: &Path) -> Selection {Selection{path:root.join("outfit_v1.zip").display().to_string(),booth_id:"123456".into(),variation:"".into(),filename:"outfit_v1.zip".into(),size:4}}
+    #[test]
+    fn non_packages_cannot_be_submitted_directly() {
+        let (dir, _c) = fixture();
+        for name in ["texture.psd", "model.fbx", "archive.7z", "archive.rar", "body.vrm", "pack.zip.part"] {
+            std::fs::write(dir.path().join(name), b"test").unwrap();
+            let mut s = selection(dir.path());
+            s.path = dir.path().join(name).display().to_string();
+            s.filename = name.into();
+            assert!(source(dir.path(), &s).is_err());
+        }
+    }
+
     #[test]
     fn versions_are_preserved_and_browser_suffix_is_only_a_candidate() {
         assert_eq!(browser_name("outfit_v1 (2).zip").as_deref(),Some("outfit_v1.zip"));
