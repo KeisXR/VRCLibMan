@@ -20,8 +20,11 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
       - name: test native macOS browser panel
-        run: swift test/macos-browser-panel-layout.swift
+        run: |
+          rustc test/fixtures/macos-panel-frame.rs -o "$RUNNER_TEMP/macos-panel-frame"
+          swift test/macos-browser-panel-layout.swift "$RUNNER_TEMP/macos-panel-frame"
 
   frontend:
     name: frontend
