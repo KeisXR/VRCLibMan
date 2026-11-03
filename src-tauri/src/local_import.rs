@@ -45,8 +45,9 @@ pub fn display_token(stored: &str) -> String {
 }
 
 pub fn start_receiver(app: AppHandle) -> Result<(), String> {
-    let server = tiny_http::Server::http(bind_addr())
-        .map_err(|err| format!("拡張機能との接続を開始できません。アプリを再起動してください: {err}"))?;
+    let server = tiny_http::Server::http(bind_addr()).map_err(|err| {
+        format!("拡張機能との接続を開始できません。アプリを再起動してください: {err}")
+    })?;
     std::thread::Builder::new()
         .name("vrclibman-import".into())
         .spawn(move || {
@@ -55,7 +56,9 @@ pub fn start_receiver(app: AppHandle) -> Result<(), String> {
                 let _ = request.respond(response);
             }
         })
-        .map_err(|err| format!("拡張機能との接続を開始できません。アプリを再起動してください: {err}"))?;
+        .map_err(|err| {
+            format!("拡張機能との接続を開始できません。アプリを再起動してください: {err}")
+        })?;
     Ok(())
 }
 
@@ -138,6 +141,7 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
         Gate::Health
             | Gate::Import
             | Gate::KnownIds
+            | Gate::ProductStatus
             | Gate::DownloadFinished
             | Gate::RouteRead
             | Gate::RouteWrite
@@ -147,7 +151,8 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
         }
         if let Ok(connection) = state.db.lock() {
             let _ = crate::integration::record_extension_seen(
-                &connection, header(request, "X-VRCLibMan-Extension-Version"),
+                &connection,
+                header(request, "X-VRCLibMan-Extension-Version"),
             );
         }
         if pinned.is_none() {
@@ -221,7 +226,10 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
             serde_json::json!({ "enabled": enabled }).to_string(),
         );
     }
-    if !matches!(gate, Gate::Import | Gate::DownloadFinished | Gate::RouteWrite) {
+    if !matches!(
+        gate,
+        Gate::Import | Gate::DownloadFinished | Gate::RouteWrite | Gate::ProductStatus
+    ) {
         discard_body(request);
         return response_for(origin.as_deref(), gate, None);
     }
@@ -252,6 +260,35 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
             );
         }
     };
+    if matches!(gate, Gate::ProductStatus) {
+        let query = match serde_json::from_str::<crate::extension_status::Query>(&text) {
+            Ok(query) => query,
+            Err(_) => {
+                return cors_json(
+                    origin.as_deref(),
+                    400,
+                    r#"{"error":"商品IDを読めません"}"#.into(),
+                );
+            }
+        };
+        let result = state
+            .db
+            .lock()
+            .map_err(|_| "データベースをロックできません".to_string())
+            .and_then(|connection| crate::extension_status::query(&connection, query));
+        return match result {
+            Ok(products) => cors_json(
+                origin.as_deref(),
+                200,
+                serde_json::json!({"products":products}).to_string(),
+            ),
+            Err(error) => cors_json(
+                origin.as_deref(),
+                400,
+                serde_json::json!({"error":error}).to_string(),
+            ),
+        };
+    }
     if matches!(gate, Gate::RouteWrite) {
         let enabled = match serde_json::from_str::<RouteUpdate>(&text) {
             Ok(update) => update.enabled,
@@ -294,7 +331,8 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
                         cloud_model: settings.cloud_model,
                         background_mode: settings.background_mode,
                         launch_at_login: settings.launch_at_login,
-                        unload_ollama_after_classification: settings.unload_ollama_after_classification,
+                        unload_ollama_after_classification: settings
+                            .unload_ollama_after_classification,
                         classification_dismissed_version: settings.classification_dismissed_version,
                         ui_rail_width: settings.ui_rail_width,
                         ui_genre_width: settings.ui_genre_width,
@@ -327,6 +365,45 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
         );
     }
     if matches!(gate, Gate::DownloadFinished) {
+        // Durable receipt makes a lost HTTP response safe to retry after the file moved.
+        let notification_id = match serde_json::from_str::<serde_json::Value>(&text)
+            .ok()
+            .and_then(|v| v.get("notificationId").cloned())
+        {
+            None => None,
+            Some(serde_json::Value::String(id))
+                if !id.is_empty()
+                    && id.len() <= 64
+                    && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') =>
+            {
+                Some(id)
+            }
+            _ => {
+                return cors_json(
+                    origin.as_deref(),
+                    400,
+                    r#"{"error":"通知IDを読めません"}"#.into(),
+                );
+            }
+        };
+        if let Some(id) = notification_id.as_deref() {
+            let receipt = state
+                .db
+                .lock()
+                .map_err(|_| "データベースをロックできません".to_string())
+                .and_then(|c| delivery_received(&c, id));
+            match receipt {
+                Ok(true) => return cors_json(origin.as_deref(), 200, r#"{"ok":true}"#.into()),
+                Ok(false) => {}
+                Err(error) => {
+                    return cors_json(
+                        origin.as_deref(),
+                        500,
+                        serde_json::json!({"error":error}).to_string(),
+                    );
+                }
+            }
+        }
         let notice = match serde_json::from_str::<crate::model::DownloadFinished>(&text) {
             Ok(notice) => notice,
             Err(_) => {
@@ -334,6 +411,49 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
                     origin.as_deref(),
                     Gate::reject(400, "ダウンロードの通知を読めません"),
                     None,
+                );
+            }
+        };
+        let downloadable_id = serde_json::from_str::<serde_json::Value>(&text)
+            .ok()
+            .and_then(|v| v.get("downloadableId").cloned());
+        let downloadable_id = match downloadable_id {
+            None => None,
+            Some(serde_json::Value::String(id))
+                if (4..=12).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_digit()) =>
+            {
+                Some(id)
+            }
+            _ => {
+                return cors_json(
+                    origin.as_deref(),
+                    400,
+                    r#"{"error":"ファイルIDを読めません"}"#.into(),
+                );
+            }
+        };
+        let started_at = serde_json::from_str::<serde_json::Value>(&text)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("startedAt")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+            });
+        let recovered = state
+            .db
+            .lock()
+            .map_err(|_| "データベースをロックできません".to_string())
+            .and_then(|connection| {
+                crate::extension_delivery::recovered(&connection, &notice, started_at.as_deref())
+            });
+        let recovered = match recovered {
+            Ok(path) => path,
+            Err(error) => {
+                return cors_json(
+                    origin.as_deref(),
+                    500,
+                    serde_json::json!({"error":error}).to_string(),
                 );
             }
         };
@@ -348,7 +468,18 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
                     );
                 }
             };
-            match db::prepare_download(&mut connection, &notice) {
+            let prepared = if recovered.is_some() {
+                Ok(db::DownloadPlan {
+                    source: notice.path.clone().into(),
+                    library: None,
+                    booth_id: notice.booth_id.clone(),
+                    variation: crate::library_files::clean_variation(&notice.variation)
+                        .unwrap_or_default(),
+                })
+            } else {
+                db::prepare_download(&mut connection, &notice)
+            };
+            match prepared {
                 Ok(plan) => plan,
                 Err(err) => {
                     return response_for(
@@ -363,11 +494,28 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
                 }
             }
         };
-        let placed = match crate::library_files::place_into_library(
-            &plan.source,
-            plan.library.as_deref(),
-            &plan.booth_id,
-        ) {
+        if let Some(id) = downloadable_id.as_deref() {
+            let count = state.db.lock().ok().and_then(|connection| connection.query_row(
+                "SELECT COUNT(*) FROM product_files WHERE booth_id=?1 AND variation=?2 AND downloadable_id=?3",
+                rusqlite::params![plan.booth_id, plan.variation, id], |r| r.get::<_, i64>(0)).ok());
+            if count != Some(1) {
+                return cors_json(
+                    origin.as_deref(),
+                    400,
+                    r#"{"error":"ファイルとバリエーションを一意に確認できません"}"#.into(),
+                );
+            }
+        }
+        let placed_result = if let Some(path) = recovered {
+            Ok(path)
+        } else {
+            crate::library_files::place_into_library(
+                &plan.source,
+                plan.library.as_deref(),
+                &plan.booth_id,
+            )
+        };
+        let placed = match placed_result {
             Ok(path) => path,
             Err(err) => {
                 return response_for(
@@ -381,25 +529,29 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
                 );
             }
         };
-        let recorded = {
-            let connection = match state.db.lock() {
-                Ok(connection) => connection,
-                Err(_) => {
-                    return response_for(
-                        origin.as_deref(),
-                        Gate::reject(500, "データベースをロックできません"),
-                        None,
-                    );
-                }
-            };
-            db::record_placed_download(
-                &connection,
+        let recorded = (|| -> Result<(), String> {
+            let mut connection = state
+                .db
+                .lock()
+                .map_err(|_| "データベースをロックできません".to_string())?;
+            let transaction = connection
+                .transaction()
+                .map_err(|_| "ダウンロードを記録できません".to_string())?;
+            db::record_extension_download(
+                &transaction,
                 &plan.booth_id,
                 &plan.variation,
                 &placed,
                 notice.size,
-            )
-        };
+                downloadable_id.as_deref(),
+            )?;
+            if let Some(id) = notification_id.as_deref() {
+                record_delivery(&transaction, id)?;
+            }
+            transaction
+                .commit()
+                .map_err(|_| "ダウンロードを記録できません".to_string())
+        })();
         return match recorded {
             Ok(()) => {
                 let _ = app.emit("library-changed", ());
@@ -459,6 +611,28 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
     }
 }
 
+fn delivery_received(connection: &rusqlite::Connection, id: &str) -> Result<bool, String> {
+    connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM settings WHERE key=?1)",
+            [format!("extension_delivery:{id}")],
+            |r| r.get(0),
+        )
+        .map_err(|_| "通知の受信記録を読めません".into())
+}
+fn record_delivery(connection: &rusqlite::Connection, id: &str) -> Result<(), String> {
+    connection
+        .execute(
+            "INSERT OR REPLACE INTO settings(key,value) VALUES (?1,?2)",
+            rusqlite::params![format!("extension_delivery:{id}"), now_ms().to_string()],
+        )
+        .map_err(|_| "通知の受信を記録できません".to_string())?;
+    // No names, paths, tokens or product text in receipts. Keep bounded recent receipts.
+    connection.execute("DELETE FROM settings WHERE key IN (SELECT key FROM settings WHERE key GLOB 'extension_delivery:*' ORDER BY CAST(value AS INTEGER) DESC, rowid DESC LIMIT -1 OFFSET 2000)", [])
+        .map_err(|_| "通知の受信を記録できません".to_string())?;
+    Ok(())
+}
+
 #[derive(serde::Deserialize)]
 struct RouteUpdate {
     enabled: bool,
@@ -488,6 +662,7 @@ enum Gate {
     Health,
     Import,
     KnownIds,
+    ProductStatus,
     DownloadFinished,
     RouteRead,
     RouteWrite,
@@ -546,6 +721,9 @@ fn classify(request: RequestView<'_>, access: Access<'_>) -> Gate {
     if request.method.eq_ignore_ascii_case("POST") && path == "/import" {
         return Gate::Import;
     }
+    if request.method.eq_ignore_ascii_case("POST") && path == "/product-status" {
+        return Gate::ProductStatus;
+    }
     if request.method.eq_ignore_ascii_case("GET") && path == "/known-ids" {
         return Gate::KnownIds;
     }
@@ -586,7 +764,9 @@ fn response_for(
         Gate::Preflight => (204, String::new()),
         Gate::Health => (200, r#"{"ok":true}"#.to_string()),
         Gate::KnownIds => (200, r#"{"ids":[]}"#.to_string()),
-        Gate::DownloadFinished | Gate::RouteRead | Gate::RouteWrite => (200, "{}".to_string()),
+        Gate::DownloadFinished | Gate::RouteRead | Gate::RouteWrite | Gate::ProductStatus => {
+            (200, "{}".to_string())
+        }
         Gate::Import => (
             200,
             serde_json::to_string(&report.expect("import report")).unwrap_or_else(|_| "{}".into()),
@@ -866,7 +1046,12 @@ mod tests {
             Gate::Import
         ));
         assert!(matches!(
-            gate("GET", "/known-ids", Some(EXTENSION), Some("Bearer ABCD-2345")),
+            gate(
+                "GET",
+                "/known-ids",
+                Some(EXTENSION),
+                Some("Bearer ABCD-2345")
+            ),
             Gate::KnownIds
         ));
         assert!(matches!(
@@ -1194,5 +1379,64 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .unwrap()
+    }
+}
+
+#[cfg(test)]
+mod companion_tests {
+    use super::*;
+    #[test]
+    fn product_status_has_the_same_authentication_boundary() {
+        let extension = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let access = || Access {
+            token: "ABCD2345",
+            pinned: Some(extension),
+            locked: false,
+        };
+        let view = |origin, authorization| RequestView {
+            method: "POST",
+            path: "/product-status",
+            origin,
+            authorization,
+        };
+        assert!(matches!(
+            classify(view(Some(extension), Some("Bearer ABCD2345")), access()),
+            Gate::ProductStatus
+        ));
+        assert!(matches!(
+            classify(view(Some(extension), None), access()),
+            Gate::Reject { status: 401, .. }
+        ));
+        assert!(matches!(
+            classify(
+                view(Some("https://booth.pm"), Some("Bearer ABCD2345")),
+                access()
+            ),
+            Gate::Reject { status: 403, .. }
+        ));
+        assert!(matches!(
+            classify(
+                view(
+                    Some("chrome-extension://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+                    Some("Bearer ABCD2345")
+                ),
+                access()
+            ),
+            Gate::Reject { status: 403, .. }
+        ));
+    }
+    #[test]
+    fn durable_delivery_receipt_is_replayable_without_a_source_file() {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        c.execute_batch("CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT NOT NULL)")
+            .unwrap();
+        assert!(!delivery_received(&c, "notification-1").unwrap());
+        record_delivery(&c, "notification-1").unwrap();
+        assert!(delivery_received(&c, "notification-1").unwrap());
+        record_delivery(&c, "notification-1").unwrap();
+        let count: i64 = c
+            .query_row("SELECT COUNT(*) FROM settings", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
     }
 }

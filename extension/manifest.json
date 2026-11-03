@@ -1,10 +1,20 @@
 {
   "manifest_version": 3,
   "name": "VRCLibMan Booth Export",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "description": "BOOTHの商品情報・購入情報を、同じPCのVRCLibManへ送ります。パスワードやCookieはアプリへ渡しません。",
-  "permissions": ["activeTab", "scripting", "downloads", "storage"],
-  "host_permissions": ["https://booth.pm/*", "https://*.booth.pm/*", "http://127.0.0.1:17321/*"],
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "downloads",
+    "storage",
+    "alarms"
+  ],
+  "host_permissions": [
+    "https://booth.pm/*",
+    "https://*.booth.pm/*",
+    "http://127.0.0.1:17321/*"
+  ],
   "background": {
     "service_worker": "background.js"
   },
@@ -14,8 +24,15 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://booth.pm/*", "https://*.booth.pm/*"],
-      "js": ["extract.js", "content.js"],
+      "matches": [
+        "https://booth.pm/*",
+        "https://*.booth.pm/*"
+      ],
+      "js": [
+        "extract.js",
+        "companion.js",
+        "content.js"
+      ],
       "run_at": "document_idle"
     }
   ]

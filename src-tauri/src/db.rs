@@ -3449,15 +3449,35 @@ pub(crate) fn record_placed_download(
     path: &std::path::Path,
     size: Option<u64>,
 ) -> Result<(), String> {
+    record_extension_download(connection, booth_id, variation, path, size, None)
+}
+
+pub(crate) fn record_extension_download(
+    connection: &Connection,
+    booth_id: &str,
+    variation: &str,
+    path: &std::path::Path,
+    size: Option<u64>,
+    downloadable_id: Option<&str>,
+) -> Result<(), String> {
     let disk_size = std::fs::metadata(path).ok().map(|meta| meta.len());
     let size = disk_size.or(size);
-    let filename = crate::library_files::safe_filename(
+    let actual_filename = crate::library_files::safe_filename(
         path.file_name()
             .and_then(|name| name.to_str())
             .unwrap_or(""),
     )
     .ok_or_else(|| "ファイル名を読めません".to_string())?;
     let variation = crate::library_files::clean_variation(variation).unwrap_or_default();
+    let filename = if let Some(id) = downloadable_id {
+        let mut statement = connection.prepare(
+            "SELECT filename FROM product_files WHERE booth_id=?1 AND variation=?2 AND downloadable_id=?3"
+        ).sql()?;
+        let names = statement.query_map(params![booth_id, variation, id], |row| row.get::<_, String>(0))
+            .sql()?.collect::<rusqlite::Result<Vec<_>>>().sql()?;
+        if names.len() != 1 { return Err("ファイルとバリエーションを一意に確認できません".into()); }
+        names[0].clone()
+    } else { actual_filename.clone() };
     if !variation.is_empty() {
         let _ = merge_variation(
             connection,
@@ -3485,6 +3505,14 @@ pub(crate) fn record_placed_download(
             ],
         )
         .sql()?;
+    if downloadable_id.is_some() {
+        // Startup recovery may have recorded this same disk file before the exact
+        // variation arrived. Drop only that duplicate fact, never a physical file.
+        connection.execute(
+            "DELETE FROM product_files WHERE booth_id=?1 AND local_path=?2 AND downloadable_id IS NULL AND (variation!=?3 OR filename!=?4)",
+            params![booth_id,path.display().to_string(),variation,filename],
+        ).sql()?;
+    }
     let bytes = std::fs::metadata(path)
         .map(|meta| meta.len() as i64)
         .unwrap_or(0);
@@ -3504,7 +3532,7 @@ pub(crate) fn record_placed_download(
                scanned_at = excluded.scanned_at",
             params![
                 path.display().to_string(),
-                filename,
+                actual_filename,
                 bytes,
                 booth_id,
                 now_iso()
@@ -3808,6 +3836,7 @@ pub(crate) fn route_staged_download(connection: &mut Connection, source: &Path) 
         plan.library.as_deref(),
         &plan.booth_id,
     )?;
+    crate::extension_delivery::remember(connection, &plan.source, &plan.booth_id, &placed)?;
     record_placed_download(
         connection,
         &plan.booth_id,

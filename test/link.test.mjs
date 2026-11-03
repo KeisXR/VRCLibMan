@@ -29,7 +29,7 @@ async function popupHarness() {
     fetch: (...args) => request(...args),
     chrome: {
       runtime: { getManifest: () => manifest },
-      storage: { local: {
+      storage: { onChanged: { addListener() {} }, local: {
         get: async (defaults) => typeof defaults === "string"
           ? { [defaults]: stored[defaults] }
           : { ...defaults, ...stored },

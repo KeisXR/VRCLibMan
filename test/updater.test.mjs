@@ -49,6 +49,9 @@ test("updater requires explicit download and restart, survives stale status, and
       await tick();
     });
   try {
+    // The browser fixture subscribes through a lazy preview import. Finish loading
+    // it before mounting so teardown cannot close Vite with that import pending.
+    await server.ssrLoadModule("/src/preview/api.ts");
     const { appUpdater } = await server.ssrLoadModule("/src/api.ts");
     const { AppUpdater } = await server.ssrLoadModule(
       "/src/components/AppUpdater.tsx",

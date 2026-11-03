@@ -565,3 +565,46 @@ routeInput.addEventListener("change", async () => {
 });
 
 refreshLink();
+
+
+async function refreshDeliveries() {
+  const stored = await chrome.storage.local.get({ pendingDeliveries:[], downloadIntents:[], deliveryError:'', pairingToken:'' });
+  document.querySelector('#pending-count').textContent = `(${stored.pendingDeliveries.length})`;
+  const normalize = token => String(token).replace(/[\s-]/g,'').toUpperCase();
+  const previous = stored.pendingDeliveries.filter(row => row.token !== normalize(stored.pairingToken)).length;
+  document.querySelector('#delivery-status').textContent = `${stored.downloadIntents.length}件の取得を追跡中。未送信通知はアプリ起動後に再送します。${previous ? `接続先の異なる${previous}件は保留中です。` : ''}${stored.deliveryError}`;
+}
+document.querySelector('#retry-deliveries').addEventListener('click', async () => {
+  const result = await chrome.runtime.sendMessage({type:'retry-deliveries'});
+  if (result?.error) setStatus(result.error);
+  await refreshDeliveries();
+});
+chrome.storage.onChanged.addListener(() => refreshDeliveries());
+async function renderDownloadFiles() {
+  const target = document.querySelector('#download-files');
+  try {
+    const tab = await currentTab();
+    const products = await readTab();
+    let count = 0;
+    for (const product of products) for (const file of product.downloads || []) {
+      if (!globalThis.VrcLibManCompanion.choose(products,file.downloadableId)) continue;
+      if (!/\.(zip|unitypackage|rar|7z|vrm)$/i.test(file.filename)) continue;
+      const button = document.createElement('button');
+      button.type='button';button.className='secondary';
+      button.textContent=`${file.variation || product.title} · ${file.filename} を取得`;
+      button.addEventListener('click', async () => {
+        button.disabled=true;
+        try {
+          const response=await chrome.runtime.sendMessage({type:'start-download',tabId:tab.id,downloadableId:file.downloadableId});
+          if (response?.error || !response?.ok) throw new Error(response?.error || '取得を開始できません');
+          setStatus('ブラウザで取得を開始しました。完了後にアプリへ通知します。');
+        } catch(error) { setStatus(error.message); }
+        finally { button.disabled=false;await refreshDeliveries(); }
+      });
+      target.append(button);count++;
+    }
+    if (!count) target.textContent='このページに取得できる対象ファイルがありません。BOOTHで対象のダウンロード欄を開いてください。';
+  } catch { target.textContent='BOOTHの商品ページかライブラリを開いてください。'; }
+}
+renderDownloadFiles();
+refreshDeliveries();
