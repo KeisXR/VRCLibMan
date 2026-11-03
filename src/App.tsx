@@ -315,7 +315,6 @@ export default function App() {
         <aside className="rail">
           <div className="brand">
             <strong>VRCLibMan</strong>
-            <span>持っているアバターと衣装</span>
           </div>
           <nav>
             <a className={route.page === "avatars" || route.page === "avatar" ? "nav-link active" : "nav-link"} href="#/">
