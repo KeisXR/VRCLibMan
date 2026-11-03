@@ -120,7 +120,6 @@ a:hover { text-decoration: underline; }
 }
 .brand { display: flex; flex-direction: column; gap: 2px; padding: 0 var(--space-3); flex-shrink: 0; }
 .brand strong { font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
-.brand span { color: var(--faint); font-size: 12px; }
 .rail nav {
   display: flex;
   flex-direction: column;
