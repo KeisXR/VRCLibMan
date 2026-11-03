@@ -26,6 +26,7 @@ import {
   type AccountSnapshot,
 } from "./accountStatus";
 import { SidebarClassificationHint } from "./components/SidebarClassificationHint";
+import { BrandMark, NavIcon, SidebarToggleIcon, type NavIconName } from "./components/navIcons";
 import { RightPanelColumn, RightPanelProvider, useRightPanelState } from "./components/RightPanel";
 import { errorText } from "./ui";
 import { BrowserAutoClassification } from "./components/BrowserAutoClassification";
@@ -268,6 +269,18 @@ export default function App() {
   const browseBase = browseKind === "asset" ? "#/assets" : "#/worlds";
   const rightPanel = useRightPanelState(fail, { builtinBrowser });
   const layout = useAppLayout(browseKind !== null, rightPanel);
+  const collapsed = layout.railCollapsed;
+  const navItems: { href: string; label: string; icon: NavIconName; active: boolean; count?: number }[] = [
+    { href: "#/", label: "アバター", icon: "avatars", active: route.page === "avatars" || route.page === "avatar", count: stats?.ownedAvatars ?? 0 },
+    { href: "#/assets", label: "アセット", icon: "assets", active: route.page === "assets" },
+    { href: "#/worlds", label: "ワールド", icon: "worlds", active: route.page === "worlds" },
+    { href: "#/queue", label: "確認", icon: "queue", active: route.page === "queue", count: stats?.queueCount ?? 0 },
+    { href: "#/import", label: "インポート", icon: "import", active: route.page === "import" },
+    { href: "#/settings", label: "設定", icon: "settings", active: route.page === "settings" },
+    ...(builtinBrowser
+      ? [{ href: "#/browser", label: "ブラウザ", icon: "browser" as const, active: route.page === "browser" }]
+      : []),
+  ];
 
   const mainPane = (
     <div className="main" ref={contentRef} hidden={layout.panelMaximized}>
@@ -312,44 +325,48 @@ export default function App() {
       <BrowserAutoClassification />
       {setupComplete === false && <SetupWizard onRefresh={refresh} onDone={() => { setSetupComplete(true); refresh(); }} />}
       <div className="app app-shell" style={layout.gridStyle}>
-        <aside className="rail">
+        <aside className={collapsed ? "rail collapsed" : "rail"} data-collapsed={collapsed ? "true" : "false"}>
           <div className="brand">
-            <strong>VRCLibMan</strong>
+            <span className="brand-lockup">
+              <BrandMark />
+              {/* Wordmark image outlined from Urbanist Black 900; see docs/design/README.md. */}
+              <span className="brand-wordmark" role="img" aria-label="VRCLibMan" title="VRCLibMan" />
+            </span>
+            <button
+              type="button"
+              className="rail-toggle"
+              aria-expanded={!collapsed}
+              aria-controls="main-sidebar-nav"
+              aria-label={collapsed ? "サイドバーを開く" : "サイドバーを閉じる"}
+              title={collapsed ? "サイドバーを開く" : "サイドバーを閉じる"}
+              onClick={() => layout.setRailCollapsed(!collapsed)}
+            >
+              <SidebarToggleIcon collapsed={collapsed} />
+            </button>
           </div>
-          <nav>
-            <a className={route.page === "avatars" || route.page === "avatar" ? "nav-link active" : "nav-link"} href="#/">
-              アバター
-              <span className="count">{stats?.ownedAvatars ?? 0}</span>
-            </a>
-            <a className={route.page === "assets" ? "nav-link active" : "nav-link"} href="#/assets">
-              アセット
-            </a>
-            <a className={route.page === "worlds" ? "nav-link active" : "nav-link"} href="#/worlds">
-              ワールド
-            </a>
-            <a className={route.page === "queue" ? "nav-link active" : "nav-link"} href="#/queue">
-              確認
-              <span className="count">{stats?.queueCount ?? 0}</span>
-            </a>
-            <a className={route.page === "import" ? "nav-link active" : "nav-link"} href="#/import">
-              インポート
-            </a>
-            <a className={route.page === "settings" ? "nav-link active" : "nav-link"} href="#/settings">
-              設定
-            </a>
-            {builtinBrowser && (
-              <a className={route.page === "browser" ? "nav-link active" : "nav-link"} href="#/browser">
-                ブラウザ
+          <nav id="main-sidebar-nav" aria-label="メイン">
+            {navItems.map((item) => (
+              <a
+                key={item.href}
+                className={item.active ? "nav-link active" : "nav-link"}
+                href={item.href}
+                aria-current={item.active ? "page" : undefined}
+                title={collapsed ? (item.count == null ? item.label : `${item.label}（${item.count}）`) : undefined}
+              >
+                <NavIcon name={item.icon} />
+                <span className="nav-label">{item.label}</span>
+                {item.count != null && <span className="count">{item.count}</span>}
               </a>
-            )}
+            ))}
           </nav>
           <div className="rail-foot">
-            <SidebarClassificationHint revision={revision} />
+            <SidebarClassificationHint revision={revision} compact={collapsed} />
             <StartupUpdateCheck enabled={checkUpdateOnStartup} />
-            <SidebarUpdaterBadge onOpenSettings={openAppUpdateSettings} />
+            <SidebarUpdaterBadge onOpenSettings={openAppUpdateSettings} compact={collapsed} />
             {builtinBrowser && (
               <AccountPill
                 view={accountView}
+                compact={collapsed}
                 onLogin={() => {
                   void api.openBoothBrowser().then(
                     () => refreshAccount(),
@@ -364,26 +381,33 @@ export default function App() {
                 onFail={(message) => fail(message)}
               />
             )}
-            <div className="rail-status">
-              <span className="app-version">{version === "未確認" ? "バージョン未確認" : version ? `v${version}` : "バージョン確認中"}</span>
-              <span className="rail-status-sep" aria-hidden="true" />
-              <span className="rail-status-count">{stats ? `ライブラリ ${stats.products} 商品` : "読み込み中"}</span>
-              {!isTauri() && <span className="rail-preview-chip">ブラウザ確認用</span>}
-            </div>
+            {!collapsed && (
+              <div className="rail-status">
+                <span className="app-version">{version === "未確認" ? "バージョン未確認" : version ? `v${version}` : "バージョン確認中"}</span>
+                <span className="rail-status-sep" aria-hidden="true" />
+                <span className="rail-status-count">{stats ? `ライブラリ ${stats.products} 商品` : "読み込み中"}</span>
+                {!isTauri() && <span className="rail-preview-chip">ブラウザ確認用</span>}
+              </div>
+            )}
           </div>
         </aside>
-        <ResizeSeparator
-          label="メインサイドバーの幅"
-          value={layout.railWidth}
-          min={UI_RAIL_WIDTH.min}
-          max={UI_RAIL_WIDTH.max}
-          onChange={layout.setRailWidth}
-          onCommit={layout.persistRail}
-          onReset={() => {
-            layout.setRailWidth(UI_RAIL_WIDTH.default);
-            layout.persistRail(UI_RAIL_WIDTH.default);
-          }}
-        />
+        {collapsed ? (
+          // Keeps the grid's separator column; the icon rail has a fixed width.
+          <div className="resize-separator rail-fixed-separator" aria-hidden="true" />
+        ) : (
+          <ResizeSeparator
+            label="メインサイドバーの幅"
+            value={layout.railWidth}
+            min={UI_RAIL_WIDTH.min}
+            max={UI_RAIL_WIDTH.max}
+            onChange={layout.setRailWidth}
+            onCommit={layout.persistRail}
+            onReset={() => {
+              layout.setRailWidth(UI_RAIL_WIDTH.default);
+              layout.persistRail(UI_RAIL_WIDTH.default);
+            }}
+          />
+        )}
         {browseKind ? (
           <GenreBrowseProvider
             kind={browseKind}
@@ -449,11 +473,14 @@ function safeAvatar(url: string): string {
 
 function AccountPill({
   view,
+  compact = false,
   onLogin,
   onLogout,
   onFail,
 }: {
   view: AccountSnapshot;
+  /** Icon-only sidebar: show just the face; the name and state move to the tooltip and label. */
+  compact?: boolean;
   onLogin: () => void;
   onLogout: () => Promise<void>;
   onFail: (message: string) => void;
@@ -486,6 +513,8 @@ function AccountPill({
     ? view.account?.displayName.trim() || view.account?.pixivId.trim() || "ログイン中"
     : label;
   const subText = signedIn && view.phase === "unverified" ? "確認できません" : "";
+  const compactLabel = signedIn ? `${nameText}${subText ? `（${subText}）` : ""}` : label;
+  const pillClass = compact ? " compact" : "";
   const pillText = (
     <>
       {face}
@@ -521,17 +550,17 @@ function AccountPill({
   if (!signedIn) {
     if (view.phase === "checking") {
       return (
-        <div className="account-pill neutral" title={label} data-account-phase={view.phase}>
+        <div className={`account-pill neutral${pillClass}`} title={label} data-account-phase={view.phase}>
           {pillText}
         </div>
       );
     }
     return (
       <button
-        className={`account-pill neutral${unverified}`}
+        className={`account-pill neutral${unverified}${pillClass}`}
         type="button"
         onClick={onLogin}
-        title={label}
+        title={compact ? `${label}（ログイン）` : label}
         data-account-phase={view.phase}
       >
         {pillText}
@@ -557,9 +586,9 @@ function AccountPill({
   return (
     <div className="account-menu" ref={rootRef}>
       <button
-        className={`account-pill${unverified}`}
+        className={`account-pill${unverified}${pillClass}`}
         type="button"
-        title={label}
+        title={compact ? compactLabel : label}
         data-account-phase={view.phase}
         aria-expanded={open}
         aria-haspopup="menu"
@@ -576,7 +605,7 @@ function AccountPill({
         </span>
       </button>
       {open && (
-        <div className="account-popover" role="menu">
+        <div className={compact ? "account-popover compact" : "account-popover"} role="menu">
           {confirming ? (
             <div className="account-confirm">
               <p>内蔵ブラウザの全サイトからログアウトし、閲覧データを削除しますか？</p>

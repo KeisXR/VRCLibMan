@@ -65,6 +65,7 @@
 
   /* レイアウト */
   --sidebar-width: 232px;
+  --sidebar-collapsed-width: 60px;
   --content-max: 1120px;
 
   /* 文字（OS の UI フォント。日本語は Yu Gothic UI / Hiragino Sans / Noto Sans JP / Meiryo） */

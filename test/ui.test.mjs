@@ -857,6 +857,70 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         assert.equal(filterItems(freeAssets.items, "一致しない見本文字列").length, 0);
       },
     );
+    await t.test("left sidebar collapses to icons, keeps navigation and remembers the choice", async () => {
+      const rail = () => document.querySelector("aside.rail");
+      const toggle = () => rail().querySelector("button.rail-toggle");
+      const links = () => [...rail().querySelectorAll("nav a.nav-link")];
+      const separator = () => document.querySelector('[role="separator"][aria-label="メインサイドバーの幅"]');
+      await route("#/assets");
+      await wait(() => document.querySelector("main h1")?.textContent === "アセット");
+      assert.equal(toggle().getAttribute("aria-expanded"), "true");
+      assert.equal(toggle().getAttribute("aria-label"), "サイドバーを閉じる");
+      assert.equal(toggle().getAttribute("aria-controls"), rail().querySelector("nav").id);
+      assert.ok(links().length >= 6);
+      for (const link of links()) {
+        assert.equal(link.querySelector("svg.nav-icon")?.getAttribute("aria-hidden"), "true");
+        assert.ok(link.querySelector(".nav-label").textContent.trim());
+        assert.equal(link.getAttribute("title"), null);
+      }
+      assert.ok(rail().querySelector(".rail-status"));
+      assert.ok(separator());
+      const wordmark = () => rail().querySelector(".brand .brand-wordmark");
+      assert.equal(wordmark().getAttribute("role"), "img");
+      assert.equal(wordmark().getAttribute("aria-label"), "VRCLibMan");
+      assert.equal(rail().querySelector(".brand svg.brand-mark")?.getAttribute("aria-hidden"), "true");
+
+      await click(toggle());
+      await wait(() => rail().classList.contains("collapsed"));
+      assert.equal(toggle().getAttribute("aria-expanded"), "false");
+      assert.equal(toggle().getAttribute("aria-label"), "サイドバーを開く");
+      await wait(async () => (await api.settings()).uiRailCollapsed === true);
+      assert.match(document.querySelector(".app-shell").getAttribute("style") ?? "", /grid-template-columns:\s*60px 6px/);
+      // Labels stay in the DOM as the links' names and appear as tooltips.
+      const assets = rail().querySelector('a[href="#/assets"]');
+      assert.equal(assets.querySelector(".nav-label").textContent, "アセット");
+      assert.equal(assets.getAttribute("title"), "アセット");
+      assert.ok(assets.classList.contains("active"));
+      assert.equal(assets.getAttribute("aria-current"), "page");
+      assert.match(rail().querySelector('a[href="#/"]').getAttribute("title"), /^アバター（\d+）$/);
+      assert.match(rail().querySelector('a[href="#/queue"]').getAttribute("title"), /^確認（\d+）$/);
+      assert.equal(rail().querySelector(".rail-status"), null);
+      assert.equal(separator(), null);
+      // The mark stays; the wordmark is hidden by CSS but keeps naming the app.
+      assert.ok(rail().querySelector(".brand svg.brand-mark"));
+      assert.equal(wordmark().getAttribute("aria-label"), "VRCLibMan");
+      // The genre column is separate from the rail and keeps working.
+      assert.ok(document.querySelector('.genre-rail-nav a[href="#/assets"]'));
+      await route("#/worlds");
+      await wait(() => document.querySelector("main h1")?.textContent === "ワールド");
+      assert.ok(rail().querySelector('a[href="#/worlds"]').classList.contains("active"));
+      assert.ok(!rail().querySelector('a[href="#/assets"]').classList.contains("active"));
+      assert.ok(document.querySelector('.genre-rail-nav a[href="#/worlds"]'));
+
+      // A fresh start reads the saved choice.
+      await act(async () => root.unmount());
+      root = createRoot(document.getElementById("root"));
+      await act(async () => root.render(createElement(App)));
+      await wait(() => rail()?.classList.contains("collapsed"));
+      assert.equal(toggle().getAttribute("aria-expanded"), "false");
+
+      await click(toggle());
+      await wait(() => !rail().classList.contains("collapsed"));
+      assert.equal(toggle().getAttribute("aria-expanded"), "true");
+      await wait(async () => (await api.settings()).uiRailCollapsed === false);
+      assert.ok(separator());
+      assert.equal(rail().querySelector('a[href="#/worlds"]').getAttribute("title"), null);
+    });
     await t.test(
       "import guidance follows the selected method and logout explains its deletion scope",
       async () => {

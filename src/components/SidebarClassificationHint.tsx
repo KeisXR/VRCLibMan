@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { ClassificationStatus } from "../types";
+import { ReclassifyIcon } from "./navIcons";
 
-export function SidebarClassificationHint({ revision }: { revision: number }) {
+export function SidebarClassificationHint({ revision, compact = false }: { revision: number; compact?: boolean }) {
   const [status, setStatus] = useState<ClassificationStatus | null>(null);
   const [dismissedVersion, setDismissedVersion] = useState(0);
 
@@ -22,11 +23,19 @@ export function SidebarClassificationHint({ revision }: { revision: number }) {
     setDismissedVersion(next.classificationDismissedVersion);
   }
 
+  const message = `分類ルールが新しくなりました。再分類をおすすめします（${status.staleCount}件）`;
+  if (compact) {
+    // The icon rail has no room for the card; the link keeps the message as its name.
+    return (
+      <a className="rail-icon-button attention" href="#/import" aria-label={`${message}。再分類へ`} title={message}>
+        <ReclassifyIcon />
+      </a>
+    );
+  }
+
   return (
     <div className="sidebar-classify-hint">
-      <p>
-        分類ルールが新しくなりました。再分類をおすすめします（{status.staleCount}件）
-      </p>
+      <p>{message}</p>
       <div className="sidebar-classify-actions">
         <a className="button primary" href="#/import">
           再分類へ

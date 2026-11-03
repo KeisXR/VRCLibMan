@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { formatBytes } from "../media";
 import { useAppUpdater } from "../useAppUpdater";
-export function SidebarUpdaterBadge({ onOpenSettings }: { onOpenSettings: () => void }) {
+import { UpdateIcon } from "./navIcons";
+export function SidebarUpdaterBadge({ onOpenSettings, compact = false }: { onOpenSettings: () => void; compact?: boolean }) {
   const { status, pending } = useAppUpdater();
   const [dismissedVersion, setDismissedVersion] = useState("");
   const phase = status?.phase;
@@ -36,6 +37,21 @@ export function SidebarUpdaterBadge({ onOpenSettings }: { onOpenSettings: () => 
     if (!version) return;
     const next = await api.updateSettings({ uiUpdateDismissedVersion: version });
     setDismissedVersion(next.uiUpdateDismissedVersion);
+  }
+
+  if (compact) {
+    return (
+      <button
+        type="button"
+        className={`rail-icon-button${faint ? " faint" : " attention"}`}
+        onClick={onOpenSettings}
+        disabled={pending}
+        aria-label={`${label}。設定の「アプリの更新」を開きます`}
+        title={label}
+      >
+        <UpdateIcon />
+      </button>
+    );
   }
 
   return (

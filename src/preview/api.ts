@@ -164,6 +164,7 @@ const store: Store = {
     unloadOllamaAfterClassification: true,
     classificationDismissedVersion: 0,
     uiRailWidth: 232,
+    uiRailCollapsed: false,
     uiGenreWidth: 200,
     previewPane: false,
     previewPaneWidth: 300,
