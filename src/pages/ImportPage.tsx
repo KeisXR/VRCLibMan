@@ -499,7 +499,7 @@ export function ImportPage() {
               フォルダを調べる
             </button>
           </SettingRow>
-          <SettingRow label="ダウンロード済みファイルを登録" help="Downloads などのフォルダを選び、BOOTH の配布ファイル名と照合します。登録方法は照合後に選べます。">
+          <SettingRow label="ダウンロード済みファイルを登録" help="Downloads や別のフォルダを選び、ZIP・Unitypackage を BOOTH の配布ファイル名と照合します。元の場所に登録します。">
             <button className="button" type="button" disabled={busy} onClick={() => void findExisting()}>取り込み元を選ぶ</button>
           </SettingRow>
           {existingPreview && <div className="panel">
