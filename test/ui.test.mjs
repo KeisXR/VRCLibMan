@@ -101,6 +101,8 @@ test("setup, import and version flows with synthetic local data", async (t) => {
     };
     root = createRoot(document.getElementById("root"));
     await act(async () => root.render(createElement(App)));
+    await wait(() => button("はじめる", document.querySelector(".setup-screen")));
+    await click(button("はじめる", document.querySelector(".setup-screen")));
     await wait(
       () =>
         document.querySelector(".setup-screen") &&
@@ -171,7 +173,13 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         assert.ok(!(await api.settings()).builtinBrowser);
         assert.equal((await api.settings()).ollamaModel, "qwen3.5:9b");
         await click(button("次へ", document.querySelector(".setup-screen")));
-        await click(button("あとで設定で選ぶ"));
+        await wait(() => document.querySelector(".setup-guide"));
+        assert.ok(document.querySelector(".setup-guide").textContent.includes("拡張機能を選択"));
+        await click(button("スキップ", document.querySelector(".setup-guide")));
+        await click(button("次へ", document.querySelector(".setup-guide")));
+        await click(button("次へ", document.querySelector(".setup-guide")));
+        await click(button("スキップ", document.querySelector(".setup-guide")));
+        await click(button("あとで設定する"));
         await wait(() => !document.querySelector(".setup-screen"));
       },
     );
@@ -1160,6 +1168,8 @@ test("setup, import and version flows with synthetic local data", async (t) => {
           requestRefresh();
           await delay();
         });
+        await wait(() => button("はじめる", document.querySelector(".setup-screen")));
+        await click(button("はじめる", document.querySelector(".setup-screen")));
         await wait(
           () =>
             document.querySelector(".setup-screen") &&

@@ -310,7 +310,7 @@ export default function App() {
     <ShellContext.Provider value={shell}>
     <RightPanelProvider value={rightPanel}>
       <BrowserAutoClassification />
-      {setupComplete === false && <SetupWizard onDone={() => { setSetupComplete(true); refresh(); }} />}
+      {setupComplete === false && <SetupWizard onRefresh={refresh} onDone={() => { setSetupComplete(true); refresh(); }} />}
       <div className="app app-shell" style={layout.gridStyle}>
         <aside className="rail">
           <div className="brand">
