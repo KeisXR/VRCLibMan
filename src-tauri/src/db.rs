@@ -795,7 +795,7 @@ pub(crate) fn regenerate_extension_token(connection: &Connection) -> Result<Stri
     Ok(token)
 }
 
-fn setting(connection: &Connection, key: &str) -> Result<Option<String>, String> {
+pub(crate) fn setting(connection: &Connection, key: &str) -> Result<Option<String>, String> {
     connection
         .query_row(
             "SELECT value FROM settings WHERE key = ?1",
@@ -806,7 +806,7 @@ fn setting(connection: &Connection, key: &str) -> Result<Option<String>, String>
         .sql()
 }
 
-fn set_setting(connection: &Connection, key: &str, value: &str) -> Result<(), String> {
+pub(crate) fn set_setting(connection: &Connection, key: &str, value: &str) -> Result<(), String> {
     connection
         .execute(
             "INSERT INTO settings (key, value) VALUES (?1, ?2)

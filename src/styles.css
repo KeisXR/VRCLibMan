@@ -1585,3 +1585,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .browser-auto-dialog::backdrop { background: #0008; }
 .browser-auto-dialog .field { margin-block: 16px; }
 .browser-auto-resume { position: fixed; bottom: 16px; left: 24px; z-index: 30; }
+
+.asset-updates { display: grid; gap: 12px; }
+.asset-update-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+.asset-update-list li { border-top: 1px solid var(--border); padding-top: 12px; }
+.asset-updates select { max-width: 100%; min-width: 0; }
+.asset-update-list p { margin: 6px 0; }

@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AppUpdateStatus,
+  AssetUpdateStatus,
+  AssetUpdateConfigure,
   AvatarCard,
   BrowserState,
   BrowserAction,
@@ -66,6 +68,12 @@ export async function appVersion(): Promise<string> {
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
+
+export const assetUpdates = {
+  status: () => call<AssetUpdateStatus>("asset_update_status"),
+  configure: (input: AssetUpdateConfigure) => call<AssetUpdateStatus>("configure_asset_updates", { input }),
+  check: () => call<AssetUpdateStatus>("check_asset_updates"),
+};
 
 export const appUpdater = {
   status: () => call<AppUpdateStatus>("updater_status"),

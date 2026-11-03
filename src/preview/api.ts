@@ -31,6 +31,8 @@ import type {
   Section,
   Settings,
   AppUpdateStatus,
+  AssetUpdateStatus,
+  AssetUpdateConfigure,
 } from "../types";
 
 const excludedProducts = new Set<string>();
@@ -1768,9 +1770,34 @@ function previewUnityStatus(): UnityStatus {
   };
 }
 
+let assetWatch: AssetUpdateStatus = { automatic: false, running: false, rows: [] };
+
 export async function dispatch<T>(command: string, args: Record<string, unknown>): Promise<T> {
   notePreviewCall(command);
   switch (command) {
+    case "asset_update_status": return structuredClone(assetWatch) as T;
+    case "configure_asset_updates": {
+      const input = args.input as AssetUpdateConfigure;
+      if (input.automatic !== undefined) assetWatch.automatic = input.automatic;
+      if (input.boothId) {
+        let row = assetWatch.rows.find((r) => r.boothId === input.boothId);
+        if (!row && input.enabled) {
+          const p = activeProducts().find((p) => p.boothId === input.boothId);
+          if (!p) throw new Error("登録済みの商品を選んでください");
+          row = { boothId: p.boothId, title: p.title, enabled: true, checkedAt: null, error: null, changes: [], revision: 0 };
+          assetWatch.rows.push(row);
+        }
+        if (row) {
+          if (input.enabled !== undefined) row.enabled = input.enabled;
+          if (input.acknowledge) { row.changes = []; row.revision++; }
+        }
+      }
+      return structuredClone(assetWatch) as T;
+    }
+    case "check_asset_updates":
+      assetWatch.rows.forEach((r) => { if (r.enabled) { const first = !r.checkedAt; r.checkedAt = new Date().toISOString(); if (!first) r.changes = ["商品説明の変更"]; } });
+      return structuredClone(assetWatch) as T;
+
     case "updater_status":
       return previewUpdaterStatus as T;
     case "check_app_update": {

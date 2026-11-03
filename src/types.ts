@@ -660,3 +660,24 @@ export interface UnityLaunchResult {
 
 /** "unity" は設定の既定 Unity で -openfile、"system" は OS の関連付け */
 export type UnityLaunchMode = "unity" | "system";
+
+export interface AssetUpdateRow {
+  revision: number;
+  boothId: string;
+  title: string;
+  enabled: boolean;
+  checkedAt: string | null;
+  error: string | null;
+  changes: string[];
+}
+export interface AssetUpdateStatus {
+  automatic: boolean;
+  running: boolean;
+  rows: AssetUpdateRow[];
+}
+export interface AssetUpdateConfigure {
+  automatic?: boolean;
+  boothId?: string;
+  enabled?: boolean;
+  acknowledge?: boolean;
+}

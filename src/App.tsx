@@ -1,3 +1,4 @@
+import { useAssetUpdateNotice } from "./useAssetUpdateNotice";
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, appVersion, isTauri, listenBoothUsed, listenProgress, onRefresh } from "./api";
 import { AvatarsPage } from "./pages/AvatarsPage";
@@ -100,6 +101,7 @@ export default function App() {
   const [stats, setStats] = useState<LibraryStats | null>(null);
   const [progress, setProgress] = useState<JobProgress | null>(null);
   const { notice, error, notify, fail, setError, dismissNotice, dismissError, runNoticeAction } = useBanners();
+  useAssetUpdateNotice(notify);
   const [revision, setRevision] = useState(0);
   const [builtinBrowser, setBuiltinBrowser] = useState(false);
   const [accountView, setAccountView] = useState<AccountSnapshot>(checkingAccount());
