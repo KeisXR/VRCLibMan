@@ -113,8 +113,8 @@ test("avatar hero measures cached images and never defaults to wide before measu
   // 未計測の既定は wide ではない
   assert.match(hero, /useState<AvatarHeroLayoutState>\("pending"\)/);
   assert.doesNotMatch(hero, /useState<AvatarHeroLayout>\("wide"\)/);
-  // path/url 変更で pending にリセット
-  assert.match(hero, /setLayout\("pending"\);\s*\}, \[path, url\]\);/);
+  // path/url/version 変更で pending にリセット
+  assert.match(hero, /setLayout\("pending"\);\s*\}, \[path, url, version\]\);/);
   assert.doesNotMatch(hero, /setLayout\("wide"\)/);
   // complete 済み画像でも計測（onLoad を取り逃しても）
   assert.match(hero, /img\.complete/);
@@ -127,4 +127,80 @@ test("avatar hero measures cached images and never defaults to wide before measu
   assert.match(probe, /onError=/);
   // 未計測中は全幅 cover 画像を出さない
   assert.match(hero, /src && !pending \?/);
+});
+
+test("a custom hero image wins over the thumbnail and busts the cache by version", async () => {
+  const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  try {
+    const hero = await server.ssrLoadModule("/src/avatarHero.ts");
+    const thumb = { thumbnailPath: "/thumbs/1.jpg", thumbnailUrl: "https://booth.pximg.net/1.jpg" };
+    assert.deepEqual(hero.avatarHeroSource({ ...thumb, heroImagePath: null, heroImageVersion: null }), {
+      path: "/thumbs/1.jpg",
+      url: "https://booth.pximg.net/1.jpg",
+      version: null,
+    });
+    // カスタムのときはリモートの URL に落ちない
+    assert.deepEqual(hero.avatarHeroSource({ ...thumb, heroImagePath: "/hero/lime.png", heroImageVersion: 7 }), {
+      path: "/hero/lime.png",
+      url: null,
+      version: 7,
+    });
+    assert.equal(hero.versionedHeroSrc("asset://a.png", 7), "asset://a.png?v=7");
+    assert.equal(hero.versionedHeroSrc("asset://a.png?x=1", 7), "asset://a.png?x=1&v=7");
+    assert.equal(hero.versionedHeroSrc("asset://a.png", null), "asset://a.png");
+    assert.equal(hero.versionedHeroSrc(null, 7), null);
+  } finally {
+    await server.close();
+  }
+});
+
+test("avatar detail passes the custom image to the hero and keeps the toolbar unchanged", () => {
+  const detail = readFileSync("src/pages/AvatarDetailPage.tsx", "utf8");
+  assert.match(detail, /avatarHeroSource\(detail\)/);
+  assert.match(detail, /path=\{heroImage\.path\}/);
+  assert.match(detail, /url=\{heroImage\.url\}/);
+  assert.match(detail, /version=\{heroImage\.version\}/);
+  assert.doesNotMatch(detail, /path=\{detail\.thumbnailPath\}/);
+  // メニューはヒーローの中だけ。旧デザインの枝には出さない
+  const heroBranch = detail.slice(detail.indexOf("<AvatarHero\n"), detail.indexOf("<AvatarHeroToolbar primary"));
+  assert.match(heroBranch, /<AvatarHeroMenu/);
+  assert.equal(detail.match(/<AvatarHeroMenu/g).length, 1);
+  // 操作行は Unity / BOOTH / アイテムを追加 だけ
+  const toolbar = detail.slice(detail.indexOf("function AvatarHeroToolbar"), detail.indexOf("function AvatarAssetsPanel"));
+  assert.equal(toolbar.match(/<button\b/g).length, 1);
+  assert.equal(toolbar.match(/<UnityOpenButton\b/g).length, 1);
+  assert.doesNotMatch(toolbar, /画像を変更|サムネに戻す|AvatarHeroMenu/);
+});
+
+test("hero image menu stays quiet until hover or focus and draws no accent", () => {
+  const menu = readFileSync("src/components/AvatarHeroMenu.tsx", "utf8");
+  assert.match(menu, /画像を変更/);
+  assert.match(menu, /サムネに戻す/);
+  assert.match(menu, /disabled=\{!hasCustomImage\}/);
+  assert.match(menu, /chooseHeroImage/);
+  assert.match(menu, /role="menu"/);
+  const api = readFileSync("src/api.ts", "utf8");
+  assert.match(api, /extensions: \["png", "jpg", "jpeg", "webp"\]/);
+  assert.match(api, /"set_avatar_hero_image", \{ avatarId, sourcePath \}/);
+  assert.match(api, /"clear_avatar_hero_image", \{ avatarId \}/);
+  const css = readFileSync("src/styles.css", "utf8");
+  // .icon-button より後ろの定義に負けないこと
+  assert.match(css, /\.icon-button\.avatar-hero-menu-trigger \{[^}]*opacity: 0/);
+  assert.match(css, /\.avatar-hero:hover \.icon-button\.avatar-hero-menu-trigger/);
+  assert.match(css, /\.avatar-hero-menu:focus-within \.icon-button\.avatar-hero-menu-trigger/);
+  assert.match(css, /@media \(hover: none\) \{\s*\.icon-button\.avatar-hero-menu-trigger \{ opacity: 1; \}/);
+  assert.match(css, /prefers-reduced-motion: reduce[\s\S]*\.icon-button\.avatar-hero-menu-trigger \{ transition: none; \}/);
+  const block = css.slice(css.indexOf(".avatar-hero-menu {"), css.indexOf("/* ヒーロー直下の操作行"));
+  assert.doesNotMatch(block, /--line-accent|--accent/);
+});
+
+test("hero images stay out of remote sync", () => {
+  const sync = readFileSync("docs/remote-sync.md", "utf8");
+  const excluded = sync.slice(sync.indexOf("## 含めないもの"), sync.indexOf("## 変更メタ"));
+  assert.match(excluded, /アバターのカスタムヒーロー画像（ファイルとパス）/);
+  for (const file of ["src-tauri/src/sync_export.rs", "src-tauri/src/sync_meta.rs"]) {
+    const code = readFileSync(file, "utf8");
+    const production = code.slice(0, code.indexOf("#[cfg(test)]"));
+    assert.doesNotMatch(production, /hero_image/, file);
+  }
 });

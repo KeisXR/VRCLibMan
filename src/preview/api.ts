@@ -851,6 +851,8 @@ function detail(id: string): AvatarDetail {
     owned: avatar.owned,
     thumbnailPath: view.thumbnailPath,
     thumbnailUrl: view.thumbnailUrl,
+    heroImagePath: null,
+    heroImageVersion: null,
     siblings,
     ownedProducts: view.owned,
     sections: view.sections,
@@ -2143,6 +2145,11 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       store.links = store.links.filter((link) => link.avatarId !== avatar.id);
       return undefined as T;
     }
+    // 見本には画像の保存先が無い。画面からは chooseHeroImage が先に案内する。
+    case "set_avatar_hero_image":
+      throw new Error("画像の変更はデスクトップアプリで使えます");
+    case "clear_avatar_hero_image":
+      return undefined as T;
     case "save_base_body": {
       const body = args.body as { id?: string | null; displayName: string; note: string };
       const displayName = body.displayName.trim();

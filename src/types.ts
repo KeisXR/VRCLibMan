@@ -131,6 +131,10 @@ export interface AvatarDetail {
   owned: boolean;
   thumbnailUrl: string | null;
   thumbnailPath: string | null;
+  /** カスタムのヒーロー画像だけ。未指定は null で、サムネイルへフォールバックする。 */
+  heroImagePath: string | null;
+  /** 同じパスのまま差し替えても画面が気付けるよう、ファイルの更新時刻を持つ。 */
+  heroImageVersion: number | null;
   siblings: Sibling[];
   ownedProducts: ItemView[];
   sections: Section[];

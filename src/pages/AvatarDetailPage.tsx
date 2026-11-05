@@ -6,7 +6,9 @@ import { CATEGORY_LABEL } from "../types";
 import type { AvatarDetail, BoothFileStatus, DownloadView, ItemView, Knowledge, ProductOption } from "../types";
 import { FileMark, Thumb, errorText } from "../ui";
 import { AvatarHero } from "../components/AvatarHero";
+import { AvatarHeroMenu } from "../components/AvatarHeroMenu";
 import {
+  avatarHeroSource,
   normalizeAvatarHero,
   readAssetsOpenPref,
   writeAssetsOpenPref,
@@ -137,6 +139,7 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
   const addAction = <AddAvatarItem avatarId={detail.id} linkedIds={linkedIds} />;
   const primaryOwned = detail.ownedProducts[0] ?? null;
   const backLink = <a href="#/">アバター一覧へ</a>;
+  const heroImage = avatarHeroSource(detail);
 
   return (
     <section className={heroSize === "off" ? undefined : "avatar-detail"}>
@@ -155,12 +158,20 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
         <>
           <AvatarHero
             size={heroSize}
-            path={detail.thumbnailPath}
-            url={detail.thumbnailUrl}
+            path={heroImage.path}
+            url={heroImage.url}
+            version={heroImage.version}
             name={detail.displayName}
             kicker="アバター"
             subtitle={subtitle}
             nav={backLink}
+            menu={
+              <AvatarHeroMenu
+                avatarId={detail.id}
+                avatarName={detail.displayName}
+                hasCustomImage={detail.heroImagePath != null}
+              />
+            }
           />
           <AvatarHeroToolbar primary={primaryOwned} addAction={addAction} />
           {primaryOwned ? <AvatarAssetsPanel item={primaryOwned} itemCardProps={itemCardProps} /> : null}
