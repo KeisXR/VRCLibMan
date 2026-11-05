@@ -649,8 +649,16 @@ button.account-pill:hover { background: var(--hover); }
   to { opacity: 1; transform: none; }
 }
 .content {
-  padding: var(--space-6) var(--space-6) 64px;
+  --content-pad-x: var(--space-6);
+  --content-pad-top: var(--space-6);
+  padding: var(--content-pad-top) var(--content-pad-x) 64px;
   max-width: calc(var(--content-max) + var(--space-6) * 2);
+}
+.content.density-compact { --content-pad-top: 28px; }
+.content.density-roomy {
+  --content-pad-x: 48px;
+  --content-pad-top: 48px;
+  padding-bottom: 80px;
 }
 .content > section { animation: rise var(--motion) ease; }
 .page-head {
@@ -688,28 +696,15 @@ button.account-pill:hover { background: var(--hover); }
   overflow: hidden;
   flex: none;
   height: var(--avatar-hero-h, 320px);
-  /* .content の左右・上パディングを打ち消し、サイドバー／topbar 端まで詰める */
-  margin: calc(-1 * var(--space-6)) calc(-1 * var(--space-6)) var(--space-5);
-  width: calc(100% + var(--space-6) * 2);
+  /* .content の --content-pad-* を打ち消し、サイドバー／topbar 端まで詰める */
+  margin: calc(-1 * var(--content-pad-top)) calc(-1 * var(--content-pad-x)) var(--space-5);
+  width: calc(100% + var(--content-pad-x) * 2);
   max-width: none;
   border-radius: 0;
   background: var(--bg);
 }
 .avatar-hero[data-size="large"] { --avatar-hero-h: 400px; }
 .avatar-hero[data-size="small"] { --avatar-hero-h: 320px; }
-.density-compact .avatar-hero {
-  /* compact は content の上パディングだけ 28px。左右は --space-6 のまま */
-  margin-top: -28px;
-}
-.density-roomy .avatar-hero {
-  margin: -48px -48px var(--space-5);
-  width: calc(100% + 96px);
-}
-.density-roomy .avatar-hero-nav,
-.density-roomy .avatar-hero-body {
-  left: 48px;
-  right: 48px;
-}
 .avatar-hero-media {
   position: absolute;
   inset: 0;
@@ -776,8 +771,8 @@ button.account-pill:hover { background: var(--hover); }
 .avatar-hero-nav {
   position: absolute;
   top: var(--space-4);
-  left: var(--space-6);
-  right: var(--space-6);
+  left: var(--content-pad-x);
+  right: var(--content-pad-x);
   z-index: 2;
   margin: 0;
 }
@@ -787,8 +782,8 @@ button.account-pill:hover { background: var(--hover); }
 }
 .avatar-hero-body {
   position: absolute;
-  left: var(--space-6);
-  right: var(--space-6);
+  left: var(--content-pad-x);
+  right: var(--content-pad-x);
   bottom: var(--space-5);
   z-index: 1;
   display: flex;
@@ -1454,7 +1449,6 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .ownership { margin-top: var(--space-5); }
 .ownership-title { margin: 0 0 var(--space-2); font-size: 20px; letter-spacing: -0.02em; }
 
-.density-compact .content { padding-top: 28px; }
 .density-compact .page-head { margin-bottom: var(--space-4); }
 .density-compact .page-head h1 { font-size: 26px; }
 .density-compact .cards { gap: 10px; }
@@ -1468,7 +1462,6 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .density-compact .group { margin-bottom: var(--space-4); }
 .density-compact .stack { gap: 8px; }
 
-.density-roomy .content { padding: 48px 48px 80px; }
 .density-roomy .page-head { margin-bottom: 32px; }
 .density-roomy .panel { padding: 24px; margin-bottom: 20px; }
 .density-roomy .form-grid { gap: 20px 16px; }
@@ -1476,24 +1469,18 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 /* 860px 以下でも列の並びは変えない。左サイドバーは useAppLayout がアイコン表示にする（保存はしない） */
 @media (max-width: 860px) {
   .split, .knowledge, .form-grid { grid-template-columns: 1fr; }
-  .content, .density-roomy .content { padding: var(--space-4); }
+  .content,
+  .content.density-roomy,
+  .content.density-compact {
+    --content-pad-x: var(--space-4);
+    --content-pad-top: var(--space-4);
+    padding: var(--content-pad-top) var(--content-pad-x) 64px;
+  }
   .banner, .progress { margin-left: var(--space-4); margin-right: var(--space-4); }
 
-  .avatar-hero,
-  .density-compact .avatar-hero,
-  .density-roomy .avatar-hero {
-    margin: calc(-1 * var(--space-4)) calc(-1 * var(--space-4)) var(--space-5);
-    width: calc(100% + var(--space-4) * 2);
-  }
   .avatar-hero[data-size="large"],
   .avatar-hero[data-size="small"] { --avatar-hero-h: 220px; }
   .avatar-hero-title { font-size: 26px; }
-  .avatar-hero-nav,
-  .avatar-hero-body,
-  .density-compact .avatar-hero-nav,
-  .density-compact .avatar-hero-body,
-  .density-roomy .avatar-hero-nav,
-  .density-roomy .avatar-hero-body { left: var(--space-4); right: var(--space-4); }
   .avatar-hero-body { bottom: 12px; flex-direction: column; align-items: stretch; }
   .avatar-hero-actions { justify-content: flex-start; }
 }
