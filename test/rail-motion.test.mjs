@@ -5,24 +5,65 @@ import { createServer } from "vite";
 
 const css = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 
-test("rail motion: width slides only while the right panel is closed", async () => {
+test("rail motion: width slides on every toggle, hold only when the panel rectangle changes", async () => {
   const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
   try {
-    const { railMotionAttrs } = await server.ssrLoadModule("/src/uiLayout.ts");
-    assert.deepEqual(railMotionAttrs(false, false), {});
-    assert.deepEqual(railMotionAttrs(false, true), {});
-    assert.deepEqual(railMotionAttrs(true, false), { "data-rail-motion": "slide" });
-    // Panel open: never the slide value, so the grid gets no transition.
-    assert.deepEqual(railMotionAttrs(true, true), { "data-rail-motion": "fade" });
+    const { railMotionAttrs, railMotionHoldsPanel, computeAppLayout } = await server.ssrLoadModule("/src/uiLayout.ts");
+    assert.deepEqual(railMotionAttrs("none"), {});
+    assert.deepEqual(railMotionAttrs("slide"), { "data-rail-motion": "slide" });
+    assert.deepEqual(railMotionAttrs("hold"), { "data-rail-motion": "slide", "data-rail-hold": "" });
+    const base = { railWidth: 200, genreWidth: 200, browseGenre: true, panelOpen: true, panelMaximized: false, panelStoredWidth: 360 };
+    const toggle = (input) => railMotionHoldsPanel(computeAppLayout({ ...input, railCollapsed: false }), computeAppLayout({ ...input, railCollapsed: true }));
+    // Panel closed: never hold.
+    assert.equal(toggle({ ...base, windowWidth: 1150, panelOpen: false }), false);
+    // Wide window with the panel open: the list absorbs the change, so the panel stays put.
+    assert.equal(toggle({ ...base, windowWidth: 1600 }), false);
+    assert.equal(toggle({ ...base, windowWidth: 1280, browseGenre: false }), false);
+    // Maximized panel follows the rail, so the page is hidden.
+    assert.equal(toggle({ ...base, windowWidth: 1600, panelMaximized: true }), true);
+    // Around 1020–1140px the genre column flips with the toggle, but the panel keeps its width
+    // and left edge (the list absorbs it), so the page keeps following: no hold.
+    let flips = 0;
+    for (let w = 1000; w <= 1400; w += 2) {
+      const input = { ...base, windowWidth: w };
+      const a = computeAppLayout({ ...input, railCollapsed: false });
+      const b = computeAppLayout({ ...input, railCollapsed: true });
+      assert.equal(toggle(input), a.panelWidth !== b.panelWidth, `w=${w}`);
+      if (a.genreVisible !== b.genreVisible) flips++;
+    }
+    assert.ok(flips > 0, "a width where the genre column flips exists");
+    // A stored width at the limit gets clamped differently with the rail open or closed: hold.
+    let clamped = false;
+    for (let w = 1000; w <= 1400 && !clamped; w += 2) clamped = toggle({ ...base, windowWidth: w, browseGenre: false, panelStoredWidth: 5000 });
+    assert.ok(clamped, "panel width clamped at its limit changes with the toggle");
   } finally {
     await server.close();
   }
 });
 
+test("rail motion: hold hides the docked page like a drag", async () => {
+  const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  const prev = globalThis.document;
+  try {
+    const { browserPanelVisible } = await server.ssrLoadModule("/src/browserPanel.ts");
+    const area = { left: 900, top: 40, width: 360, height: 600 };
+    let hold = false;
+    globalThis.document = { body: { classList: { contains: () => false } }, querySelector: (sel) => (sel === "[data-rail-hold]" && hold ? {} : null) };
+    assert.equal(browserPanelVisible(area, { overlay: false, dragging: false, covers: [] }), true);
+    hold = true;
+    assert.equal(browserPanelVisible(area, { overlay: false, dragging: false, covers: [] }), false);
+  } finally {
+    globalThis.document = prev;
+    await server.close();
+  }
+  const panel = readFileSync(new URL("../src/components/BrowserPanel.tsx", import.meta.url), "utf8");
+  assert.match(panel, /attributeFilter: \[[^\]]*"data-rail-hold"/, "the hold attribute re-reports the panel");
+});
+
 test("rail motion: grid transition only under slide, and only on allowed properties", () => {
   const slide = '.app-shell[data-rail-motion="slide"] { transition: grid-template-columns var(--motion-rail) var(--ease-out); }';
   assert.ok(css.includes(slide), "the slide rule animates the grid width");
-  // No other rule (including the fade one used while the right panel is open) moves the grid.
+  // No other rule moves the grid.
   assert.doesNotMatch(css.replace(slide, ""), /grid-template-columns[^;{}]*(var\(--motion|ms)/);
   assert.doesNotMatch(css.replace(slide, ""), /transition:[^;]*grid-template-columns/);
   for (const name of ["rail-label-in", "rail-icon-in"]) {
@@ -43,25 +84,8 @@ test("rail motion: reduced motion stops every animation and transition", () => {
   assert.match(block, /transition: none !important/);
 });
 
-test("rail motion: fade mode never blanks the rail and fades labels out on collapse", () => {
-  const rule = (sel) => {
-    const i = css.indexOf(sel + " {");
-    assert.ok(i >= 0, sel);
-    return css.slice(i, css.indexOf("}", i));
-  };
-  const open = rule('.app-shell[data-rail-motion="fade"] .rail:not(.collapsed) :is(.nav-label, .count, .brand-wordmark, .rail-status)');
-  assert.doesNotMatch(open, /var\(--motion-delay\)|\bboth\b|backwards/, "no delay/backwards fill that forces opacity 0 after the width snap");
-  assert.match(css, /@keyframes rail-label-in-soft \{ from \{ opacity: 0\.35;/);
-  assert.match(css, /@keyframes rail-icon-in-soft \{ from \{ opacity: 0\.4; \}/);
-  const out = rule('.app-shell[data-rail-motion="fade"] .rail.collapsed :is(.brand-wordmark, .nav-label, .count)');
-  assert.match(out, /clip: auto/);
-  assert.match(out, /animation: rail-label-out var\(--motion-fade-out\)/);
-  assert.ok(css.includes("--motion-fade-out: 100ms"));
-  assert.match(css, /@keyframes rail-label-out \{ from \{ opacity: 1; \} to \{ opacity: 0; \} \}/);
-  for (const name of ["rail-label-in-soft", "rail-icon-in-soft", "rail-label-out"]) {
-    const body = new RegExp(`@keyframes ${name} \\{([^\\n]*)\\}`).exec(css)?.[1];
-    for (const m of body.matchAll(/([a-z-]+):/g)) assert.ok(["opacity", "transform"].includes(m[1]), `${name} animates ${m[1]}`);
-  }
+test("rail motion: the old fade mode is gone", () => {
+  assert.doesNotMatch(css, /data-rail-motion="fade"|rail-label-out|-in-soft|--motion-fade-out/);
 });
 
 test("rail motion: slide mode values are unchanged (C2)", () => {

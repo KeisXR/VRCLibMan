@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import { RIGHT_PANEL_SEPARATOR } from "./rightPanel";
-import { UI_GENRE_WIDTH, UI_RAIL_WIDTH, clampGenreWidth, clampRailWidth, computeAppLayout, railMotionAttrs } from "./uiLayout";
+import { UI_GENRE_WIDTH, UI_RAIL_WIDTH, clampGenreWidth, clampRailWidth, computeAppLayout, railMotionAttrs, railMotionHoldsPanel } from "./uiLayout";
+import type { AppLayoutInput, RailMotion } from "./uiLayout";
 
 /** How long the toggle keeps the motion attributes on (width 140ms + label 30ms delay + 120ms, rounded up). */
 export const RAIL_MOTION_HOLD_MS = 220;
@@ -25,7 +26,7 @@ export function useAppLayout(browseGenre: boolean, panel: PanelLayoutInput = { o
   const [genreWidth, setGenreWidth] = useState(UI_GENRE_WIDTH.default);
   const [windowWidth, setWindowWidth] = useState(currentWindowWidth);
   // Set only by the toggle, so window resizes, separator drags and the first load never animate.
-  const [railMotion, setRailMotion] = useState(false);
+  const [railMotion, setRailMotion] = useState<RailMotion>("none");
   const railMotionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (railMotionTimer.current) clearTimeout(railMotionTimer.current); }, []);
 
@@ -45,20 +46,22 @@ export function useAppLayout(browseGenre: boolean, panel: PanelLayoutInput = { o
 
   // See computeAppLayout: icon rail at 860px or less (not saved), the genre column only when
   // the list keeps 480px, and the right panel over the page below 1000px.
-  const layout = useMemo(
-    () =>
-      computeAppLayout({
-        windowWidth,
-        railWidth,
-        railCollapsed,
-        genreWidth,
-        browseGenre,
-        panelOpen: panel.open,
-        panelMaximized: panel.maximized,
-        panelStoredWidth: panel.width,
-      }),
+  const layoutInput = useMemo<AppLayoutInput>(
+    () => ({
+      windowWidth,
+      railWidth,
+      railCollapsed,
+      genreWidth,
+      browseGenre,
+      panelOpen: panel.open,
+      panelMaximized: panel.maximized,
+      panelStoredWidth: panel.width,
+    }),
     [windowWidth, railWidth, railCollapsed, genreWidth, browseGenre, panel.open, panel.maximized, panel.width],
   );
+  const layout = useMemo(() => computeAppLayout(layoutInput), [layoutInput]);
+  const layoutInputRef = useRef(layoutInput);
+  layoutInputRef.current = layoutInput;
   const { genreVisible, panelDocked, panelMaximized, panelWidth } = layout;
 
   const persistRail = useCallback((value: number) => {
@@ -66,13 +69,16 @@ export function useAppLayout(browseGenre: boolean, panel: PanelLayoutInput = { o
     void api.updateSettings({ uiRailWidth: next });
   }, []);
 
-  // The width animates only while the right panel is closed. With the panel open the docked
-  // browser page is a native view placed from the DOM, so the columns change in one frame.
+  // The width slides on every toggle. With the right panel open the docked page (a native view)
+  // follows the viewport; if the toggle would also move or resize the panel itself, the page is
+  // hidden for the motion instead ("hold").
   const setRailCollapsed = useCallback((next: boolean) => {
     railToggled.current = true;
-    setRailMotion(true);
+    const input = layoutInputRef.current;
+    const hold = railMotionHoldsPanel(computeAppLayout(input), computeAppLayout({ ...input, railCollapsed: next }));
+    setRailMotion(hold ? "hold" : "slide");
     if (railMotionTimer.current) clearTimeout(railMotionTimer.current);
-    railMotionTimer.current = setTimeout(() => setRailMotion(false), RAIL_MOTION_HOLD_MS);
+    railMotionTimer.current = setTimeout(() => setRailMotion("none"), RAIL_MOTION_HOLD_MS);
     setRailCollapsedState(next);
     void api.updateSettings({ uiRailCollapsed: next }).catch(() => undefined);
   }, []);
@@ -116,7 +122,7 @@ export function useAppLayout(browseGenre: boolean, panel: PanelLayoutInput = { o
     panelMax: layout.panelMax,
     gridStyle,
     /** data-rail-motion for the app shell while a toggle is animating. */
-    railMotionAttrs: railMotionAttrs(railMotion, panel.open),
+    railMotionAttrs: railMotionAttrs(railMotion),
     setRailWidth,
     setGenreWidth,
     persistRail,
