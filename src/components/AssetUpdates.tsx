@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, assetUpdates, openExternal } from "../api";
 import { useShell } from "../App";
+import { assetUpdateListStartsOpen, assetUpdateListSummary } from "../assetUpdatesUi";
 import type { AssetUpdateConfigure, AssetUpdateStatus, ProductOption } from "../types";
 import { errorText } from "../ui";
 
@@ -15,11 +16,15 @@ export function AssetUpdates() {
   const [page, setPage] = useState(0);
   const [pending, setPending] = useState(false);
   const [checking, setChecking] = useState(false);
+  const [listOpen, setListOpen] = useState(false);
   const load = useCallback(() => assetUpdates.status().then(setStatus), []);
   useEffect(() => {
     let alive = true;
     void Promise.all([assetUpdates.status(), api.productOptions()]).then(([s, p]) => {
-      if (alive) { setStatus(s); setProducts(p); }
+      if (!alive) return;
+      setStatus(s);
+      setProducts(p);
+      setListOpen(assetUpdateListStartsOpen(s.rows.length));
     }, (err: unknown) => { if (alive) fail(errorText(err)); });
     return () => { alive = false; };
   }, [fail]);
@@ -46,6 +51,7 @@ export function AssetUpdates() {
   const lastPage = Math.max(0, Math.ceil(matching.length / 50) - 1);
   const currentPage = Math.min(page, lastPage);
   const visible = matching.slice(currentPage * 50, (currentPage + 1) * 50);
+  const summary = assetUpdateListSummary(status);
   return <section className="settings-section" id="settings-asset-updates">
     <header><h2>アセットの更新候補</h2><p>公開情報を比較して変更を確認します。有料ファイルの更新や、同じ名前・番号のファイル差し替えは検出できません。</p></header>
     <div className="section-body asset-updates">
@@ -62,23 +68,35 @@ export function AssetUpdates() {
         <button type="button" className="button" disabled={pending || checking || status?.running || !status?.rows.some((r) => r.enabled)} onClick={() => void check()}>{checking || status?.running ? "確認中…" : "今すぐ確認"}</button>
         {(checking || status?.running) && <button type="button" className="button" disabled={pending} onClick={() => void configure({ automatic: false })}>自動確認をオフ</button>}
       </div>
-      {status && !status.rows.length && <p>確認を許可した商品はありません。</p>}
-      {Boolean(status?.rows.length) && <div className="inline-control">
-        <input aria-label="確認対象の商品を絞り込む" placeholder="確認対象の商品名・BOOTH ID" value={listQuery} onChange={(e) => { setListQuery(e.target.value); setPage(0); }} />
-        <select aria-label="確認結果で絞り込む" value={filter} onChange={(e) => { setFilter(e.target.value); setPage(0); }}><option value="all">すべての結果</option><option value="changed">更新候補あり</option><option value="error">確認失敗</option></select>
-        <span>{matching.length} 件</span>
+      {status && !status.rows.length && <p role="status">{summary}</p>}
+      {Boolean(status?.rows.length) && <div className="asset-update-summary">
+        <p role="status">{summary}</p>
+        <button
+          type="button"
+          className="button"
+          aria-expanded={listOpen}
+          aria-controls="asset-update-list-panel"
+          onClick={() => setListOpen((open) => !open)}
+        >{listOpen ? "一覧を閉じる" : "一覧を表示"}</button>
       </div>}
-      <ul className="asset-update-list">{visible.map((r) => <li key={r.boothId}>
-        <label className="switch-label"><input type="checkbox" checked={r.enabled} disabled={pending} onChange={(e) => void configure({ boothId: r.boothId, enabled: e.target.checked })} />{r.title}</label>
-        <p role="status">{r.error ? `確認失敗：${r.error}` : r.changes.length ? `更新候補あり：${r.changes.join("・")}` : r.checkedAt ? "比較できる公開情報に変更なし" : "未確認"}</p>
-        {r.error && r.changes.length > 0 && <p>前回の更新候補：{r.changes.join("・")}</p>}
-        <p>最終確認：{r.checkedAt ? new Date(r.checkedAt).toLocaleString() : "未確認"}</p>
-        <div className="inline-control"><button type="button" className="button" onClick={() => void openExternal(`https://booth.pm/ja/items/${r.boothId}`).catch((err: unknown) => fail(errorText(err)))}>BOOTH で確認</button>{r.changes.length > 0 && <button type="button" className="button" disabled={pending || checking || status?.running} onClick={() => void configure({ boothId: r.boothId, acknowledge: true })}>確認済みにする</button>}</div>
-      </li>)}</ul>
-      {matching.length > 50 && <div className="inline-control">
-        <button type="button" className="button" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>前の50件</button>
-        <span>{currentPage + 1} / {lastPage + 1} ページ</span>
-        <button type="button" className="button" disabled={currentPage === lastPage} onClick={() => setPage(currentPage + 1)}>次の50件</button>
+      {Boolean(status?.rows.length) && listOpen && <div id="asset-update-list-panel" className="asset-update-panel">
+        <div className="inline-control">
+          <input aria-label="確認対象の商品を絞り込む" placeholder="確認対象の商品名・BOOTH ID" value={listQuery} onChange={(e) => { setListQuery(e.target.value); setPage(0); }} />
+          <select aria-label="確認結果で絞り込む" value={filter} onChange={(e) => { setFilter(e.target.value); setPage(0); }}><option value="all">すべての結果</option><option value="changed">更新候補あり</option><option value="error">確認失敗</option></select>
+          <span>{matching.length} 件</span>
+        </div>
+        <ul className="asset-update-list">{visible.map((r) => <li key={r.boothId}>
+          <label className="switch-label"><input type="checkbox" checked={r.enabled} disabled={pending} onChange={(e) => void configure({ boothId: r.boothId, enabled: e.target.checked })} /><span className="asset-update-title" title={r.title}>{r.title}</span></label>
+          <p role="status">{r.error ? `確認失敗：${r.error}` : r.changes.length ? `更新候補あり：${r.changes.join("・")}` : r.checkedAt ? "比較できる公開情報に変更なし" : "未確認"}</p>
+          {r.error && r.changes.length > 0 && <p>前回の更新候補：{r.changes.join("・")}</p>}
+          <p>最終確認：{r.checkedAt ? new Date(r.checkedAt).toLocaleString() : "未確認"}</p>
+          <div className="inline-control"><button type="button" className="button" onClick={() => void openExternal(`https://booth.pm/ja/items/${r.boothId}`).catch((err: unknown) => fail(errorText(err)))}>BOOTH で確認</button>{r.changes.length > 0 && <button type="button" className="button" disabled={pending || checking || status?.running} onClick={() => void configure({ boothId: r.boothId, acknowledge: true })}>確認済みにする</button>}</div>
+        </li>)}</ul>
+        {matching.length > 50 && <div className="inline-control">
+          <button type="button" className="button" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>前の50件</button>
+          <span>{currentPage + 1} / {lastPage + 1} ページ</span>
+          <button type="button" className="button" disabled={currentPage === lastPage} onClick={() => setPage(currentPage + 1)}>次の50件</button>
+        </div>}
       </div>}
       <p className="muted">オフにすると以後の自動確認を停止します。実行中の通信は完了することがあります。ログイン・年齢確認が必要な商品は確認失敗として扱います。通信失敗時は1時間以上空けます。</p>
     </div>

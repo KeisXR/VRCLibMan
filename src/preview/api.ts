@@ -592,6 +592,10 @@ if (typeof location !== "undefined" && new URLSearchParams(location.search).get(
   store.setupComplete = true;
 }
 
+const assetUpdatesCount = typeof location !== "undefined"
+  ? Number(new URLSearchParams(location.search).get("assetUpdates") ?? "0")
+  : 0;
+
 const previewAccountQuery =
   typeof location !== "undefined" ? (new URLSearchParams(location.search).get("account") ?? "") : "";
 let previewAccountUnknown = previewAccountQuery === "unknown";
@@ -1781,6 +1785,59 @@ function previewUnityStatus(): UnityStatus {
 }
 
 let assetWatch: AssetUpdateStatus = { automatic: false, allProducts: false, totalProducts: 0, running: false, rows: [] };
+/** ブラウザ確認用。設定の更新候補一覧にダミー行を入れる。本番の Rust 側には無い。 */
+export function seedPreviewAssetUpdates(count: number, opts?: { changed?: number; errors?: number }): AssetUpdateStatus {
+  const n = Math.max(0, Math.min(500, Math.floor(count)));
+  const changed = Math.max(0, Math.min(n, opts?.changed ?? 3));
+  const errors = Math.max(0, Math.min(n - changed, opts?.errors ?? 1));
+  const now = new Date().toISOString();
+  assetWatch.allProducts = false;
+  assetWatch.automatic = false;
+  assetWatch.running = false;
+  assetWatch.rows = Array.from({ length: n }, (_, i) => {
+    const boothId = String(9000000 + i);
+    const title = i % 7 === 0
+      ? `とても長い商品名の見本アセット ${i + 1} — BOOTH で公開されているオリジナル3Dモデル向けの追加衣装とアクセサリ一式`
+      : `見本アセット ${i + 1}`;
+    if (!store.products.some((p) => p.boothId === boothId)) {
+      store.products.push({
+        boothId,
+        title,
+        shop: "見本ショップ",
+        descriptionSnippet: "見本",
+        url: `https://booth.pm/ja/items/${boothId}`,
+        thumbnailUrl: null,
+        thumbnailPath: null,
+        category: "accessory",
+        categoryLocked: false,
+        compatibleAvatars: [],
+        unresolvedNames: [],
+        isGeneric: false,
+        confidence: null,
+        linksLocked: false,
+        userConfirmed: true,
+        needsReview: false,
+        updatedAt: now,
+        isFree: false,
+        isAdult: false,
+        unpublished: false,
+      });
+    }
+    return {
+      boothId,
+      title,
+      enabled: true,
+      checkedAt: now,
+      error: i < errors ? "通信に失敗しました" : null,
+      changes: i >= errors && i < errors + changed ? ["商品説明の変更"] : [],
+      revision: 1,
+    };
+  });
+  assetWatch.totalProducts = activeProducts().length;
+  return assetWatchStatus();
+}
+if (assetUpdatesCount > 0) seedPreviewAssetUpdates(assetUpdatesCount);
+
 function enrollAssetProducts() {
   assetWatch.totalProducts = activeProducts().length;
   if (assetWatch.allProducts) for (const p of activeProducts()) {
