@@ -37,6 +37,7 @@ mod presence;
 #[cfg(target_os = "linux")]
 mod presence_linux;
 mod preview_image;
+mod progress;
 mod quiet;
 mod resolve;
 mod scan;
