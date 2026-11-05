@@ -4,6 +4,7 @@ use crate::library_walk::{
     same_library_page, section_label, settled_stop, walk_block_reason,
 };
 use crate::model::ImportReport;
+use crate::progress::ProgressGuard;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::io::Write;
@@ -865,18 +866,19 @@ pub fn host_log(host: &str) -> String {
 }
 
 fn emit_file_status(
-    app: &AppHandle,
+    progress: &ProgressGuard,
     booth_id: &str,
     variation: &str,
     filename: &str,
     phase: &str,
     message: &str,
 ) {
-    emit_file_status_with_path(app, booth_id, variation, filename, phase, message, None);
+    emit_file_status_with_path(progress, booth_id, variation, filename, phase, message, None);
 }
 
+/// `booth-file-download` と、同じ仕事の `job-progress` を送る。done / error で進捗も終える。
 fn emit_file_status_with_path(
-    app: &AppHandle,
+    progress: &ProgressGuard,
     booth_id: &str,
     variation: &str,
     filename: &str,
@@ -884,20 +886,15 @@ fn emit_file_status_with_path(
     message: &str,
     path: Option<&std::path::Path>,
 ) {
-    let _ = app.emit(
+    let _ = progress.sink().emit(
         "booth-file-download",
         file_status(booth_id, variation, filename, phase, message, path),
     );
-    let (current, total) = if phase == "done" { (1, 1) } else { (0, 0) };
-    let _ = app.emit(
-        "job-progress",
-        crate::model::JobProgress {
-            job: "download".to_string(),
-            current,
-            total,
-            message: message.to_string(),
-        },
-    );
+    match phase {
+        "done" => progress.done_with(1, message),
+        "error" => progress.fail(message),
+        _ => progress.update(0, 0, message),
+    }
 }
 
 fn file_status(
@@ -1248,6 +1245,7 @@ pub async fn download_one_file(
     if library_walk_running() {
         return Err("ライブラリのインポート中です。終わってからダウンロードしてください".into());
     }
+    let progress = ProgressGuard::new(app.clone(), "download");
     let app_for_plan = app.clone();
     let booth_for_plan = booth_id.clone();
     let variation_for_plan = variation.clone();
@@ -1275,7 +1273,7 @@ pub async fn download_one_file(
     let (request, dir) = plan;
     let url = downloadable_url(&request.downloadable_id)?;
     emit_file_status(
-        &app,
+        &progress,
         &request.booth_id,
         &request.variation,
         &request.filename,
@@ -1307,7 +1305,7 @@ pub async fn download_one_file(
                 browser_log(&app, "ダウンロードに失敗しました");
             }
             emit_file_status(
-                &app,
+                &progress,
                 &request.booth_id,
                 &request.variation,
                 &request.filename,
@@ -1318,7 +1316,7 @@ pub async fn download_one_file(
         }
     };
     emit_file_status(
-        &app,
+        &progress,
         &request.booth_id,
         &request.variation,
         &request.filename,
@@ -1339,7 +1337,7 @@ pub async fn download_one_file(
     match committed {
         Ok(placed) => {
             emit_file_status_with_path(
-                &app,
+                &progress,
                 &booth_id,
                 &variation,
                 &filename,
@@ -1358,7 +1356,7 @@ pub async fn download_one_file(
             } else {
                 browser_log(&app, "ダウンロードに失敗しました");
             }
-            emit_file_status(&app, &booth_id, &variation, &filename, "error", &err);
+            emit_file_status(&progress, &booth_id, &variation, &filename, "error", &err);
             Err(err)
         }
     }
@@ -1503,16 +1501,8 @@ fn parse_probe(raw: &str) -> Result<(String, String), String> {
     Ok((href, ready))
 }
 
-fn emit_walk_progress(app: &AppHandle, current: u32, total: u32, message: &str) {
-    let _ = app.emit(
-        "job-progress",
-        crate::model::JobProgress {
-            job: "browser-library".to_string(),
-            current,
-            total,
-            message: message.to_string(),
-        },
-    );
+fn emit_walk_progress(progress: &ProgressGuard, current: u32, total: u32, message: &str) {
+    progress.update(current, total, message);
 }
 
 async fn pause_for(total: Duration) {
@@ -1880,6 +1870,7 @@ pub async fn import_library(app: AppHandle) -> Result<LibraryWalkReport, String>
         return Err("ライブラリのインポート中です".into());
     }
     let _guard = WalkRunningGuard;
+    let progress = ProgressGuard::new(app.clone(), "browser-library");
     let page_delay = {
         let state = app.state::<crate::AppState>();
         let connection = state.db.lock().map_err(|_| "データベースをロックできません".to_string())?;
@@ -1897,7 +1888,7 @@ pub async fn import_library(app: AppHandle) -> Result<LibraryWalkReport, String>
             break;
         };
         let line = machine.progress_line_for(&planned);
-        emit_walk_progress(&app, 0, 0, &line);
+        emit_walk_progress(&progress, 0, 0, &line);
         if planned.pause {
             if walk_cancel_requested() {
                 machine.cancel();
@@ -1986,13 +1977,19 @@ pub async fn import_library(app: AppHandle) -> Result<LibraryWalkReport, String>
     }
     let skip_detail = report.cancelled || report.notice == db::BROWSER_AGE_MESSAGE;
     if !skip_detail {
-        fill_public_details(&app).await?;
+        fill_public_details(&app, &progress).await?;
     }
-    emit_walk_progress(&app, 1, 1, &summary);
+    if report.cancelled {
+        progress.cancel(summary);
+    } else if !report.notice.is_empty() {
+        progress.fail(summary);
+    } else {
+        progress.done_with(1, summary);
+    }
     Ok(report)
 }
 
-async fn fill_public_details(app: &AppHandle) -> Result<(), String> {
+async fn fill_public_details(app: &AppHandle, progress: &ProgressGuard) -> Result<(), String> {
     if walk_cancel_requested() {
         return Ok(());
     }
@@ -2028,7 +2025,7 @@ async fn fill_public_details(app: &AppHandle) -> Result<(), String> {
         }
         let current = (index as u32) + 1;
         emit_walk_progress(
-            app,
+            progress,
             current,
             total,
             &library_walk::detail_progress_line(current, total),

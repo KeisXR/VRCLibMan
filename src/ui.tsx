@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { FILE_PRESENCE_LABEL, mediaSrc } from "./media";
 import type { FilePresence } from "./media";
+import { progressPercent } from "./progress";
+import type { JobProgressState } from "./types";
 
 export function Thumb({
   path,
@@ -63,4 +65,31 @@ export function errorText(err: unknown): string {
   if (typeof err === "string" && err.trim()) return err;
   if (err instanceof Error && err.message) return err.message;
   return "操作に失敗しました";
+}
+
+/** 進捗バー。total = 0 で走っている間は不定（往復する帯）。決まりは docs/design/README.md#進捗。 */
+export function ProgressTrack({
+  current,
+  total,
+  label,
+  state = "running",
+}: {
+  current: number;
+  total: number;
+  label: string;
+  state?: JobProgressState;
+}) {
+  const percent = progressPercent(current, total, state);
+  return (
+    <div
+      className={percent === null ? "track indeterminate" : "track"}
+      role="progressbar"
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={percent === null ? undefined : Math.round(percent)}
+    >
+      <span style={{ width: percent === null ? undefined : `${percent}%` }} />
+    </div>
+  );
 }

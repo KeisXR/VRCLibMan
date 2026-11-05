@@ -461,11 +461,20 @@ export interface AvatarCandidate {
   productCount: number;
 }
 
+/** 進捗の状態。省略時は running（古い送り方との互換。`src/progress.ts` の `progressState`）。 */
+export type JobProgressState = "running" | "done" | "error" | "cancelled";
+
+/** `job-progress` の中身。決まりは docs/design/README.md#進捗。 */
 export interface JobProgress {
   job: string;
   current: number;
+  /** 0 は終わりが分からない（不定）。 */
   total: number;
+  /** 件数（current / total）を必ず書く。対象の名前は付けてよい。検索語や URL は書かない。 */
   message: string;
+  state?: JobProgressState;
+  /** true の仕事は上部の帯に出さず、その設定の欄だけで見せる。 */
+  background?: boolean;
 }
 
 /** 「ファイルを取得」の結果。保存後の商品のファイル行の数。 */

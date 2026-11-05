@@ -601,6 +601,10 @@ button.account-pill:hover { background: var(--hover); }
 }
 .progress { margin: var(--space-3) var(--space-6) 0; }
 .progress p { margin: 0 0 6px; color: var(--text-secondary); font-size: 13px; }
+/* 「ほか N 件」は文言と同じ行の右端に置き、帯の高さを変えない（右パネルの配置がずれないように）。 */
+.progress-head { display: flex; align-items: baseline; gap: var(--space-3); }
+.progress-head p { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.progress-more { flex: none; margin: 0 0 6px; color: var(--text-secondary); font-size: 13px; font-variant-numeric: tabular-nums; }
 .track {
   height: 4px;
   border-radius: var(--radius-pill);

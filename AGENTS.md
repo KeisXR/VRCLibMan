@@ -154,6 +154,7 @@ Windows では、BOOTH の窓を同期コマンドの中で作らない。WebVie
 - カプセル状になる通常の文字ボタン・検索欄・ツールバーには既存の `--radius-control`、タブ・小さな行操作には `--radius-sm` を使う。状態バッジと丸いアイコンは `--radius-pill` を使う。
 - 朱のアクセントは曲線（角丸の辺に沿って曲がる線）に付けず、全周の枠か曲線に触れない直線だけにする（縦棒と下線の両端は 2px まで丸くてよい。進捗バーは例外）。指定は `src/styles.css` の「線のアクセント」ブロックだけに書く。部品と選択の示し方は[デザインガイド](docs/design/README.md#線のアクセントの部品)。
 - 左サイドバーの開閉は幅を動かさずに切り替え、状態は `ui_rail_collapsed` に保存する。右パネルのネイティブ WebView の矩形とずれないため（[デザインガイド](docs/design/README.md#左サイドバーの開閉)）。狭い窓の列は [狭い窓](docs/design/README.md#狭い窓) に従う。
+- 進捗（`job-progress`）は `src-tauri/src/progress.rs` から送り、始めた仕事は失敗や途中で抜けても必ず終わりの状態を送る（`ProgressGuard`）。文言は件数（`current / total`）を必ず出し、対象の名前は付けてよい。決まりは[進捗](docs/design/README.md#進捗)。
 - デザインの方針と変数は `docs/design/` にまとめている。`src/styles.css` を変えたら `docs/design/tokens.css` も合わせる。
 
 - 商品の除外は `product_exclusions`（DB版2）に保持する。通常の商品一覧、確認、分類、突合、自動整理の対象から外し、再インポートでも解除しない。管理画面から解除でき、商品情報・手動修正・ファイルを消さない。

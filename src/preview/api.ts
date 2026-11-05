@@ -1610,6 +1610,7 @@ function desktopOnly(): never {
 const previewProgress = new EventTarget();
 let previewLibraryCancel = false;
 
+/** 見本の進捗。アプリと同じく、始めた仕事は必ず done / error / cancelled で終える（docs/design/README.md#進捗）。 */
 export function emitPreviewProgress(progress: JobProgress): void {
   previewProgress.dispatchEvent(new CustomEvent("progress", { detail: progress }));
 }
@@ -1678,6 +1679,7 @@ async function previewLibraryWalk(): Promise<LibraryWalkReport> {
       job: "browser-library",
       current: 0,
       total: 0,
+      state: "running",
       message: previewWalkMessage(seen.label, seen.page, seen.last, seen.products, seen.files, seen.named, seen.unnamed),
     });
     await new Promise((resolve) => setTimeout(resolve, 800));
@@ -1688,6 +1690,7 @@ async function previewLibraryWalk(): Promise<LibraryWalkReport> {
       job: "browser-library",
       current: 1,
       total: 2,
+      state: "running",
       message: "商品情報 1/2",
     });
   }
@@ -1706,8 +1709,9 @@ async function previewLibraryWalk(): Promise<LibraryWalkReport> {
   };
   emitPreviewProgress({
     job: "browser-library",
-    current: 1,
-    total: 1,
+    current: cancelled ? 0 : 1,
+    total: cancelled ? 0 : 1,
+    state: cancelled ? "cancelled" : "done",
     message: `商品 ${report.products}、ファイル ${report.files}、名前あり ${report.namedFiles}、名前なし ${report.unnamedFiles}`,
   });
   return report;

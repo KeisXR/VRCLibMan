@@ -3,7 +3,7 @@ use crate::db::{self, ExtractJob};
 use crate::model::{
     AvatarCandidate, AvatarInput, BaseBodyInput, CatalogInfo, CatalogRefresh, ClassificationSnapshot,
     RegisterOwnedBodyResult,
-    ExtractReport, ImportReport, JobProgress, Knowledge, LibraryStats, OllamaStatus, ProductUpdate,
+    ExtractReport, ImportReport, Knowledge, LibraryStats, OllamaStatus, ProductUpdate,
     ScanReport, Category, Settings, SettingsInput, SetupStatus, StagedLeftover,
 };
 use crate::apple_fm::{self, AppleError};
@@ -79,17 +79,8 @@ fn db(state: &AppState) -> Result<MutexGuard<'_, rusqlite::Connection>, String> 
         .map_err(|_| "データベースをロックできません".to_string())
 }
 
-fn emit_progress(app: &AppHandle, job: &str, current: u32, total: u32, message: impl Into<String>) {
-    let _ = app.emit(
-        "job-progress",
-        JobProgress {
-            job: job.to_string(),
-            current,
-            total,
-            message: message.into(),
-        },
-    );
-}
+pub(crate) use crate::progress::emit_progress;
+use crate::progress::ProgressGuard;
 
 #[tauri::command]
 pub fn import_export(state: State<'_, AppState>, json: String) -> Result<ImportReport, String> {
@@ -690,13 +681,12 @@ pub fn add_free_product(state: State<'_, AppState>, url: String) -> Result<Strin
     db::add_free_product(&mut connection, &url)
 }
 
-fn finish_copy(app: &AppHandle, filename: &str, result: &Result<(), String>) {
-    let message = if result.is_ok() {
-        format!("{filename} をコピーしました")
+fn finish_copy(progress: &ProgressGuard, filename: &str, result: &Result<(), String>) {
+    if result.is_ok() {
+        progress.done(format!("{filename} をコピーしました"));
     } else {
-        "コピーを中断しました".into()
-    };
-    emit_progress(app, "copy", 1, 1, message);
+        progress.fail("コピーを中断しました");
+    }
 }
 
 #[tauri::command]
@@ -707,7 +697,8 @@ pub async fn pull_remote_file(
     filename: String,
 ) -> Result<(), String> {
     let label = filename.clone();
-    emit_progress(&app, "copy", 0, 1, format!("{label} をコピーしています"));
+    let progress = ProgressGuard::new(app.clone(), "copy");
+    progress.update(0, 1, crate::progress::counted_message("コピー中", 1, 1, &label));
     let worker = app.clone();
     let copied = tauri::async_runtime::spawn_blocking(move || {
         let (remote, library) = {
@@ -741,7 +732,7 @@ pub async fn pull_remote_file(
     })
     .await
     .map_err(|err| format!("コピーを実行できません: {err}"))?;
-    finish_copy(&app, &label, &copied);
+    finish_copy(&progress, &label, &copied);
     copied
 }
 
@@ -753,7 +744,8 @@ pub async fn push_remote_file(
     filename: String,
 ) -> Result<(), String> {
     let label = filename.clone();
-    emit_progress(&app, "copy", 0, 1, format!("{label} をコピーしています"));
+    let progress = ProgressGuard::new(app.clone(), "copy");
+    progress.update(0, 1, crate::progress::counted_message("コピー中", 1, 1, &label));
     let worker = app.clone();
     let copied = tauri::async_runtime::spawn_blocking(move || {
         let (source, remote) = {
@@ -782,7 +774,7 @@ pub async fn push_remote_file(
     })
     .await
     .map_err(|err| format!("コピーを実行できません: {err}"))?;
-    finish_copy(&app, &label, &copied);
+    finish_copy(&progress, &label, &copied);
     copied
 }
 
@@ -1091,16 +1083,14 @@ pub async fn scan_library(
     path: String,
 ) -> Result<ScanReport, String> {
     let root = path.clone();
-    emit_progress(&app, "scan", 0, 0, "フォルダを調べています");
+    let progress = ProgressGuard::new(app.clone(), "scan");
+    progress.update(0, 0, "フォルダを調べています");
     let outcome = tauri::async_runtime::spawn_blocking(move || scan::scan_folder(Path::new(&root)))
         .await
         .map_err(|err| format!("スキャンを実行できません: {err}"))??;
     let mut connection = db(&state)?;
     let report = db::apply_library_scan(&mut connection, &path, &outcome)?;
-    emit_progress(
-        &app,
-        "scan",
-        report.indexed,
+    progress.done_with(
         report.indexed,
         format!(
             "{} 件を調べ、{} 件を商品と紐づけました",
@@ -1194,7 +1184,7 @@ pub async fn extract_products(
             "extract",
             index as u32,
             total,
-            format!("分類中: {label}"),
+            crate::progress::counted_message("分類中", index as u32 + 1, total, &label),
         );
         if job.description == crate::model::UNAVAILABLE_DESCRIPTION {
             let mut connection = db(&state)?;
@@ -1618,7 +1608,8 @@ pub async fn refresh_avatar_catalog(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<CatalogRefresh, String> {
-    emit_progress(&app, "catalog", 0, 0, "プロファイル一覧を取得しています");
+    let progress = ProgressGuard::new(app.clone(), "catalog");
+    progress.update(0, 0, "プロファイル一覧を取得しています");
     let client = ollama::catalog_client()?;
     let response = client
         .get(crate::catalog::DATA_URL)
@@ -1644,10 +1635,7 @@ pub async fn refresh_avatar_catalog(
     let parsed = crate::catalog::parse_catalog_json(&text)?;
     let mut connection = db(&state)?;
     let report = db::install_catalog(&mut connection, &parsed)?;
-    emit_progress(
-        &app,
-        "catalog",
-        report.total,
+    progress.done_with(
         report.total,
         format!("対応表を更新しました（{} 件）", report.total),
     );
@@ -1680,8 +1668,8 @@ pub async fn pull_ollama_model(app: AppHandle, state: State<'_, AppState>, model
         let connection = db(&state)?;
         db::settings(&connection)?
     };
+    let progress = ProgressGuard::new(app.clone(), "pull");
     let client = ollama::pull_client()?;
-    let app_progress = app.clone();
     ollama::pull_model(
         &client,
         &settings.ollama_base_url,
@@ -1695,11 +1683,11 @@ pub async fn pull_ollama_model(app: AppHandle, state: State<'_, AppState>, model
             } else {
                 status.to_string()
             };
-            emit_progress(&app_progress, "pull", current, whole, message);
+            progress.update(current, whole, message);
         },
     )
     .await?;
-    emit_progress(&app, "pull", 1, 1, "モデルを取得しました");
+    progress.done_with(1, "モデルを取得しました");
     Ok(())
 }
 
@@ -1742,6 +1730,7 @@ pub async fn cache_thumbnails(app: AppHandle, state: State<'_, AppState>) -> Res
         let mut connection = db(&state)?;
         db::thumbnail_jobs(&mut connection)?
     };
+    let progress = ProgressGuard::new(app.clone(), "thumbs");
     let thumbs = state.thumbs_dir.clone();
     let client = crate::thumb::download_client()?;
     let total = jobs.len() as u32;
@@ -1752,9 +1741,7 @@ pub async fn cache_thumbnails(app: AppHandle, state: State<'_, AppState>) -> Res
                 continue;
             }
         }
-        emit_progress(
-            &app,
-            "thumbs",
+        progress.update(
             index as u32,
             total,
             format!("サムネイルを保存しています ({}/{total})", index + 1),
@@ -1768,13 +1755,7 @@ pub async fn cache_thumbnails(app: AppHandle, state: State<'_, AppState>) -> Res
             saved += 1;
         }
     }
-    emit_progress(
-        &app,
-        "thumbs",
-        total,
-        total,
-        format!("{saved} 件のサムネイルを保存しました"),
-    );
+    progress.done_with(total, format!("{saved} 件のサムネイルを保存しました"));
     Ok(saved)
 }
 
