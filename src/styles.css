@@ -32,7 +32,6 @@
   --motion-fast: 120ms;
   --motion-rail: 140ms;
   --motion-delay: 30ms;
-  --motion-fade-out: 100ms;
   --ease-out: cubic-bezier(0.32, 0.72, 0, 1);
   --space-1: 4px;
   --space-2: 8px;
@@ -421,7 +420,7 @@ a.drag-over {
 }
 .rail.collapsed .rail-foot { align-items: center; }
 /* 左サイドバーの開閉の動き。開閉ボタンを押した直後だけ App が data-rail-motion を付ける。
-   slide = 右パネルを閉じている: 幅も動かす。fade = 右パネルが開いている: 幅は一瞬で、文字とアイコンだけ。
+   slide = 幅を動かす（右パネルの有無にかかわらず）。data-rail-hold = パネル自体も動く開閉なので、その間ネイティブのページを隠す。
    動かすのは grid-template-columns / opacity / transform だけ。reduced-motion では先頭の規則で全部止まる */
 .app-shell[data-rail-motion="slide"] { transition: grid-template-columns var(--motion-rail) var(--ease-out); }
 .app-shell[data-rail-motion] :is(.rail, .rail .brand) { overflow: hidden; }
@@ -435,27 +434,6 @@ a.drag-over {
 }
 @keyframes rail-label-in { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: none; } }
 @keyframes rail-icon-in { from { opacity: 0; } to { opacity: 1; } }
-/* fade モード（右パネルが開いている）: 幅は一瞬で変わるので、空のレールや即消えを見せない。
-   開くとき: 遅れなし・0.35 から。閉じるとき: 動きの間だけ名前を視覚的に隠さず 100ms で消し、アイコンは 0.4 から出す */
-.app-shell[data-rail-motion="fade"] .rail:not(.collapsed) :is(.nav-label, .count, .brand-wordmark, .rail-status) {
-  animation: rail-label-in-soft var(--motion-fast) var(--ease-out) forwards;
-}
-.app-shell[data-rail-motion="fade"] .rail.collapsed :is(.nav-icon, .brand-mark, .rail-toggle) {
-  animation: rail-icon-in-soft var(--motion-fast) var(--ease-out) forwards;
-}
-.app-shell[data-rail-motion="fade"] .rail.collapsed :is(.brand-wordmark, .nav-label, .count) {
-  position: absolute;
-  width: auto;
-  height: auto;
-  margin: 0;
-  overflow: visible;
-  clip: auto;
-  pointer-events: none;
-  animation: rail-label-out var(--motion-fade-out) ease forwards;
-}
-@keyframes rail-label-in-soft { from { opacity: 0.35; transform: translateX(-4px); } to { opacity: 1; transform: none; } }
-@keyframes rail-icon-in-soft { from { opacity: 0.4; } to { opacity: 1; } }
-@keyframes rail-label-out { from { opacity: 1; } to { opacity: 0; } }
 .rail-icon-button {
   display: grid;
   place-items: center;

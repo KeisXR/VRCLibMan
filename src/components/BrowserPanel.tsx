@@ -75,7 +75,7 @@ function useDockedArea(viewport: RefObject<HTMLDivElement | null>, docked: boole
       subtree: true,
       childList: true,
       attributes: true,
-      attributeFilter: ["class", "open", "hidden", "role", "aria-modal", "aria-expanded"],
+      attributeFilter: ["class", "open", "hidden", "role", "aria-modal", "aria-expanded", "data-rail-hold"],
     });
     const startDrag = (event: Event) => {
       const target = event.target;
