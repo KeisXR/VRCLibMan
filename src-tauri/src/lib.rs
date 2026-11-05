@@ -41,6 +41,8 @@ mod progress;
 mod quiet;
 mod resolve;
 mod scan;
+mod sync_export;
+mod sync_meta;
 mod thumb;
 mod view;
 mod unity;
@@ -234,6 +236,8 @@ pub fn run() {
             commands::register_owned_body,
             commands::classification_feedback,
             commands::save_classification_feedback,
+            commands::sync_export_json,
+            commands::save_sync_export,
             commands::attach_product_to_avatar,
             commands::link_file,
             commands::save_avatar,

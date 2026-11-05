@@ -172,6 +172,8 @@ const store: Store = {
     rightPanelTabs: '{"tabs":["preview"],"active":0}',
     checkUpdateOnStartup: false,
     uiUpdateDismissedVersion: "",
+    deviceId: "preview-device",
+    deviceName: "見本の PC",
   },
   setupComplete: false,
   baseBodies: [
@@ -1076,6 +1078,65 @@ function pushClassificationMove(
   to: FeedbackPlacement | null,
 ) {
   classificationMoves.push({ boothId, at: new Date().toISOString(), action, from, to });
+}
+
+function previewDeviceName(value: unknown): string {
+  const name = String(value ?? "").trim();
+  if (!name) throw new Error("端末名を入力してください");
+  if ([...name].length > 64) throw new Error("端末名は 64 文字以内にしてください");
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(name)) throw new Error("端末名に制御文字は使えません");
+  return name;
+}
+
+/** 形式の確認用の小さな JSON。見本の全件は出さず、分類の規則も複製しない。 */
+function previewSyncExport(): string {
+  const device = { id: store.settings.deviceId, name: store.settings.deviceName };
+  const values = {
+    llmBackend: store.settings.llmBackend,
+    ollamaModel: store.settings.ollamaModel,
+    cloudModel: store.settings.cloudModel,
+    confidenceThreshold: store.settings.confidenceThreshold,
+    unloadOllamaAfterClassification: store.settings.unloadOllamaAfterClassification,
+    avatarHero: store.settings.avatarHero,
+    boothLinkTarget: store.settings.boothLinkTarget,
+    previewPane: store.settings.previewPane,
+    browserForceDark: store.settings.browserForceDark,
+    checkUpdateOnStartup: store.settings.checkUpdateOnStartup,
+  };
+  const products = activeProducts()
+    .slice()
+    .sort((left, right) => (left.boothId < right.boothId ? -1 : left.boothId > right.boothId ? 1 : 0))
+    .slice(0, 2)
+    .map((item) => ({
+      boothId: item.boothId,
+      title: item.title,
+      url: `https://booth.pm/ja/items/${item.boothId}`,
+      classification: {
+        category: item.category,
+        categoryLocked: item.categoryLocked,
+        genre: item.genre ?? null,
+        genreLocked: item.genreLocked,
+        confidence: item.confidence,
+        classifierVersion: 8,
+        userConfirmed: item.userConfirmed,
+        needsReview: item.needsReview,
+        isGeneric: item.isGeneric,
+        meta: null,
+      },
+      links: { items: [], locked: item.linksLocked, names: [], unresolvedNames: [], meta: null },
+    }));
+  return `${JSON.stringify({
+    format: "vrclibman-sync",
+    version: 1,
+    device,
+    appVersion: "preview",
+    exportedAt: new Date().toISOString(),
+    config: { values, meta: Object.fromEntries(Object.keys(values).map((key) => [key, null])) },
+    products,
+    avatars: [],
+    fileLinks: [],
+    counts: { products: products.length, links: 0, avatars: 0, fileLinks: 0, config: Object.keys(values).length },
+  }, null, 2)}\n`;
 }
 
 function classificationFeedback(scope: string): string {
@@ -2003,7 +2064,8 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       return { running: false, copied: 0, skipped: 0, lastCompletedAt: null, error: null } as T;
     case "update_settings":
     case "save_settings": {
-      const settings = command === "update_settings" ? { ...store.settings, ...(args.patch as Partial<Settings>) } : args.settings as Settings;
+      const settings = command === "update_settings" ? { ...store.settings, ...(args.patch as Partial<Settings>) } : { ...args.settings as Settings, deviceName: store.settings.deviceName };
+      const deviceName = previewDeviceName(settings.deviceName);
       if (!/^http:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i.test(settings.ollamaBaseUrl.replace(/\/$/, ""))) throw new Error("Ollamaは手元のPC（localhost）だけに接続します");
       if (!/^[a-zA-Z0-9._:/-]{1,80}$/.test(settings.ollamaModel.trim())) throw new Error("モデル名が不正です");
       if (settings.remoteAutoSync && !settings.remoteLibraryFolder.trim()) throw new Error("自動同期をオンにする前に、リモートライブラリのフォルダを選んでください");
@@ -2016,7 +2078,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       const cloudModel = String(settings.cloudModel ?? "").trim();
       if (cloudModel.length > 200 || /[\u0000-\u001f]/.test(cloudModel)) throw new Error("クラウドAPIのモデル名に使えない文字があります");
       const llmBackend = settings.llmBackend === "apple" || settings.llmBackend === "cloud" ? settings.llmBackend : "ollama";
-      store.settings = { ...settings, llmBackend, cloudBaseUrl, cloudModel, ollamaModel: settings.ollamaModel.trim(), backgroundSupported, backgroundMode, launchAtLogin: backgroundMode && Boolean(settings.launchAtLogin), confidenceThreshold: Math.min(1, Math.max(0, settings.confidenceThreshold)), boothLinkTarget, browserForceDark, avatarHero: (settings.avatarHero === "large" || settings.avatarHero === "off" || settings.avatarHero === "small") ? settings.avatarHero : "small" };
+      store.settings = { ...settings, deviceId: store.settings.deviceId, deviceName, llmBackend, cloudBaseUrl, cloudModel, ollamaModel: settings.ollamaModel.trim(), backgroundSupported, backgroundMode, launchAtLogin: backgroundMode && Boolean(settings.launchAtLogin), confidenceThreshold: Math.min(1, Math.max(0, settings.confidenceThreshold)), boothLinkTarget, browserForceDark, avatarHero: (settings.avatarHero === "large" || settings.avatarHero === "off" || settings.avatarHero === "small") ? settings.avatarHero : "small" };
       return (command === "update_settings" ? { ...store.settings } : undefined) as T;
     }
     case "import_export":
@@ -2037,6 +2099,11 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       classificationFeedback(String(args.scope ?? ""));
       if (!String(args.path ?? "").toLowerCase().endsWith(".json")) throw new Error("保存先は JSON ファイルにしてください");
       return undefined as T;
+    case "sync_export_json":
+      return previewSyncExport() as T;
+    case "save_sync_export":
+      if (!String(args.path ?? "").toLowerCase().endsWith(".json")) throw new Error("保存先は JSON ファイルにしてください");
+      return { counts: JSON.parse(previewSyncExport()).counts } as T;
     case "register_owned_body":
       return registerPreviewOwnedBody(String(args.boothId ?? ""), args.name == null ? null : String(args.name)) as T;
     case "attach_product_to_avatar": {

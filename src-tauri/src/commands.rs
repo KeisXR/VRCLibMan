@@ -415,7 +415,7 @@ pub fn save_settings(
                 ui_genre_width: settings.ui_genre_width,
                 preview_pane: settings.preview_pane,
                 preview_pane_width: settings.preview_pane_width,
-                avatar_hero: crate::model::DEFAULT_AVATAR_HERO.into(),
+                avatar_hero: settings.avatar_hero,
                 right_panel_tabs: settings.right_panel_tabs,
                 check_update_on_startup: settings.check_update_on_startup,
                 ui_update_dismissed_version: settings.ui_update_dismissed_version,
@@ -1006,6 +1006,48 @@ pub fn save_classification_feedback(
         db::classification_feedback_json(&connection, &scope)?
     };
     db::save_classification_feedback_body(Path::new(&path), &json)
+}
+
+fn sync_export_app_version(app: &AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
+#[tauri::command]
+pub fn sync_export_json(
+    view: tauri::Webview,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    if view.label() != "main" {
+        return Err("この画面から同期データは書き出せません".into());
+    }
+    let mut connection = db(&state)?;
+    let file = crate::sync_export::build(&mut connection, &sync_export_app_version(&app))?;
+    crate::sync_export::to_json(&file)
+}
+
+/// The database lock covers building the JSON only, so a slow share cannot hold up the app.
+#[tauri::command]
+pub async fn save_sync_export(
+    view: tauri::Webview,
+    app: AppHandle,
+    path: String,
+) -> Result<crate::sync_export::SyncExportReport, String> {
+    if view.label() != "main" {
+        return Err("この画面から同期データは書き出せません".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let (json, counts) = {
+            let mut connection = db(&state)?;
+            let file = crate::sync_export::build(&mut connection, &sync_export_app_version(&app))?;
+            (crate::sync_export::to_json(&file)?, file.counts)
+        };
+        crate::sync_export::save(Path::new(&path), &json)?;
+        Ok(crate::sync_export::SyncExportReport { counts })
+    })
+    .await
+    .map_err(|err| format!("同期データを保存できません: {err}"))?
 }
 
 #[tauri::command]
