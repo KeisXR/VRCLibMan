@@ -17,6 +17,7 @@ import { CloudClassifierSettings } from "../components/CloudClassifierSettings";
 import { AssetUpdates } from "../components/AssetUpdates";
 import { UnitySettings } from "../components/UnitySettings";
 import { SettingsNav } from "../components/SettingsNav";
+import { AVATAR_HERO_CHOICES, AVATAR_HERO_BASE, normalizeAvatarHero } from "../avatarHero";
 
 const emptyAvatar = {
   id: "",
@@ -332,6 +333,33 @@ export function SettingsPage() {
               <label className="switch-label"><input aria-label="ログイン時に起動" type="checkbox" checked={settings.backgroundSupported && settings.launchAtLogin} disabled={!settings.backgroundSupported || !settings.backgroundMode} onChange={(e) => changeSettings({ launchAtLogin: e.target.checked })} /></label>
             </SettingRow>
             {settings.backgroundSupported && <details className="settings-details"><summary>起動と常駐について詳しく</summary><p>オフにすると、ウィンドウを閉じたときにアプリも終了します。オンにすると、トレイ（Windows・Linux）またはメニューバー（macOS）から再表示・終了できます。</p><p>「ログイン時に起動」を有効にすると、ウィンドウを表示せずに起動します。バックグラウンド動作をオフにすると、ログイン時の起動もオフになります。</p><p>Linux はトレイのメニューから「開く」「終了」を選びます。GNOME では AppIndicator 対応の拡張が必要になる場合があります。トレイを利用できないときはウィンドウを表示し、閉じると終了します。</p></details>}
+          </section>
+
+
+          <section className="settings-section" id="settings-design">
+            <header><h2>デザイン</h2><p>アバター詳細のヒーロー画像の高さを選びます。標準デザイン自体は1つです。</p></header>
+            <SettingRow label="アバター詳細のヒーロー" help="大・小は画像を中央で切り抜いて表示します。旧デザインは従来の文字だけの見出しです。">
+              <fieldset className="scope-choices" aria-label="アバター詳細のヒーロー">
+                {AVATAR_HERO_CHOICES.map((choice) => (
+                  <label key={choice.value} className="choice-row">
+                    <input
+                      type="radio"
+                      name="avatar-hero"
+                      value={choice.value}
+                      checked={normalizeAvatarHero(settings.avatarHero) === choice.value}
+                      onChange={() => changeSettings({ avatarHero: choice.value })}
+                    />
+                    <span>
+                      <strong>{choice.label}</strong>
+                      <span className="meta">{choice.help}</span>
+                    </span>
+                  </label>
+                ))}
+              </fieldset>
+            </SettingRow>
+            <div className="section-body">
+              <p className="meta">基準画像は {AVATAR_HERO_BASE.width}×{AVATAR_HERO_BASE.height}（2:1）です。各サイズへ拡大縮小し、中央を切り抜いて表示します（object-fit: cover）。小さい画像は拡大で粗くなることがあります。</p>
+            </div>
           </section>
 
           <AssetUpdates />

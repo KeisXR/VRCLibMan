@@ -680,6 +680,142 @@ button.account-pill:hover { background: var(--hover); }
 .avatar-add-panel .picker .button { width: 100%; text-align: left; }
 .panel h2, .section h2 { margin: 0 0 var(--space-2); font-size: 16px; font-weight: 650; }
 .page-head p, .lede { margin: 6px 0 0; color: var(--text-secondary); }
+
+/* アバター詳細のヒーロー（Apple Music 風の段階ぼかし C）。高さは設定の avatar_hero。 */
+.avatar-detail > p:first-child { margin-bottom: var(--space-3); }
+.avatar-hero {
+  position: relative;
+  overflow: hidden;
+  flex: none;
+  height: var(--avatar-hero-h, 320px);
+  margin: calc(-1 * var(--space-6)) calc(-1 * var(--space-6)) var(--space-5);
+  width: calc(100% + var(--space-6) * 2);
+  max-width: none;
+  background: var(--bg);
+}
+.avatar-hero[data-size="large"] { --avatar-hero-h: 400px; }
+.avatar-hero[data-size="small"] { --avatar-hero-h: 320px; }
+.density-compact .avatar-hero {
+  margin-top: -28px;
+}
+.density-roomy .avatar-hero {
+  margin: -48px -48px var(--space-5);
+  width: calc(100% + 96px);
+}
+.avatar-hero-media {
+  position: absolute;
+  inset: 0;
+  will-change: opacity, transform;
+}
+.avatar-hero-image,
+.avatar-hero-fallback {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 18%;
+}
+.avatar-hero-fallback {
+  background:
+    radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, var(--surface) 80%, var(--text) 20%), transparent 70%),
+    var(--surface-secondary);
+}
+.avatar-hero-blur {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.avatar-hero-blur i {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+/* 段階ぼかし（中: 2 / 8 / 24px）。mask 非対応時は下のフェードだけが効く */
+.avatar-hero-blur i:nth-child(1) {
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 35%, #000 55%);
+  mask-image: linear-gradient(to bottom, transparent 35%, #000 55%);
+}
+.avatar-hero-blur i:nth-child(2) {
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 50%, #000 70%);
+  mask-image: linear-gradient(to bottom, transparent 50%, #000 70%);
+}
+.avatar-hero-blur i:nth-child(3) {
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 62%, #000 85%);
+  mask-image: linear-gradient(to bottom, transparent 62%, #000 85%);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .avatar-hero-blur { display: none; }
+}
+/* 背景へのフェードを早め（約30%）から開始して文字コントラストを確保 */
+.avatar-hero-fade {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    transparent 30%,
+    color-mix(in srgb, var(--bg) 55%, transparent) 62%,
+    var(--bg) 100%
+  );
+}
+.avatar-hero-body {
+  position: absolute;
+  left: var(--space-6);
+  right: var(--space-6);
+  bottom: 20px;
+  z-index: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: var(--space-4);
+}
+.avatar-hero-scrim {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 12px 14px 10px;
+  border-radius: var(--radius-control);
+  /* 薄いスクリムで名前と補足が 4.5:1 を満たしやすくする */
+  background: color-mix(in srgb, var(--bg) 42%, transparent);
+}
+.avatar-hero-kicker {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  font-weight: 650;
+}
+.avatar-hero-title {
+  margin: 2px 0 0;
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--text);
+  line-height: 1.15;
+}
+.avatar-hero-title::before { content: none; } /* page-head の朱棒は付けない */
+.avatar-hero-sub {
+  margin: 6px 0 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+.avatar-hero-actions {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+@media (prefers-reduced-motion: reduce) {
+  .avatar-hero-media { will-change: auto; }
+}
+
 .toolbar {
   display: flex;
   gap: 4px;
@@ -1319,6 +1455,12 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
   .split, .knowledge, .form-grid { grid-template-columns: 1fr; }
   .content, .density-roomy .content { padding: var(--space-4); }
   .banner, .progress { margin-left: var(--space-4); margin-right: var(--space-4); }
+
+  .avatar-hero[data-size="large"],
+  .avatar-hero[data-size="small"] { --avatar-hero-h: 220px; }
+  .avatar-hero-title { font-size: 26px; }
+  .avatar-hero-body { bottom: 12px; left: var(--space-4); right: var(--space-4); flex-direction: column; align-items: stretch; }
+  .avatar-hero-actions { justify-content: flex-start; }
 }
 
 /* Settings */

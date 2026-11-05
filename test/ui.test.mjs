@@ -317,13 +317,13 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       const nav = document.querySelector(".settings-layout > .settings-nav");
       assert.ok(nav, "nav sits in the settings layout");
       const buttons = [...nav.querySelectorAll("button")];
-      assert.deepEqual(buttons.map((node) => node.textContent), ["ライブラリ", "Unity", "起動と常駐", "更新候補", "BOOTH", "分類モデル", "データ", "対応表を編集", "デバッグ"]);
+      assert.deepEqual(buttons.map((node) => node.textContent), ["ライブラリ", "Unity", "起動と常駐", "デザイン", "更新候補", "BOOTH", "分類モデル", "データ", "対応表を編集", "デバッグ"]);
       for (const node of buttons) {
         const target = document.getElementById(node.dataset.target);
         assert.ok(target, `section exists: ${node.dataset.target}`);
         assert.ok(target.closest(".settings-sections"), `section is inside the nav's layout: ${node.dataset.target}`);
       }
-      for (const id of ["settings-unity", "settings-asset-updates", "settings-app-update"]) assert.ok(document.getElementById(id), `anchor kept: ${id}`);
+      for (const id of ["settings-unity", "settings-design", "settings-asset-updates", "settings-app-update"]) assert.ok(document.getElementById(id), `anchor kept: ${id}`);
       assert.equal(nav.querySelectorAll("[aria-current]").length, 1);
       const debug = document.getElementById("settings-debug");
       assert.equal(debug.tagName, "DETAILS");
@@ -334,11 +334,26 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       debug.removeAttribute("open");
     });
 
-    await t.test("settings use the standard design without a design section", async () => {
+    await t.test("settings design section picks avatar hero size without restoring Liquid", async () => {
       await route("#/settings");
-      assert.equal(document.querySelector("#settings-design"), null);
-      assert.equal(document.querySelector('a[href="#settings-design"]'), null);
+      const section = document.querySelector("#settings-design");
+      assert.ok(section, "avatar hero design section is present");
+      assert.match(section.textContent, /アバター詳細のヒーロー/);
+      assert.match(section.textContent, /2400×1200/);
       assert.equal(document.documentElement.classList.contains("theme-liquid"), false);
+      assert.equal((await api.settings()).avatarHero ?? "small", "small");
+      const large = [...section.querySelectorAll('input[type="radio"]')].find((node) => node.value === "large");
+      assert.ok(large);
+      await act(async () => {
+        large.checked = true;
+        const propsKey = Object.keys(large).find((name) => name.startsWith("__reactProps$"));
+        const onChange = propsKey ? large[propsKey].onChange : null;
+        assert.ok(onChange, "radio change handler");
+        onChange({ target: large, currentTarget: large });
+        await delay();
+      });
+      await wait(async () => (await api.settings()).avatarHero === "large");
+      assert.equal((await api.settings()).avatarHero, "large");
     });
 
     await t.test("settings toggles expose accessible names without redundant labels", async () => {

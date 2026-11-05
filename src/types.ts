@@ -129,6 +129,8 @@ export interface AvatarDetail {
   isBuiltin: boolean;
   isPlaceholder: boolean;
   owned: boolean;
+  thumbnailUrl: string | null;
+  thumbnailPath: string | null;
   siblings: Sibling[];
   ownedProducts: ItemView[];
   sections: Section[];
@@ -269,6 +271,8 @@ export interface Settings {
   /** アセットとワールドの大きい画像欄。列幅と同じく設定に残す。 */
   previewPane: boolean;
   previewPaneWidth: number;
+  /** アバター詳細のヒーロー。large | small | off（旧デザイン）。既定は small。 */
+  avatarHero: "large" | "small" | "off";
   /** 右パネルのタブの種類と並び、選択中の位置（JSON）。URL は含めない。開閉は previewPane、幅は previewPaneWidth を引き継ぐ。 */
   rightPanelTabs: string;
   checkUpdateOnStartup: boolean;

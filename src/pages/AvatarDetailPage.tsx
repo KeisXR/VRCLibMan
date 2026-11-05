@@ -5,6 +5,8 @@ import { filePresence, formatBytes } from "../media";
 import { CATEGORY_LABEL } from "../types";
 import type { AvatarDetail, BoothFileStatus, DownloadView, ItemView, Knowledge, ProductOption } from "../types";
 import { FileMark, Thumb, errorText } from "../ui";
+import { AvatarHero } from "../components/AvatarHero";
+import { normalizeAvatarHero, type AvatarHeroSize } from "../avatarHero";
 import { ExcludeProductButton } from "../components/ProductExclusions";
 import { UnityOpenButton } from "../components/UnityOpenDialog";
 import { isUnityOpenableName } from "../unityOpen";
@@ -20,6 +22,7 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
   const { revision, refresh, notify, fail } = useShell();
   const [detail, setDetail] = useState<AvatarDetail | null>(null);
   const [knowledge, setKnowledge] = useState<Knowledge | null>(null);
+  const [heroSize, setHeroSize] = useState<AvatarHeroSize>("small");
   const [intoId, setIntoId] = useState("");
 
   useEffect(() => {
@@ -35,6 +38,12 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
     api.knowledge().then(
       (value) => {
         if (!cancelled) setKnowledge(value);
+      },
+      () => undefined,
+    );
+    api.settings().then(
+      (value) => {
+        if (!cancelled) setHeroSize(normalizeAvatarHero(value.avatarHero));
       },
       () => undefined,
     );
@@ -96,19 +105,31 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
   if (!detail) return <p className="meta">読み込み中</p>;
   const targets = (knowledge?.avatars ?? []).filter((avatar) => avatar.id !== detail.id);
 
+  const subtitle = `${detail.owned ? "所持アバター" : "所持未登録"}${detail.baseBodyName ? ` ・ ${detail.baseBodyName}` : ""}`;
+  const addAction = <AddAvatarItem avatarId={detail.id} linkedIds={linkedIds} />;
+
   return (
-    <section>
+    <section className={heroSize === "off" ? undefined : "avatar-detail"}>
       <p><a href="#/">アバター一覧へ</a></p>
-      <div className="page-head">
-        <div>
-          <h1>{detail.displayName}</h1>
-          <p>
-            {detail.owned ? "所持アバター" : "所持未登録"}
-            {detail.baseBodyName ? ` ・ ${detail.baseBodyName}` : ""}
-          </p>
+      {heroSize === "off" ? (
+        <div className="page-head">
+          <div>
+            <h1>{detail.displayName}</h1>
+            <p>{subtitle}</p>
+          </div>
+          {addAction}
         </div>
-        <AddAvatarItem avatarId={detail.id} linkedIds={linkedIds} />
-      </div>
+      ) : (
+        <AvatarHero
+          size={heroSize}
+          path={detail.thumbnailPath}
+          url={detail.thumbnailUrl}
+          name={detail.displayName}
+          kicker="アバター"
+          subtitle={subtitle}
+          actions={addAction}
+        />
+      )}
       {(detail.aliases.length > 0 || detail.baseBodyNote) && (
         <details className="generic">
           <summary>アバターの情報</summary>

@@ -388,6 +388,7 @@ fn ensure_ready(connection: &Connection) -> Result<u32, String> {
         ("ui_genre_width", "200"),
         ("preview_pane", "0"),
         ("preview_pane_width", "300"),
+        ("avatar_hero", crate::model::DEFAULT_AVATAR_HERO),
         ("right_panel_tabs", crate::model::DEFAULT_RIGHT_PANEL_TABS),
         ("check_update_on_startup", "0"),
         ("ui_update_dismissed_version", ""),
@@ -490,6 +491,9 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
             setting(connection, "preview_pane_width")?
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(300),
+        ),
+        avatar_hero: crate::model::normalize_avatar_hero(
+            &setting(connection, "avatar_hero")?.unwrap_or_else(|| crate::model::DEFAULT_AVATAR_HERO.into()),
         ),
         right_panel_tabs: crate::model::normalize_right_panel_tabs(
             &setting(connection, "right_panel_tabs")?.unwrap_or_default(),
@@ -672,6 +676,11 @@ fn save_settings_values(
         connection,
         "preview_pane_width",
         &crate::model::clamp_preview_pane_width(input.preview_pane_width).to_string(),
+    )?;
+    set_setting(
+        connection,
+        "avatar_hero",
+        &crate::model::normalize_avatar_hero(&input.avatar_hero),
     )?;
     set_setting(
         connection,
@@ -7716,6 +7725,7 @@ mod tests {
                 ui_genre_width: 200,
                 preview_pane: false,
                 preview_pane_width: 300,
+                avatar_hero: crate::model::DEFAULT_AVATAR_HERO.into(),
                 right_panel_tabs: crate::model::DEFAULT_RIGHT_PANEL_TABS.into(),
                 check_update_on_startup: false,
                 ui_update_dismissed_version: String::new(),
@@ -7792,6 +7802,41 @@ mod tests {
     }
 
     #[test]
+
+    #[test]
+    fn avatar_hero_defaults_to_small_and_accepts_large_or_off() {
+        let connection = open_memory().unwrap();
+        assert_eq!(settings(&connection).unwrap().avatar_hero, "small");
+        let large = update_settings(
+            &connection,
+            &SettingsPatch {
+                avatar_hero: Some("large".into()),
+                ..SettingsPatch::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(large.avatar_hero, "large");
+        let off = update_settings(
+            &connection,
+            &SettingsPatch {
+                avatar_hero: Some("off".into()),
+                ..SettingsPatch::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(off.avatar_hero, "off");
+        let weird = update_settings(
+            &connection,
+            &SettingsPatch {
+                avatar_hero: Some("liquid".into()),
+                ..SettingsPatch::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(weird.avatar_hero, "small");
+        assert!(!settings(&connection).unwrap().preview_pane);
+    }
+
     fn preview_pane_defaults_off_without_a_schema_change() {
         let connection = open_memory().unwrap();
         let version: i64 = connection
@@ -8017,6 +8062,7 @@ mod tests {
                 ui_genre_width: 200,
                 preview_pane: false,
                 preview_pane_width: 300,
+                avatar_hero: crate::model::DEFAULT_AVATAR_HERO.into(),
                 right_panel_tabs: crate::model::DEFAULT_RIGHT_PANEL_TABS.into(),
                 check_update_on_startup: false,
                 ui_update_dismissed_version: String::new(),
@@ -9488,6 +9534,7 @@ mod tests {
                 ui_genre_width: 200,
                 preview_pane: false,
                 preview_pane_width: 300,
+                avatar_hero: crate::model::DEFAULT_AVATAR_HERO.into(),
                 right_panel_tabs: crate::model::DEFAULT_RIGHT_PANEL_TABS.into(),
                 check_update_on_startup: false,
                 ui_update_dismissed_version: String::new(),
@@ -9520,6 +9567,7 @@ mod tests {
                 ui_genre_width: 200,
                 preview_pane: false,
                 preview_pane_width: 300,
+                avatar_hero: crate::model::DEFAULT_AVATAR_HERO.into(),
                 right_panel_tabs: crate::model::DEFAULT_RIGHT_PANEL_TABS.into(),
                 check_update_on_startup: false,
                 ui_update_dismissed_version: String::new(),
@@ -9647,6 +9695,7 @@ mod tests {
                 ui_genre_width: 200,
                 preview_pane: false,
                 preview_pane_width: 300,
+                avatar_hero: crate::model::DEFAULT_AVATAR_HERO.into(),
                 right_panel_tabs: crate::model::DEFAULT_RIGHT_PANEL_TABS.into(),
                 check_update_on_startup: false,
                 ui_update_dismissed_version: String::new(),
@@ -9921,6 +9970,7 @@ mod tests {
             ui_genre_width: 200,
             preview_pane: false,
             preview_pane_width: 300,
+            avatar_hero: crate::model::DEFAULT_AVATAR_HERO.into(),
             right_panel_tabs: crate::model::DEFAULT_RIGHT_PANEL_TABS.into(),
             check_update_on_startup: false,
             ui_update_dismissed_version: String::new(),
@@ -10124,6 +10174,7 @@ mod tests {
                 ui_genre_width: 200,
                 preview_pane: false,
                 preview_pane_width: 300,
+                avatar_hero: crate::model::DEFAULT_AVATAR_HERO.into(),
                 right_panel_tabs: crate::model::DEFAULT_RIGHT_PANEL_TABS.into(),
                 check_update_on_startup: false,
                 ui_update_dismissed_version: String::new(),
