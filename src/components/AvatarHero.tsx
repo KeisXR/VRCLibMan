@@ -5,7 +5,7 @@ import {
   avatarHeroLayout,
   avatarHeroLowRes,
   AVATAR_HERO_LOW_RES_WIDTH,
-  type AvatarHeroLayout,
+  type AvatarHeroLayoutState,
   type AvatarHeroSize,
 } from "../avatarHero";
 
@@ -30,7 +30,9 @@ export function AvatarHero({
   const mediaRef = useRef<HTMLDivElement>(null);
   const [failed, setFailed] = useState(false);
   const [reduced, setReduced] = useState(false);
-  const [layout, setLayout] = useState<AvatarHeroLayout>("wide");
+  const probeRef = useRef<HTMLImageElement>(null);
+  // 計測前は "pending"。wide 固定にすると正方形サムネが全幅 cover で引き伸ばされる。
+  const [layout, setLayout] = useState<AvatarHeroLayoutState>("pending");
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
   const src = failed ? null : mediaSrc(path, url);
 
@@ -46,8 +48,23 @@ export function AvatarHero({
   useEffect(() => {
     setFailed(false);
     setNatural(null);
-    setLayout("wide");
+    setLayout("pending");
   }, [path, url]);
+
+  const measure = (img: HTMLImageElement | null) => {
+    if (!img || !img.complete || !(img.naturalWidth > 0 && img.naturalHeight > 0)) return false;
+    const w = img.naturalWidth;
+    const h = img.naturalHeight;
+    setNatural((prev) => (prev && prev.w === w && prev.h === h ? prev : { w, h }));
+    setLayout(avatarHeroLayout(w, h));
+    return true;
+  };
+
+  // キャッシュ済み・即時完了で onLoad を取り逃しても、マウント時/src 変更時に complete を見て計測する。
+  useEffect(() => {
+    if (!src) return;
+    measure(probeRef.current);
+  }, [src]);
 
   useEffect(() => {
     if (reduced) return;
@@ -79,14 +96,11 @@ export function AvatarHero({
   }, [reduced, size, src, layout]);
 
   const onImageLoad = (event: SyntheticEvent<HTMLImageElement>) => {
-    const img = event.currentTarget;
-    const w = img.naturalWidth;
-    const h = img.naturalHeight;
-    setNatural({ w, h });
-    setLayout(avatarHeroLayout(w, h));
+    measure(event.currentTarget);
   };
 
-  const lowRes = natural ? avatarHeroLowRes(layout, natural.w) : false;
+  const pending = layout === "pending" && !!src;
+  const lowRes = natural && layout !== "pending" ? avatarHeroLowRes(layout, natural.w) : false;
   const blockAspect = natural ? avatarHeroBlockAspect(natural.w, natural.h) : 1;
   const copy = (
     <div className="avatar-hero-copy">
@@ -124,15 +138,13 @@ export function AvatarHero({
           </>
         ) : (
           <>
-            {src ? (
+            {src && !pending ? (
               <img
                 className="avatar-hero-image"
                 src={src}
                 alt=""
                 draggable={false}
                 referrerPolicy="no-referrer"
-                onLoad={onImageLoad}
-                onError={() => setFailed(true)}
               />
             ) : (
               <div className="avatar-hero-fallback" aria-hidden="true" />
@@ -145,9 +157,11 @@ export function AvatarHero({
             <div className="avatar-hero-fade" aria-hidden="true" />
           </>
         )}
-        {/* block でも自然サイズ計測用に隠した img を1枚読む */}
-        {layout === "block" && src ? (
+        {/* レイアウトに関係なく常設の計測用 img（onLoad + complete 両方で計測） */}
+        {src ? (
           <img
+            key={src}
+            ref={probeRef}
             className="avatar-hero-probe"
             src={src}
             alt=""

@@ -107,3 +107,24 @@ test("settings keep a design section for avatar hero only", () => {
   assert.match(types, /avatarHero: "large" \| "small" \| "off"/);
   assert.match(types, /thumbnailPath: string \| null;/);
 });
+
+test("avatar hero measures cached images and never defaults to wide before measuring", () => {
+  const hero = readFileSync("src/components/AvatarHero.tsx", "utf8");
+  // 未計測の既定は wide ではない
+  assert.match(hero, /useState<AvatarHeroLayoutState>\("pending"\)/);
+  assert.doesNotMatch(hero, /useState<AvatarHeroLayout>\("wide"\)/);
+  // path/url 変更で pending にリセット
+  assert.match(hero, /setLayout\("pending"\);\s*\}, \[path, url\]\);/);
+  assert.doesNotMatch(hero, /setLayout\("wide"\)/);
+  // complete 済み画像でも計測（onLoad を取り逃しても）
+  assert.match(hero, /img\.complete/);
+  assert.match(hero, /measure\(probeRef\.current\)/);
+  assert.match(hero, /ref=\{probeRef\}/);
+  // probe はレイアウトに関係なく常設、onLoad/onError を持つ
+  const probe = hero.slice(hero.indexOf('className="avatar-hero-probe"') - 200, hero.indexOf('className="avatar-hero-probe"') + 300);
+  assert.match(probe, /\{src \? \(/);
+  assert.match(probe, /onLoad=\{onImageLoad\}/);
+  assert.match(probe, /onError=/);
+  // 未計測中は全幅 cover 画像を出さない
+  assert.match(hero, /src && !pending \?/);
+});
