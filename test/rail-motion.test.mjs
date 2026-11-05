@@ -42,3 +42,32 @@ test("rail motion: reduced motion stops every animation and transition", () => {
   assert.match(block, /animation: none !important/);
   assert.match(block, /transition: none !important/);
 });
+
+test("rail motion: fade mode never blanks the rail and fades labels out on collapse", () => {
+  const rule = (sel) => {
+    const i = css.indexOf(sel + " {");
+    assert.ok(i >= 0, sel);
+    return css.slice(i, css.indexOf("}", i));
+  };
+  const open = rule('.app-shell[data-rail-motion="fade"] .rail:not(.collapsed) :is(.nav-label, .count, .brand-wordmark, .rail-status)');
+  assert.doesNotMatch(open, /var\(--motion-delay\)|\bboth\b|backwards/, "no delay/backwards fill that forces opacity 0 after the width snap");
+  assert.match(css, /@keyframes rail-label-in-soft \{ from \{ opacity: 0\.35;/);
+  assert.match(css, /@keyframes rail-icon-in-soft \{ from \{ opacity: 0\.4; \}/);
+  const out = rule('.app-shell[data-rail-motion="fade"] .rail.collapsed :is(.brand-wordmark, .nav-label, .count)');
+  assert.match(out, /clip: auto/);
+  assert.match(out, /animation: rail-label-out var\(--motion-fade-out\)/);
+  assert.ok(css.includes("--motion-fade-out: 100ms"));
+  assert.match(css, /@keyframes rail-label-out \{ from \{ opacity: 1; \} to \{ opacity: 0; \} \}/);
+  for (const name of ["rail-label-in-soft", "rail-icon-in-soft", "rail-label-out"]) {
+    const body = new RegExp(`@keyframes ${name} \\{([^\\n]*)\\}`).exec(css)?.[1];
+    for (const m of body.matchAll(/([a-z-]+):/g)) assert.ok(["opacity", "transform"].includes(m[1]), `${name} animates ${m[1]}`);
+  }
+});
+
+test("rail motion: slide mode values are unchanged (C2)", () => {
+  assert.ok(css.includes(".app-shell[data-rail-motion] .rail:not(.collapsed) :is(.nav-label, .count, .brand-wordmark, .rail-status) {\n  animation: rail-label-in var(--motion-fast) var(--ease-out) var(--motion-delay) both;"));
+  assert.ok(css.includes(".app-shell[data-rail-motion] .rail.collapsed :is(.nav-icon, .brand-mark, .rail-toggle) {\n  animation: rail-icon-in var(--motion-fast) var(--ease-out) both;"));
+  assert.ok(css.includes("@keyframes rail-label-in { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: none; } }"));
+  assert.ok(css.includes("@keyframes rail-icon-in { from { opacity: 0; } to { opacity: 1; } }"));
+  assert.doesNotMatch(css, /\[data-rail-motion="slide"\][^{]*\.rail/);
+});
