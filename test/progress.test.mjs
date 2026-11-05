@@ -141,3 +141,19 @@ test("Rust progress uses the shared helper and guards the never-clearing jobs", 
     assert.match(browser, new RegExp(`ProgressGuard::new\\(app\\.clone\\(\\), "${name}"\\)`), name);
   }
 });
+
+test("progress wording rule: count first, name allowed, one line with ellipsis", () => {
+  const css = readFileSync("src/styles.css", "utf8");
+  const head = css.match(/\.progress-head p \{([^}]*)\}/)?.[1] ?? "";
+  for (const decl of ["text-overflow: ellipsis", "white-space: nowrap", "overflow: hidden", "min-width: 0"]) {
+    assert.ok(head.includes(decl), `.progress-head p needs ${decl}`);
+  }
+  const docs = readFileSync("docs/design/README.md", "utf8");
+  assert.ok(!docs.includes("文言は件数だけ"), "old count-only rule removed");
+  assert.ok(docs.includes("分類中 3 / 10: 商品名"));
+  const agents = readFileSync("AGENTS.md", "utf8");
+  assert.ok(!agents.includes("文言は件数だけ"));
+  const rs = readFileSync("src-tauri/src/commands.rs", "utf8");
+  assert.ok(!rs.includes("分類中: "), "extract message carries the count");
+  assert.ok(!rs.includes("をコピーしています"), "copy message carries the count");
+});

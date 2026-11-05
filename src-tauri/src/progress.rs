@@ -37,6 +37,16 @@ pub fn inferred_state(current: u32, total: u32) -> ProgressState {
 
 /// 状態を明示せずに送る。終わりの判定は [`inferred_state`] に任せる。
 /// 失敗や 0 件で終わる仕事は、これではなく [`ProgressGuard`] を使う。
+/// 件数と対象の名前を並べた文言（例「分類中 3 / 10: 商品名」）。名前は 40 文字で切る。
+pub fn counted_message(verb: &str, current: u32, total: u32, name: &str) -> String {
+    let name: String = name.chars().take(40).collect();
+    if name.trim().is_empty() {
+        format!("{verb} {current} / {total}")
+    } else {
+        format!("{verb} {current} / {total}: {name}")
+    }
+}
+
 pub fn emit_progress(app: &AppHandle, job: &str, current: u32, total: u32, message: impl Into<String>) {
     app.send(JobProgress {
         job: job.to_string(),
@@ -190,6 +200,17 @@ impl<S: ProgressSink> Drop for ProgressGuard<S> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn counted_message_shows_count_and_name() {
+        assert_eq!(super::counted_message("分類中", 3, 10, "商品"), "分類中 3 / 10: 商品");
+        assert_eq!(super::counted_message("コピー中", 1, 1, " "), "コピー中 1 / 1");
+        let long = "あ".repeat(60);
+        assert_eq!(
+            super::counted_message("分類中", 1, 2, &long),
+            format!("分類中 1 / 2: {}", "あ".repeat(40))
+        );
+    }
+
     use super::*;
     use std::sync::Arc;
 

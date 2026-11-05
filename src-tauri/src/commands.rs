@@ -698,7 +698,7 @@ pub async fn pull_remote_file(
 ) -> Result<(), String> {
     let label = filename.clone();
     let progress = ProgressGuard::new(app.clone(), "copy");
-    progress.update(0, 1, format!("{label} をコピーしています"));
+    progress.update(0, 1, crate::progress::counted_message("コピー中", 1, 1, &label));
     let worker = app.clone();
     let copied = tauri::async_runtime::spawn_blocking(move || {
         let (remote, library) = {
@@ -745,7 +745,7 @@ pub async fn push_remote_file(
 ) -> Result<(), String> {
     let label = filename.clone();
     let progress = ProgressGuard::new(app.clone(), "copy");
-    progress.update(0, 1, format!("{label} をコピーしています"));
+    progress.update(0, 1, crate::progress::counted_message("コピー中", 1, 1, &label));
     let worker = app.clone();
     let copied = tauri::async_runtime::spawn_blocking(move || {
         let (source, remote) = {
@@ -1184,7 +1184,7 @@ pub async fn extract_products(
             "extract",
             index as u32,
             total,
-            format!("分類中: {label}"),
+            crate::progress::counted_message("分類中", index as u32 + 1, total, &label),
         );
         if job.description == crate::model::UNAVAILABLE_DESCRIPTION {
             let mut connection = db(&state)?;
