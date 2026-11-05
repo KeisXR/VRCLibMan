@@ -263,6 +263,12 @@ VRCLibMan の見た目の決まりを、ほかのプロジェクトへ持ち出�
 - 節はカード（角丸 24px、`--surface`、`--shadow`）。見出しの前に朱の棒（幅 3px、高さ 0.85em）。
 - 行は「説明（左）｜操作（右寄せ）」の2列で、行の下に `1px solid var(--line)`。狭い幅では1列にします（コンテナクエリ 600px / 800px）。
 
+#### アセットの更新候補（`.asset-updates`）
+
+- 設定のスクロールを占領しないよう、確認対象の一覧は既定で閉じる。件数と状態（確認中 / 更新候補 N 件 / 候補なし / 確認失敗）は折り畳み時も常に出す。
+- 「一覧を表示」で開き、一覧は `max-height: min(40vh, 360px)` の内部スクロール。商品名は1行省略（`ellipsis`）。展開時の出現は `switch-rise`（opacity + 2px、`--motion`）。幅・高さは動かさない。
+- 絞り込みと50件ページングは展開時だけ。節の `id`（`settings-asset-updates`）は変えない。
+
 #### 設定のカテゴリ一覧（`.settings-nav`）
 
 - 部品は `src/components/SettingsNav.tsx`、項目と並びは `src/settingsNav.ts` の `SETTINGS_NAV_ITEMS`。ライブラリ・Unity・起動と常駐・更新候補・BOOTH・分類モデル・データ・対応表を編集・デバッグの 9 つで、画面の節の並びと同じです。節の `id`（`settings-unity`、`settings-asset-updates` など）は他の画面からの移動先なので変えません。`settings-app-update` は「データ」の中にあります。

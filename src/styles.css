@@ -1784,10 +1784,41 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .browser-auto-resume { position: fixed; bottom: 16px; left: 24px; z-index: 30; }
 
 .asset-updates { display: grid; gap: 12px; }
-.asset-update-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+.asset-update-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+.asset-update-summary p { margin: 0; min-width: 0; }
+.asset-update-panel {
+  display: grid;
+  gap: 12px;
+  animation: switch-rise var(--motion) ease;
+}
+.asset-update-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 12px;
+  max-height: min(40vh, 360px);
+  overflow: auto;
+  padding-right: 4px;
+}
 .asset-update-list li { border-top: 1px solid var(--border); padding-top: 12px; }
 .asset-updates select { max-width: 100%; min-width: 0; }
 .asset-update-list p { margin: 6px 0; }
+.asset-update-list .switch-label { min-width: 0; }
+.asset-update-title {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
 
 /* The guide stays available while the app's own screens remain interactive. */
 .setup-guide {
