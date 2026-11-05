@@ -17,6 +17,7 @@ import { CloudClassifierSettings } from "../components/CloudClassifierSettings";
 import { AssetUpdates } from "../components/AssetUpdates";
 import { UnitySettings } from "../components/UnitySettings";
 import { SettingsNav } from "../components/SettingsNav";
+import { SyncExportSettings } from "../components/SyncExportSettings";
 import { AVATAR_HERO_CHOICES, AVATAR_HERO_BASE, normalizeAvatarHero } from "../avatarHero";
 
 const emptyAvatar = {
@@ -480,6 +481,7 @@ export function SettingsPage() {
             <SettingRow label="アプリの更新" help="公開済みの配布版を確認して、アプリ内で更新します。ライブラリと設定は引き継ぎます。">
               <AppUpdater beforeInstall={flush} workInProgress={workInProgress} />
             </SettingRow>
+            <SyncExportSettings settings={settings} onChange={changeSettings} onBlur={flushSettings} beforeExport={flush} onNotify={notify} onFail={fail} />
             {catalog && <SettingRow label="同梱の対応表" help={`${catalog.credit}（${catalog.author}）・${catalog.count} 件`}>
               <div className="inline-control"><button className="button primary" type="button" onClick={() => void refreshCatalog()}>対応表を更新</button><button className="button" type="button" onClick={() => void openExternal(catalog.sourceUrl)}>出典</button><button className="button" type="button" onClick={() => void openExternal(catalog.termsUrl)}>利用規約</button></div>
             </SettingRow>}
@@ -495,6 +497,7 @@ export function SettingsPage() {
               <p>内蔵ブラウザでの閲覧やログインには、開いたサイトとの通信を行います。ログイン状態とブックマークは端末内に保存し、選択したファイルのダウンロード時には BOOTH の Cookie を利用します。</p>
               <p>各サイトのログイン状態と閲覧データは「内蔵ブラウザの閲覧データを削除」で削除できます。ライブラリ情報・設定・ブックマークは残ります。</p>
               <p>更新を確認・ダウンロードするときは GitHub と通信します。ライブラリや購入情報は送信しません。</p>
+              <p>エクスポートしたファイルには商品名とファイル名が含まれます。保存先の管理はご自身で行ってください。</p>
             </details>
           </section>
 

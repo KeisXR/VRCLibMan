@@ -360,6 +360,10 @@ pub struct Settings {
     pub check_update_on_startup: bool,
     pub ui_update_dismissed_version: String,
     pub unload_ollama_after_classification: bool,
+    /// Read-only. Created once on first start, and never in a settings patch.
+    pub device_id: String,
+    /// Shown to other devices. Defaults to the OS host name.
+    pub device_name: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -456,6 +460,7 @@ pub struct SettingsPatch {
     pub check_update_on_startup: Option<bool>,
     pub ui_update_dismissed_version: Option<String>,
     pub unload_ollama_after_classification: Option<bool>,
+    pub device_name: Option<String>,
 }
 
 impl SettingsPatch {

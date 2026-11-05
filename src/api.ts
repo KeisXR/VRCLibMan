@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { syncExportFilename } from "./syncExport";
 import type {
   AppUpdateStatus,
   AssetUpdateStatus,
@@ -38,6 +39,7 @@ import type {
   QueuePage,
   ScanReport,
   Settings,
+  SyncExportReport,
   RemoteSyncStatus,
   StagedDownload,
   DirListing,
@@ -261,6 +263,8 @@ export const api = {
     call<string>("classification_feedback", { scope }),
   saveClassificationFeedback: (scope: ClassificationFeedbackScope, path: string) =>
     call<void>("save_classification_feedback", { scope, path }),
+  syncExportJson: () => call<string>("sync_export_json"),
+  saveSyncExport: (path: string) => call<SyncExportReport>("save_sync_export", { path }),
 };
 
 export async function copyClassificationFeedback(scope: ClassificationFeedbackScope): Promise<void> {
@@ -287,6 +291,23 @@ export async function saveClassificationFeedback(
   if (typeof selected !== "string") return "cancelled";
   await api.saveClassificationFeedback(scope, selected);
   return "saved";
+}
+
+export async function exportSyncData(deviceName: string): Promise<SyncExportReport | "cancelled"> {
+  const filename = syncExportFilename(deviceName, new Date());
+  if (!isTauri()) {
+    const json = await api.syncExportJson();
+    downloadJson(filename, json);
+    return { counts: (JSON.parse(json) as SyncExportReport).counts };
+  }
+  const { save } = await import("@tauri-apps/plugin-dialog");
+  const selected = await save({
+    title: "同期データをエクスポート",
+    defaultPath: filename,
+    filters: [{ name: "JSON", extensions: ["json"] }],
+  });
+  if (typeof selected !== "string") return "cancelled";
+  return api.saveSyncExport(selected);
 }
 
 function downloadJson(filename: string, json: string) {

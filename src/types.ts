@@ -277,6 +277,22 @@ export interface Settings {
   rightPanelTabs: string;
   checkUpdateOnStartup: boolean;
   uiUpdateDismissedVersion: string;
+  /** 初回起動で作る端末 ID。変更しない。 */
+  deviceId: string;
+  /** 同期データに記録する端末名。既定は OS のホスト名。 */
+  deviceName: string;
+}
+
+export interface SyncCounts {
+  products: number;
+  links: number;
+  avatars: number;
+  fileLinks: number;
+  config: number;
+}
+
+export interface SyncExportReport {
+  counts: SyncCounts;
 }
 
 export interface RemoteSyncStatus {

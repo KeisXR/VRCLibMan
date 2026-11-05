@@ -28,6 +28,8 @@ tauri-plugin-updater = { version = "2.14", default-features = false, features = 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 getrandom = "0.3"
+# Default device name for sync metadata.
+gethostname = "1"
 tiny_http = "0.12"
 tempfile = "3.27"
 # deep-link 2.6.2 builds a rust-ini 0.21 ParseOption literal. 0.21.3 added fields.
