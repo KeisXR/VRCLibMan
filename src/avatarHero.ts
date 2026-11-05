@@ -5,6 +5,9 @@ export type AvatarHeroSize = "large" | "small" | "off";
 /** 横長フルブリードか、左ブロック＋ぼかし背景か。画像の幅/高さ >= しきい値で wide。 */
 export type AvatarHeroLayout = "wide" | "block";
 
+/** コンポーネント内の状態。"pending" は未計測（画像は出さずフォールバック背景のみ）。 */
+export type AvatarHeroLayoutState = AvatarHeroLayout | "pending";
+
 export const AVATAR_HERO_BASE = { width: 2400, height: 1200 } as const;
 
 /** これ以上のアスペクト比は全幅ヒーロー（wide）。未満は左ブロック（block）。 */
