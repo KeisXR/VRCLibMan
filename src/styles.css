@@ -1785,3 +1785,43 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .setup-guide-card p { margin: 0 0 var(--space-3); }
 .setup-guide-toggle { float: right; margin: -4px 0 8px 8px; }
 .setup-guide .row-actions { clear: both; }
+
+/* ==== 切替の動き: 押して切り替わる場所の控えめな動き ====
+   動かすのは opacity と transform だけ（幅・高さ・位置の計算は動かさない）。長さは 120〜160ms。
+   右パネル（ネイティブの WebView）とその親には transform を付けない。長い一覧の各行にも付けない。
+   prefers-reduced-motion では先頭のグローバル停止で止まる。詳細は docs/design/README.md「動き」。 */
+@keyframes switch-rise {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes switch-pop {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes switch-pop-down {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes switch-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+/* 選択中の地・影はフェードで移る */
+.tab { transition: background-color var(--motion) ease, color var(--motion) ease, box-shadow var(--motion) ease; }
+.genre-link,
+.settings-nav button { transition: background-color var(--motion) ease, color var(--motion) ease, box-shadow var(--motion) ease; }
+/* 朱の縦棒・下線は直線のまま、不透明度だけで現れる */
+.tab.active::after,
+.chip-bar-item.active::after,
+.genre-link.active::before,
+.settings-nav button[aria-current]::before,
+.settings-nav button[aria-current]::after { animation: switch-fade var(--motion) ease; }
+/* 切り替えた下の一覧（タブの中身・ジャンルの一覧）は 2px の短い rise。JS が切替ごとに付け直す */
+.switch-rise { animation: switch-rise var(--motion) ease; }
+/* メニューとダイアログ: フェード＋4px */
+.account-popover { animation: switch-pop 120ms ease-out; }
+.account-popover.right-panel-popover { animation-name: switch-pop-down; }
+.unity-open-overlay { animation: switch-fade 120ms ease-out; }
+.panel.unity-open-dialog { animation: switch-pop var(--motion) ease-out; }
+.browser-auto-dialog[open] { animation: switch-pop var(--motion) ease-out; }
+/* ==== 切替の動きここまで ==== */
