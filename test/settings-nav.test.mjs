@@ -14,7 +14,7 @@ test("active settings section follows the scroll position", async () => {
     assert.equal(activeSettingsSection(tops, 60, true), "c", "at the end, the last section is current");
     assert.equal(activeSettingsSection([], 60, false), null);
     const ids = SETTINGS_NAV_ITEMS.map((item) => item.id);
-    for (const id of ["settings-unity", "settings-asset-updates", "settings-knowledge", "settings-debug"]) assert.ok(ids.includes(id), id);
+    for (const id of ["settings-unity", "settings-design", "settings-asset-updates", "settings-knowledge", "settings-debug"]) assert.ok(ids.includes(id), id);
     assert.equal(new Set(ids).size, ids.length);
   } finally {
     await server.close();
