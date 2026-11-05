@@ -5,7 +5,8 @@ import type { AppleFmStatus, JobProgress, OllamaStatus, SetupStatus } from "../t
 import { ModelPicker } from "../components/ModelPicker";
 import { BoothImportSettings } from "../components/BoothImportSettings";
 import { modelDownloadPrompt, modelInstalled } from "../models";
-import { errorText } from "../ui";
+import { ProgressTrack, errorText } from "../ui";
+import { progressState } from "../progress";
 
 export function SetupWizard({ onDone, onRefresh }: { onDone: () => void; onRefresh: () => void }) {
   const [status, setStatus] = useState<SetupStatus | null>(null);
@@ -158,7 +159,6 @@ export function SetupWizard({ onDone, onRefresh }: { onDone: () => void; onRefre
   const appleAvailable = apple?.availability === "available";
   const ready = usingApple || modelInstalled(ollama?.models ?? [], model);
   const connected = ollama != null && ollamaError === "";
-  const percent = progress && progress.total > 0 ? Math.min(100, (progress.current / progress.total) * 100) : 0;
 
   return (
     <div className={guided ? "setup-guide" : "setup-screen"}>
@@ -188,9 +188,12 @@ export function SetupWizard({ onDone, onRefresh }: { onDone: () => void; onRefre
             {pulling && (
               <div className="progress">
                 <p>{progress?.message ?? "取得中"}</p>
-                <div className={progress && progress.total > 0 ? "track" : "track indeterminate"}>
-                  <span style={{ width: progress && progress.total > 0 ? `${percent}%` : undefined }} />
-                </div>
+                <ProgressTrack
+                  current={progress?.current ?? 0}
+                  total={progress?.total ?? 0}
+                  state={progress ? progressState(progress) : "running"}
+                  label={progress?.message ?? "取得中"}
+                />
               </div>
             )}
             {appleAvailable && !usingApple && (

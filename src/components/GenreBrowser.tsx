@@ -7,6 +7,7 @@ import { useRemoteProductProbe } from "../remoteProductProbe";
 import { isPreviewMoveKey, nextPreviewId, previewKeysBlocked } from "../previewPane";
 import { GenreChipBar } from "./GenreChipBar";
 import { useRightPanel } from "./RightPanel";
+import { useReplayRise } from "../useReplayRise";
 
 const NOUN: Record<string, string> = { asset: "アセット", world: "ワールド" };
 
@@ -76,8 +77,10 @@ export function GenreBrowser({ title, lede }: { title: string; lede?: string }) 
     return () => window.removeEventListener("keydown", onKey);
   }, [previewOpen, shownIds]);
 
+  const listRef = useRef<HTMLDivElement>(null);
+  useReplayRise(listRef, selected);
   const list = (
-    <div className="stack">
+    <div className="stack" ref={listRef}>
       {shown.map((item) => {
         const resolved = probedMap.get(item.boothId) ?? item;
         const isSelected = previewOpen && item.boothId === selectedId;

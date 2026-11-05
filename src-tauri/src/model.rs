@@ -775,13 +775,30 @@ pub struct LibraryStats {
     pub ollama_model: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+/// 進捗の状態。省略時は running（古い送り方との互換）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProgressState {
+    #[default]
+    Running,
+    Done,
+    Error,
+    Cancelled,
+}
+
+/// `job-progress` の中身。送り方は `progress.rs` にまとめる。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JobProgress {
     pub job: String,
     pub current: u32,
     pub total: u32,
     pub message: String,
+    #[serde(default)]
+    pub state: ProgressState,
+    /// 上部の帯に出さず、その設定の欄だけで見せる仕事。
+    #[serde(default)]
+    pub background: bool,
 }
 
 pub fn now_iso() -> String {

@@ -17,7 +17,17 @@ import { useAppLayout } from "./useAppLayout";
 import { UI_GENRE_WIDTH, UI_RAIL_WIDTH } from "./uiLayout";
 import { AppUpdaterProvider, useStartupUpdateCheck } from "./useAppUpdater";
 import { SidebarUpdaterBadge } from "./components/SidebarUpdaterBadge";
-import type { JobProgress, LibraryStats } from "./types";
+import type { LibraryStats } from "./types";
+import {
+  EMPTY_PROGRESS,
+  applyProgress,
+  nextPruneDelay,
+  othersLabel,
+  progressStrip,
+  pruneProgress,
+  workInProgress as anyWorkInProgress,
+} from "./progress";
+import type { ProgressBoard } from "./progress";
 import {
   accountAfterLogout,
   accountLabel,
@@ -28,7 +38,7 @@ import {
 import { SidebarClassificationHint } from "./components/SidebarClassificationHint";
 import { BrandMark, NavIcon, SidebarToggleIcon, type NavIconName } from "./components/navIcons";
 import { RightPanelColumn, RightPanelProvider, useRightPanelState } from "./components/RightPanel";
-import { errorText } from "./ui";
+import { ProgressTrack, errorText } from "./ui";
 import { BrowserAutoClassification } from "./components/BrowserAutoClassification";
 import { ErrorBanner, NoticeBanner } from "./components/NoticeBanner";
 import type { NoticeAction, NotifyOptions } from "./notice";
@@ -100,7 +110,7 @@ export default function App() {
   useEffect(() => { void appVersion().then(setVersion, () => setVersion("未確認")); }, []);
   const [hash, setHash] = useState(window.location.hash);
   const [stats, setStats] = useState<LibraryStats | null>(null);
-  const [progress, setProgress] = useState<JobProgress | null>(null);
+  const [progressBoard, setProgressBoard] = useState<ProgressBoard>(EMPTY_PROGRESS);
   const { notice, error, notify, fail, setError, dismissNotice, dismissError, runNoticeAction } = useBanners();
   useAssetUpdateNotice(notify);
   const [revision, setRevision] = useState(0);
@@ -207,20 +217,26 @@ export default function App() {
     let alive = true;
     listenProgress((next) => {
       if (!alive) return;
-      setProgress(next);
-      if (next.total > 0 && next.current >= next.total) {
-        window.setTimeout(() => {
-          if (alive) setProgress(null);
-        }, 2500);
-      }
+      setProgressBoard((board) => applyProgress(board, next, Date.now()));
     }).then((unlisten) => {
-      stop = unlisten;
+      if (!alive) unlisten();
+      else stop = unlisten;
     });
     return () => {
       alive = false;
       stop();
     };
   }, []);
+
+  // 終わった仕事は少し残してから消す（docs/design/README.md#進捗）。
+  useEffect(() => {
+    const delay = nextPruneDelay(progressBoard, Date.now());
+    if (delay === null) return;
+    const timer = window.setTimeout(() => {
+      setProgressBoard((board) => pruneProgress(board, Date.now()));
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [progressBoard]);
 
   const refreshAccount = useCallback(() => {
     accountReload.current();
@@ -266,12 +282,12 @@ export default function App() {
     };
   }, [builtinBrowser]);
 
+  const working = anyWorkInProgress(progressBoard);
   const shell = useMemo<ShellValue>(
-    () => ({ revision, refresh, notify, fail, builtinBrowser, refreshAccount, workInProgress: progress !== null }),
-    [revision, refresh, notify, fail, builtinBrowser, refreshAccount, progress],
+    () => ({ revision, refresh, notify, fail, builtinBrowser, refreshAccount, workInProgress: working }),
+    [revision, refresh, notify, fail, builtinBrowser, refreshAccount, working],
   );
-  const percent =
-    progress && progress.total > 0 ? Math.min(100, (progress.current / progress.total) * 100) : 0;
+  const strip = progressStrip(progressBoard);
   const density =
     route.page === "settings"
       ? "density-roomy"
@@ -300,12 +316,22 @@ export default function App() {
       <div className="topbar" ref={topbarRef}>
         {error && <ErrorBanner key={error.id} error={error} onDismiss={dismissError} />}
         {notice && <NoticeBanner key={notice.id} notice={notice} onDismiss={dismissNotice} onAction={runNoticeAction} />}
-        {progress && (
+        {strip && (
           <div className="progress">
-            <p>{progress.message}</p>
-            <div className={progress.total > 0 ? "track" : "track indeterminate"}>
-              <span style={{ width: progress.total > 0 ? `${percent}%` : undefined }} />
-            </div>
+            {strip.others > 0 ? (
+              <div className="progress-head">
+                <p>{strip.entry.message}</p>
+                <span className="progress-more">{othersLabel(strip.others)}</span>
+              </div>
+            ) : (
+              <p>{strip.entry.message}</p>
+            )}
+            <ProgressTrack
+              current={strip.entry.current}
+              total={strip.entry.total}
+              state={strip.entry.state}
+              label={strip.entry.message}
+            />
           </div>
         )}
       </div>
