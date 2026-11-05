@@ -8,6 +8,7 @@
   --sunken: #f7f7f9;
   --text: #20222b;
   --text-secondary: #858995;
+  --avatar-hero-sub: #5d616c;
   --muted: var(--text-secondary);
   --faint: #a0a4ae;
   --button: #20222b;
@@ -59,6 +60,7 @@
     --sunken: #26262b;
     --text: #f3f3f5;
     --text-secondary: #9b9ba6;
+    --avatar-hero-sub: #b4b4be;
     --faint: #7e7e88;
     --button: #f5f5f7;
     --button-text: #161618;
@@ -697,7 +699,7 @@ button.account-pill:hover { background: var(--hover); }
   flex: none;
   height: var(--avatar-hero-h, 320px);
   /* .content の --content-pad-* を打ち消し、サイドバー／topbar 端まで詰める */
-  margin: calc(-1 * var(--content-pad-top)) calc(-1 * var(--content-pad-x)) var(--space-5);
+  margin: calc(-1 * var(--content-pad-top)) calc(-1 * var(--content-pad-x)) var(--space-4);
   width: calc(100% + var(--content-pad-x) * 2);
   max-width: none;
   border-radius: 0;
@@ -717,12 +719,28 @@ button.account-pill:hover { background: var(--hover); }
   width: 100%;
   height: 100%;
   object-fit: cover;
-  object-position: center 18%;
+  object-position: center 22%;
 }
 .avatar-hero-fallback {
   background:
     radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, var(--surface) 80%, var(--text) 20%), transparent 70%),
     var(--surface-secondary);
+}
+.avatar-hero-bg {
+  position: absolute;
+  inset: -60px;
+  width: calc(100% + 120px);
+  height: calc(100% + 120px);
+  object-fit: cover;
+  filter: blur(48px) saturate(1.25);
+  transform: scale(1.02);
+}
+.avatar-hero-probe {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 .avatar-hero-blur {
   position: absolute;
@@ -756,15 +774,16 @@ button.account-pill:hover { background: var(--hover); }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .avatar-hero-blur { display: none; }
 }
-/* カードなしでも 4.5:1 を満たすよう、フェードを早め・強めに（約 25% から） */
-.avatar-hero-fade {
+/* 覆い: --bg 45% → 82% → 100%（上→下）。カード型スクリムは使わない */
+.avatar-hero-fade,
+.avatar-hero-veil {
   position: absolute;
   inset: 0;
   pointer-events: none;
   background: linear-gradient(
     to bottom,
-    transparent 25%,
-    color-mix(in srgb, var(--bg) 70%, transparent) 58%,
+    color-mix(in srgb, var(--bg) 45%, transparent),
+    color-mix(in srgb, var(--bg) 82%, transparent) 60%,
     var(--bg) 100%
   );
 }
@@ -803,7 +822,7 @@ button.account-pill:hover { background: var(--hover); }
   margin: 0;
   font-size: 12px;
   letter-spacing: 0.04em;
-  color: var(--text-secondary);
+  color: var(--avatar-hero-sub);
   font-weight: 650;
   text-shadow: 0 1px 2px color-mix(in srgb, var(--bg) 65%, transparent);
 }
@@ -819,19 +838,85 @@ button.account-pill:hover { background: var(--hover); }
 .avatar-hero-title::before { content: none; } /* page-head の朱棒は付けない */
 .avatar-hero-sub {
   margin: 6px 0 0;
-  color: var(--text-secondary);
+  color: var(--avatar-hero-sub);
   font-size: 14px;
   text-shadow: 0 1px 2px color-mix(in srgb, var(--bg) 65%, transparent);
 }
-.avatar-hero-actions {
+.avatar-hero-warn {
+  margin: 8px 0 0;
+  color: var(--warn);
+  text-shadow: none;
+}
+/* 正方形・縦長: 左に鮮明ブロック + 右側に名前 */
+.avatar-hero-block {
+  position: absolute;
+  left: var(--content-pad-x);
+  right: var(--content-pad-x);
+  top: calc(var(--space-4) + 28px);
+  bottom: var(--space-5);
+  z-index: 1;
   display: flex;
-  gap: 8px;
-  flex: 0 0 auto;
+  gap: var(--space-5);
+  align-items: flex-end;
+}
+.avatar-hero-sharp {
+  height: 100%;
+  width: auto;
+  aspect-ratio: var(--avatar-hero-ar, 1);
+  max-width: 45%;
+  object-fit: cover;
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
+  flex: none;
+}
+/* ヒーロー直下の操作行（副ボタンのみ）。新版ダウンロード専用ボタンは置かない */
+.avatar-hero-toolbar {
+  display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+}
+.avatar-hero-toolbar .avatar-add { align-self: center; margin-left: auto; }
+/* アセットファイルの開閉。件数は常に見出しに出す */
+.avatar-assets {
+  margin: 0 0 var(--space-5);
+}
+.avatar-assets > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 15px;
+  font-weight: 650;
+  user-select: none;
+}
+.avatar-assets > summary::-webkit-details-marker { display: none; }
+.avatar-assets-chevron {
+  display: inline-block;
+  width: 0.65em;
+  height: 0.65em;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform var(--motion) var(--ease-out);
+  flex: none;
+}
+.avatar-assets[open] > summary .avatar-assets-chevron {
+  transform: rotate(45deg);
+}
+.avatar-assets-summary-meta {
+  font-weight: 500;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.avatar-assets-body {
+  margin-top: var(--space-3);
 }
 @media (prefers-reduced-motion: reduce) {
   .avatar-hero-media { will-change: auto; }
+  .avatar-assets-chevron { transition: none; }
 }
 
 .toolbar {
@@ -1482,7 +1567,8 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
   .avatar-hero[data-size="small"] { --avatar-hero-h: 220px; }
   .avatar-hero-title { font-size: 26px; }
   .avatar-hero-body { bottom: 12px; flex-direction: column; align-items: stretch; }
-  .avatar-hero-actions { justify-content: flex-start; }
+  .avatar-hero-block { top: calc(var(--space-3) + 24px); bottom: 12px; gap: var(--space-4); }
+  .avatar-hero-sharp { max-width: 42%; }
 }
 
 /* Settings */

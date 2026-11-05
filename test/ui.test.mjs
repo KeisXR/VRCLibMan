@@ -1174,10 +1174,14 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       await route("#/avatar/lime");
       await wait(() => main().querySelector("h1")?.textContent === "ライム");
       await wait(() => main().textContent.includes("見本の本体.unitypackage"));
+      assert.ok(main().querySelector(".avatar-assets .download-row"), "hero-side assets list shows downloads");
+      assert.ok(main().querySelector(".avatar-hero-toolbar"), "actions sit under the hero");
       const bodyCard = [...main().querySelectorAll(".item")].find((node) =>
-        node.textContent.includes("見本の本体.unitypackage"),
-      );
-      assert.ok(bodyCard?.querySelector(".download-row"));
+        node.textContent.includes("ライム -Lime-") || node.textContent.includes("見本の本体"),
+      ) ?? [...main().querySelectorAll(".item")].find((node) => node.querySelector(".product-actions-trigger"));
+      // 所持本体カードは残るが、ファイル行はヒーロー下のアセット一覧へ移している
+      assert.ok(bodyCard);
+      assert.equal(bodyCard.querySelector(".download-row"), null);
       assert.equal(bodyCard.getAttribute("draggable"), "false");
       assert.ok(!bodyCard.textContent.includes("手動"));
       await click(bodyCard.querySelector(".product-actions-trigger"));

@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, listenBoothFile, openBoothLink, openLocal, revealInFolder } from "../api";
 import { useShell } from "../App";
 import { filePresence, formatBytes } from "../media";
@@ -6,7 +6,12 @@ import { CATEGORY_LABEL } from "../types";
 import type { AvatarDetail, BoothFileStatus, DownloadView, ItemView, Knowledge, ProductOption } from "../types";
 import { FileMark, Thumb, errorText } from "../ui";
 import { AvatarHero } from "../components/AvatarHero";
-import { normalizeAvatarHero, type AvatarHeroSize } from "../avatarHero";
+import {
+  normalizeAvatarHero,
+  readAssetsOpenPref,
+  writeAssetsOpenPref,
+  type AvatarHeroSize,
+} from "../avatarHero";
 import { ExcludeProductButton } from "../components/ProductExclusions";
 import { UnityOpenButton } from "../components/UnityOpenDialog";
 import { isUnityOpenableName } from "../unityOpen";
@@ -17,6 +22,29 @@ import {
   placeLabelForFile,
   useRemoteProductProbe,
 } from "../remoteProductProbe";
+
+
+function totalDownloadBytes(files: ReadonlyArray<{ sizeBytes?: number | null; size?: number | null }>): number {
+  return files.reduce((sum, file) => {
+    const n = file.sizeBytes ?? file.size ?? 0;
+    return sum + (n > 0 ? n : 0);
+  }, 0);
+}
+
+function formatAssetSummary(count: number, bytes: number): string {
+  if (bytes > 0) return `${count} ファイル・${formatBytes(bytes)}`;
+  return `${count} ファイル`;
+}
+
+function firstUnityLocalPath(item: ItemView): string | null {
+  for (const file of item.downloads) {
+    if (file.state === "local" && file.localPath && isUnityOpenableName(file.localPath)) return file.localPath;
+  }
+  for (const file of item.localFiles) {
+    if (!file.isDir && isUnityOpenableName(file.filename)) return file.path;
+  }
+  return null;
+}
 
 export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?: string }) {
   const { revision, refresh, notify, fail } = useShell();
@@ -107,7 +135,7 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
 
   const subtitle = `${detail.owned ? "所持アバター" : "所持未登録"}${detail.baseBodyName ? ` ・ ${detail.baseBodyName}` : ""}`;
   const addAction = <AddAvatarItem avatarId={detail.id} linkedIds={linkedIds} />;
-
+  const primaryOwned = detail.ownedProducts[0] ?? null;
   const backLink = <a href="#/">アバター一覧へ</a>;
 
   return (
@@ -124,16 +152,19 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
           </div>
         </>
       ) : (
-        <AvatarHero
-          size={heroSize}
-          path={detail.thumbnailPath}
-          url={detail.thumbnailUrl}
-          name={detail.displayName}
-          kicker="アバター"
-          subtitle={subtitle}
-          nav={backLink}
-          actions={addAction}
-        />
+        <>
+          <AvatarHero
+            size={heroSize}
+            path={detail.thumbnailPath}
+            url={detail.thumbnailUrl}
+            name={detail.displayName}
+            kicker="アバター"
+            subtitle={subtitle}
+            nav={backLink}
+          />
+          <AvatarHeroToolbar primary={primaryOwned} addAction={addAction} />
+          {primaryOwned ? <AvatarAssetsPanel item={primaryOwned} itemCardProps={itemCardProps} /> : null}
+        </>
       )}
       {(detail.aliases.length > 0 || detail.baseBodyNote) && (
         <details className="generic">
@@ -156,7 +187,11 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
           {detail.ownedProducts.length > 0 && (
             <div className="stack">
               {detail.ownedProducts.map((item) => (
-                <ItemCard key={item.boothId} {...itemCardProps(item)} />
+                <ItemCard
+                  key={item.boothId}
+                  {...itemCardProps(item)}
+                  hideFiles={heroSize !== "off" && primaryOwned?.boothId === item.boothId}
+                />
               ))}
             </div>
           )}
@@ -214,6 +249,163 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
         )}
       </div>
     </section>
+  );
+}
+
+
+function AvatarHeroToolbar({
+  primary,
+  addAction,
+}: {
+  primary: ItemView | null;
+  addAction: ReactNode;
+}) {
+  const { notify, fail } = useShell();
+  const unityPath = primary ? firstUnityLocalPath(primary) : null;
+  return (
+    <div className="avatar-hero-toolbar">
+      {unityPath ? (
+        <UnityOpenButton
+          className="button"
+          label="Unity で開く"
+          target={{ path: unityPath, boothId: primary?.boothId }}
+          notify={notify}
+          fail={fail}
+        />
+      ) : null}
+      {primary ? (
+        <button className="button" type="button" onClick={() => void openBoothLink(primary.url)}>
+          BOOTH で開く
+        </button>
+      ) : null}
+      {addAction}
+    </div>
+  );
+}
+
+function AvatarAssetsPanel({
+  item,
+  itemCardProps,
+}: {
+  item: ItemView;
+  itemCardProps: (item: ItemView) => {
+    item: ItemView;
+    remoteProbeStatus: RemoteProbeStatus;
+    onRetryRemoteProbe: () => void;
+  };
+}) {
+  const { builtinBrowser, refresh, notify, fail } = useShell();
+  const probed = itemCardProps(item);
+  const view = probed.item;
+  const [open, setOpen] = useState(() =>
+    readAssetsOpenPref(typeof localStorage === "undefined" ? null : localStorage),
+  );
+  const [busy, setBusy] = useState("");
+  const fileCount = view.downloads.length + view.localFiles.length;
+  const bytes = totalDownloadBytes(view.downloads) + totalDownloadBytes(view.localFiles);
+  if (fileCount === 0 && !offerFreeFileCheck(view, builtinBrowser)) return null;
+
+  async function pull(file: DownloadView) {
+    setBusy(file.filename);
+    try {
+      await api.pullRemoteFile(view.boothId, file.variation, file.filename);
+      notify(`${file.filename} を手元のフォルダへコピーしました`);
+      refresh();
+    } catch (err) {
+      fail(errorText(err));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function push(file: DownloadView) {
+    setBusy(file.filename);
+    try {
+      await api.pushRemoteFile(view.boothId, file.variation, file.filename);
+      notify(`${file.filename} をリモートへコピーしました`);
+      refresh();
+    } catch (err) {
+      fail(errorText(err));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  return (
+    <details
+      className="avatar-assets"
+      open={open}
+      onToggle={(event) => {
+        const next = event.currentTarget.open;
+        setOpen(next);
+        writeAssetsOpenPref(next, typeof localStorage === "undefined" ? null : localStorage);
+      }}
+    >
+      <summary>
+        <span className="avatar-assets-chevron" aria-hidden="true" />
+        <span>アセットファイル</span>
+        <span className="avatar-assets-summary-meta">{formatAssetSummary(fileCount, bytes)}</span>
+      </summary>
+      <div className="avatar-assets-body">
+        {offerFreeFileCheck(view, builtinBrowser) ? (
+          <FreeFileCheckButton boothId={view.boothId} />
+        ) : null}
+        {view.downloads.length > 0 ? (
+          <DownloadFiles
+            item={view}
+            remoteProbeStatus={probed.remoteProbeStatus}
+            busy={busy}
+            pull={(file) => void pull(file)}
+            push={(file) => void push(file)}
+          />
+        ) : null}
+        {view.localFileCount > 0 ? (
+          <ul className="file-list">
+            {view.localFiles.map((file) => (
+              <li key={file.path}>
+                <button type="button" onClick={() => void openLocal(file.path).catch((err: unknown) => fail(errorText(err)))}>
+                  {file.isDir ? "フォルダ" : "ファイル"} {file.filename}
+                </button>
+                <span className="row-actions">
+                  {!file.isDir && isUnityOpenableName(file.filename) ? (
+                    <UnityOpenButton target={{ path: file.path, boothId: view.boothId }} notify={notify} fail={fail} />
+                  ) : null}
+                  <span>{formatBytes(file.size)}</span>
+                </span>
+              </li>
+            ))}
+            {view.localFileCount > view.localFiles.length ? (
+              <li>ほか {view.localFileCount - view.localFiles.length} 件</li>
+            ) : null}
+          </ul>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
+function FreeFileCheckButton({ boothId }: { boothId: string }) {
+  const { refresh, notify, fail } = useShell();
+  const [checkingFree, setCheckingFree] = useState(false);
+  async function runFreeFileCheck() {
+    if (checkingFree) return;
+    setCheckingFree(true);
+    try {
+      const report = await api.fetchFreeFiles(boothId);
+      notify(freeFilesFoundMessage(report.files));
+      refresh();
+    } catch (err) {
+      fail(errorText(err));
+    } finally {
+      setCheckingFree(false);
+    }
+  }
+  return (
+    <div className="free-file-check">
+      <button className="button" type="button" disabled={checkingFree} onClick={() => void runFreeFileCheck()}>
+        {checkingFree ? FREE_FILE_CHECK_BUSY_LABEL : FREE_FILE_CHECK_LABEL}
+      </button>
+    </div>
   );
 }
 
@@ -394,6 +586,7 @@ export function ItemCard({
   selected = false,
   tabStop = false,
   onSelect,
+  hideFiles = false,
 }: {
   item: ItemView;
   movable?: boolean;
@@ -404,6 +597,8 @@ export function ItemCard({
   selected?: boolean;
   tabStop?: boolean;
   onSelect?: () => void;
+  /** ヒーロー直下のアセット一覧へ移したとき、カード内のファイル行を隠す */
+  hideFiles?: boolean;
 }) {
   const { builtinBrowser, refresh, notify, fail } = useShell();
   const [busy, setBusy] = useState("");
@@ -517,27 +712,27 @@ export function ItemCard({
           </div>
         )}
         <div id={`files-${item.boothId}`}>
-          {item.downloads.length === 0 && item.localFileCount === 0 && (
+          {!hideFiles && item.downloads.length === 0 && item.localFileCount === 0 && (
             <p className="meta">ファイル情報はまだありません。再インポートするか、フォルダを調べてください</p>
           )}
-          {offerFreeFileCheck(item, builtinBrowser) && (
+          {!hideFiles && offerFreeFileCheck(item, builtinBrowser) && (
             <div className="free-file-check">
               <button className="button" type="button" disabled={checkingFree} onClick={() => void checkFreeFiles()}>
                 {checkingFree ? FREE_FILE_CHECK_BUSY_LABEL : FREE_FILE_CHECK_LABEL}
               </button>
             </div>
           )}
-          {item.downloads.length > 0 &&
+          {!hideFiles && item.downloads.length > 0 &&
             item.remoteConfigured &&
             ((item.remoteChecked && !item.remoteReachable) || remoteProbeStatus === "failed") && (
               <p className="meta">リモートのフォルダを確認できません。接続してからもう一度開いてください。</p>
             )}
-          {remoteProbeStatus === "failed" && onRetryRemoteProbe && (
+          {!hideFiles && remoteProbeStatus === "failed" && onRetryRemoteProbe && (
             <button className="button" type="button" onClick={onRetryRemoteProbe}>
               もう一度確認
             </button>
           )}
-          {item.downloads.length > 0 && (
+          {!hideFiles && item.downloads.length > 0 && (
             <DownloadFiles
               item={item}
               remoteProbeStatus={remoteProbeStatus}
@@ -546,7 +741,7 @@ export function ItemCard({
               push={(file) => void push(file)}
             />
           )}
-          {item.localFileCount > 0 && (
+          {!hideFiles && item.localFileCount > 0 && (
             <ul className="file-list">
               {item.localFiles.map((file) => (
                 <li key={file.path}>

@@ -358,7 +358,7 @@ export function SettingsPage() {
               </fieldset>
             </SettingRow>
             <div className="section-body">
-              <p className="meta">基準画像は {AVATAR_HERO_BASE.width}×{AVATAR_HERO_BASE.height}（2:1）です。各サイズへ拡大縮小し、中央を切り抜いて表示します（object-fit: cover）。小さい画像は拡大で粗くなることがあります。</p>
+              <p className="meta">基準画像は {AVATAR_HERO_BASE.width}×{AVATAR_HERO_BASE.height}（2:1）です。横長（幅/高さ ≥ 1.6）のときは拡大縮小して中央を切り抜きます。正方形・縦長は左のブロック表示になります。横長で幅がおおよそ 2000px 未満のときは粗さの注意を出します。</p>
             </div>
           </section>
 
