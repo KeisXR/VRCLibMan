@@ -107,6 +107,9 @@ pub struct Avatar {
     pub is_builtin: bool,
     pub owned: bool,
     pub notes: String,
+    /// Local path. Reaches the screen only through `AvatarDetail`, never with the dictionary.
+    #[serde(skip_serializing)]
+    pub hero_image_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

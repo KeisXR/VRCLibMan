@@ -67,7 +67,8 @@ CREATE TABLE avatars (
     aliases_json TEXT NOT NULL DEFAULT '[]',
     is_builtin INTEGER NOT NULL DEFAULT 0,
     owned INTEGER NOT NULL DEFAULT 0,
-    notes TEXT NOT NULL DEFAULT ''
+    notes TEXT NOT NULL DEFAULT '',
+    hero_image_path TEXT
 );
 CREATE TABLE product_avatars (
     product_id TEXT NOT NULL,
@@ -315,6 +316,18 @@ fn migrate(connection: &Connection) -> Result<(), String> {
         crate::sync_meta::baseline_missing(&tx)?;
         tx.execute_batch("PRAGMA user_version = 8;").sql()?;
         tx.commit().sql()?;
+    }
+    // v9 is only `avatars.hero_image_path` (a copy in `hero_images`). NULL means the thumbnail.
+    if version < 9 {
+        ensure_column(
+            connection,
+            "avatars",
+            "hero_image_path",
+            "ALTER TABLE avatars ADD COLUMN hero_image_path TEXT",
+        )?;
+        connection
+            .execute_batch("PRAGMA user_version = 9;")
+            .sql()?;
     }
     Ok(())
 }
@@ -4114,6 +4127,31 @@ pub(crate) fn save_avatar(
     Ok(id)
 }
 
+pub(crate) fn set_avatar_hero_path(
+    connection: &Connection,
+    id: &str,
+    path: Option<&str>,
+) -> Result<(), String> {
+    let rows = connection
+        .execute(
+            "UPDATE avatars SET hero_image_path = ?1 WHERE id = ?2",
+            params![path, id],
+        )
+        .sql()?;
+    if rows == 0 {
+        return Err("アバターが見つかりません".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn avatar_hero_paths(connection: &Connection) -> Result<Vec<String>, String> {
+    let mut statement = connection
+        .prepare("SELECT hero_image_path FROM avatars WHERE hero_image_path IS NOT NULL")
+        .sql()?;
+    let rows = statement.query_map([], |row| row.get(0)).sql()?;
+    rows.collect::<Result<Vec<_>, _>>().sql()
+}
+
 pub(crate) fn delete_avatar(connection: &mut Connection, id: &str) -> Result<(), String> {
     let avatar = avatar_by_id(connection, id)?.ok_or("アバターが見つかりません")?;
     if avatar.is_builtin {
@@ -5851,7 +5889,7 @@ fn load_products(connection: &Connection) -> Result<Vec<Product>, String> {
 fn load_avatars(connection: &Connection) -> Result<Vec<Avatar>, String> {
     let mut statement = connection
         .prepare(
-            "SELECT id, display_name, base_body, aliases_json, is_builtin, owned, notes FROM avatars",
+            "SELECT id, display_name, base_body, aliases_json, is_builtin, owned, notes, hero_image_path FROM avatars",
         )
         .sql()?;
     let rows = statement
@@ -5865,6 +5903,7 @@ fn load_avatars(connection: &Connection) -> Result<Vec<Avatar>, String> {
                 is_builtin: row.get::<_, i64>(4)? != 0,
                 owned: row.get::<_, i64>(5)? != 0,
                 notes: row.get(6)?,
+                hero_image_path: row.get(7)?,
             })
         })
         .sql()?;
@@ -6071,7 +6110,7 @@ fn valid_id(id: &str) -> bool {
             .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_' || ch == '-')
 }
 
-fn fnv(text: &str) -> u32 {
+pub(crate) fn fnv(text: &str) -> u32 {
     let mut hash = 2_166_136_261u32;
     for byte in text.as_bytes() {
         hash ^= u32::from(*byte);
@@ -6242,7 +6281,7 @@ mod tests {
             connection
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
-            8
+            9
         );
         let detail_at: Option<String> = connection
             .query_row(
@@ -6958,7 +6997,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
         let json = r#"{
             "products": [
                 {
@@ -7559,7 +7598,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
         let report = import_products(&mut connection, &parsed).unwrap();
         assert_eq!(report.inserted, 7);
         assert_eq!(report.skipped, 0);
@@ -7841,7 +7880,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
         assert!(!settings(&connection).unwrap().ui_rail_collapsed);
         let saved = update_settings(
             &connection,
@@ -7910,7 +7949,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
         assert!(!settings(&connection).unwrap().preview_pane);
         assert_eq!(settings(&connection).unwrap().preview_pane_width, 300);
         let saved = update_settings(
@@ -7959,7 +7998,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
     }
 
     #[test]
@@ -7968,7 +8007,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
         assert!(!settings(&connection).unwrap().browser_force_dark);
         connection
             .execute("DELETE FROM settings WHERE key = 'browser_force_dark'", [])
@@ -8016,7 +8055,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
     }
 
     #[test]
@@ -8096,7 +8135,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
     }
 
     #[test]

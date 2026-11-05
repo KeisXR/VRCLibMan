@@ -46,7 +46,7 @@ VRCLibMan を変更するときは、このファイルを先に読む。実装�
 - フロントは React + TypeScript。画面は `invoke` だけの薄い層。
 - インポート、正規化、突合、名前解決、抽出、SQLite は Rust。`rusqlite` の bundled を使い、`tauri-plugin-sql` は使わない。WebView なしでテストするため。
 - クレート名は雛形の `tauri-app` / `tauri_app_lib` のまま。`main.rs` が `tauri_app_lib::run()` を呼ぶ。配布する実行ファイルは `mainBinaryName` の `VRCLibMan.exe`。NSIS のファイル名は productName から `VRCLibMan_<version>_x64-setup.exe`。
-- DB はアプリデータディレクトリの `library.sqlite`。サムネイルは同じ場所の `thumbs`。選択した商品の大きいプレビューは隣の `previews`。識別子 `app.vrclibman.desktop` は、インストールしたアプリと `tauri dev` で同じなので、Windows では `%APPDATA%\app.vrclibman.desktop` の DB と `%LOCALAPPDATA%\app.vrclibman.desktop\EBWebView` の WebView プロファイルを共有する。Mac の DB は `~/Library/Application Support/app.vrclibman.desktop`。内蔵ブラウザのログインは WebKit のデータストアにあり、メイン画面とは別である。`npm run dev` の見本はこのディレクトリを使わない。
+- DB はアプリデータディレクトリの `library.sqlite`。サムネイルは同じ場所の `thumbs`。選択した商品の大きいプレビューは隣の `previews`。アバターごとのヒーロー画像は隣の `hero_images`（`avatars.hero_image_path`、DB版9）で、ファイルもパスも同期しない。識別子 `app.vrclibman.desktop` は、インストールしたアプリと `tauri dev` で同じなので、Windows では `%APPDATA%\app.vrclibman.desktop` の DB と `%LOCALAPPDATA%\app.vrclibman.desktop\EBWebView` の WebView プロファイルを共有する。Mac の DB は `~/Library/Application Support/app.vrclibman.desktop`。内蔵ブラウザのログインは WebKit のデータストアにあり、メイン画面とは別である。`npm run dev` の見本はこのディレクトリを使わない。
 - アンインストールの `src-tauri/windows/hooks.nsh` は `NSIS_HOOK_POSTUNINSTALL` で `HKCU\Software\VRCLibMan` だけを消す。アプリデータのディレクトリは消さない。
 - `user_version` が 0 のときだけ `SCHEMA` を流す。既存 DB の列を変えるときは、新しい版の移行を足す。`SCHEMA` 定数の書き換えだけでは入らない。
 - 変更系の関数は `&mut Connection`。`transaction()` が可変借用を要求するため。
@@ -235,7 +235,7 @@ Windows では、BOOTH の窓を同期コマンドの中で作らない。WebVie
 
 【対応】【専用】や、説明のなかの「オリジナル3Dモデル」ではアバターにしない。対応リストがあるだけでは衣装にしない。「Nアバター対応」は人数であり、アバター商品でも仮アバター名でもない。
 
-髪・テクスチャ・ヘイローなどのキーワード分類は、インポート直後の下見と、BOOTH のカテゴリとタグで決まらなかった抽出の穴埋めに使う。モデルが「その他」のときはキーワードのカテゴリを採用する。モデルがギミックと言っても、タイトルがディスクやカードならアクセサリに、家具や差し替えならワールドにする。衣装・髪など確定した BOOTH 分類と、両方ロックされた手動分類は変えない。ソフトウェアと 3Dツール・システムだけは、設置型ギミックやアバターギミックの文面で上書きできる。分類規則を変えたので `classifier_version` は 8。抽出済みでロックされていない商品は、再分類（stale）の対象になる。カタログ照合と所持登録でアバター本体にした商品も、そのときの版を書く。手動ロック、失敗した行、公開終了の行は古い版のまま残してよい。データベースの版は 8 である。
+髪・テクスチャ・ヘイローなどのキーワード分類は、インポート直後の下見と、BOOTH のカテゴリとタグで決まらなかった抽出の穴埋めに使う。モデルが「その他」のときはキーワードのカテゴリを採用する。モデルがギミックと言っても、タイトルがディスクやカードならアクセサリに、家具や差し替えならワールドにする。衣装・髪など確定した BOOTH 分類と、両方ロックされた手動分類は変えない。ソフトウェアと 3Dツール・システムだけは、設置型ギミックやアバターギミックの文面で上書きできる。分類規則を変えたので `classifier_version` は 8。抽出済みでロックされていない商品は、再分類（stale）の対象になる。カタログ照合と所持登録でアバター本体にした商品も、そのときの版を書く。手動ロック、失敗した行、公開終了の行は古い版のまま残してよい。データベースの版は 9 である。
 
 ### 名前
 
@@ -365,6 +365,7 @@ Mac の内蔵ブラウザは `data_directory` を使わない。固定の 16 バ
 | `src-tauri/src/booth_detail.rs` | 公開の商品 JSON。Cookie は付けない |
 | `src-tauri/src/free_files.rs` | 「ファイルを取得」。無料配布のファイル行だけ。Cookie は付けない |
 | `src-tauri/src/preview_image.rs` | 選択中の大きいプレビュー。Cookie は付けない |
+| `src-tauri/src/hero_image.rs` | アバターごとのヒーロー画像の検証、縮小、保存、掃除 |
 | `src-tauri/src/view.rs` | 一覧、詳細、キューの形 |
 | `src-tauri/src/sync_meta.rs` | 端末 ID と端末名、変更メタ（`sync_meta`、DB版8）、Config の許可リスト |
 | `src-tauri/src/sync_export.rs` | 同期データの JSON の組み立てと保存 |

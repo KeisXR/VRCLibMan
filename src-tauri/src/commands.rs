@@ -217,7 +217,9 @@ fn load_avatar(app: &AppHandle, id: &str, probe_remote: bool) -> Result<AvatarDe
     } else {
         crate::library_files::fill_local_places(&mut snapshot, &remote);
     }
-    view::avatar_detail(&snapshot, id).ok_or_else(|| "アバターが見つかりません".into())
+    let mut detail = view::avatar_detail(&snapshot, id).ok_or("アバターが見つかりません")?;
+    crate::hero_image::fill_display(&mut detail);
+    Ok(detail)
 }
 
 #[tauri::command]
@@ -1081,7 +1083,52 @@ pub fn save_avatar(state: State<'_, AppState>, avatar: AvatarInput) -> Result<St
 #[tauri::command]
 pub fn delete_avatar(state: State<'_, AppState>, id: String) -> Result<(), String> {
     let mut connection = db(&state)?;
-    db::delete_avatar(&mut connection, &id)
+    db::delete_avatar(&mut connection, &id)?;
+    let _ = crate::hero_image::prune(&connection, &state.hero_images_dir);
+    Ok(())
+}
+
+/// Copies the chosen image into `hero_images` and returns the stored path. Main window only.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn set_avatar_hero_image(
+    view: tauri::Webview,
+    app: AppHandle,
+    avatarId: String,
+    sourcePath: String,
+) -> Result<String, String> {
+    if view.label() != "main" {
+        return Err("この画面からヒーロー画像は変更できません".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let prepared = crate::hero_image::prepare(std::path::Path::new(&sourcePath))?;
+        let state = app.state::<AppState>();
+        let mut connection = db(&state)?;
+        let stored = crate::hero_image::store(
+            &mut connection,
+            &state.hero_images_dir,
+            &avatarId,
+            &prepared,
+        )?;
+        Ok(stored.display().to_string())
+    })
+    .await
+    .map_err(|err| format!("画像を保存できません: {err}"))?
+}
+
+/// Back to the thumbnail. Main window only.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn clear_avatar_hero_image(
+    view: tauri::Webview,
+    state: State<'_, AppState>,
+    avatarId: String,
+) -> Result<(), String> {
+    if view.label() != "main" {
+        return Err("この画面からヒーロー画像は変更できません".into());
+    }
+    let connection = db(&state)?;
+    crate::hero_image::clear(&connection, &state.hero_images_dir, &avatarId)
 }
 
 #[tauri::command]
@@ -1104,7 +1151,9 @@ pub fn merge_avatars(
     intoId: String,
 ) -> Result<(), String> {
     let mut connection = db(&state)?;
-    db::merge_avatars(&mut connection, &fromId, &intoId)
+    db::merge_avatars(&mut connection, &fromId, &intoId)?;
+    let _ = crate::hero_image::prune(&connection, &state.hero_images_dir);
+    Ok(())
 }
 
 #[tauri::command]

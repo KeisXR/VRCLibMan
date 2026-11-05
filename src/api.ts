@@ -198,6 +198,9 @@ export const api = {
     call<void>("link_file", { path, productId }),
   saveAvatar: (avatar: AvatarInput) => call<string>("save_avatar", { avatar }),
   deleteAvatar: (id: string) => call<void>("delete_avatar", { id }),
+  setAvatarHeroImage: (avatarId: string, sourcePath: string) =>
+    call<string>("set_avatar_hero_image", { avatarId, sourcePath }),
+  clearAvatarHeroImage: (avatarId: string) => call<void>("clear_avatar_hero_image", { avatarId }),
   saveBaseBody: (body: { id?: string | null; displayName: string; note: string }) =>
     call<string>("save_base_body", { body }),
   deleteBaseBody: (id: string) => call<void>("delete_base_body", { id }),
@@ -358,6 +361,21 @@ export async function chooseUnityEditor(): Promise<string | null> {
     multiple: false,
     title: "Unity 本体を選ぶ",
     ...(windows ? { filters: [{ name: "Unity", extensions: ["exe"] }] } : {}),
+  });
+  return typeof selected === "string" ? selected : null;
+}
+
+/** アバターのヒーロー画像を選ぶ。読み込みと検証は Rust 側で行う。 */
+export async function chooseHeroImage(): Promise<string | null> {
+  if (!isTauri()) {
+    throw new Error("画像の選択はデスクトップアプリで使えます");
+  }
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const selected = await open({
+    directory: false,
+    multiple: false,
+    title: "ヒーロー画像を選ぶ",
+    filters: [{ name: "画像", extensions: ["png", "jpg", "jpeg", "webp"] }],
   });
   return typeof selected === "string" ? selected : null;
 }

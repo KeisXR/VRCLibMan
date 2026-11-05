@@ -4,6 +4,7 @@ import {
   avatarHeroBlockAspect,
   avatarHeroLayout,
   avatarHeroLowRes,
+  versionedHeroSrc,
   AVATAR_HERO_LOW_RES_WIDTH,
   type AvatarHeroLayoutState,
   type AvatarHeroSize,
@@ -13,18 +14,23 @@ export function AvatarHero({
   size,
   path,
   url,
+  version,
   name,
   kicker,
   subtitle,
   nav,
+  menu,
 }: {
   size: Exclude<AvatarHeroSize, "off">;
   path: string | null;
   url: string | null;
+  /** 同じパスで差し替えたカスタム画像の読み直し用。変わると計測をやり直す。 */
+  version?: number | null;
   name: string;
   kicker: string;
   subtitle: string;
   nav?: ReactNode;
+  menu?: ReactNode;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const mediaRef = useRef<HTMLDivElement>(null);
@@ -34,7 +40,7 @@ export function AvatarHero({
   // 計測前は "pending"。wide 固定にすると正方形サムネが全幅 cover で引き伸ばされる。
   const [layout, setLayout] = useState<AvatarHeroLayoutState>("pending");
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
-  const src = failed ? null : mediaSrc(path, url);
+  const src = failed ? null : versionedHeroSrc(mediaSrc(path, url), version);
 
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
@@ -49,7 +55,7 @@ export function AvatarHero({
     setFailed(false);
     setNatural(null);
     setLayout("pending");
-  }, [path, url]);
+  }, [path, url, version]);
 
   const measure = (img: HTMLImageElement | null) => {
     if (!img || !img.complete || !(img.naturalWidth > 0 && img.naturalHeight > 0)) return false;
@@ -173,6 +179,7 @@ export function AvatarHero({
         ) : null}
       </div>
       {nav ? <div className="avatar-hero-nav">{nav}</div> : null}
+      {menu ? <div className="avatar-hero-menu">{menu}</div> : null}
       {layout === "block" && src ? (
         <div className="avatar-hero-block">
           <img

@@ -31,6 +31,31 @@ export const AVATAR_HERO_SUB = {
 /** 覆い（上→下）の --bg 合成率。 */
 export const AVATAR_HERO_VEIL = { top: 0.45, mid: 0.82, bottom: 1 } as const;
 
+export interface AvatarHeroSource {
+  path: string | null;
+  url: string | null;
+  version: number | null;
+}
+
+/** カスタム画像があればそれだけを使い、無ければ本体のサムネイルへ。 */
+export function avatarHeroSource(detail: {
+  heroImagePath: string | null;
+  heroImageVersion: number | null;
+  thumbnailPath: string | null;
+  thumbnailUrl: string | null;
+}): AvatarHeroSource {
+  if (detail.heroImagePath) {
+    return { path: detail.heroImagePath, url: null, version: detail.heroImageVersion };
+  }
+  return { path: detail.thumbnailPath, url: detail.thumbnailUrl, version: null };
+}
+
+/** 同じパスのまま差し替えたカスタム画像を読み直させる。asset プロトコルはクエリを無視する。 */
+export function versionedHeroSrc(src: string | null, version: number | null | undefined): string | null {
+  if (!src || version == null) return src;
+  return `${src}${src.includes("?") ? "&" : "?"}v=${version}`;
+}
+
 /** 設定値を正規化する。未知・空は小（320px）。 */
 export function normalizeAvatarHero(value: unknown): AvatarHeroSize {
   const raw = typeof value === "string" ? value.trim().toLowerCase() : "";

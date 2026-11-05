@@ -869,6 +869,31 @@ button.account-pill:hover { background: var(--hover); }
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
   flex: none;
 }
+/* 画像の変更メニュー。普段は隠し、ヒーローに乗ったとき・フォーカス時だけ出す */
+.avatar-hero-menu {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--content-pad-x);
+  z-index: 3;
+}
+.icon-button.avatar-hero-menu-trigger {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  color: var(--text);
+  font-size: 22px;
+  opacity: 0;
+  transition: opacity var(--motion) var(--ease-out);
+}
+.icon-button.avatar-hero-menu-trigger:hover { background: var(--surface); }
+.avatar-hero:hover .icon-button.avatar-hero-menu-trigger,
+.avatar-hero-menu:focus-within .icon-button.avatar-hero-menu-trigger,
+.icon-button.avatar-hero-menu-trigger[aria-expanded="true"],
+.icon-button.avatar-hero-menu-trigger[aria-busy="true"] { opacity: 1; }
+@media (hover: none) {
+  .icon-button.avatar-hero-menu-trigger { opacity: 1; }
+}
 /* ヒーロー直下の操作行（副ボタンのみ）。新版ダウンロード専用ボタンは置かない */
 .avatar-hero-toolbar {
   display: flex;
@@ -916,6 +941,7 @@ button.account-pill:hover { background: var(--hover); }
 }
 @media (prefers-reduced-motion: reduce) {
   .avatar-hero-media { will-change: auto; }
+  .icon-button.avatar-hero-menu-trigger { transition: none; }
   .avatar-assets-chevron { transition: none; }
 }
 

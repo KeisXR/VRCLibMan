@@ -1169,6 +1169,23 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       await wait(() => main().textContent.includes("見本のその他小物"));
       assert.equal((await api.avatars()).some((avatar) => avatar.displayName === "見本丸" && avatar.owned), false);
     });
+    await t.test("avatar hero menu offers the image actions outside the toolbar", async () => {
+      const main = () => document.querySelector("main");
+      await route("#/avatar/lime");
+      await wait(() => main().querySelector(".avatar-hero-menu-trigger"));
+      const trigger = () => main().querySelector(".avatar-hero-menu-trigger");
+      const hero = () => main().querySelector(".avatar-hero");
+      assert.equal(button("画像を変更", hero()), undefined);
+      await click(trigger());
+      assert.equal(trigger().getAttribute("aria-expanded"), "true");
+      assert.ok(button("画像を変更", hero()));
+      assert.equal(button("サムネに戻す", hero()).disabled, true, "nothing to clear without a custom image");
+      assert.equal(button("画像を変更", main().querySelector(".avatar-hero-toolbar")), undefined);
+      await click(button("画像を変更", hero()));
+      await wait(() => document.querySelector(".banner.error, .banner.fail")?.textContent.includes("デスクトップアプリ"));
+      assert.equal(trigger().getAttribute("aria-expanded"), "false");
+    });
+
     await t.test("avatar detail attaches an item without pinning its classification", async () => {
       const main = () => document.querySelector("main");
       await route("#/avatar/lime");
