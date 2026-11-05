@@ -466,6 +466,7 @@ interface RightPanelTab { id: string; kind: RightPanelKind | "web"; tabId?: stri
 
 - 窓幅が 1000px 未満（`src/uiLayout.ts` の `UI_PANEL_OVERLAY_PX`）なら `narrow` です。このとき `panelDocked = open && !narrow` は false になります。
 - 列の幅は `computeAppLayout`（`src/uiLayout.ts`）がまとめて決めます。パネルの幅を先に決め、一覧が 480px を切るならジャンル列をやめてチップ帯にし、パネルの幅をもう一度決めます（[デザインガイドの狭い窓](design/README.md#狭い窓)）。860px 以下でサイドバーがアイコンだけになるのは重ね表示のときだけなので、列のパネルと同時には起きません。
+- 左サイドバーの開閉は、右パネルが開いている間は幅を一瞬で切り替えます（`railMotionAttrs` が `fade` を返し、グリッドに `transition` を付けない）。幅を動かすのは右パネルが閉じている間だけです（[デザインガイドの動き](design/README.md#動き)）。
 - `PanelOverlay` は `document.body` へのポータルです（`.preview-overlay.right-panel-overlay`）。
   - 通常は `role="dialog"` と `aria-modal` を付けます。
   - 開いたら閉じるボタンにフォーカスします。

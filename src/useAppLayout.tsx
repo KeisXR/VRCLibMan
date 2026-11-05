@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import { RIGHT_PANEL_SEPARATOR } from "./rightPanel";
-import { UI_GENRE_WIDTH, UI_RAIL_WIDTH, clampGenreWidth, clampRailWidth, computeAppLayout } from "./uiLayout";
+import { UI_GENRE_WIDTH, UI_RAIL_WIDTH, clampGenreWidth, clampRailWidth, computeAppLayout, railMotionAttrs } from "./uiLayout";
+
+/** How long the toggle keeps the motion attributes on (width 140ms + label 30ms delay + 120ms, rounded up). */
+export const RAIL_MOTION_HOLD_MS = 220;
 
 export interface PanelLayoutInput {
   open: boolean;
@@ -21,6 +24,10 @@ export function useAppLayout(browseGenre: boolean, panel: PanelLayoutInput = { o
   const railToggled = useRef(false);
   const [genreWidth, setGenreWidth] = useState(UI_GENRE_WIDTH.default);
   const [windowWidth, setWindowWidth] = useState(currentWindowWidth);
+  // Set only by the toggle, so window resizes, separator drags and the first load never animate.
+  const [railMotion, setRailMotion] = useState(false);
+  const railMotionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (railMotionTimer.current) clearTimeout(railMotionTimer.current); }, []);
 
   useEffect(() => {
     void api.settings().then((settings) => {
@@ -59,10 +66,13 @@ export function useAppLayout(browseGenre: boolean, panel: PanelLayoutInput = { o
     void api.updateSettings({ uiRailWidth: next });
   }, []);
 
-  // The width does not animate: the docked browser page is a native view placed from the DOM,
-  // so the new columns are applied in one frame and the panel re-measures right after.
+  // The width animates only while the right panel is closed. With the panel open the docked
+  // browser page is a native view placed from the DOM, so the columns change in one frame.
   const setRailCollapsed = useCallback((next: boolean) => {
     railToggled.current = true;
+    setRailMotion(true);
+    if (railMotionTimer.current) clearTimeout(railMotionTimer.current);
+    railMotionTimer.current = setTimeout(() => setRailMotion(false), RAIL_MOTION_HOLD_MS);
     setRailCollapsedState(next);
     void api.updateSettings({ uiRailCollapsed: next }).catch(() => undefined);
   }, []);
@@ -105,6 +115,8 @@ export function useAppLayout(browseGenre: boolean, panel: PanelLayoutInput = { o
     panelWidth,
     panelMax: layout.panelMax,
     gridStyle,
+    /** data-rail-motion for the app shell while a toggle is animating. */
+    railMotionAttrs: railMotionAttrs(railMotion, panel.open),
     setRailWidth,
     setGenreWidth,
     persistRail,

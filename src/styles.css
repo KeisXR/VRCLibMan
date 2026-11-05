@@ -29,6 +29,10 @@
   --radius-lg: 20px;
   --radius-pill: 9999px;
   --motion: 160ms;
+  --motion-fast: 120ms;
+  --motion-rail: 140ms;
+  --motion-delay: 30ms;
+  --ease-out: cubic-bezier(0.32, 0.72, 0, 1);
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -133,7 +137,7 @@ a:hover { text-decoration: underline; }
   -webkit-mask: url("./assets/brand/vrclibman-wordmark.svg") left center / contain no-repeat;
   mask: url("./assets/brand/vrclibman-wordmark.svg") left center / contain no-repeat;
 }
-/* 左サイドバーの開閉。幅は動かさない（右パネルのネイティブページが DOM の矩形に合わせて置かれるため） */
+/* 左サイドバーの開閉。右パネルが開いている間は幅を動かさない（ネイティブページが DOM の矩形に合わせて置かれるため） */
 .rail-toggle {
   flex: 0 0 auto;
   display: grid;
@@ -415,6 +419,21 @@ a.drag-over {
   border: 0;
 }
 .rail.collapsed .rail-foot { align-items: center; }
+/* 左サイドバーの開閉の動き。開閉ボタンを押した直後だけ App が data-rail-motion を付ける。
+   slide = 右パネルを閉じている: 幅も動かす。fade = 右パネルが開いている: 幅は一瞬で、文字とアイコンだけ。
+   動かすのは grid-template-columns / opacity / transform だけ。reduced-motion では先頭の規則で全部止まる */
+.app-shell[data-rail-motion="slide"] { transition: grid-template-columns var(--motion-rail) var(--ease-out); }
+.app-shell[data-rail-motion] :is(.rail, .rail .brand) { overflow: hidden; }
+.rail .nav-link, .rail .brand-lockup { overflow: hidden; }
+.rail .nav-label, .rail .count, .rail .rail-status { white-space: nowrap; }
+.app-shell[data-rail-motion] .rail:not(.collapsed) :is(.nav-label, .count, .brand-wordmark, .rail-status) {
+  animation: rail-label-in var(--motion-fast) var(--ease-out) var(--motion-delay) both;
+}
+.app-shell[data-rail-motion] .rail.collapsed :is(.nav-icon, .brand-mark, .rail-toggle) {
+  animation: rail-icon-in var(--motion-fast) var(--ease-out) both;
+}
+@keyframes rail-label-in { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: none; } }
+@keyframes rail-icon-in { from { opacity: 0; } to { opacity: 1; } }
 .rail-icon-button {
   display: grid;
   place-items: center;
