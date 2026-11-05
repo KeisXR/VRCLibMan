@@ -6,6 +6,7 @@ import { CATEGORIES, CATEGORY_LABEL, GENRE_LABEL, genresForCategory } from "../t
 import type { AvatarCandidate, ProductOption, QueueFile, QueueProduct } from "../types";
 import { FileMark, Thumb, errorText } from "../ui";
 import { ExcludeProductButton } from "../components/ProductExclusions";
+import { useReplayRise } from "../useReplayRise";
 
 type Kind = "unextracted" | "review" | "files";
 
@@ -92,6 +93,9 @@ export function QueuePage() {
   const { revision, refresh, notify, fail } = useShell();
   const [kind, setKind] = useState<Kind | null>(null);
   const [choseTab, setChoseTab] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  // 自動で決まった最初のタブでは動かさず、押して切り替えたときだけ短い rise を出す。
+  useReplayRise(bodyRef, choseTab ? kind : null);
   const [counts, setCounts] = useState<Counts>(EMPTY_COUNTS);
   const [products, setProducts] = useState<QueueProduct[]>([]);
   const [files, setFiles] = useState<QueueFile[]>([]);
@@ -214,6 +218,7 @@ export function QueuePage() {
           商品未設定のファイル {counts.unlinkedFiles}
         </button>
       </div>
+      <div className="queue-tab-body" ref={bodyRef}>
       {visible && kind !== "files" && products.length === 0 && <p className="empty">この一覧は空です。</p>}
       {visible && kind === "files" && files.length === 0 && <p className="empty">商品未設定のファイルはありません。</p>}
       {kind === "review" && (
@@ -235,6 +240,7 @@ export function QueuePage() {
           files.map((file) => (
             <FileEditor key={file.path} file={file} options={options} onDone={onDone} onError={fail} />
           ))}
+      </div>
       </div>
     </section>
   );
