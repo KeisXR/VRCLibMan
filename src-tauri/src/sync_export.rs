@@ -589,7 +589,8 @@ mod tests {
                  INSERT INTO local_files (path, filename, linked_product_id, link_source, scanned_at)
                  VALUES ('/home/kei/PATH-SECRET/a.zip', 'a.zip', '1001', 'manual', 't');
                  INSERT INTO product_files (booth_id, filename, local_path)
-                 VALUES ('1001', 'a.zip', '/home/kei/PATH-SECRET/a.zip');",
+                 VALUES ('1001', 'a.zip', '/home/kei/PATH-SECRET/a.zip');
+                 UPDATE avatars SET hero_image_path = '/home/kei/PATH-SECRET/hero_images/lime.png';",
             )
             .unwrap();
         let text = to_json(&build(&mut connection, "1").unwrap()).unwrap();
@@ -604,6 +605,9 @@ mod tests {
             "thumbnailUrl",
             "thumbnail_path",
             "thumbnailPath",
+            "hero_image_path",
+            "heroImagePath",
+            "hero_images",
             "isAdult",
             "/home/kei",
         ] {

@@ -717,6 +717,7 @@ mod tests {
             is_builtin: true,
             owned: false,
             notes: String::new(),
+            hero_image_path: None,
         }
     }
 

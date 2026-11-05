@@ -17,6 +17,7 @@ mod cloud;
 mod commands;
 mod compat;
 mod genre;
+mod hero_image;
 mod db;
 mod file_browser;
 mod free_files;
@@ -65,6 +66,7 @@ pub struct AppState {
     pub extract_running: Arc<AtomicBool>,
     pub thumbs_dir: std::path::PathBuf,
     pub previews_dir: std::path::PathBuf,
+    pub hero_images_dir: std::path::PathBuf,
     pub receiver_error: Mutex<Option<String>>,
     pub import_guard: Mutex<local_import::ImportGuard>,
     pub background_mode: AtomicBool,
@@ -111,16 +113,21 @@ pub fn run() {
             std::fs::create_dir_all(&directory)?;
             let thumbs = directory.join("thumbs");
             let previews = directory.join("previews");
+            let hero_images = directory.join("hero_images");
             std::fs::create_dir_all(&thumbs)?;
             std::fs::create_dir_all(&previews)?;
+            std::fs::create_dir_all(&hero_images)?;
             let connection = db::open(&directory.join("library.sqlite"))
                 .map_err(|err| std::io::Error::other(err))?;
+            // `reresolve_all` can drop an unlinked `owned-*` row at any time. Collected here.
+            let _ = hero_image::prune(&connection, &hero_images);
             app.manage(AppState {
                 db: Mutex::new(connection),
                 cancel_extract: AtomicBool::new(false),
                 extract_running: Arc::new(AtomicBool::new(false)),
                 thumbs_dir: thumbs,
                 previews_dir: previews,
+                hero_images_dir: hero_images,
                 receiver_error: Mutex::new(None),
                 import_guard: Mutex::new(local_import::ImportGuard::default()),
                 background_mode: AtomicBool::new(false),
@@ -242,6 +249,8 @@ pub fn run() {
             commands::link_file,
             commands::save_avatar,
             commands::delete_avatar,
+            commands::set_avatar_hero_image,
+            commands::clear_avatar_hero_image,
             commands::save_base_body,
             commands::delete_base_body,
             commands::merge_avatars,
