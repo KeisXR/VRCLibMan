@@ -363,7 +363,7 @@ export default function App() {
     <RightPanelProvider value={rightPanel}>
       <BrowserAutoClassification />
       {setupComplete === false && <SetupWizard onRefresh={refresh} onDone={() => { setSetupComplete(true); refresh(); }} />}
-      <div className="app app-shell" style={layout.gridStyle}>
+      <div className="app app-shell" style={layout.gridStyle} {...layout.railMotionAttrs}>
         <aside
           className={collapsed ? "rail collapsed" : "rail"}
           data-collapsed={collapsed ? "true" : "false"}

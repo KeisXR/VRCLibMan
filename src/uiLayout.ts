@@ -142,3 +142,14 @@ export function computeAppLayout(input: AppLayoutInput): AppLayout {
     listWidth: plain.listWidth,
   };
 }
+
+/**
+ * Motion for the left sidebar toggle. Labels and icons fade on every toggle; the grid width
+ * slides only while the right panel is closed, because an open panel's native WebView is
+ * placed from the DOM rectangle and must not see intermediate widths.
+ * Returned as data attributes for the app shell (spread into its props).
+ */
+export function railMotionAttrs(toggling: boolean, panelOpen: boolean): Record<string, string> {
+  if (!toggling) return {};
+  return panelOpen ? { "data-rail-motion": "fade" } : { "data-rail-motion": "slide" };
+}

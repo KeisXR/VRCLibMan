@@ -91,7 +91,8 @@ test("app layout: icon rail at 860px or less, genre column only while the list k
     assert.doesNotMatch(narrowRules, /\.app\b|42vh|\.rail/);
     assert.equal(css.match(/@media \(max-width: 860px\)/g)?.length, 1);
     assert.doesNotMatch(css, /genre-mobile/);
-    assert.doesNotMatch(css, /transition:[^;]*grid-template-columns/);
+    // The grid width animates only under data-rail-motion="slide" (right panel closed); see rail-motion.test.mjs.
+    assert.doesNotMatch(css.replace(/\.app-shell\[data-rail-motion="slide"\] \{[^}]*\}/, ""), /transition:[^;]*grid-template-columns/);
     assert.match(css, /\.chip-bar \{[^}]*position: sticky;[^}]*top: var\(--topbar-height/);
     assert.match(css, /\.chip-bar-track \{[^}]*overflow-x: auto;/);
     // 選択中のチップは「線のアクセント」ブロックの共通の直線の下線（::after）。片側の影は使わない。
