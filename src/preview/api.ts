@@ -168,6 +168,7 @@ const store: Store = {
     uiGenreWidth: 200,
     previewPane: false,
     previewPaneWidth: 300,
+    avatarHero: "small",
     rightPanelTabs: '{"tabs":["preview"],"active":0}',
     checkUpdateOnStartup: false,
     uiUpdateDismissedVersion: "",
@@ -200,12 +201,14 @@ const store: Store = {
       shop: "こまど",
       category: "avatar",
       descriptionSnippet: "共通素体のアバターです。",
+      thumbnailUrl: "/samples/avatar-hero.png",
     }),
     product({
       boothId: "7770415",
       title: "プラム -Plum- / オリジナル3Dモデル",
       shop: "こまど",
       category: "avatar",
+      thumbnailUrl: "/samples/avatar-hero.png",
     }),
     product({
       boothId: "5058077",
@@ -844,6 +847,8 @@ function detail(id: string): AvatarDetail {
     isBuiltin: avatar.isBuiltin,
     isPlaceholder: avatar.id.startsWith("owned-"),
     owned: avatar.owned,
+    thumbnailPath: view.thumbnailPath,
+    thumbnailUrl: view.thumbnailUrl,
     siblings,
     ownedProducts: view.owned,
     sections: view.sections,
@@ -2011,7 +2016,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       const cloudModel = String(settings.cloudModel ?? "").trim();
       if (cloudModel.length > 200 || /[\u0000-\u001f]/.test(cloudModel)) throw new Error("クラウドAPIのモデル名に使えない文字があります");
       const llmBackend = settings.llmBackend === "apple" || settings.llmBackend === "cloud" ? settings.llmBackend : "ollama";
-      store.settings = { ...settings, llmBackend, cloudBaseUrl, cloudModel, ollamaModel: settings.ollamaModel.trim(), backgroundSupported, backgroundMode, launchAtLogin: backgroundMode && Boolean(settings.launchAtLogin), confidenceThreshold: Math.min(1, Math.max(0, settings.confidenceThreshold)), boothLinkTarget, browserForceDark };
+      store.settings = { ...settings, llmBackend, cloudBaseUrl, cloudModel, ollamaModel: settings.ollamaModel.trim(), backgroundSupported, backgroundMode, launchAtLogin: backgroundMode && Boolean(settings.launchAtLogin), confidenceThreshold: Math.min(1, Math.max(0, settings.confidenceThreshold)), boothLinkTarget, browserForceDark, avatarHero: (settings.avatarHero === "large" || settings.avatarHero === "off" || settings.avatarHero === "small") ? settings.avatarHero : "small" };
       return (command === "update_settings" ? { ...store.settings } : undefined) as T;
     }
     case "import_export":
