@@ -28,7 +28,7 @@ test("avatar hero helpers normalize size, height, and contrast", async () => {
       hero.relativeLuminance(0x20, 0x22, 0x2b),
       hero.relativeLuminance(128, 128, 128),
     );
-    assert.ok(bare < 4.5, `bare mid-gray should fail without scrim/fade: ${bare}`);
+    assert.ok(bare < 4.5, `bare mid-gray should fail without fade: ${bare}`);
   } finally {
     await server.close();
   }
@@ -42,8 +42,11 @@ test("avatar hero CSS uses early fade, mid blur, and no curved accent on the tit
   assert.match(css, /backdrop-filter:\s*blur\(2px\)/);
   assert.match(css, /backdrop-filter:\s*blur\(8px\)/);
   assert.match(css, /backdrop-filter:\s*blur\(24px\)/);
-  assert.match(css, /transparent 30%/);
-  assert.match(css, /\.avatar-hero-scrim/);
+  assert.match(css, /transparent 25%/);
+  assert.match(css, /\.avatar-hero-copy/);
+  assert.match(css, /\.avatar-hero-nav/);
+  assert.doesNotMatch(css, /\.avatar-hero-scrim\s*\{/);
+  assert.match(css, /avatar-hero[\s\S]*border-radius:\s*0/);
   assert.match(css, /\.avatar-hero-title::before\s*\{\s*content:\s*none/);
   assert.match(css, /prefers-reduced-motion: reduce[\s\S]*\.avatar-hero-media/);
   assert.match(css, /@supports not \(\(backdrop-filter/);

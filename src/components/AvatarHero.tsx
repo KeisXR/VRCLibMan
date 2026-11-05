@@ -9,6 +9,7 @@ export function AvatarHero({
   name,
   kicker,
   subtitle,
+  nav,
   actions,
 }: {
   size: Exclude<AvatarHeroSize, "off">;
@@ -17,6 +18,7 @@ export function AvatarHero({
   name: string;
   kicker: string;
   subtitle: string;
+  nav?: ReactNode;
   actions?: ReactNode;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -90,13 +92,14 @@ export function AvatarHero({
         </div>
         <div className="avatar-hero-fade" aria-hidden="true" />
       </div>
+      {nav ? <div className="avatar-hero-nav">{nav}</div> : null}
       <div className="avatar-hero-body">
-        <div className="avatar-hero-scrim">
+        <div className="avatar-hero-copy">
           <p className="avatar-hero-kicker">{kicker}</p>
           <h1 className="avatar-hero-title">{name}</h1>
           <p className="avatar-hero-sub">{subtitle}</p>
-          {actions ? <div className="avatar-hero-actions">{actions}</div> : null}
         </div>
+        {actions ? <div className="avatar-hero-actions">{actions}</div> : null}
       </div>
     </div>
   );

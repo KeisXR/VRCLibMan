@@ -65,15 +65,16 @@ export function mixRgb(
 
 /**
  * ヒーロー下端付近の文字コントラスト見積もり。
- * 画像の最悪寄りの中間灰色の上に、背景へのフェード（約30%から）と
- * 文字用スクリムを載せたうえで、本文色との比が 4.5 以上になること。
+ * カード型スクリムは使わない。画像の最悪寄りの中間灰色の上に、
+ * 背景への強めのフェード（約25%から、下端付近 alpha≈0.88）だけを載せ、
+ * 本文色との比が 4.5 以上になること。
  */
 export function heroTextContrast(
   text: readonly [number, number, number],
   pageBg: readonly [number, number, number],
   imageSample: readonly [number, number, number] = [128, 128, 128],
-  fadeAlpha = 0.72,
-  scrimAlpha = 0.35,
+  fadeAlpha = 0.88,
+  scrimAlpha = 0,
 ): number {
   const afterFade = mixRgb(pageBg, imageSample, fadeAlpha);
   const afterScrim = mixRgb(pageBg, afterFade, scrimAlpha);

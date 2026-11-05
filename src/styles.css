@@ -681,26 +681,34 @@ button.account-pill:hover { background: var(--hover); }
 .panel h2, .section h2 { margin: 0 0 var(--space-2); font-size: 16px; font-weight: 650; }
 .page-head p, .lede { margin: 6px 0 0; color: var(--text-secondary); }
 
-/* アバター詳細のヒーロー（Apple Music 風の段階ぼかし C）。高さは設定の avatar_hero。 */
+/* アバター詳細のヒーロー（段階ぼかし C）。左右フルブリード、名前はカードにせず直置き。 */
 .avatar-detail > p:first-child { margin-bottom: var(--space-3); }
 .avatar-hero {
   position: relative;
   overflow: hidden;
   flex: none;
   height: var(--avatar-hero-h, 320px);
+  /* .content の左右・上パディングを打ち消し、サイドバー／topbar 端まで詰める */
   margin: calc(-1 * var(--space-6)) calc(-1 * var(--space-6)) var(--space-5);
   width: calc(100% + var(--space-6) * 2);
   max-width: none;
+  border-radius: 0;
   background: var(--bg);
 }
 .avatar-hero[data-size="large"] { --avatar-hero-h: 400px; }
 .avatar-hero[data-size="small"] { --avatar-hero-h: 320px; }
 .density-compact .avatar-hero {
+  /* compact は content の上パディングだけ 28px。左右は --space-6 のまま */
   margin-top: -28px;
 }
 .density-roomy .avatar-hero {
   margin: -48px -48px var(--space-5);
   width: calc(100% + 96px);
+}
+.density-roomy .avatar-hero-nav,
+.density-roomy .avatar-hero-body {
+  left: 48px;
+  right: 48px;
 }
 .avatar-hero-media {
   position: absolute;
@@ -753,36 +761,48 @@ button.account-pill:hover { background: var(--hover); }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .avatar-hero-blur { display: none; }
 }
-/* 背景へのフェードを早め（約30%）から開始して文字コントラストを確保 */
+/* カードなしでも 4.5:1 を満たすよう、フェードを早め・強めに（約 25% から） */
 .avatar-hero-fade {
   position: absolute;
   inset: 0;
   pointer-events: none;
   background: linear-gradient(
     to bottom,
-    transparent 30%,
-    color-mix(in srgb, var(--bg) 55%, transparent) 62%,
+    transparent 25%,
+    color-mix(in srgb, var(--bg) 70%, transparent) 58%,
     var(--bg) 100%
   );
+}
+.avatar-hero-nav {
+  position: absolute;
+  top: var(--space-4);
+  left: var(--space-6);
+  right: var(--space-6);
+  z-index: 2;
+  margin: 0;
+}
+.avatar-hero-nav a {
+  color: var(--text);
+  text-shadow: 0 1px 2px color-mix(in srgb, var(--bg) 70%, transparent);
 }
 .avatar-hero-body {
   position: absolute;
   left: var(--space-6);
   right: var(--space-6);
-  bottom: 20px;
+  bottom: var(--space-5);
   z-index: 1;
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
   gap: var(--space-4);
 }
-.avatar-hero-scrim {
+/* 浮いたカードにしない。本文と同じ左右インセットの直置き */
+.avatar-hero-copy {
   flex: 1 1 auto;
   min-width: 0;
-  padding: 12px 14px 10px;
-  border-radius: var(--radius-control);
-  /* 薄いスクリムで名前と補足が 4.5:1 を満たしやすくする */
-  background: color-mix(in srgb, var(--bg) 42%, transparent);
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
 }
 .avatar-hero-kicker {
   margin: 0;
@@ -790,6 +810,7 @@ button.account-pill:hover { background: var(--hover); }
   letter-spacing: 0.04em;
   color: var(--text-secondary);
   font-weight: 650;
+  text-shadow: 0 1px 2px color-mix(in srgb, var(--bg) 65%, transparent);
 }
 .avatar-hero-title {
   margin: 2px 0 0;
@@ -798,12 +819,14 @@ button.account-pill:hover { background: var(--hover); }
   letter-spacing: -0.03em;
   color: var(--text);
   line-height: 1.15;
+  text-shadow: 0 1px 2px color-mix(in srgb, var(--bg) 65%, transparent);
 }
 .avatar-hero-title::before { content: none; } /* page-head の朱棒は付けない */
 .avatar-hero-sub {
   margin: 6px 0 0;
   color: var(--text-secondary);
   font-size: 14px;
+  text-shadow: 0 1px 2px color-mix(in srgb, var(--bg) 65%, transparent);
 }
 .avatar-hero-actions {
   display: flex;
@@ -1456,10 +1479,22 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
   .content, .density-roomy .content { padding: var(--space-4); }
   .banner, .progress { margin-left: var(--space-4); margin-right: var(--space-4); }
 
+  .avatar-hero,
+  .density-compact .avatar-hero,
+  .density-roomy .avatar-hero {
+    margin: calc(-1 * var(--space-4)) calc(-1 * var(--space-4)) var(--space-5);
+    width: calc(100% + var(--space-4) * 2);
+  }
   .avatar-hero[data-size="large"],
   .avatar-hero[data-size="small"] { --avatar-hero-h: 220px; }
   .avatar-hero-title { font-size: 26px; }
-  .avatar-hero-body { bottom: 12px; left: var(--space-4); right: var(--space-4); flex-direction: column; align-items: stretch; }
+  .avatar-hero-nav,
+  .avatar-hero-body,
+  .density-compact .avatar-hero-nav,
+  .density-compact .avatar-hero-body,
+  .density-roomy .avatar-hero-nav,
+  .density-roomy .avatar-hero-body { left: var(--space-4); right: var(--space-4); }
+  .avatar-hero-body { bottom: 12px; flex-direction: column; align-items: stretch; }
   .avatar-hero-actions { justify-content: flex-start; }
 }
 

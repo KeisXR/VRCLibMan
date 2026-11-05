@@ -108,17 +108,21 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
   const subtitle = `${detail.owned ? "所持アバター" : "所持未登録"}${detail.baseBodyName ? ` ・ ${detail.baseBodyName}` : ""}`;
   const addAction = <AddAvatarItem avatarId={detail.id} linkedIds={linkedIds} />;
 
+  const backLink = <a href="#/">アバター一覧へ</a>;
+
   return (
     <section className={heroSize === "off" ? undefined : "avatar-detail"}>
-      <p><a href="#/">アバター一覧へ</a></p>
       {heroSize === "off" ? (
-        <div className="page-head">
-          <div>
-            <h1>{detail.displayName}</h1>
-            <p>{subtitle}</p>
+        <>
+          <p>{backLink}</p>
+          <div className="page-head">
+            <div>
+              <h1>{detail.displayName}</h1>
+              <p>{subtitle}</p>
+            </div>
+            {addAction}
           </div>
-          {addAction}
-        </div>
+        </>
       ) : (
         <AvatarHero
           size={heroSize}
@@ -127,6 +131,7 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
           name={detail.displayName}
           kicker="アバター"
           subtitle={subtitle}
+          nav={backLink}
           actions={addAction}
         />
       )}
