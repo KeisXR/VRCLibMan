@@ -21,7 +21,24 @@ pub struct AppleStatus {
 pub enum AppleError {
     Guardrail,
     ContextWindow,
+    /// Model JSON came back but `category` could not be mapped to a stored value.
+    Unreadable(String),
     Message(String),
+}
+
+/// Next step after Apple returns [`AppleError::Unreadable`] (no mask retry).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppleUnreadableNext {
+    Ollama,
+    Review,
+}
+
+pub fn apple_unreadable_next(ollama_ready: bool) -> AppleUnreadableNext {
+    if ollama_ready {
+        AppleUnreadableNext::Ollama
+    } else {
+        AppleUnreadableNext::Review
+    }
 }
 
 pub struct Resident {
@@ -348,7 +365,13 @@ pub fn parse_generation(line: &str) -> Result<Extraction, AppleError> {
         json.to_string()
     };
     parse_extraction(&text).map_err(|err| {
-        AppleError::Message(format!("Apple のオンデバイスモデルの応答を解釈できません: {err}"))
+        let message = format!("Apple のオンデバイスモデルの応答を解釈できません: {err}");
+        if err.contains(crate::ollama::UNREADABLE_CATEGORY_PREFIX) {
+            eprintln!("VRCLibMan: {message}");
+            AppleError::Unreadable(message)
+        } else {
+            AppleError::Message(message)
+        }
     })
 }
 
@@ -442,6 +465,23 @@ mod tests {
             Err(AppleError::Message(message)) => assert!(message.contains("failed")),
             other => panic!("expected a coded failure, got {other:?}"),
         }
+        match parse_generation(
+            r#"{"ok":true,"json":{"category":"furniture","compatible_avatars":[],"is_generic":false,"confidence":0.5}}"#,
+        ) {
+            Ok(extraction) => assert_eq!(extraction.category, crate::model::Category::World),
+            other => panic!("expected furniture to resolve, got {other:?}"),
+        }
+        match parse_generation(
+            r#"{"ok":true,"json":{"category":"shoes","compatible_avatars":[],"is_generic":false,"confidence":0.4}}"#,
+        ) {
+            Err(AppleError::Unreadable(message)) => {
+                assert!(message.contains("shoes"));
+                assert!(message.contains(crate::ollama::UNREADABLE_CATEGORY_PREFIX));
+            }
+            other => panic!("expected Unreadable, got {other:?}"),
+        }
+        assert_eq!(apple_unreadable_next(true), AppleUnreadableNext::Ollama);
+        assert_eq!(apple_unreadable_next(false), AppleUnreadableNext::Review);
     }
 
     #[cfg(unix)]

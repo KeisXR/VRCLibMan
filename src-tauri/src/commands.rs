@@ -1535,23 +1535,55 @@ async fn classify_product(
                     Err(_) => {}
                 }
             }
-            if ollama_ready {
-                let extraction = ollama::extract_product(
-                    client,
-                    &settings.ollama_base_url,
-                    &settings.ollama_model,
-                    &job.title,
-                    &job.description,
-                    &category_line,
-                    &tags_line,
-                )
-                .await?;
-                Ok(Classified::Done(extraction))
-            } else {
-                Ok(Classified::Review)
-            }
+            fallback_after_apple_unreadable(
+                client,
+                settings,
+                job,
+                &category_line,
+                &tags_line,
+                ollama_ready,
+            )
+            .await
+        }
+        Err(AppleError::Unreadable(message)) => {
+            eprintln!("VRCLibMan: {message}");
+            fallback_after_apple_unreadable(
+                client,
+                settings,
+                job,
+                &category_line,
+                &tags_line,
+                ollama_ready,
+            )
+            .await
         }
         Err(AppleError::Message(message)) => Err(message),
+    }
+}
+
+async fn fallback_after_apple_unreadable(
+    client: &reqwest::Client,
+    settings: &Settings,
+    job: &ExtractJob,
+    category_line: &str,
+    tags_line: &str,
+    ollama_ready: bool,
+) -> Result<Classified, String> {
+    match apple_fm::apple_unreadable_next(ollama_ready) {
+        apple_fm::AppleUnreadableNext::Ollama => {
+            let extraction = ollama::extract_product(
+                client,
+                &settings.ollama_base_url,
+                &settings.ollama_model,
+                &job.title,
+                &job.description,
+                category_line,
+                tags_line,
+            )
+            .await?;
+            Ok(Classified::Done(extraction))
+        }
+        apple_fm::AppleUnreadableNext::Review => Ok(Classified::Review),
     }
 }
 

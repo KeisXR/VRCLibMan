@@ -267,20 +267,27 @@ pub(crate) fn user_prompt(
     )
 }
 
+/// Prefix of the category-parse error. Apple maps this to `AppleError::Unreadable`.
+pub const UNREADABLE_CATEGORY_PREFIX: &str = "分類結果の商品カテゴリを読み取れませんでした";
+
+/// How many characters of a raw category value to keep in error text.
+const RAW_CATEGORY_ERROR_CHARS: usize = 40;
+
 pub fn parse_extraction(raw: &str) -> Result<Extraction, String> {
     let without_think = strip_think(raw);
     let json = json_object(&without_think)
         .ok_or("分類結果を読み取れませんでした。もう一度分類してください")?;
     let value: Value = serde_json::from_str(json)
         .map_err(|err| format!("分類結果を読み取れませんでした: {err}"))?;
-    let category_text = value
-        .get("category")
-        .and_then(Value::as_str)
-        .map(|text| text.trim().to_ascii_lowercase());
-    let category = category_text
-        .as_deref()
-        .and_then(Category::parse)
-        .ok_or("分類結果の商品カテゴリを読み取れませんでした。もう一度分類してください")?;
+    let category_raw = value.get("category").and_then(Value::as_str);
+    let genre_raw = value.get("genre").and_then(Value::as_str);
+    let category = match resolve_category(category_raw, genre_raw) {
+        Ok(category) => category,
+        Err(shown) => {
+            eprintln!("VRCLibMan: {UNREADABLE_CATEGORY_PREFIX}(受け取った値: {shown})");
+            return Err(unreadable_category_message(&shown));
+        }
+    };
     let is_generic = value
         .get("is_generic")
         .and_then(Value::as_bool)
@@ -317,10 +324,7 @@ pub fn parse_extraction(raw: &str) -> Result<Extraction, String> {
             break;
         }
     }
-    let genre = value
-        .get("genre")
-        .and_then(Value::as_str)
-        .map(str::to_string);
+    let genre = genre_raw.map(str::to_string);
     Ok(Extraction {
         category,
         genre,
@@ -328,6 +332,143 @@ pub fn parse_extraction(raw: &str) -> Result<Extraction, String> {
         is_generic,
         confidence: confidence.clamp(0.0, 1.0),
     })
+}
+
+fn unreadable_category_message(shown: &str) -> String {
+    if shown.is_empty() {
+        format!("{UNREADABLE_CATEGORY_PREFIX}。もう一度分類してください")
+    } else {
+        format!("{UNREADABLE_CATEGORY_PREFIX}(受け取った値: {shown})。もう一度分類してください")
+    }
+}
+
+/// Clip a raw category/genre string for errors and logs.
+pub fn clip_raw_category(raw: &str) -> String {
+    let trimmed = raw.trim();
+    let count = trimmed.chars().count();
+    if count <= RAW_CATEGORY_ERROR_CHARS {
+        trimmed.to_string()
+    } else {
+        let head: String = trimmed.chars().take(RAW_CATEGORY_ERROR_CHARS).collect();
+        format!("{head}…")
+    }
+}
+
+/// Map a model `category` (and optional `genre`) to one of the eight stored categories.
+///
+/// Accepts exact keys, NFKC/case folding, leading tokens before extra notes, known synonyms,
+/// and genre keys via `genre::category_for_genre`. On failure returns a clipped display form
+/// of what the model sent (category preferred, else genre, else empty).
+pub fn resolve_category(category: Option<&str>, genre: Option<&str>) -> Result<Category, String> {
+    if let Some(text) = category {
+        if let Some(parsed) = category_from_model_text(text, genre) {
+            return Ok(parsed);
+        }
+    }
+    if let Some(text) = genre {
+        if let Some(parsed) = crate::genre::category_for_genre(text.trim()) {
+            return Ok(parsed);
+        }
+        if let Some(parsed) = category_from_model_text(text, None) {
+            return Ok(parsed);
+        }
+    }
+    let shown = category
+        .map(clip_raw_category)
+        .filter(|text| !text.is_empty())
+        .or_else(|| genre.map(clip_raw_category).filter(|text| !text.is_empty()))
+        .unwrap_or_default();
+    Err(shown)
+}
+
+fn category_from_model_text(raw: &str, genre: Option<&str>) -> Option<Category> {
+    let normalized = crate::normalize::nfkc(raw).trim().to_lowercase();
+    if normalized.is_empty() {
+        return None;
+    }
+    if let Some(category) = interpret_category_token(&normalized, genre) {
+        return Some(category);
+    }
+    for token in category_token_candidates(&normalized) {
+        if token == normalized {
+            continue;
+        }
+        if let Some(category) = interpret_category_token(&token, genre) {
+            return Some(category);
+        }
+    }
+    None
+}
+
+fn category_token_candidates(normalized: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let stripped = normalized
+        .trim_matches(|ch: char| crate::normalize::is_punct(ch) || ch.is_whitespace())
+        .to_string();
+    if !stripped.is_empty() {
+        out.push(stripped.clone());
+    }
+    let cut = stripped
+        .find(|ch: char| {
+            ch.is_whitespace()
+                || matches!(
+                    ch,
+                    '(' | ')' | '（' | '）' | '/' | ':' | '：' | ',' | '、' | '|'
+                )
+        })
+        .map(|index| stripped[..index].trim())
+        .unwrap_or("")
+        .trim_matches(|ch: char| crate::normalize::is_punct(ch) || ch.is_whitespace())
+        .to_string();
+    if !cut.is_empty() && !out.iter().any(|existing| existing == &cut) {
+        out.push(cut);
+    }
+    out
+}
+
+fn interpret_category_token(token: &str, genre: Option<&str>) -> Option<Category> {
+    if let Some(category) = Category::parse(token) {
+        return Some(category);
+    }
+    if let Some(category) = crate::genre::category_for_genre(token) {
+        return Some(category);
+    }
+    match token {
+        "prop" | "props" | "furniture" | "家具" | "小物" | "こたつ" | "布団" => {
+            Some(world_or_gimmick(genre))
+        }
+        "tool" | "tools" | "item" | "items" | "その他" | "misc" | "unknown" => {
+            Some(Category::Other)
+        }
+        "ギミック" | "gimmicks" => Some(Category::Gimmick),
+        "アバター" | "本体" => Some(Category::Avatar),
+        "衣装" | "服" => Some(Category::Outfit),
+        "髪" | "ヘア" | "髪型" => Some(Category::Hair),
+        "アクセサリ" | "アクセサリー" | "accessorys" | "accessories" => {
+            Some(Category::Accessory)
+        }
+        "テクスチャ" | "textures" => Some(Category::Texture),
+        "ワールド" | "ワールド用" => Some(Category::World),
+        _ => None,
+    }
+}
+
+fn world_or_gimmick(genre: Option<&str>) -> Category {
+    if let Some(genre) = genre {
+        let key = crate::normalize::nfkc(genre).trim().to_lowercase();
+        if let Some(category) = crate::genre::category_for_genre(&key) {
+            if category == Category::Gimmick || category == Category::World {
+                return category;
+            }
+        }
+        if matches!(
+            key.as_str(),
+            "gimmick" | "particle_effect" | "expression_animation" | "pose" | "ギミック"
+        ) {
+            return Category::Gimmick;
+        }
+    }
+    Category::World
 }
 
 pub fn extraction_client() -> Result<reqwest::Client, String> {
@@ -684,7 +825,62 @@ mod tests {
     fn rejects_unknown_category() {
         let raw =
             r#"{"category":"shoes","compatible_avatars":[],"is_generic":false,"confidence":0.4}"#;
-        assert!(parse_extraction(raw).is_err());
+        let err = parse_extraction(raw).unwrap_err();
+        assert!(err.contains(UNREADABLE_CATEGORY_PREFIX));
+        assert!(err.contains("受け取った値: shoes"));
+    }
+
+    #[test]
+    fn resolves_loose_category_values() {
+        let cases: &[(&str, Option<&str>, Option<Category>)] = &[
+            ("furniture", None, Some(Category::World)),
+            ("prop", None, Some(Category::World)),
+            ("props", None, Some(Category::World)),
+            ("tool", None, Some(Category::Other)),
+            ("furniture_props", None, Some(Category::World)),
+            ("world_gimmick", None, Some(Category::World)),
+            ("tool_other", None, Some(Category::World)),
+            ("", None, None),
+            ("家具", None, Some(Category::World)),
+            ("ギミック", None, Some(Category::Gimmick)),
+            ("gimmick (pen)", None, Some(Category::Gimmick)),
+            ("ｇｉｍｍｉｃｋ", None, Some(Category::Gimmick)),
+            ("Gimmick", None, Some(Category::Gimmick)),
+            (" world ", None, Some(Category::World)),
+            ("prop", Some("gimmick"), Some(Category::Gimmick)),
+            ("furniture", Some("furniture_props"), Some(Category::World)),
+            ("", Some("furniture_props"), Some(Category::World)),
+            ("nonsense", Some("world_gimmick"), Some(Category::World)),
+        ];
+        for &(category, genre, expected) in cases {
+            let got = resolve_category(Some(category), genre);
+            match expected {
+                Some(want) => {
+                    assert_eq!(got.unwrap(), want, "category={category:?} genre={genre:?}")
+                }
+                None => assert!(got.is_err(), "category={category:?} genre={genre:?}"),
+            }
+        }
+        let extraction = parse_extraction(
+            r#"{"category":"furniture","genre":"furniture_props","compatible_avatars":[],"is_generic":false,"confidence":0.7}"#,
+        )
+        .unwrap();
+        assert_eq!(extraction.category, Category::World);
+        assert_eq!(extraction.genre.as_deref(), Some("furniture_props"));
+        let qvpen = parse_extraction(
+            r#"{"category":"prop","genre":"texture_material","compatible_avatars":[],"is_generic":false,"confidence":0.6}"#,
+        )
+        .unwrap();
+        assert_eq!(qvpen.category, Category::World);
+        let kotatsu = parse_extraction(
+            r#"{"category":"家具","genre":"furniture_props","compatible_avatars":[],"is_generic":false,"confidence":0.8}"#,
+        )
+        .unwrap();
+        assert_eq!(kotatsu.category, Category::World);
+        let long = "x".repeat(50);
+        let err = resolve_category(Some(&long), None).unwrap_err();
+        assert_eq!(err.chars().count(), RAW_CATEGORY_ERROR_CHARS + 1);
+        assert!(err.ends_with('…'));
     }
 
     #[test]
