@@ -208,9 +208,9 @@ export function ImportPage() {
       setBusy(true);
       const result = await api.registerExistingImport(existingRoot, selections, existingCopy);
       notify(`${result.registered} 件を登録しました${result.errors.length ? `（${result.errors.length} 件失敗）` : ""}`, undefined, { persist: result.errors.length > 0 });
-      if (result.errors.length) { fail(result.errors.join("\n")); return; }
       setExistingPreview(null);
       refresh();
+      if (result.errors.length) fail(result.errors.join("\n"));
     } catch (err) { fail(errorText(err)); } finally { setBusy(false); }
   }
 
