@@ -107,6 +107,9 @@ pub struct Avatar {
     pub is_builtin: bool,
     pub owned: bool,
     pub notes: String,
+    /// Local path. Reaches the screen only through `AvatarDetail`, never with the dictionary.
+    #[serde(skip_serializing)]
+    pub hero_image_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -353,11 +356,17 @@ pub struct Settings {
     pub ui_genre_width: u32,
     pub preview_pane: bool,
     pub preview_pane_width: u32,
+    /// Avatar detail hero: large | small | off.
+    pub avatar_hero: String,
     /// Right panel tab kinds and the active index, as normalized JSON. Never holds a URL.
     pub right_panel_tabs: String,
     pub check_update_on_startup: bool,
     pub ui_update_dismissed_version: String,
     pub unload_ollama_after_classification: bool,
+    /// Read-only. Created once on first start, and never in a settings patch.
+    pub device_id: String,
+    /// Shown to other devices. Defaults to the OS host name.
+    pub device_name: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -403,6 +412,8 @@ pub struct SettingsInput {
     pub preview_pane: bool,
     #[serde(default = "default_preview_pane_width")]
     pub preview_pane_width: u32,
+    #[serde(default = "default_avatar_hero")]
+    pub avatar_hero: String,
     #[serde(default = "default_right_panel_tabs")]
     pub right_panel_tabs: String,
     #[serde(default)]
@@ -447,10 +458,12 @@ pub struct SettingsPatch {
     #[serde(default)]
     pub preview_pane: Option<bool>,
     pub preview_pane_width: Option<u32>,
+    pub avatar_hero: Option<String>,
     pub right_panel_tabs: Option<String>,
     pub check_update_on_startup: Option<bool>,
     pub ui_update_dismissed_version: Option<String>,
     pub unload_ollama_after_classification: Option<bool>,
+    pub device_name: Option<String>,
 }
 
 impl SettingsPatch {
@@ -498,6 +511,11 @@ impl SettingsPatch {
             preview_pane: self.preview_pane.unwrap_or(current.preview_pane),
             preview_pane_width: clamp_preview_pane_width(
                 self.preview_pane_width.unwrap_or(current.preview_pane_width),
+            ),
+            avatar_hero: normalize_avatar_hero(
+                self.avatar_hero
+                    .as_deref()
+                    .unwrap_or(&current.avatar_hero),
             ),
             right_panel_tabs: normalize_right_panel_tabs(
                 self.right_panel_tabs
@@ -552,6 +570,22 @@ pub(crate) fn clamp_ui_rail_width(value: u32) -> u32 {
 
 pub(crate) fn clamp_ui_genre_width(value: u32) -> u32 {
     value.clamp(160, 320)
+}
+
+
+pub const DEFAULT_AVATAR_HERO: &str = "small";
+
+/// `large` | `small` | `off`. Unknown values become `small`.
+pub(crate) fn normalize_avatar_hero(value: &str) -> String {
+    match value.trim().to_lowercase().as_str() {
+        "large" => "large".into(),
+        "off" => "off".into(),
+        _ => "small".into(),
+    }
+}
+
+fn default_avatar_hero() -> String {
+    DEFAULT_AVATAR_HERO.into()
 }
 
 pub(crate) fn clamp_preview_pane_width(value: u32) -> u32 {

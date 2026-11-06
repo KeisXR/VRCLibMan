@@ -156,6 +156,12 @@ pub struct AvatarDetail {
     pub is_builtin: bool,
     pub is_placeholder: bool,
     pub owned: bool,
+    pub thumbnail_path: Option<String>,
+    pub thumbnail_url: Option<String>,
+    /// Custom hero image only. The thumbnail fields stay as they are, and the screen picks.
+    pub hero_image_path: Option<String>,
+    /// Changes when the file is replaced. Set by `hero_image::fill_display`.
+    pub hero_image_version: Option<u64>,
     pub siblings: Vec<Sibling>,
     pub owned_products: Vec<ItemView>,
     pub sections: Vec<Section>,
@@ -279,6 +285,10 @@ pub fn avatar_detail(snapshot: &Snapshot, id: &str) -> Option<AvatarDetail> {
         is_builtin: avatar.is_builtin,
         is_placeholder: avatar.id.starts_with("owned-"),
         owned: avatar.owned,
+        thumbnail_path: classified.thumbnail_path,
+        thumbnail_url: classified.thumbnail_url,
+        hero_image_path: avatar.hero_image_path.clone(),
+        hero_image_version: None,
         siblings,
         owned_products: classified.owned,
         sections: classified.sections,
@@ -869,6 +879,7 @@ mod tests {
             is_builtin: true,
             owned: matches!(id, "lime" | "plum" | "manuka"),
             notes: String::new(),
+            hero_image_path: None,
         }
     }
 

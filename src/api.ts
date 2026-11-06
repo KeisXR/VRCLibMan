@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { syncExportFilename } from "./syncExport";
 import type {
   AppUpdateStatus,
   AssetUpdateStatus,
@@ -38,6 +39,7 @@ import type {
   QueuePage,
   ScanReport,
   Settings,
+  SyncExportReport,
   RemoteSyncStatus,
   StagedDownload,
   DirListing,
@@ -196,6 +198,9 @@ export const api = {
     call<void>("link_file", { path, productId }),
   saveAvatar: (avatar: AvatarInput) => call<string>("save_avatar", { avatar }),
   deleteAvatar: (id: string) => call<void>("delete_avatar", { id }),
+  setAvatarHeroImage: (avatarId: string, sourcePath: string) =>
+    call<string>("set_avatar_hero_image", { avatarId, sourcePath }),
+  clearAvatarHeroImage: (avatarId: string) => call<void>("clear_avatar_hero_image", { avatarId }),
   saveBaseBody: (body: { id?: string | null; displayName: string; note: string }) =>
     call<string>("save_base_body", { body }),
   deleteBaseBody: (id: string) => call<void>("delete_base_body", { id }),
@@ -261,6 +266,8 @@ export const api = {
     call<string>("classification_feedback", { scope }),
   saveClassificationFeedback: (scope: ClassificationFeedbackScope, path: string) =>
     call<void>("save_classification_feedback", { scope, path }),
+  syncExportJson: () => call<string>("sync_export_json"),
+  saveSyncExport: (path: string) => call<SyncExportReport>("save_sync_export", { path }),
 };
 
 export async function copyClassificationFeedback(scope: ClassificationFeedbackScope): Promise<void> {
@@ -287,6 +294,23 @@ export async function saveClassificationFeedback(
   if (typeof selected !== "string") return "cancelled";
   await api.saveClassificationFeedback(scope, selected);
   return "saved";
+}
+
+export async function exportSyncData(deviceName: string): Promise<SyncExportReport | "cancelled"> {
+  const filename = syncExportFilename(deviceName, new Date());
+  if (!isTauri()) {
+    const json = await api.syncExportJson();
+    downloadJson(filename, json);
+    return { counts: (JSON.parse(json) as SyncExportReport).counts };
+  }
+  const { save } = await import("@tauri-apps/plugin-dialog");
+  const selected = await save({
+    title: "同期データをエクスポート",
+    defaultPath: filename,
+    filters: [{ name: "JSON", extensions: ["json"] }],
+  });
+  if (typeof selected !== "string") return "cancelled";
+  return api.saveSyncExport(selected);
 }
 
 function downloadJson(filename: string, json: string) {
@@ -337,6 +361,21 @@ export async function chooseUnityEditor(): Promise<string | null> {
     multiple: false,
     title: "Unity 本体を選ぶ",
     ...(windows ? { filters: [{ name: "Unity", extensions: ["exe"] }] } : {}),
+  });
+  return typeof selected === "string" ? selected : null;
+}
+
+/** アバターのヒーロー画像を選ぶ。読み込みと検証は Rust 側で行う。 */
+export async function chooseHeroImage(): Promise<string | null> {
+  if (!isTauri()) {
+    throw new Error("画像の選択はデスクトップアプリで使えます");
+  }
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const selected = await open({
+    directory: false,
+    multiple: false,
+    title: "ヒーロー画像を選ぶ",
+    filters: [{ name: "画像", extensions: ["png", "jpg", "jpeg", "webp"] }],
   });
   return typeof selected === "string" ? selected : null;
 }

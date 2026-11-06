@@ -271,6 +271,7 @@ mod tests {
             extract_running: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             thumbs_dir: directory.path().join("thumbs"),
             previews_dir: directory.path().join("previews"),
+            hero_images_dir: directory.path().join("hero_images"),
             receiver_error: Mutex::new(None),
             import_guard: Mutex::new(crate::local_import::ImportGuard::default()),
             background_mode: std::sync::atomic::AtomicBool::new(false),

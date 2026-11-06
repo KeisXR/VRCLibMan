@@ -17,6 +17,8 @@ import { CloudClassifierSettings } from "../components/CloudClassifierSettings";
 import { AssetUpdates } from "../components/AssetUpdates";
 import { UnitySettings } from "../components/UnitySettings";
 import { SettingsNav } from "../components/SettingsNav";
+import { SyncExportSettings } from "../components/SyncExportSettings";
+import { AVATAR_HERO_CHOICES, AVATAR_HERO_BASE, normalizeAvatarHero } from "../avatarHero";
 
 const emptyAvatar = {
   id: "",
@@ -334,6 +336,33 @@ export function SettingsPage() {
             {settings.backgroundSupported && <details className="settings-details"><summary>起動と常駐について詳しく</summary><p>オフにすると、ウィンドウを閉じたときにアプリも終了します。オンにすると、トレイ（Windows・Linux）またはメニューバー（macOS）から再表示・終了できます。</p><p>「ログイン時に起動」を有効にすると、ウィンドウを表示せずに起動します。バックグラウンド動作をオフにすると、ログイン時の起動もオフになります。</p><p>Linux はトレイのメニューから「開く」「終了」を選びます。GNOME では AppIndicator 対応の拡張が必要になる場合があります。トレイを利用できないときはウィンドウを表示し、閉じると終了します。</p></details>}
           </section>
 
+
+          <section className="settings-section" id="settings-design">
+            <header><h2>デザイン</h2><p>アバター詳細のヒーロー画像の高さを選びます。標準デザイン自体は1つです。</p></header>
+            <SettingRow label="アバター詳細のヒーロー" help="大・小は画像を中央で切り抜いて表示します。旧デザインは従来の文字だけの見出しです。">
+              <fieldset className="scope-choices" aria-label="アバター詳細のヒーロー">
+                {AVATAR_HERO_CHOICES.map((choice) => (
+                  <label key={choice.value} className="choice-row">
+                    <input
+                      type="radio"
+                      name="avatar-hero"
+                      value={choice.value}
+                      checked={normalizeAvatarHero(settings.avatarHero) === choice.value}
+                      onChange={() => changeSettings({ avatarHero: choice.value })}
+                    />
+                    <span>
+                      <strong>{choice.label}</strong>
+                      <span className="meta">{choice.help}</span>
+                    </span>
+                  </label>
+                ))}
+              </fieldset>
+            </SettingRow>
+            <div className="section-body">
+              <p className="meta">基準画像は {AVATAR_HERO_BASE.width}×{AVATAR_HERO_BASE.height}（2:1）です。横長（幅/高さ ≥ 1.6）のときは拡大縮小して中央を切り抜きます。正方形・縦長は左のブロック表示になります。横長で幅がおおよそ 2000px 未満のときは粗さの注意を出します。</p>
+            </div>
+          </section>
+
           <AssetUpdates />
 
           <section className="settings-section" id="settings-booth">
@@ -452,6 +481,7 @@ export function SettingsPage() {
             <SettingRow label="アプリの更新" help="公開済みの配布版を確認して、アプリ内で更新します。ライブラリと設定は引き継ぎます。">
               <AppUpdater beforeInstall={flush} workInProgress={workInProgress} />
             </SettingRow>
+            <SyncExportSettings settings={settings} onChange={changeSettings} onBlur={flushSettings} beforeExport={flush} onNotify={notify} onFail={fail} />
             {catalog && <SettingRow label="同梱の対応表" help={`${catalog.credit}（${catalog.author}）・${catalog.count} 件`}>
               <div className="inline-control"><button className="button primary" type="button" onClick={() => void refreshCatalog()}>対応表を更新</button><button className="button" type="button" onClick={() => void openExternal(catalog.sourceUrl)}>出典</button><button className="button" type="button" onClick={() => void openExternal(catalog.termsUrl)}>利用規約</button></div>
             </SettingRow>}
@@ -467,6 +497,7 @@ export function SettingsPage() {
               <p>内蔵ブラウザでの閲覧やログインには、開いたサイトとの通信を行います。ログイン状態とブックマークは端末内に保存し、選択したファイルのダウンロード時には BOOTH の Cookie を利用します。</p>
               <p>各サイトのログイン状態と閲覧データは「内蔵ブラウザの閲覧データを削除」で削除できます。ライブラリ情報・設定・ブックマークは残ります。</p>
               <p>更新を確認・ダウンロードするときは GitHub と通信します。ライブラリや購入情報は送信しません。</p>
+              <p>エクスポートしたファイルには商品名とファイル名が含まれます。保存先の管理はご自身で行ってください。</p>
             </details>
           </section>
 

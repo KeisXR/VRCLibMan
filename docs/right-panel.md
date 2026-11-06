@@ -466,7 +466,9 @@ interface RightPanelTab { id: string; kind: RightPanelKind | "web"; tabId?: stri
 
 - 窓幅が 1000px 未満（`src/uiLayout.ts` の `UI_PANEL_OVERLAY_PX`）なら `narrow` です。このとき `panelDocked = open && !narrow` は false になります。
 - 列の幅は `computeAppLayout`（`src/uiLayout.ts`）がまとめて決めます。パネルの幅を先に決め、一覧が 480px を切るならジャンル列をやめてチップ帯にし、パネルの幅をもう一度決めます（[デザインガイドの狭い窓](design/README.md#狭い窓)）。860px 以下でサイドバーがアイコンだけになるのは重ね表示のときだけなので、列のパネルと同時には起きません。
-- 左サイドバーの開閉は、右パネルが開いている間は幅を一瞬で切り替えます（`railMotionAttrs` が `fade` を返し、グリッドに `transition` を付けない）。幅を動かすのは右パネルが閉じている間だけです（[デザインガイドの動き](design/README.md#動き)）。
+- 左サイドバーの開閉は、右パネルが開いていても幅を動かします（`data-rail-motion="slide"`）。ドッキングしたページ（ネイティブビュー）は `useDockedArea` の rAF / ResizeObserver で矩形に追従します。パネルの矩形が変わらなければ `sameReport` で送信は起きません。
+  - 開閉でパネル自体の left / width が変わるとき（`fitRightPanelWidth` の上限で幅が変わる、最大化）。ジャンル列の出入りだけではパネルは動かないので隠しませんは、`railMotionHoldsPanel` が真になり、`.app-shell` に `data-rail-hold` が付きます。その 220ms は `browserPanelVisible` が false を返し、ドラッグ中と同じくページを隠して HTML の地を見せます。
+  - 実機（WebView2 / WKWebView）で追従中にちらつく場合は、右パネルが開いている開閉を常に hold にするのが代替案です。詳しくは[デザインガイドの動き](design/README.md#動き)。
 - `PanelOverlay` は `document.body` へのポータルです（`.preview-overlay.right-panel-overlay`）。
   - 通常は `role="dialog"` と `aria-modal` を付けます。
   - 開いたら閉じるボタンにフォーカスします。

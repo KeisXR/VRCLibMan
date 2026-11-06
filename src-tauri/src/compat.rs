@@ -1222,6 +1222,7 @@ mod tests {
             is_builtin: true,
             owned: false,
             notes: String::new(),
+            hero_image_path: None,
         }
     }
 
@@ -1540,6 +1541,7 @@ Avatar
             is_builtin: false,
             owned: false,
             notes: String::new(),
+            hero_image_path: None,
         });
         assert_eq!(
             title_avatar_hints("【Kipfel】ねこネコパーカー", &kipfel),

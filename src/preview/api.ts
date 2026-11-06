@@ -168,9 +168,12 @@ const store: Store = {
     uiGenreWidth: 200,
     previewPane: false,
     previewPaneWidth: 300,
+    avatarHero: "small",
     rightPanelTabs: '{"tabs":["preview"],"active":0}',
     checkUpdateOnStartup: false,
     uiUpdateDismissedVersion: "",
+    deviceId: "preview-device",
+    deviceName: "見本の PC",
   },
   setupComplete: false,
   baseBodies: [
@@ -200,12 +203,14 @@ const store: Store = {
       shop: "こまど",
       category: "avatar",
       descriptionSnippet: "共通素体のアバターです。",
+      thumbnailUrl: "/samples/avatar-hero.png",
     }),
     product({
       boothId: "7770415",
       title: "プラム -Plum- / オリジナル3Dモデル",
       shop: "こまど",
       category: "avatar",
+      thumbnailUrl: "/samples/avatar-hero.png",
     }),
     product({
       boothId: "5058077",
@@ -589,6 +594,10 @@ if (typeof location !== "undefined" && new URLSearchParams(location.search).get(
   store.setupComplete = true;
 }
 
+const assetUpdatesCount = typeof location !== "undefined"
+  ? Number(new URLSearchParams(location.search).get("assetUpdates") ?? "0")
+  : 0;
+
 const previewAccountQuery =
   typeof location !== "undefined" ? (new URLSearchParams(location.search).get("account") ?? "") : "";
 let previewAccountUnknown = previewAccountQuery === "unknown";
@@ -840,6 +849,10 @@ function detail(id: string): AvatarDetail {
     isBuiltin: avatar.isBuiltin,
     isPlaceholder: avatar.id.startsWith("owned-"),
     owned: avatar.owned,
+    thumbnailPath: view.thumbnailPath,
+    thumbnailUrl: view.thumbnailUrl,
+    heroImagePath: null,
+    heroImageVersion: null,
     siblings,
     ownedProducts: view.owned,
     sections: view.sections,
@@ -1067,6 +1080,65 @@ function pushClassificationMove(
   to: FeedbackPlacement | null,
 ) {
   classificationMoves.push({ boothId, at: new Date().toISOString(), action, from, to });
+}
+
+function previewDeviceName(value: unknown): string {
+  const name = String(value ?? "").trim();
+  if (!name) throw new Error("端末名を入力してください");
+  if ([...name].length > 64) throw new Error("端末名は 64 文字以内にしてください");
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(name)) throw new Error("端末名に制御文字は使えません");
+  return name;
+}
+
+/** 形式の確認用の小さな JSON。見本の全件は出さず、分類の規則も複製しない。 */
+function previewSyncExport(): string {
+  const device = { id: store.settings.deviceId, name: store.settings.deviceName };
+  const values = {
+    llmBackend: store.settings.llmBackend,
+    ollamaModel: store.settings.ollamaModel,
+    cloudModel: store.settings.cloudModel,
+    confidenceThreshold: store.settings.confidenceThreshold,
+    unloadOllamaAfterClassification: store.settings.unloadOllamaAfterClassification,
+    avatarHero: store.settings.avatarHero,
+    boothLinkTarget: store.settings.boothLinkTarget,
+    previewPane: store.settings.previewPane,
+    browserForceDark: store.settings.browserForceDark,
+    checkUpdateOnStartup: store.settings.checkUpdateOnStartup,
+  };
+  const products = activeProducts()
+    .slice()
+    .sort((left, right) => (left.boothId < right.boothId ? -1 : left.boothId > right.boothId ? 1 : 0))
+    .slice(0, 2)
+    .map((item) => ({
+      boothId: item.boothId,
+      title: item.title,
+      url: `https://booth.pm/ja/items/${item.boothId}`,
+      classification: {
+        category: item.category,
+        categoryLocked: item.categoryLocked,
+        genre: item.genre ?? null,
+        genreLocked: item.genreLocked,
+        confidence: item.confidence,
+        classifierVersion: 8,
+        userConfirmed: item.userConfirmed,
+        needsReview: item.needsReview,
+        isGeneric: item.isGeneric,
+        meta: null,
+      },
+      links: { items: [], locked: item.linksLocked, names: [], unresolvedNames: [], meta: null },
+    }));
+  return `${JSON.stringify({
+    format: "vrclibman-sync",
+    version: 1,
+    device,
+    appVersion: "preview",
+    exportedAt: new Date().toISOString(),
+    config: { values, meta: Object.fromEntries(Object.keys(values).map((key) => [key, null])) },
+    products,
+    avatars: [],
+    fileLinks: [],
+    counts: { products: products.length, links: 0, avatars: 0, fileLinks: 0, config: Object.keys(values).length },
+  }, null, 2)}\n`;
 }
 
 function classificationFeedback(scope: string): string {
@@ -1776,6 +1848,59 @@ function previewUnityStatus(): UnityStatus {
 }
 
 let assetWatch: AssetUpdateStatus = { automatic: false, allProducts: false, totalProducts: 0, running: false, rows: [] };
+/** ブラウザ確認用。設定の更新候補一覧にダミー行を入れる。本番の Rust 側には無い。 */
+export function seedPreviewAssetUpdates(count: number, opts?: { changed?: number; errors?: number }): AssetUpdateStatus {
+  const n = Math.max(0, Math.min(500, Math.floor(count)));
+  const changed = Math.max(0, Math.min(n, opts?.changed ?? 3));
+  const errors = Math.max(0, Math.min(n - changed, opts?.errors ?? 1));
+  const now = new Date().toISOString();
+  assetWatch.allProducts = false;
+  assetWatch.automatic = false;
+  assetWatch.running = false;
+  assetWatch.rows = Array.from({ length: n }, (_, i) => {
+    const boothId = String(9000000 + i);
+    const title = i % 7 === 0
+      ? `とても長い商品名の見本アセット ${i + 1} — BOOTH で公開されているオリジナル3Dモデル向けの追加衣装とアクセサリ一式`
+      : `見本アセット ${i + 1}`;
+    if (!store.products.some((p) => p.boothId === boothId)) {
+      store.products.push({
+        boothId,
+        title,
+        shop: "見本ショップ",
+        descriptionSnippet: "見本",
+        url: `https://booth.pm/ja/items/${boothId}`,
+        thumbnailUrl: null,
+        thumbnailPath: null,
+        category: "accessory",
+        categoryLocked: false,
+        compatibleAvatars: [],
+        unresolvedNames: [],
+        isGeneric: false,
+        confidence: null,
+        linksLocked: false,
+        userConfirmed: true,
+        needsReview: false,
+        updatedAt: now,
+        isFree: false,
+        isAdult: false,
+        unpublished: false,
+      });
+    }
+    return {
+      boothId,
+      title,
+      enabled: true,
+      checkedAt: now,
+      error: i < errors ? "通信に失敗しました" : null,
+      changes: i >= errors && i < errors + changed ? ["商品説明の変更"] : [],
+      revision: 1,
+    };
+  });
+  assetWatch.totalProducts = activeProducts().length;
+  return assetWatchStatus();
+}
+if (assetUpdatesCount > 0) seedPreviewAssetUpdates(assetUpdatesCount);
+
 function enrollAssetProducts() {
   assetWatch.totalProducts = activeProducts().length;
   if (assetWatch.allProducts) for (const p of activeProducts()) {
@@ -1941,7 +2066,8 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       return { running: false, copied: 0, skipped: 0, lastCompletedAt: null, error: null } as T;
     case "update_settings":
     case "save_settings": {
-      const settings = command === "update_settings" ? { ...store.settings, ...(args.patch as Partial<Settings>) } : args.settings as Settings;
+      const settings = command === "update_settings" ? { ...store.settings, ...(args.patch as Partial<Settings>) } : { ...args.settings as Settings, deviceName: store.settings.deviceName };
+      const deviceName = previewDeviceName(settings.deviceName);
       if (!/^http:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i.test(settings.ollamaBaseUrl.replace(/\/$/, ""))) throw new Error("Ollamaは手元のPC（localhost）だけに接続します");
       if (!/^[a-zA-Z0-9._:/-]{1,80}$/.test(settings.ollamaModel.trim())) throw new Error("モデル名が不正です");
       if (settings.remoteAutoSync && !settings.remoteLibraryFolder.trim()) throw new Error("自動同期をオンにする前に、リモートライブラリのフォルダを選んでください");
@@ -1954,7 +2080,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       const cloudModel = String(settings.cloudModel ?? "").trim();
       if (cloudModel.length > 200 || /[\u0000-\u001f]/.test(cloudModel)) throw new Error("クラウドAPIのモデル名に使えない文字があります");
       const llmBackend = settings.llmBackend === "apple" || settings.llmBackend === "cloud" ? settings.llmBackend : "ollama";
-      store.settings = { ...settings, llmBackend, cloudBaseUrl, cloudModel, ollamaModel: settings.ollamaModel.trim(), backgroundSupported, backgroundMode, launchAtLogin: backgroundMode && Boolean(settings.launchAtLogin), confidenceThreshold: Math.min(1, Math.max(0, settings.confidenceThreshold)), boothLinkTarget, browserForceDark };
+      store.settings = { ...settings, deviceId: store.settings.deviceId, deviceName, llmBackend, cloudBaseUrl, cloudModel, ollamaModel: settings.ollamaModel.trim(), backgroundSupported, backgroundMode, launchAtLogin: backgroundMode && Boolean(settings.launchAtLogin), confidenceThreshold: Math.min(1, Math.max(0, settings.confidenceThreshold)), boothLinkTarget, browserForceDark, avatarHero: (settings.avatarHero === "large" || settings.avatarHero === "off" || settings.avatarHero === "small") ? settings.avatarHero : "small" };
       return (command === "update_settings" ? { ...store.settings } : undefined) as T;
     }
     case "import_export":
@@ -1975,6 +2101,11 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       classificationFeedback(String(args.scope ?? ""));
       if (!String(args.path ?? "").toLowerCase().endsWith(".json")) throw new Error("保存先は JSON ファイルにしてください");
       return undefined as T;
+    case "sync_export_json":
+      return previewSyncExport() as T;
+    case "save_sync_export":
+      if (!String(args.path ?? "").toLowerCase().endsWith(".json")) throw new Error("保存先は JSON ファイルにしてください");
+      return { counts: JSON.parse(previewSyncExport()).counts } as T;
     case "register_owned_body":
       return registerPreviewOwnedBody(String(args.boothId ?? ""), args.name == null ? null : String(args.name)) as T;
     case "attach_product_to_avatar": {
@@ -2014,6 +2145,11 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       store.links = store.links.filter((link) => link.avatarId !== avatar.id);
       return undefined as T;
     }
+    // 見本には画像の保存先が無い。画面からは chooseHeroImage が先に案内する。
+    case "set_avatar_hero_image":
+      throw new Error("画像の変更はデスクトップアプリで使えます");
+    case "clear_avatar_hero_image":
+      return undefined as T;
     case "save_base_body": {
       const body = args.body as { id?: string | null; displayName: string; note: string };
       const displayName = body.displayName.trim();

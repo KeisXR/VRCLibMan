@@ -427,6 +427,7 @@ fn linux_browser_panel_native() {
                 extract_running: Arc::new(AtomicBool::new(false)),
                 thumbs_dir: root.join("thumbs"),
                 previews_dir: root.join("previews"),
+                hero_images_dir: root.join("hero_images"),
                 receiver_error: Mutex::new(None),
                 import_guard: Mutex::new(crate::local_import::ImportGuard::default()),
                 background_mode: AtomicBool::new(false),

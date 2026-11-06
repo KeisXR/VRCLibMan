@@ -129,6 +129,12 @@ export interface AvatarDetail {
   isBuiltin: boolean;
   isPlaceholder: boolean;
   owned: boolean;
+  thumbnailUrl: string | null;
+  thumbnailPath: string | null;
+  /** カスタムのヒーロー画像だけ。未指定は null で、サムネイルへフォールバックする。 */
+  heroImagePath: string | null;
+  /** 同じパスのまま差し替えても画面が気付けるよう、ファイルの更新時刻を持つ。 */
+  heroImageVersion: number | null;
   siblings: Sibling[];
   ownedProducts: ItemView[];
   sections: Section[];
@@ -269,10 +275,28 @@ export interface Settings {
   /** アセットとワールドの大きい画像欄。列幅と同じく設定に残す。 */
   previewPane: boolean;
   previewPaneWidth: number;
+  /** アバター詳細のヒーロー。large | small | off（旧デザイン）。既定は small。 */
+  avatarHero: "large" | "small" | "off";
   /** 右パネルのタブの種類と並び、選択中の位置（JSON）。URL は含めない。開閉は previewPane、幅は previewPaneWidth を引き継ぐ。 */
   rightPanelTabs: string;
   checkUpdateOnStartup: boolean;
   uiUpdateDismissedVersion: string;
+  /** 初回起動で作る端末 ID。変更しない。 */
+  deviceId: string;
+  /** 同期データに記録する端末名。既定は OS のホスト名。 */
+  deviceName: string;
+}
+
+export interface SyncCounts {
+  products: number;
+  links: number;
+  avatars: number;
+  fileLinks: number;
+  config: number;
+}
+
+export interface SyncExportReport {
+  counts: SyncCounts;
 }
 
 export interface RemoteSyncStatus {

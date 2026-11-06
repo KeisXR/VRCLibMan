@@ -217,7 +217,9 @@ fn load_avatar(app: &AppHandle, id: &str, probe_remote: bool) -> Result<AvatarDe
     } else {
         crate::library_files::fill_local_places(&mut snapshot, &remote);
     }
-    view::avatar_detail(&snapshot, id).ok_or_else(|| "アバターが見つかりません".into())
+    let mut detail = view::avatar_detail(&snapshot, id).ok_or("アバターが見つかりません")?;
+    crate::hero_image::fill_display(&mut detail);
+    Ok(detail)
 }
 
 #[tauri::command]
@@ -415,6 +417,7 @@ pub fn save_settings(
                 ui_genre_width: settings.ui_genre_width,
                 preview_pane: settings.preview_pane,
                 preview_pane_width: settings.preview_pane_width,
+                avatar_hero: settings.avatar_hero,
                 right_panel_tabs: settings.right_panel_tabs,
                 check_update_on_startup: settings.check_update_on_startup,
                 ui_update_dismissed_version: settings.ui_update_dismissed_version,
@@ -1007,6 +1010,48 @@ pub fn save_classification_feedback(
     db::save_classification_feedback_body(Path::new(&path), &json)
 }
 
+fn sync_export_app_version(app: &AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
+#[tauri::command]
+pub fn sync_export_json(
+    view: tauri::Webview,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    if view.label() != "main" {
+        return Err("この画面から同期データは書き出せません".into());
+    }
+    let mut connection = db(&state)?;
+    let file = crate::sync_export::build(&mut connection, &sync_export_app_version(&app))?;
+    crate::sync_export::to_json(&file)
+}
+
+/// The database lock covers building the JSON only, so a slow share cannot hold up the app.
+#[tauri::command]
+pub async fn save_sync_export(
+    view: tauri::Webview,
+    app: AppHandle,
+    path: String,
+) -> Result<crate::sync_export::SyncExportReport, String> {
+    if view.label() != "main" {
+        return Err("この画面から同期データは書き出せません".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let (json, counts) = {
+            let mut connection = db(&state)?;
+            let file = crate::sync_export::build(&mut connection, &sync_export_app_version(&app))?;
+            (crate::sync_export::to_json(&file)?, file.counts)
+        };
+        crate::sync_export::save(Path::new(&path), &json)?;
+        Ok(crate::sync_export::SyncExportReport { counts })
+    })
+    .await
+    .map_err(|err| format!("同期データを保存できません: {err}"))?
+}
+
 #[tauri::command]
 #[allow(non_snake_case)]
 pub fn attach_product_to_avatar(
@@ -1038,7 +1083,52 @@ pub fn save_avatar(state: State<'_, AppState>, avatar: AvatarInput) -> Result<St
 #[tauri::command]
 pub fn delete_avatar(state: State<'_, AppState>, id: String) -> Result<(), String> {
     let mut connection = db(&state)?;
-    db::delete_avatar(&mut connection, &id)
+    db::delete_avatar(&mut connection, &id)?;
+    let _ = crate::hero_image::prune(&connection, &state.hero_images_dir);
+    Ok(())
+}
+
+/// Copies the chosen image into `hero_images` and returns the stored path. Main window only.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn set_avatar_hero_image(
+    view: tauri::Webview,
+    app: AppHandle,
+    avatarId: String,
+    sourcePath: String,
+) -> Result<String, String> {
+    if view.label() != "main" {
+        return Err("この画面からヒーロー画像は変更できません".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let prepared = crate::hero_image::prepare(std::path::Path::new(&sourcePath))?;
+        let state = app.state::<AppState>();
+        let mut connection = db(&state)?;
+        let stored = crate::hero_image::store(
+            &mut connection,
+            &state.hero_images_dir,
+            &avatarId,
+            &prepared,
+        )?;
+        Ok(stored.display().to_string())
+    })
+    .await
+    .map_err(|err| format!("画像を保存できません: {err}"))?
+}
+
+/// Back to the thumbnail. Main window only.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn clear_avatar_hero_image(
+    view: tauri::Webview,
+    state: State<'_, AppState>,
+    avatarId: String,
+) -> Result<(), String> {
+    if view.label() != "main" {
+        return Err("この画面からヒーロー画像は変更できません".into());
+    }
+    let connection = db(&state)?;
+    crate::hero_image::clear(&connection, &state.hero_images_dir, &avatarId)
 }
 
 #[tauri::command]
@@ -1061,7 +1151,9 @@ pub fn merge_avatars(
     intoId: String,
 ) -> Result<(), String> {
     let mut connection = db(&state)?;
-    db::merge_avatars(&mut connection, &fromId, &intoId)
+    db::merge_avatars(&mut connection, &fromId, &intoId)?;
+    let _ = crate::hero_image::prune(&connection, &state.hero_images_dir);
+    Ok(())
 }
 
 #[tauri::command]

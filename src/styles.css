@@ -8,6 +8,7 @@
   --sunken: #f7f7f9;
   --text: #20222b;
   --text-secondary: #858995;
+  --avatar-hero-sub: #5d616c;
   --muted: var(--text-secondary);
   --faint: #a0a4ae;
   --button: #20222b;
@@ -59,6 +60,7 @@
     --sunken: #26262b;
     --text: #f3f3f5;
     --text-secondary: #9b9ba6;
+    --avatar-hero-sub: #b4b4be;
     --faint: #7e7e88;
     --button: #f5f5f7;
     --button-text: #161618;
@@ -420,7 +422,7 @@ a.drag-over {
 }
 .rail.collapsed .rail-foot { align-items: center; }
 /* 左サイドバーの開閉の動き。開閉ボタンを押した直後だけ App が data-rail-motion を付ける。
-   slide = 右パネルを閉じている: 幅も動かす。fade = 右パネルが開いている: 幅は一瞬で、文字とアイコンだけ。
+   slide = 幅を動かす（右パネルの有無にかかわらず）。data-rail-hold = パネル自体も動く開閉なので、その間ネイティブのページを隠す。
    動かすのは grid-template-columns / opacity / transform だけ。reduced-motion では先頭の規則で全部止まる */
 .app-shell[data-rail-motion="slide"] { transition: grid-template-columns var(--motion-rail) var(--ease-out); }
 .app-shell[data-rail-motion] :is(.rail, .rail .brand) { overflow: hidden; }
@@ -649,8 +651,16 @@ button.account-pill:hover { background: var(--hover); }
   to { opacity: 1; transform: none; }
 }
 .content {
-  padding: var(--space-6) var(--space-6) 64px;
+  --content-pad-x: var(--space-6);
+  --content-pad-top: var(--space-6);
+  padding: var(--content-pad-top) var(--content-pad-x) 64px;
   max-width: calc(var(--content-max) + var(--space-6) * 2);
+}
+.content.density-compact { --content-pad-top: 28px; }
+.content.density-roomy {
+  --content-pad-x: 48px;
+  --content-pad-top: 48px;
+  padding-bottom: 80px;
 }
 .content > section { animation: rise var(--motion) ease; }
 .page-head {
@@ -680,6 +690,261 @@ button.account-pill:hover { background: var(--hover); }
 .avatar-add-panel .picker .button { width: 100%; text-align: left; }
 .panel h2, .section h2 { margin: 0 0 var(--space-2); font-size: 16px; font-weight: 650; }
 .page-head p, .lede { margin: 6px 0 0; color: var(--text-secondary); }
+
+/* アバター詳細のヒーロー（段階ぼかし C）。左右フルブリード、名前はカードにせず直置き。 */
+.avatar-detail > p:first-child { margin-bottom: var(--space-3); }
+.avatar-hero {
+  position: relative;
+  overflow: hidden;
+  flex: none;
+  height: var(--avatar-hero-h, 320px);
+  /* .content の --content-pad-* を打ち消し、サイドバー／topbar 端まで詰める */
+  margin: calc(-1 * var(--content-pad-top)) calc(-1 * var(--content-pad-x)) var(--space-4);
+  width: calc(100% + var(--content-pad-x) * 2);
+  max-width: none;
+  border-radius: 0;
+  background: var(--bg);
+}
+.avatar-hero[data-size="large"] { --avatar-hero-h: 400px; }
+.avatar-hero[data-size="small"] { --avatar-hero-h: 320px; }
+.avatar-hero-media {
+  position: absolute;
+  inset: 0;
+  will-change: opacity, transform;
+}
+.avatar-hero-image,
+.avatar-hero-fallback {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 22%;
+}
+.avatar-hero-fallback {
+  background:
+    radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, var(--surface) 80%, var(--text) 20%), transparent 70%),
+    var(--surface-secondary);
+}
+.avatar-hero-bg {
+  position: absolute;
+  inset: -60px;
+  width: calc(100% + 120px);
+  height: calc(100% + 120px);
+  object-fit: cover;
+  filter: blur(48px) saturate(1.25);
+  transform: scale(1.02);
+}
+.avatar-hero-probe {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.avatar-hero-blur {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.avatar-hero-blur i {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+/* 段階ぼかし（中: 2 / 8 / 24px）。mask 非対応時は下のフェードだけが効く */
+.avatar-hero-blur i:nth-child(1) {
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 35%, #000 55%);
+  mask-image: linear-gradient(to bottom, transparent 35%, #000 55%);
+}
+.avatar-hero-blur i:nth-child(2) {
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 50%, #000 70%);
+  mask-image: linear-gradient(to bottom, transparent 50%, #000 70%);
+}
+.avatar-hero-blur i:nth-child(3) {
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 62%, #000 85%);
+  mask-image: linear-gradient(to bottom, transparent 62%, #000 85%);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .avatar-hero-blur { display: none; }
+}
+/* 覆い: --bg 45% → 82% → 100%（上→下）。カード型スクリムは使わない */
+.avatar-hero-fade,
+.avatar-hero-veil {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--bg) 45%, transparent),
+    color-mix(in srgb, var(--bg) 82%, transparent) 60%,
+    var(--bg) 100%
+  );
+}
+.avatar-hero-nav {
+  position: absolute;
+  top: var(--space-4);
+  left: var(--content-pad-x);
+  right: var(--content-pad-x);
+  z-index: 2;
+  margin: 0;
+}
+.avatar-hero-nav a {
+  color: var(--text);
+  text-shadow: 0 1px 2px color-mix(in srgb, var(--bg) 70%, transparent);
+}
+.avatar-hero-body {
+  position: absolute;
+  left: var(--content-pad-x);
+  right: var(--content-pad-x);
+  bottom: var(--space-5);
+  z-index: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: var(--space-4);
+}
+/* 浮いたカードにしない。本文と同じ左右インセットの直置き */
+.avatar-hero-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.avatar-hero-kicker {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--avatar-hero-sub);
+  font-weight: 650;
+  text-shadow: 0 1px 2px color-mix(in srgb, var(--bg) 65%, transparent);
+}
+.avatar-hero-title {
+  margin: 2px 0 0;
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--text);
+  line-height: 1.15;
+  text-shadow: 0 1px 2px color-mix(in srgb, var(--bg) 65%, transparent);
+}
+.avatar-hero-title::before { content: none; } /* page-head の朱棒は付けない */
+.avatar-hero-sub {
+  margin: 6px 0 0;
+  color: var(--avatar-hero-sub);
+  font-size: 14px;
+  text-shadow: 0 1px 2px color-mix(in srgb, var(--bg) 65%, transparent);
+}
+.avatar-hero-warn {
+  margin: 8px 0 0;
+  color: var(--warn);
+  text-shadow: none;
+}
+/* 正方形・縦長: 左に鮮明ブロック + 右側に名前 */
+.avatar-hero-block {
+  position: absolute;
+  left: var(--content-pad-x);
+  right: var(--content-pad-x);
+  top: calc(var(--space-4) + 28px);
+  bottom: var(--space-5);
+  z-index: 1;
+  display: flex;
+  gap: var(--space-5);
+  align-items: flex-end;
+}
+.avatar-hero-sharp {
+  height: 100%;
+  width: auto;
+  aspect-ratio: var(--avatar-hero-ar, 1);
+  max-width: 45%;
+  object-fit: cover;
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
+  flex: none;
+}
+/* 画像の変更メニュー。普段は隠し、ヒーローに乗ったとき・フォーカス時だけ出す */
+.avatar-hero-menu {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--content-pad-x);
+  z-index: 3;
+}
+.icon-button.avatar-hero-menu-trigger {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  color: var(--text);
+  font-size: 22px;
+  opacity: 0;
+  transition: opacity var(--motion) var(--ease-out);
+}
+.icon-button.avatar-hero-menu-trigger:hover { background: var(--surface); }
+.avatar-hero:hover .icon-button.avatar-hero-menu-trigger,
+.avatar-hero-menu:focus-within .icon-button.avatar-hero-menu-trigger,
+.icon-button.avatar-hero-menu-trigger[aria-expanded="true"],
+.icon-button.avatar-hero-menu-trigger[aria-busy="true"] { opacity: 1; }
+@media (hover: none) {
+  .icon-button.avatar-hero-menu-trigger { opacity: 1; }
+}
+/* ヒーロー直下の操作行（副ボタンのみ）。新版ダウンロード専用ボタンは置かない */
+.avatar-hero-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+}
+.avatar-hero-toolbar .avatar-add { align-self: center; margin-left: auto; }
+/* アセットファイルの開閉。件数は常に見出しに出す */
+.avatar-assets {
+  margin: 0 0 var(--space-5);
+}
+.avatar-assets > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 15px;
+  font-weight: 650;
+  user-select: none;
+}
+.avatar-assets > summary::-webkit-details-marker { display: none; }
+.avatar-assets-chevron {
+  display: inline-block;
+  width: 0.65em;
+  height: 0.65em;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform var(--motion) var(--ease-out);
+  flex: none;
+}
+.avatar-assets[open] > summary .avatar-assets-chevron {
+  transform: rotate(45deg);
+}
+.avatar-assets-summary-meta {
+  font-weight: 500;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.avatar-assets-body {
+  margin-top: var(--space-3);
+}
+@media (prefers-reduced-motion: reduce) {
+  .avatar-hero-media { will-change: auto; }
+  .icon-button.avatar-hero-menu-trigger { transition: none; }
+  .avatar-assets-chevron { transition: none; }
+}
+
 .toolbar {
   display: flex;
   gap: 4px;
@@ -1295,7 +1560,6 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .ownership { margin-top: var(--space-5); }
 .ownership-title { margin: 0 0 var(--space-2); font-size: 20px; letter-spacing: -0.02em; }
 
-.density-compact .content { padding-top: 28px; }
 .density-compact .page-head { margin-bottom: var(--space-4); }
 .density-compact .page-head h1 { font-size: 26px; }
 .density-compact .cards { gap: 10px; }
@@ -1309,7 +1573,6 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .density-compact .group { margin-bottom: var(--space-4); }
 .density-compact .stack { gap: 8px; }
 
-.density-roomy .content { padding: 48px 48px 80px; }
 .density-roomy .page-head { margin-bottom: 32px; }
 .density-roomy .panel { padding: 24px; margin-bottom: 20px; }
 .density-roomy .form-grid { gap: 20px 16px; }
@@ -1317,8 +1580,21 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 /* 860px 以下でも列の並びは変えない。左サイドバーは useAppLayout がアイコン表示にする（保存はしない） */
 @media (max-width: 860px) {
   .split, .knowledge, .form-grid { grid-template-columns: 1fr; }
-  .content, .density-roomy .content { padding: var(--space-4); }
+  .content,
+  .content.density-roomy,
+  .content.density-compact {
+    --content-pad-x: var(--space-4);
+    --content-pad-top: var(--space-4);
+    padding: var(--content-pad-top) var(--content-pad-x) 64px;
+  }
   .banner, .progress { margin-left: var(--space-4); margin-right: var(--space-4); }
+
+  .avatar-hero[data-size="large"],
+  .avatar-hero[data-size="small"] { --avatar-hero-h: 220px; }
+  .avatar-hero-title { font-size: 26px; }
+  .avatar-hero-body { bottom: 12px; flex-direction: column; align-items: stretch; }
+  .avatar-hero-block { top: calc(var(--space-3) + 24px); bottom: 12px; gap: var(--space-4); }
+  .avatar-hero-sharp { max-width: 42%; }
 }
 
 /* Settings */
@@ -1784,10 +2060,41 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .browser-auto-resume { position: fixed; bottom: 16px; left: 24px; z-index: 30; }
 
 .asset-updates { display: grid; gap: 12px; }
-.asset-update-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+.asset-update-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+.asset-update-summary p { margin: 0; min-width: 0; }
+.asset-update-panel {
+  display: grid;
+  gap: 12px;
+  animation: switch-rise var(--motion) ease;
+}
+.asset-update-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 12px;
+  max-height: min(40vh, 360px);
+  overflow: auto;
+  padding-right: 4px;
+}
 .asset-update-list li { border-top: 1px solid var(--border); padding-top: 12px; }
 .asset-updates select { max-width: 100%; min-width: 0; }
 .asset-update-list p { margin: 6px 0; }
+.asset-update-list .switch-label { min-width: 0; }
+.asset-update-title {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
 
 /* The guide stays available while the app's own screens remain interactive. */
 .setup-guide {

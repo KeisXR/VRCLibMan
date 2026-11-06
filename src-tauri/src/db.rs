@@ -67,7 +67,8 @@ CREATE TABLE avatars (
     aliases_json TEXT NOT NULL DEFAULT '[]',
     is_builtin INTEGER NOT NULL DEFAULT 0,
     owned INTEGER NOT NULL DEFAULT 0,
-    notes TEXT NOT NULL DEFAULT ''
+    notes TEXT NOT NULL DEFAULT '',
+    hero_image_path TEXT
 );
 CREATE TABLE product_avatars (
     product_id TEXT NOT NULL,
@@ -130,7 +131,7 @@ pub(crate) fn open(path: &Path) -> Result<Connection, String> {
 }
 
 #[cfg(test)]
-fn open_memory() -> Result<Connection, String> {
+pub(crate) fn open_memory() -> Result<Connection, String> {
     finish_open(Connection::open_in_memory().sql()?, false)
 }
 
@@ -144,6 +145,8 @@ fn finish_open(mut connection: Connection, wal: bool) -> Result<Connection, Stri
     migrate(&mut connection)?;
     let seeded = ensure_ready(&connection)?;
     let added = merge_catalog(&connection)?;
+    // New seed and catalog rows are not changes. This must run before the startup settling below.
+    crate::sync_meta::baseline_missing(&connection)?;
     settle_dictionary(&mut connection)?;
     if added > 0 || seeded > 0 {
         reresolve_all(&mut connection)?;
@@ -305,6 +308,27 @@ fn migrate(connection: &Connection) -> Result<(), String> {
             .execute_batch("PRAGMA user_version = 7;")
             .sql()?;
     }
+    // v8 records who last changed each syncable group. Existing values get a baseline with no
+    // device or time, so none of them looks newer than a real change on another device.
+    if version < 8 {
+        let tx = connection.unchecked_transaction().sql()?;
+        tx.execute_batch(crate::sync_meta::SYNC_META_TABLE).sql()?;
+        crate::sync_meta::baseline_missing(&tx)?;
+        tx.execute_batch("PRAGMA user_version = 8;").sql()?;
+        tx.commit().sql()?;
+    }
+    // v9 is only `avatars.hero_image_path` (a copy in `hero_images`). NULL means the thumbnail.
+    if version < 9 {
+        ensure_column(
+            connection,
+            "avatars",
+            "hero_image_path",
+            "ALTER TABLE avatars ADD COLUMN hero_image_path TEXT",
+        )?;
+        connection
+            .execute_batch("PRAGMA user_version = 9;")
+            .sql()?;
+    }
     Ok(())
 }
 
@@ -363,6 +387,7 @@ fn ensure_owned_column(connection: &Connection) -> Result<(), String> {
 
 /// Returns how many avatars a seed upgrade inserted, so the caller can re-resolve.
 fn ensure_ready(connection: &Connection) -> Result<u32, String> {
+    crate::sync_meta::ensure_device_identity(connection)?;
     for (key, value) in [
         ("ollama_base_url", "http://127.0.0.1:11434"),
         ("ollama_model", crate::model::DEFAULT_OLLAMA_MODEL),
@@ -388,6 +413,7 @@ fn ensure_ready(connection: &Connection) -> Result<u32, String> {
         ("ui_genre_width", "200"),
         ("preview_pane", "0"),
         ("preview_pane_width", "300"),
+        ("avatar_hero", crate::model::DEFAULT_AVATAR_HERO),
         ("right_panel_tabs", crate::model::DEFAULT_RIGHT_PANEL_TABS),
         ("check_update_on_startup", "0"),
         ("ui_update_dismissed_version", ""),
@@ -442,6 +468,7 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
         setting(connection, "background_mode")?.as_deref() == Some("1"),
         setting(connection, "launch_at_login")?.as_deref() == Some("1"),
     );
+    let identity = crate::sync_meta::device_identity(connection)?;
     Ok(Settings {
         ollama_base_url: setting(connection, "ollama_base_url")?
             .unwrap_or_else(|| "http://127.0.0.1:11434".into()),
@@ -491,12 +518,17 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(300),
         ),
+        avatar_hero: crate::model::normalize_avatar_hero(
+            &setting(connection, "avatar_hero")?.unwrap_or_else(|| crate::model::DEFAULT_AVATAR_HERO.into()),
+        ),
         right_panel_tabs: crate::model::normalize_right_panel_tabs(
             &setting(connection, "right_panel_tabs")?.unwrap_or_default(),
         ),
         check_update_on_startup: setting(connection, "check_update_on_startup")?.as_deref() == Some("1"),
         ui_update_dismissed_version: setting(connection, "ui_update_dismissed_version")?
             .unwrap_or_default(),
+        device_id: identity.id,
+        device_name: identity.name,
     })
 }
 
@@ -517,7 +549,7 @@ fn normalize_booth_link_target(value: &str) -> String {
 }
 
 pub(crate) fn save_settings(connection: &Connection, input: &SettingsInput) -> Result<(), String> {
-    save_settings_values(connection, input, true)
+    save_settings_values(connection, input, true, None)
 }
 
 pub(crate) fn update_settings(
@@ -529,6 +561,7 @@ pub(crate) fn update_settings(
         connection,
         &input,
         patch.library_folder.is_some() || patch.route_downloads == Some(true),
+        patch.device_name.as_deref(),
     )?;
     settings(connection)
 }
@@ -537,7 +570,11 @@ fn save_settings_values(
     connection: &Connection,
     input: &SettingsInput,
     validate_library: bool,
+    device_name: Option<&str>,
 ) -> Result<(), String> {
+    let device_name = device_name
+        .map(crate::sync_meta::clean_device_name)
+        .transpose()?;
     let base = crate::ollama::validate_base_url(&input.ollama_base_url)?;
     let model = crate::ollama::validate_model_name(&input.ollama_model)?;
     let cloud_base = crate::cloud::validate_base_url(&input.cloud_base_url)?;
@@ -675,6 +712,11 @@ fn save_settings_values(
     )?;
     set_setting(
         connection,
+        "avatar_hero",
+        &crate::model::normalize_avatar_hero(&input.avatar_hero),
+    )?;
+    set_setting(
+        connection,
         "right_panel_tabs",
         &crate::model::normalize_right_panel_tabs(&input.right_panel_tabs),
     )?;
@@ -684,6 +726,10 @@ fn save_settings_values(
         if input.check_update_on_startup { "1" } else { "0" },
     )?;
     set_setting(connection, "ui_update_dismissed_version", &input.ui_update_dismissed_version)?;
+    if let Some(name) = &device_name {
+        set_setting(connection, crate::sync_meta::DEVICE_NAME_KEY, name)?;
+    }
+    crate::sync_meta::touch_config(&tx)?;
     tx.commit().sql()
 }
 
@@ -963,6 +1009,7 @@ fn upsert(connection: &Connection, incoming: &IncomingProduct) -> Result<Upsert,
                     ],
                 )
                 .sql()?;
+            crate::sync_meta::touch_product(connection, &existing.booth_id)?;
             return finish_upsert(connection, incoming, Upsert::Updated);
         }
         if description_changed {
@@ -996,6 +1043,7 @@ fn upsert(connection: &Connection, incoming: &IncomingProduct) -> Result<Upsert,
             if !existing.links_locked {
                 delete_links(connection, &existing.booth_id)?;
             }
+            crate::sync_meta::touch_product(connection, &existing.booth_id)?;
         } else {
             connection
                 .execute(
@@ -1574,7 +1622,14 @@ fn apply_extraction_inner(
     .sql()?;
     if !existing.links_locked {
         replace_links(&tx, booth_id, &output.avatar_ids, "extracted")?;
+        for draft in &output.created_avatars {
+            crate::sync_meta::touch_avatar(&tx, &draft.id)?;
+        }
+        for (avatar_id, _) in &output.readings {
+            crate::sync_meta::touch_avatar(&tx, avatar_id)?;
+        }
     }
+    crate::sync_meta::touch_product(&tx, booth_id)?;
     tx.commit().sql()?;
     // The model records an owned-<booth id> placeholder and source "extracted"
     // without setting avatars.owned. Settle afterwards so a later reclassify
@@ -1832,6 +1887,7 @@ pub(crate) fn reresolve_all(connection: &mut Connection) -> Result<u32, String> 
         [],
     )
     .sql()?;
+    crate::sync_meta::reconcile_all(&tx)?;
     tx.commit().sql()?;
     Ok(processed)
 }
@@ -2038,6 +2094,10 @@ pub(crate) fn restore_product_classification(
     if changed && snapshot.links.is_none() {
         record_classification_move(&tx, &snapshot.booth_id, "restore", &from, Some(&to))?;
     }
+    crate::sync_meta::touch_product(&tx, &snapshot.booth_id)?;
+    for avatar in &snapshot.owned_avatars {
+        crate::sync_meta::touch_avatar(&tx, &avatar.id)?;
+    }
     tx.commit().sql()?;
     Ok(())
 }
@@ -2066,6 +2126,7 @@ pub(crate) fn unpin_product_classification(
         )
         .sql()?;
     record_classification_move(connection, booth_id, "unpin", &from, None)?;
+    crate::sync_meta::touch_product(connection, booth_id)?;
     Ok(snapshot)
 }
 
@@ -2219,6 +2280,13 @@ pub(crate) fn save_classification_feedback(
 }
 
 pub(crate) fn save_classification_feedback_body(path: &std::path::Path, body: &str) -> Result<(), String> {
+    let destination = checked_json_destination(path)?;
+    std::fs::write(&destination, body).map_err(|_| "ファイルを保存できません".to_string())?;
+    Ok(())
+}
+
+/// The save path for a chosen JSON file: a `.json` name in an existing folder, and not a symlink.
+pub(crate) fn checked_json_destination(path: &std::path::Path) -> Result<std::path::PathBuf, String> {
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -2247,8 +2315,7 @@ pub(crate) fn save_classification_feedback_body(path: &std::path::Path, body: &s
     {
         return Err("シンボリックリンクには保存できません".into());
     }
-    std::fs::write(&destination, body).map_err(|_| "ファイルを保存できません".to_string())?;
-    Ok(())
+    Ok(destination)
 }
 
 /// Register a product that is not already an avatar body as an owned avatar.
@@ -2327,6 +2394,8 @@ pub(crate) fn register_manual_owned_body(
         params![now_iso(), booth_id],
     )
     .sql()?;
+    crate::sync_meta::touch_product(&tx, booth_id)?;
+    crate::sync_meta::touch_avatar(&tx, &target.avatar_id)?;
     tx.commit().sql()?;
     let display_name = avatar_display(connection, &target.avatar_id)?;
     Ok(RegisterOwnedBodyResult::Registered {
@@ -2371,6 +2440,7 @@ pub(crate) fn attach_product_to_avatar(
         params![now_iso(), booth_id],
     )
     .sql()?;
+    crate::sync_meta::touch_product(&tx, booth_id)?;
     tx.commit().sql()?;
     Ok(())
 }
@@ -2448,6 +2518,7 @@ pub(crate) fn update_product(
     if let Some(ids) = replacement {
         replace_links(&tx, &product.booth_id, &ids, "manual")?;
     }
+    crate::sync_meta::touch_product(&tx, &product.booth_id)?;
     tx.commit().sql()?;
     Ok(())
 }
@@ -2457,17 +2528,17 @@ pub(crate) fn link_file(
     path: &str,
     product_id: Option<&str>,
 ) -> Result<(), String> {
-    let found: Option<String> = connection
+    let found: Option<(String, Option<String>)> = connection
         .query_row(
-            "SELECT path FROM local_files WHERE path = ?1",
+            "SELECT path, linked_product_id FROM local_files WHERE path = ?1",
             params![path],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()
         .sql()?;
-    if found.is_none() {
+    let Some((_path, previous)) = found else {
         return Err("ファイルがスキャン結果にありません".into());
-    }
+    };
     if let Some(product_id) = product_id {
         let product = require_product(connection, product_id)?;
         connection
@@ -2477,6 +2548,12 @@ pub(crate) fn link_file(
                 params![product.booth_id, path],
             )
             .sql()?;
+        crate::sync_meta::touch_file_links(connection, &product.booth_id)?;
+        if let Some(prev) = previous.as_deref() {
+            if prev != product.booth_id {
+                crate::sync_meta::touch_file_links(connection, prev)?;
+            }
+        }
     } else {
         connection
             .execute(
@@ -2485,6 +2562,9 @@ pub(crate) fn link_file(
                 params![path],
             )
             .sql()?;
+        if let Some(prev) = previous.as_deref() {
+            crate::sync_meta::touch_file_links(connection, prev)?;
+        }
     }
     Ok(())
 }
@@ -2640,6 +2720,7 @@ pub(crate) fn apply_scan(
         }
     }
     sync_scanned_downloads(&tx)?;
+    crate::sync_meta::reconcile_file_links(&tx)?;
     tx.commit().sql()?;
     Ok(crate::model::ScanReport {
         indexed: outcome.entries.len() as u32,
@@ -3546,6 +3627,7 @@ pub(crate) fn record_extension_download(
             ],
         )
         .sql()?;
+    crate::sync_meta::touch_file_links(connection, booth_id)?;
     Ok(())
 }
 
@@ -4040,8 +4122,34 @@ pub(crate) fn save_avatar(
             params![id, display, base, to_json(&aliases)?, builtin, notes],
         )
         .sql()?;
+    crate::sync_meta::touch_avatar(connection, &id)?;
     reresolve_all(connection)?;
     Ok(id)
+}
+
+pub(crate) fn set_avatar_hero_path(
+    connection: &Connection,
+    id: &str,
+    path: Option<&str>,
+) -> Result<(), String> {
+    let rows = connection
+        .execute(
+            "UPDATE avatars SET hero_image_path = ?1 WHERE id = ?2",
+            params![path, id],
+        )
+        .sql()?;
+    if rows == 0 {
+        return Err("アバターが見つかりません".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn avatar_hero_paths(connection: &Connection) -> Result<Vec<String>, String> {
+    let mut statement = connection
+        .prepare("SELECT hero_image_path FROM avatars WHERE hero_image_path IS NOT NULL")
+        .sql()?;
+    let rows = statement.query_map([], |row| row.get(0)).sql()?;
+    rows.collect::<Result<Vec<_>, _>>().sql()
 }
 
 pub(crate) fn delete_avatar(connection: &mut Connection, id: &str) -> Result<(), String> {
@@ -4107,7 +4215,7 @@ pub(crate) fn delete_base_body(connection: &Connection, id: &str) -> Result<(), 
     if rows == 0 {
         return Err("素体が見つかりません".into());
     }
-    Ok(())
+    crate::sync_meta::reconcile_all(connection)
 }
 
 pub(crate) fn merge_avatars(
@@ -4831,6 +4939,7 @@ fn protect_written_body(connection: &Connection, product: &Product) -> Result<bo
             ],
         )
         .sql()?;
+    crate::sync_meta::touch_product(connection, &product.booth_id)?;
     Ok(true)
 }
 
@@ -4863,7 +4972,8 @@ fn write_catalog_body(
             params![avatar_id],
         )
         .sql()?;
-    Ok(())
+    crate::sync_meta::touch_product(connection, booth_id)?;
+    crate::sync_meta::touch_avatar(connection, avatar_id)
 }
 
 struct OwnedTarget {
@@ -5107,6 +5217,8 @@ fn release_manual_owned_body(
         )
         .sql()?;
     }
+    crate::sync_meta::touch_product(&tx, &product.booth_id)?;
+    crate::sync_meta::touch_avatar(&tx, avatar_id)?;
     tx.commit().sql()?;
     Ok(snapshot)
 }
@@ -5291,7 +5403,8 @@ fn save_owned_body(connection: &Connection, product: &Product, avatar_id: &str) 
     if !product.links_locked {
         replace_links(connection, booth_id, &[avatar_id.to_string()], "owned")?;
     }
-    Ok(())
+    crate::sync_meta::touch_product(connection, booth_id)?;
+    crate::sync_meta::touch_avatar(connection, avatar_id)
 }
 
 pub(crate) fn known_booth_ids(connection: &Connection) -> Result<Vec<String>, String> {
@@ -5357,7 +5470,7 @@ pub(crate) fn mark_guardrail_review(connection: &Connection, booth_id: &str) -> 
             params![now, booth_id],
         )
         .sql()?;
-    Ok(())
+    crate::sync_meta::touch_product(connection, booth_id)
 }
 
 pub(crate) fn set_setup_complete(connection: &Connection, complete: bool) -> Result<(), String> {
@@ -5414,6 +5527,7 @@ pub(crate) fn register_candidate(
         for alias in &aliases {
             remember_alias(connection, &existing, alias)?;
         }
+        crate::sync_meta::touch_avatar(connection, &existing)?;
         reresolve_all(connection)?;
         return Ok(existing);
     }
@@ -5425,6 +5539,7 @@ pub(crate) fn register_candidate(
             params![id, display, to_json(&aliases)?],
         )
         .sql()?;
+    crate::sync_meta::touch_avatar(connection, &id)?;
     reresolve_all(connection)?;
     Ok(id)
 }
@@ -5607,7 +5722,7 @@ fn note_unavailable(connection: &Connection, booth_id: &str) -> Result<(), Strin
     if locked == 0 {
         delete_links(connection, booth_id)?;
     }
-    Ok(())
+    crate::sync_meta::touch_product(connection, booth_id)
 }
 
 fn close_unavailable_products(connection: &Connection) -> Result<(), String> {
@@ -5774,7 +5889,7 @@ fn load_products(connection: &Connection) -> Result<Vec<Product>, String> {
 fn load_avatars(connection: &Connection) -> Result<Vec<Avatar>, String> {
     let mut statement = connection
         .prepare(
-            "SELECT id, display_name, base_body, aliases_json, is_builtin, owned, notes FROM avatars",
+            "SELECT id, display_name, base_body, aliases_json, is_builtin, owned, notes, hero_image_path FROM avatars",
         )
         .sql()?;
     let rows = statement
@@ -5788,6 +5903,7 @@ fn load_avatars(connection: &Connection) -> Result<Vec<Avatar>, String> {
                 is_builtin: row.get::<_, i64>(4)? != 0,
                 owned: row.get::<_, i64>(5)? != 0,
                 notes: row.get(6)?,
+                hero_image_path: row.get(7)?,
             })
         })
         .sql()?;
@@ -5994,7 +6110,7 @@ fn valid_id(id: &str) -> bool {
             .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_' || ch == '-')
 }
 
-fn fnv(text: &str) -> u32 {
+pub(crate) fn fnv(text: &str) -> u32 {
     let mut hash = 2_166_136_261u32;
     for byte in text.as_bytes() {
         hash ^= u32::from(*byte);
@@ -6165,7 +6281,7 @@ mod tests {
             connection
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
-            7
+            9
         );
         let detail_at: Option<String> = connection
             .query_row(
@@ -6881,7 +6997,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 9);
         let json = r#"{
             "products": [
                 {
@@ -7482,7 +7598,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 9);
         let report = import_products(&mut connection, &parsed).unwrap();
         assert_eq!(report.inserted, 7);
         assert_eq!(report.skipped, 0);
@@ -7716,6 +7832,7 @@ mod tests {
                 ui_genre_width: 200,
                 preview_pane: false,
                 preview_pane_width: 300,
+                avatar_hero: crate::model::DEFAULT_AVATAR_HERO.into(),
                 right_panel_tabs: crate::model::DEFAULT_RIGHT_PANEL_TABS.into(),
                 check_update_on_startup: false,
                 ui_update_dismissed_version: String::new(),
@@ -7763,7 +7880,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 9);
         assert!(!settings(&connection).unwrap().ui_rail_collapsed);
         let saved = update_settings(
             &connection,
@@ -7792,12 +7909,47 @@ mod tests {
     }
 
     #[test]
+
+    #[test]
+    fn avatar_hero_defaults_to_small_and_accepts_large_or_off() {
+        let connection = open_memory().unwrap();
+        assert_eq!(settings(&connection).unwrap().avatar_hero, "small");
+        let large = update_settings(
+            &connection,
+            &SettingsPatch {
+                avatar_hero: Some("large".into()),
+                ..SettingsPatch::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(large.avatar_hero, "large");
+        let off = update_settings(
+            &connection,
+            &SettingsPatch {
+                avatar_hero: Some("off".into()),
+                ..SettingsPatch::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(off.avatar_hero, "off");
+        let weird = update_settings(
+            &connection,
+            &SettingsPatch {
+                avatar_hero: Some("liquid".into()),
+                ..SettingsPatch::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(weird.avatar_hero, "small");
+        assert!(!settings(&connection).unwrap().preview_pane);
+    }
+
     fn preview_pane_defaults_off_without_a_schema_change() {
         let connection = open_memory().unwrap();
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 9);
         assert!(!settings(&connection).unwrap().preview_pane);
         assert_eq!(settings(&connection).unwrap().preview_pane_width, 300);
         let saved = update_settings(
@@ -7846,7 +7998,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 9);
     }
 
     #[test]
@@ -7855,7 +8007,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 9);
         assert!(!settings(&connection).unwrap().browser_force_dark);
         connection
             .execute("DELETE FROM settings WHERE key = 'browser_force_dark'", [])
@@ -7903,7 +8055,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 9);
     }
 
     #[test]
@@ -7983,7 +8135,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 9);
     }
 
     #[test]
@@ -8017,6 +8169,7 @@ mod tests {
                 ui_genre_width: 200,
                 preview_pane: false,
                 preview_pane_width: 300,
+                avatar_hero: crate::model::DEFAULT_AVATAR_HERO.into(),
                 right_panel_tabs: crate::model::DEFAULT_RIGHT_PANEL_TABS.into(),
                 check_update_on_startup: false,
                 ui_update_dismissed_version: String::new(),
@@ -9488,6 +9641,7 @@ mod tests {
                 ui_genre_width: 200,
                 preview_pane: false,
                 preview_pane_width: 300,
+                avatar_hero: crate::model::DEFAULT_AVATAR_HERO.into(),
                 right_panel_tabs: crate::model::DEFAULT_RIGHT_PANEL_TABS.into(),
                 check_update_on_startup: false,
                 ui_update_dismissed_version: String::new(),
@@ -9520,6 +9674,7 @@ mod tests {
                 ui_genre_width: 200,
                 preview_pane: false,
                 preview_pane_width: 300,
+                avatar_hero: crate::model::DEFAULT_AVATAR_HERO.into(),
                 right_panel_tabs: crate::model::DEFAULT_RIGHT_PANEL_TABS.into(),
                 check_update_on_startup: false,
                 ui_update_dismissed_version: String::new(),
@@ -9647,6 +9802,7 @@ mod tests {
                 ui_genre_width: 200,
                 preview_pane: false,
                 preview_pane_width: 300,
+                avatar_hero: crate::model::DEFAULT_AVATAR_HERO.into(),
                 right_panel_tabs: crate::model::DEFAULT_RIGHT_PANEL_TABS.into(),
                 check_update_on_startup: false,
                 ui_update_dismissed_version: String::new(),
@@ -9921,6 +10077,7 @@ mod tests {
             ui_genre_width: 200,
             preview_pane: false,
             preview_pane_width: 300,
+            avatar_hero: crate::model::DEFAULT_AVATAR_HERO.into(),
             right_panel_tabs: crate::model::DEFAULT_RIGHT_PANEL_TABS.into(),
             check_update_on_startup: false,
             ui_update_dismissed_version: String::new(),
@@ -10124,6 +10281,7 @@ mod tests {
                 ui_genre_width: 200,
                 preview_pane: false,
                 preview_pane_width: 300,
+                avatar_hero: crate::model::DEFAULT_AVATAR_HERO.into(),
                 right_panel_tabs: crate::model::DEFAULT_RIGHT_PANEL_TABS.into(),
                 check_update_on_startup: false,
                 ui_update_dismissed_version: String::new(),
@@ -11472,6 +11630,7 @@ pub(crate) fn browser_auto_register(
                     [id],
                 )
                 .sql()?;
+            crate::sync_meta::touch_product(connection, id)?;
         }
         set_setting(connection, &seen, "1")?;
     }

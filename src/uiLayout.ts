@@ -144,12 +144,31 @@ export function computeAppLayout(input: AppLayoutInput): AppLayout {
 }
 
 /**
- * Motion for the left sidebar toggle. Labels and icons fade on every toggle; the grid width
- * slides only while the right panel is closed, because an open panel's native WebView is
- * placed from the DOM rectangle and must not see intermediate widths.
+ * Motion for the left sidebar toggle. The grid width slides on every toggle, also while the
+ * right panel is open: the docked page (a native view) follows the viewport rectangle through
+ * useDockedArea. When the toggle also moves or resizes the panel itself, `hold` is set and the
+ * native view is hidden for the motion (see railMotionHoldsPanel).
  * Returned as data attributes for the app shell (spread into its props).
  */
-export function railMotionAttrs(toggling: boolean, panelOpen: boolean): Record<string, string> {
-  if (!toggling) return {};
-  return panelOpen ? { "data-rail-motion": "fade" } : { "data-rail-motion": "slide" };
+export type RailMotion = "none" | "slide" | "hold";
+
+export function railMotionAttrs(motion: RailMotion): Record<string, string> {
+  if (motion === "none") return {};
+  return motion === "hold" ? { "data-rail-motion": "slide", "data-rail-hold": "" } : { "data-rail-motion": "slide" };
+}
+
+/**
+ * True when a sidebar toggle changes the docked right panel's own rectangle (left or width).
+ * The docked panel is the last column, so its rectangle changes only with its width (clamped by
+ * fitRightPanelWidth from the columns on its left, e.g. when the genre column flips) or when it
+ * is maximized into the middle column. Only then is the native page hidden during the slide.
+ * A genre column flip alone is absorbed by the list and does not move the panel.
+ */
+export function railMotionHoldsPanel(
+  before: Pick<AppLayout, "panelDocked" | "panelMaximized" | "panelWidth">,
+  after: Pick<AppLayout, "panelDocked" | "panelMaximized" | "panelWidth">,
+): boolean {
+  if (!before.panelDocked && !after.panelDocked) return false;
+  if (before.panelDocked !== after.panelDocked || before.panelMaximized || after.panelMaximized) return true;
+  return before.panelWidth !== after.panelWidth;
 }

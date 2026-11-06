@@ -63,7 +63,9 @@ export interface PanelVisibility {
 /** Whether the native view may be drawn at `area` right now. */
 export function browserPanelVisible(area: BrowserPanelRect | null, state: PanelVisibility): boolean {
   const tabDrag = typeof document !== "undefined" && document.body.classList.contains("tab-dragging");
-  if (!area || state.overlay || state.dragging || tabDrag) return false;
+  // A sidebar toggle that also moves the panel itself hides the page for the slide (uiLayout railMotionHoldsPanel).
+  const railHold = typeof document !== "undefined" && typeof document.querySelector === "function" && document.querySelector("[data-rail-hold]") !== null;
+  if (!area || state.overlay || state.dragging || tabDrag || railHold) return false;
   return !state.covers.some((cover) => rectsOverlap(area, cover));
 }
 

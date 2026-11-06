@@ -98,6 +98,7 @@ fn record(c: &mut Connection,s: &Selection,path: &Path) -> Result<(),String> {
     tx.execute("UPDATE product_files SET downloaded=1,local_path=?1 WHERE booth_id=?2 AND variation=?3 AND filename=?4",params![path,s.booth_id,s.variation,s.filename]).map_err(sql)?;
     let filename=Path::new(&path).file_name().and_then(|n|n.to_str()).ok_or("ファイル名を確認できません")?;
     tx.execute("INSERT INTO local_files(path,filename,size,linked_product_id,candidate_product_id,match_score,link_source,scanned_at) VALUES(?1,?2,?3,?4,?4,1,'manual',datetime('now')) ON CONFLICT(path) DO UPDATE SET filename=excluded.filename,size=excluded.size,linked_product_id=excluded.linked_product_id,candidate_product_id=excluded.candidate_product_id,match_score=1,link_source='manual'",params![path,filename,s.size as i64,s.booth_id]).map_err(sql)?;
+    crate::sync_meta::touch_file_links(&tx,&s.booth_id)?;
     tx.commit().map_err(sql)
 }
 pub fn register(app: &AppHandle,root: &Path,selections: Vec<Selection>,copy: bool) -> Result<Report,String> {
