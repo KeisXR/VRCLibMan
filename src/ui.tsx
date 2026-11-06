@@ -61,6 +61,34 @@ export function FileMark({
   return <span className={className}>{label}</span>;
 }
 
+/** 件数の多い一覧のページ送り。1 ページに収まるときは出さない。 */
+export function Pager({
+  offset,
+  pageSize,
+  total,
+  onChange,
+}: {
+  offset: number;
+  pageSize: number;
+  total: number;
+  onChange: (offset: number) => void;
+}) {
+  if (total <= pageSize) return null;
+  return (
+    <div className="row-actions pager">
+      <button className="button" type="button" disabled={offset === 0} onClick={() => onChange(Math.max(0, offset - pageSize))}>
+        前へ
+      </button>
+      <span className="meta">
+        {offset + 1}〜{Math.min(offset + pageSize, total)} / {total} 件
+      </span>
+      <button className="button" type="button" disabled={offset + pageSize >= total} onClick={() => onChange(offset + pageSize)}>
+        次へ
+      </button>
+    </div>
+  );
+}
+
 export function errorText(err: unknown): string {
   if (typeof err === "string" && err.trim()) return err;
   if (err instanceof Error && err.message) return err.message;

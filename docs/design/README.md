@@ -67,7 +67,7 @@ VRCLibMan の見た目の決まりを、ほかのプロジェクトへ持ち出�
 | --- | --- | --- | --- |
 | `--line-accent` | `#a6361f` | `#d97757` | ナビの選択棒、ページ見出しと設定見出しの棒、進捗バー、入力欄のフォーカス、タブの下線 |
 | `--line-selection` | `rgba(166, 54, 31, 0.55)` | `rgba(217, 119, 87, 0.65)` | 選択中の選択肢（`.choice-row`・`.scope-choices`）の枠 |
-| `--selection-outline` | `#7c808b` | `#73737c` | 商品カードと確認画面のタブの 1px 中立色の全周枠 |
+| `--selection-outline` | `#7c808b` | `#73737c` | 商品カードの 1px 中立色の全周枠 |
 
 | 変数 | 値 | 使いどころ |
 | --- | --- | --- |
@@ -116,7 +116,7 @@ VRCLibMan の見た目の決まりを、ほかのプロジェクトへ持ち出�
 | 件数・チップ・バッジ | 12px | |
 | 一覧の小見出し `.group h2` | 13px | `--faint`、650、`letter-spacing: 0.02em` |
 
-表示の詰め具合は画面ごとにクラスで変えています。アバター・アセット・ワールド・確認画面は `density-compact`（見出し 26px、カード角丸 `--radius-sm`、画像 48px）、設定は `density-roomy`（内容の余白 48px）です。
+表示の詰め具合は画面ごとにクラスで変えています。アバター・アセット・ワールド・分類記録は `density-compact`（見出し 26px、カード角丸 `--radius-sm`、画像 48px）、設定は `density-roomy`（内容の余白 48px）です。
 - ブランド名は画像ロゴ（Urbanist Black 900 相当）。文字をパスにした `src/assets/brand/vrclibman-wordmark.svg` を文字色のマスクで塗ります。フォントは同梱せず、ほかの文字は OS の UI フォントのままです（作り方は `scripts/make-brand-wordmark.py`）。
 
 ## 余白
@@ -177,7 +177,7 @@ VRCLibMan の見た目の決まりを、ほかのプロジェクトへ持ち出�
 
 ### カード
 
-- `.card` / `.item` / `.queue-card`: `--surface`、角丸 `--radius`、`--shadow`、枠なし。
+- `.card` / `.item` / `.edit-card`: `--surface`、角丸 `--radius`、`--shadow`、枠なし。
 - 一覧は `repeat(auto-fill, minmax(260px, 1fr))`、間隔 `--space-3`。
 - 選択中の商品カード `.item.selected`: `box-shadow: inset 0 0 0 1px var(--selection-outline)`（1px の中立色の全周枠。朱は使わない）。
 - 非公開の商品は画像と本文を `opacity: 0.55`。
@@ -186,7 +186,6 @@ VRCLibMan の見た目の決まりを、ほかのプロジェクトへ持ち出�
 
 - `.tab`: 地なし、文字 `--text-secondary`、角丸 `--radius-sm`、`padding: 6px 12px`。ホバーで `--hover`。
 - 選択中 `.tab.active`: 地 `--surface`、文字 `--text`、650、影なし。下に朱の直線の下線（`::after`、幅は左右 `--accent-inset` を空けた残り、下端から `--accent-offset`、太さ `--accent-line`、両端は縦棒と同じ 2px の丸み）。角丸の曲がる部分には線を掛けません。
-- 確認画面だけは例外で、選択中のタブを `inset 0 0 0 1px var(--selection-outline)` の全周枠にし、朱の下線とページ見出しの棒は出しません。
 - 右パネルと内蔵ブラウザのタブ: 選択中は `--surface`＋650＋`--shadow`（朱の線なし）。閉じる × はホバー中・選択中・フォーカス中だけ見せます。
 
 ### バッジ・チップ・件数
@@ -332,7 +331,7 @@ VRCLibMan の見た目の決まりを、ほかのプロジェクトへ持ち出�
 | ホバー | 地を `--hover` にし、文字を `--text` に上げる。主ボタンは `--button-hover` |
 | キーボードのフォーカス | `:focus-visible` に `2px solid var(--text)`、`outline-offset: 2px`。入力欄は `2px solid var(--line-accent)` |
 | 選択中（ナビ・タブ） | `--surface`＋650＋`--shadow`。サイドバー・ジャンルは左の朱の縦棒、`.tab` は下の朱の直線（角丸に掛けない） |
-| 選択中（商品カード・確認画面のタブ） | `--selection-outline` の 1px 全周枠だけ |
+| 選択中（商品カード） | `--selection-outline` の 1px 全周枠だけ |
 | 選択中（選択肢） | 枠を `--line-selection`、地を `--surface-secondary` |
 | 無効 | `opacity: 0.45`（内蔵ブラウザの操作は 0.4、更新の帯は 0.6）、`cursor: default` |
 | ドラッグ中 | 引いている行は `opacity: 0.72`。落とし先は `--hover`＋`inset 0 0 0 1px var(--line)` |
@@ -350,7 +349,7 @@ VRCLibMan の見た目の決まりを、ほかのプロジェクトへ持ち出�
   - 動かすのは `grid-template-columns`・`opacity`・`transform` だけです。幅や高さを持つ他のプロパティは動かしません。
 - 押して切り替わる場所は、`styles.css` の「切替の動き」ブロックにまとめています。動かすのは `opacity` と `transform` だけで、幅・高さは動かしません。長さは 120〜160ms です。
   - タブ（`.tab`）・ジャンル列（`.genre-link`）・設定ナビ: 選択中の地・影は `--motion` でフェードします。朱の縦棒・下線は直線のまま、不透明度だけで現れます（`switch-fade`）。
-  - タブの中身（確認画面）・ジャンルの一覧（ジャンル列・チップバーで切替）: `switch-rise`（2px 下から現れる）。要素は作り直さず、`useReplayRise` が切替のたびに付け直します。自動で決まった最初のタブでは動かしません。
+  - ジャンルの一覧（ジャンル列・チップバーで切替）: `switch-rise`（2px 下から現れる）。要素は作り直さず、`useReplayRise` が切替のたびに付け直します。自動で決まった最初のタブでは動かしません。
   - メニュー（`.account-popover`）: フェード＋4px（下に開くメニューは上から）120ms。ダイアログ（「Unityで開く」・取得した商品の分類）: フェード＋4px、`--motion`。背景は 120ms でフェード。
   - 動かさないもの: 右パネルのタブ切替（ネイティブの WebView）。右パネルとそれを含む親要素には `transform` を付けません（WebView の位置がずれるため）。長い一覧の各行にも付けません。
   - 決まりは `test/switch-motion.test.mjs` で確かめます。
@@ -379,7 +378,7 @@ VRCLibMan の見た目の決まりを、ほかのプロジェクトへ持ち出�
 - 状態色で背景を塗らない（`.chip.warn` なども地は透明）。
 - カードやパネルに枠線を足さない。影と面の差で分ける。
 - 文字ボタン・検索欄・ツールバーを大きなカプセル形にしない（`--radius-control` を使う）。
-- 商品カードと確認画面のタブの選択に朱の棒を出さない（中立色の 1px 枠にする）。
+- 商品カードの選択に朱の棒を出さない（中立色の 1px 枠にする）。
 - 背景のぼかしや半透明のガラス表現を使わない（Liquid でも使っていなかった）。
 - フォーカス枠を消さない。`prefers-reduced-motion` への対応を外さない。
 

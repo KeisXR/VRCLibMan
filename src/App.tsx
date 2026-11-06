@@ -4,7 +4,7 @@ import { api, appVersion, isTauri, listenBoothUsed, listenProgress, onRefresh } 
 import { AvatarsPage } from "./pages/AvatarsPage";
 import { AvatarDetailPage } from "./pages/AvatarDetailPage";
 import { ImportPage } from "./pages/ImportPage";
-import { QueuePage } from "./pages/QueuePage";
+import { ClassificationLogPage } from "./pages/ClassificationLogPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { BrowserPage } from "./pages/BrowserPage";
 import { WorldsPage } from "./pages/WorldsPage";
@@ -46,7 +46,7 @@ import { noticeAction, useBanners } from "./useBanners";
 
 export type { NoticeAction, NotifyOptions } from "./notice";
 
-type Page = "avatars" | "avatar" | "assets" | "worlds" | "queue" | "import" | "settings" | "browser";
+type Page = "avatars" | "avatar" | "assets" | "worlds" | "classification-log" | "import" | "settings" | "browser";
 
 interface Route {
   page: Page;
@@ -99,7 +99,10 @@ function parseRoute(hash: string): Route {
   if (parts[0] === "assets" || parts[0] === "worlds") {
     return { page: parts[0], genre: parts[1] ? decodePart(parts[1]) : undefined };
   }
-  if (parts[0] === "queue" || parts[0] === "import" || parts[0] === "settings" || parts[0] === "browser") {
+  if (parts[0] === "classification-log") {
+    return { page: "classification-log", id: parts[1] ? decodeURIComponent(parts[1]) : undefined };
+  }
+  if (parts[0] === "import" || parts[0] === "settings" || parts[0] === "browser") {
     return { page: parts[0] };
   }
   return { page: "avatars" };
@@ -291,7 +294,7 @@ export default function App() {
   const density =
     route.page === "settings"
       ? "density-roomy"
-      : route.page === "avatars" || route.page === "avatar" || route.page === "assets" || route.page === "worlds" || route.page === "queue"
+      : route.page === "avatars" || route.page === "avatar" || route.page === "assets" || route.page === "worlds" || route.page === "classification-log"
         ? "density-compact"
         : "";
   const browseKind = route.page === "assets" ? "asset" : route.page === "worlds" ? "world" : null;
@@ -303,7 +306,7 @@ export default function App() {
     { href: "#/", label: "アバター", icon: "avatars", active: route.page === "avatars" || route.page === "avatar", count: stats?.ownedAvatars ?? 0 },
     { href: "#/assets", label: "アセット", icon: "assets", active: route.page === "assets" },
     { href: "#/worlds", label: "ワールド", icon: "worlds", active: route.page === "worlds" },
-    { href: "#/queue", label: "確認", icon: "queue", active: route.page === "queue", count: stats?.queueCount ?? 0 },
+    { href: "#/classification-log", label: "分類記録", icon: "log", active: route.page === "classification-log" },
     { href: "#/import", label: "インポート", icon: "import", active: route.page === "import" },
     { href: "#/settings", label: "設定", icon: "settings", active: route.page === "settings" },
     ...(builtinBrowser
@@ -342,7 +345,7 @@ export default function App() {
         )}
         {route.page === "assets" && <AssetsPage />}
         {route.page === "worlds" && <WorldsPage />}
-        {route.page === "queue" && <QueuePage />}
+        {route.page === "classification-log" && <ClassificationLogPage boothId={route.id} />}
         {route.page === "import" && <ImportPage />}
         {route.page === "settings" && <SettingsPage />}
         {route.page === "browser" && <BrowserPage enabled={builtinBrowser} />}

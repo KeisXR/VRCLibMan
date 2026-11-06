@@ -144,7 +144,7 @@ export function SetupWizard({ onDone, onRefresh }: { onDone: () => void; onRefre
     setMessage("");
     setStep(next);
     setCollapsed(false);
-    window.location.hash = next === "library" ? "#/browser" : next === "manual" ? "#/queue" : "#/import";
+    window.location.hash = next === "library" ? "#/browser" : next === "manual" ? "#/classification-log" : "#/import";
     if (next === "classify" || next === "files") {
       window.setTimeout(() => document.getElementById(next === "classify" ? "import-classification" : "import-existing-files")?.scrollIntoView?.({ block: "start" }), 100);
     }
@@ -263,12 +263,12 @@ export function SetupWizard({ onDone, onRefresh }: { onDone: () => void; onRefre
         </>}
         {step === "manual" && <>
           <ol className="setup-steps">
-            <li>確認画面の「未分類」または「要確認」を開きます。</li>
-            <li>商品のカテゴリ・ジャンル・対応アバターを修正します。</li>
-            <li>「確認済みにする」を押して保存し、確認待ちから外します。</li>
+            <li>「分類記録」で、分類が何をどこへ振り分けたかを見られます。違っていた変更は 1 件ずつ元に戻せます。</li>
+            <li>商品のカテゴリ・ジャンル・対応アバターを直すときは、商品の「⋯」から「分類を編集」を開きます。</li>
+            <li>未分類の商品は、インポートの「商品を管理・除外」で絞り込めます。</li>
           </ol>
-          <p className="meta">「保存」だけでも修正を残せます。対象がなければ、そのまま次へ進めます。</p>
-          <div className="row-actions"><button className="button" type="button" onClick={() => guide("classify")}>戻る</button><button className="button" type="button" onClick={() => { window.location.hash = "#/queue"; }}>確認画面へ</button><button className="button primary" type="button" onClick={() => guide("files")}>次へ</button></div>
+          <p className="meta">分類は自動で反映されます。直す必要がなければ、そのまま次へ進めます。</p>
+          <div className="row-actions"><button className="button" type="button" onClick={() => guide("classify")}>戻る</button><button className="button" type="button" onClick={() => { window.location.hash = "#/classification-log"; }}>分類記録へ</button><button className="button primary" type="button" onClick={() => guide("files")}>次へ</button></div>
         </>}
         {step === "files" && <>
           <ol className="setup-steps">

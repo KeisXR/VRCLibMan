@@ -447,16 +447,12 @@ export function SettingsPage() {
                 </SettingRow>
               </>
             )}
-            <details className="settings-details">
+            {settings.llmBackend === "ollama" && <details className="settings-details">
               <summary>分類の詳細設定</summary>
-              {settings.llmBackend === "ollama" && <SettingRow label="Ollama の接続先" help="通常は変更不要です。http と、この PC のアドレス（127.0.0.1、localhost、::1）だけを使えます。">
+              <SettingRow label="Ollama の接続先" help="通常は変更不要です。http と、この PC のアドレス（127.0.0.1、localhost、::1）だけを使えます。">
                 <input value={settings.ollamaBaseUrl} onChange={(e) => changeSettings({ ollamaBaseUrl: e.target.value }, 300)} onBlur={flushSettings} />
-              </SettingRow>}
-              <SettingRow label="要確認の判定しきい値" help="0〜1で指定します。値を高くすると、確認対象が増えます。">
-                <input className="short-input" type="number" min={0} max={1} step={0.05} value={settings.confidenceThreshold} onChange={(e) => changeSettings({ confidenceThreshold: Number(e.target.value) }, 300)} onBlur={flushSettings} />
               </SettingRow>
-              <p>商品説明のアバター名と対応表の一致などをもとに、確認が必要な商品を判定します。</p>
-            </details>
+            </details>}
           </section>
 
           <section className="settings-section" id="settings-data">

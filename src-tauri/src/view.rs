@@ -169,32 +169,25 @@ pub struct AvatarDetail {
     pub unsupported_outfits: Vec<ItemView>,
 }
 
+/// What the product editor needs. Saving goes through `update_product`.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct QueueProduct {
+pub struct ProductEditView {
     pub booth_id: String,
     pub title: String,
     pub shop: String,
     pub url: String,
-    pub description_snippet: String,
     pub thumbnail_url: Option<String>,
     pub thumbnail_path: Option<String>,
     pub category: Option<Category>,
     pub genre: Option<String>,
-    pub classification_pinned: bool,
     pub is_generic: bool,
-    pub confidence: Option<f64>,
-    pub compatible_avatars: Vec<String>,
-    pub unresolved_names: Vec<String>,
     pub linked_avatar_ids: Vec<String>,
-    pub user_confirmed: bool,
-    /// local, partial, missing, or unknown. Remote is filled on the avatar page after a probe.
-    pub file_presence: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct QueueFile {
+pub struct UnlinkedFile {
     pub path: String,
     pub filename: String,
     pub is_dir: bool,
@@ -206,12 +199,9 @@ pub struct QueueFile {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct QueuePage {
-    pub unextracted: u32,
-    pub needs_review: u32,
-    pub unlinked_files: u32,
-    pub products: Vec<QueueProduct>,
-    pub files: Vec<QueueFile>,
+pub struct UnlinkedFilesPage {
+    pub total: u32,
+    pub files: Vec<UnlinkedFile>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -404,135 +394,62 @@ fn product_has_local_copy(snapshot: &Snapshot, booth_id: &str) -> bool {
         .any(|row| row.booth_id == booth_id && (row.downloaded || row.local_path.is_some()))
 }
 
-fn file_presence(snapshot: &Snapshot, booth_id: &str) -> String {
-    let rows: Vec<&DownloadFact> = snapshot
-        .download_rows
+pub fn product_edit_view(snapshot: &Snapshot, booth_id: &str) -> Option<ProductEditView> {
+    let product = snapshot
+        .products
         .iter()
-        .filter(|row| row.booth_id == booth_id)
-        .collect();
-    let names: HashSet<&str> = rows.iter().map(|row| row.filename.as_str()).collect();
-    let extra_local = snapshot
-        .files
-        .iter()
-        .filter(|file| {
-            !file.is_dir
-                && file.linked_product_id.as_deref() == Some(booth_id)
-                && !names.contains(file.filename.as_str())
-        })
-        .count();
-    let local_rows = rows
-        .iter()
-        .filter(|row| row.downloaded || row.local_path.is_some())
-        .count();
-    let missing = rows.len().saturating_sub(local_rows);
-    let has_local = local_rows > 0 || extra_local > 0;
-    if rows.is_empty() && extra_local == 0 {
-        return "unknown".into();
-    }
-    if has_local && missing > 0 {
-        return "partial".into();
-    }
-    if has_local {
-        return "local".into();
-    }
-    "missing".into()
+        .find(|product| product.booth_id == booth_id)?;
+    Some(ProductEditView {
+        booth_id: product.booth_id.clone(),
+        title: product.title.clone(),
+        shop: product.shop.clone(),
+        url: product.url.clone(),
+        thumbnail_url: product.thumbnail_url.clone(),
+        thumbnail_path: product.thumbnail_path.clone(),
+        category: product.category,
+        genre: product.genre.clone(),
+        is_generic: product.is_generic,
+        linked_avatar_ids: snapshot
+            .links
+            .iter()
+            .filter(|link| link.product_id == product.booth_id)
+            .map(|link| link.avatar_id.clone())
+            .collect(),
+    })
 }
 
-pub fn queue_page(snapshot: &Snapshot, kind: &str, offset: u32, limit: u32) -> QueuePage {
-    let unextracted = snapshot
-        .products
-        .iter()
-        .filter(|product| product.category.is_none())
-        .count() as u32;
-    let needs_review = snapshot
-        .products
-        .iter()
-        .filter(|product| product.needs_review && product.category.is_some())
-        .count() as u32;
-    let unlinked_files = snapshot
+pub fn unlinked_files_page(snapshot: &Snapshot, offset: u32, limit: u32) -> UnlinkedFilesPage {
+    let mut rows: Vec<&LocalFile> = snapshot
         .files
         .iter()
         .filter(|file| file.linked_product_id.is_none())
-        .count() as u32;
-    let mut products = Vec::new();
-    let mut files = Vec::new();
-    if kind == "files" {
-        let mut rows: Vec<&LocalFile> = snapshot
-            .files
-            .iter()
-            .filter(|file| file.linked_product_id.is_none())
-            .collect();
-        rows.sort_by(|left, right| left.filename.cmp(&right.filename));
-        let titles: HashMap<&str, &str> = snapshot
-            .products
-            .iter()
-            .map(|product| (product.booth_id.as_str(), product.title.as_str()))
-            .collect();
-        files = rows
-            .into_iter()
-            .skip(offset as usize)
-            .take(limit as usize)
-            .map(|file| QueueFile {
-                path: file.path.clone(),
-                filename: file.filename.clone(),
-                is_dir: file.is_dir,
-                size: file.size,
-                match_score: file.match_score,
-                candidate_product_id: file.candidate_product_id.clone(),
-                candidate_title: file
-                    .candidate_product_id
-                    .as_deref()
-                    .and_then(|id| titles.get(id).copied())
-                    .map(str::to_string),
-            })
-            .collect();
-    } else {
-        let mut rows: Vec<&Product> = snapshot
-            .products
-            .iter()
-            .filter(|product| match kind {
-                "unextracted" => product.category.is_none(),
-                _ => product.needs_review && product.category.is_some(),
-            })
-            .collect();
-        rows.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
-        products = rows
-            .into_iter()
-            .skip(offset as usize)
-            .take(limit as usize)
-            .map(|product| QueueProduct {
-                booth_id: product.booth_id.clone(),
-                title: product.title.clone(),
-                shop: product.shop.clone(),
-                url: product.url.clone(),
-                description_snippet: product.description_snippet.clone(),
-                thumbnail_url: product.thumbnail_url.clone(),
-                thumbnail_path: product.thumbnail_path.clone(),
-                category: product.category,
-                genre: product.genre.clone(),
-                classification_pinned: product.category_locked && product.genre_locked,
-                is_generic: product.is_generic,
-                confidence: product.confidence,
-                compatible_avatars: product.compatible_avatars.clone(),
-                unresolved_names: product.unresolved_names.clone(),
-                linked_avatar_ids: snapshot
-                    .links
-                    .iter()
-                    .filter(|link| link.product_id == product.booth_id)
-                    .map(|link| link.avatar_id.clone())
-                    .collect(),
-                user_confirmed: product.user_confirmed,
-                file_presence: file_presence(snapshot, &product.booth_id),
-            })
-            .collect();
-    }
-    QueuePage {
-        unextracted,
-        needs_review,
-        unlinked_files,
-        products,
-        files,
-    }
+        .collect();
+    rows.sort_by(|left, right| left.filename.cmp(&right.filename));
+    let titles: HashMap<&str, &str> = snapshot
+        .products
+        .iter()
+        .map(|product| (product.booth_id.as_str(), product.title.as_str()))
+        .collect();
+    let total = rows.len() as u32;
+    let files = rows
+        .into_iter()
+        .skip(offset as usize)
+        .take(limit as usize)
+        .map(|file| UnlinkedFile {
+            path: file.path.clone(),
+            filename: file.filename.clone(),
+            is_dir: file.is_dir,
+            size: file.size,
+            match_score: file.match_score,
+            candidate_product_id: file.candidate_product_id.clone(),
+            candidate_title: file
+                .candidate_product_id
+                .as_deref()
+                .and_then(|id| titles.get(id).copied())
+                .map(str::to_string),
+        })
+        .collect();
+    UnlinkedFilesPage { total, files }
 }
 
 pub fn library_stats(snapshot: &Snapshot, model: &str) -> LibraryStats {
@@ -540,11 +457,6 @@ pub fn library_stats(snapshot: &Snapshot, model: &str) -> LibraryStats {
         .products
         .iter()
         .filter(|product| product.category.is_none())
-        .count() as u32;
-    let needs_review = snapshot
-        .products
-        .iter()
-        .filter(|product| product.needs_review && product.category.is_some())
         .count() as u32;
     LibraryStats {
         products: snapshot.products.len() as u32,
@@ -554,8 +466,6 @@ pub fn library_stats(snapshot: &Snapshot, model: &str) -> LibraryStats {
             .filter(|avatar| avatar.owned)
             .count() as u32,
         unextracted,
-        needs_review,
-        queue_count: unextracted + needs_review,
         unlinked_files: snapshot
             .files
             .iter()

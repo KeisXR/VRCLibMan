@@ -2,7 +2,7 @@ use crate::import_data::ParsedExport;
 use serde::Serialize;
 use crate::matching::{LabelScore, choose_match, contains_booth_id, score_label};
 use crate::model::{
-    Avatar, AvatarCandidate, AvatarInput, BaseBody, BaseBodyInput, CatalogInfo, CatalogRefresh,
+    Avatar, AvatarInput, BaseBody, BaseBodyInput, CatalogInfo, CatalogRefresh,
     Category, ClassificationSnapshot, DownloadFact, DownloadFinished, Extraction, ImportReport,
     OwnedAvatarRestore, RegisterOwnedBodyResult, SnapshotLink,
     IncomingDownload, IncomingProduct, IncomingVariation, Knowledge, Link, LocalFile, Product,
@@ -25,6 +25,10 @@ pub(crate) use classification_log::KIND_IMPLICIT;
 pub(crate) use classification_log::{
     CLASSIFIER_CATALOG, CLASSIFIER_NONE, ClassificationRun, KIND_BOOTH_DETAIL, KIND_CATALOG,
     KIND_EDIT, KIND_IMPORT, KIND_RECLASSIFY, KIND_STARTUP, observe,
+};
+pub(crate) use classification_log::{
+    ClassificationEntryView, ClassificationRunPage, UnresolvedNameCount, run_entries, run_page,
+    search_entries, undo_entry, unresolved_name_counts,
 };
 use classification_log::observe_all;
 
@@ -2082,7 +2086,6 @@ pub(crate) fn move_product_genre(
                 genre: Some(genre.to_string()),
                 is_generic: None,
                 avatar_ids: None,
-                confirm: None,
             },
         )?;
         record_classification_move(connection, booth_id, "move", &from, Some(&to))?;
@@ -2549,11 +2552,7 @@ pub(crate) fn update_product(
             }
         }
         product.links_locked = true;
-        product.unresolved_names.clear();
         replacement = Some(ids.clone());
-    }
-    if let Some(confirm) = update.confirm {
-        product.user_confirmed = confirm;
     }
     let linked_ids = if let Some(ids) = &replacement {
         ids.clone()
@@ -5593,134 +5592,6 @@ pub(crate) fn set_setup_complete(connection: &Connection, complete: bool) -> Res
     )
 }
 
-pub(crate) fn avatar_candidates(connection: &Connection) -> Result<Vec<AvatarCandidate>, String> {
-    let products = load_products(connection)?;
-    let mut counts: HashMap<String, u32> = HashMap::new();
-    for product in products {
-        let mut seen = HashSet::new();
-        for name in product.unresolved_names {
-            if name.trim().is_empty() || !seen.insert(name.clone()) {
-                continue;
-            }
-            *counts.entry(name).or_default() += 1;
-        }
-    }
-    let mut listed: Vec<AvatarCandidate> = counts
-        .into_iter()
-        .map(|(name, product_count)| AvatarCandidate {
-            name,
-            product_count,
-        })
-        .collect();
-    listed.sort_by(|left, right| {
-        right
-            .product_count
-            .cmp(&left.product_count)
-            .then_with(|| left.name.cmp(&right.name))
-    });
-    Ok(listed)
-}
-
-pub(crate) fn register_candidate(
-    connection: &mut Connection,
-    name: &str,
-) -> Result<String, String> {
-    let (display, aliases) = crate::catalog::split_bilingual_name(name);
-    let display = if display.is_empty() {
-        name.trim().to_string()
-    } else {
-        display
-    };
-    if display.is_empty() || display.chars().count() > 80 {
-        return Err("アバター名を確認してください".into());
-    }
-    if let Some(existing) = unique_avatar_named(connection, &display)? {
-        remember_alias(connection, &existing, name)?;
-        for alias in &aliases {
-            remember_alias(connection, &existing, alias)?;
-        }
-        crate::sync_meta::touch_avatar(connection, &existing)?;
-        reresolve_after_edit(connection)?;
-        return Ok(existing);
-    }
-    let id = generate_id(connection, &display)?;
-    connection
-        .execute(
-            "INSERT INTO avatars (id, display_name, base_body, aliases_json, is_builtin, notes)
-             VALUES (?1, ?2, NULL, ?3, 0, '')",
-            params![id, display, to_json(&aliases)?],
-        )
-        .sql()?;
-    crate::sync_meta::touch_avatar(connection, &id)?;
-    reresolve_after_edit(connection)?;
-    Ok(id)
-}
-
-pub(crate) fn alias_candidate(
-    connection: &mut Connection,
-    name: &str,
-    avatar_id: &str,
-) -> Result<(), String> {
-    if avatar_by_id(connection, avatar_id)?.is_none() {
-        return Err("アバターが見つかりません".into());
-    }
-    remember_alias(connection, avatar_id, name)?;
-    let (display, aliases) = crate::catalog::split_bilingual_name(name);
-    if display != name {
-        remember_alias(connection, avatar_id, &display)?;
-    }
-    for alias in aliases {
-        remember_alias(connection, avatar_id, &alias)?;
-    }
-    reresolve_after_edit(connection)?;
-    Ok(())
-}
-
-fn unique_avatar_named(connection: &Connection, display: &str) -> Result<Option<String>, String> {
-    let key = crate::normalize::normalize_label(display);
-    let avatars = load_avatars(connection)?;
-    let mut hits = Vec::new();
-    for avatar in avatars {
-        let matches = std::iter::once(&avatar.display_name)
-            .chain(avatar.aliases.iter())
-            .any(|name| crate::normalize::normalize_label(name) == key);
-        if matches {
-            hits.push(avatar.id);
-        }
-    }
-    hits.sort();
-    hits.dedup();
-    if hits.len() == 1 {
-        Ok(hits.pop())
-    } else {
-        Ok(None)
-    }
-}
-
-fn remember_alias(connection: &Connection, avatar_id: &str, alias: &str) -> Result<(), String> {
-    let alias = alias.trim();
-    if alias.is_empty() {
-        return Ok(());
-    }
-    let display = avatar_display(connection, avatar_id)?;
-    if alias == display {
-        return Ok(());
-    }
-    let mut aliases = avatar_aliases(connection, avatar_id)?;
-    if aliases.iter().any(|existing| existing == alias) {
-        return Ok(());
-    }
-    aliases.push(alias.to_string());
-    aliases.truncate(32);
-    connection
-        .execute(
-            "UPDATE avatars SET aliases_json = ?1 WHERE id = ?2",
-            params![to_json(&aliases)?, avatar_id],
-        )
-        .sql()?;
-    Ok(())
-}
-
 fn tokyo_date() -> String {
     let offset = chrono::FixedOffset::east_opt(9 * 3600)
         .unwrap_or(chrono::FixedOffset::east_opt(0).unwrap());
@@ -6309,7 +6180,7 @@ struct SeedAvatar {
 mod tests {
     use super::*;
     use crate::import_data::parse_export;
-    use crate::view::{avatar_cards, avatar_detail, products_by_ids, queue_page};
+    use crate::view::{avatar_cards, avatar_detail, products_by_ids};
 
     #[test]
     fn only_registered_local_paths_may_be_opened() {
@@ -7033,7 +6904,6 @@ mod tests {
                 genre: None,
                 is_generic: Some(false),
                 avatar_ids: Some(vec!["manuka".into()]),
-                confirm: Some(true),
             },
         )
         .unwrap();
@@ -7069,7 +6939,7 @@ mod tests {
         import_products(&mut connection, &parse_export(SAMPLE).unwrap()).unwrap();
         update_product(&mut connection, &ProductUpdate {
             booth_id: "1004".into(), category: Some("outfit".into()), genre: Some("shader".into()),
-            is_generic: None, avatar_ids: None, confirm: None,
+            is_generic: None, avatar_ids: None,
         }).unwrap();
         apply_extraction(&mut connection, "1004", &Extraction {
             category: Category::Outfit, genre: Some("outfit".into()), compatible_avatars: vec![],
@@ -7089,7 +6959,7 @@ mod tests {
         import_products(&mut connection, &parse_export(SAMPLE).unwrap()).unwrap();
         update_product(&mut connection, &ProductUpdate {
             booth_id: "1004".into(), category: Some("world".into()), genre: Some("skybox".into()),
-            is_generic: None, avatar_ids: None, confirm: None,
+            is_generic: None, avatar_ids: None,
         }).unwrap();
         let has = |ids: Vec<String>| ids.contains(&"1004".to_string());
         assert!(has(product_ids_by_genre(&connection, "world", Some("skybox")).unwrap()));
@@ -7725,7 +7595,7 @@ mod tests {
             owned_ids,
             vec!["lime".to_string(), "manuka".to_string(), "plum".to_string()]
         );
-        assert_eq!(queue_page(&before, "unextracted", 0, 20).unextracted, 4);
+        assert_eq!(before.products.iter().filter(|product| product.category.is_none()).count(), 4);
         assert!(
             before
                 .products
@@ -7862,13 +7732,16 @@ mod tests {
         );
         assert!(manuka.siblings.is_empty());
 
-        let review = queue_page(&snapshot, "review", 0, 20);
-        assert_eq!(review.unextracted, 0);
-        assert_eq!(review.needs_review, 1);
-        assert_eq!(review.products.len(), 1);
-        assert_eq!(review.products[0].booth_id, "8800104");
+        assert!(snapshot.products.iter().all(|product| product.category.is_some()));
+        let review: Vec<&Product> = snapshot
+            .products
+            .iter()
+            .filter(|product| product.needs_review)
+            .collect();
+        assert_eq!(review.len(), 1);
+        assert_eq!(review[0].booth_id, "8800104");
         assert!(
-            review.products[0]
+            review[0]
                 .unresolved_names
                 .iter()
                 .any(|name| name == "架空ちゃん")
@@ -8322,9 +8195,6 @@ mod tests {
             assert!(!product.needs_review, "{id}");
             assert!(product.user_confirmed, "{id}");
         }
-        let page = queue_page(&snapshot, "unextracted", 0, 20);
-        assert_eq!(page.unextracted, 0);
-        assert_eq!(page.needs_review, 0);
     }
 
     #[test]
@@ -8925,26 +8795,6 @@ mod tests {
             .find(|avatar| avatar.display_name == "桔梗")
             .unwrap();
         assert!(!kikyo.owned);
-        let candidates = avatar_candidates(&connection).unwrap();
-        let fictional = candidates
-            .iter()
-            .find(|item| item.name == "架空丸")
-            .unwrap();
-        assert_eq!(fictional.product_count, 2);
-        let id = register_candidate(&mut connection, "架空丸").unwrap();
-        let after = load_snapshot(&mut connection).unwrap();
-        assert!(
-            after
-                .links
-                .iter()
-                .any(|link| link.product_id == "8800991" && link.avatar_id == id)
-        );
-        assert!(
-            avatar_candidates(&connection)
-                .unwrap()
-                .iter()
-                .all(|item| item.name != "架空丸")
-        );
         let known = known_booth_ids(&connection).unwrap();
         assert!(known.iter().any(|item| item == "3016885"));
         assert!(known.iter().any(|item| item == "8800991"));
@@ -10545,22 +10395,11 @@ mod tests {
             .unwrap()
             .contains(&"424242".into()));
 
-        update_product(
-            &mut connection,
-            &ProductUpdate {
-                booth_id: "424242".into(),
-                category: None,
-                genre: None,
-                is_generic: None,
-                avatar_ids: None,
-                confirm: Some(true),
-            },
-        )
-        .unwrap();
+        // A row confirmed from the old queue keeps its flags.
         connection
-            .execute(
-                "INSERT INTO product_avatars (product_id, avatar_id, source) VALUES ('424242', 'lime', 'extracted')",
-                [],
+            .execute_batch(
+                "UPDATE products SET user_confirmed = 1, needs_review = 0 WHERE booth_id = '424242';
+                 INSERT INTO product_avatars (product_id, avatar_id, source) VALUES ('424242', 'lime', 'extracted');",
             )
             .unwrap();
         let confirmed = require_product(&connection, "424242").unwrap();
@@ -10586,10 +10425,6 @@ mod tests {
         assert_eq!(kept.extracted_at.as_deref(), Some(extracted_at.as_str()));
         assert!(kept.description_snippet.contains("ライム"));
         assert_eq!(link_ids(&connection, "424242").unwrap(), vec!["lime".to_string()]);
-        let queued = queue_page(&load_snapshot(&connection).unwrap(), "review", 0, 50);
-        assert!(!queued.products.iter().any(|product| product.booth_id == "424242"));
-        let unextracted = queue_page(&load_snapshot(&connection).unwrap(), "unextracted", 0, 50);
-        assert!(!unextracted.products.iter().any(|product| product.booth_id == "424242"));
 
         apply_extraction(
             &mut connection,

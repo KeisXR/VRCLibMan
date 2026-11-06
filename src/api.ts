@@ -12,7 +12,6 @@ import type {
   IntegrationStatus,
   AvatarDetail,
   AvatarInput,
-  AvatarCandidate,
   CatalogInfo,
   CatalogRefresh,
   ExtractReport,
@@ -36,7 +35,11 @@ import type {
   SetupStatus,
   ProductOption,
   ProductUpdate,
-  QueuePage,
+  ProductEditView,
+  UnlinkedFilesPage,
+  ClassificationRunPage,
+  ClassificationEntry,
+  UnresolvedNameCount,
   ScanReport,
   Settings,
   SyncExportReport,
@@ -145,8 +148,18 @@ export const api = {
   productsByGenre: (kind: GenreKind, genre?: string | null) => call<GenreProducts>("list_products_by_genre", { kind, genre: genre ?? null }),
   probeRemoteFiles: (id: string) => call<AvatarDetail>("probe_remote_files", { id }),
   probeRemoteProducts: (ids: string[]) => call<import("./types").RemoteProductProbe[]>("probe_remote_products", { ids }),
-  queue: (kind: string, offset = 0, limit = 50) =>
-    call<QueuePage>("list_queue", { kind, offset, limit }),
+  productForEdit: (boothId: string) => call<ProductEditView>("product_for_edit", { boothId }),
+  unlinkedFiles: (offset = 0, limit = 50) =>
+    call<UnlinkedFilesPage>("list_unlinked_files", { offset, limit }),
+  classificationRuns: (offset = 0, limit = 50) =>
+    call<ClassificationRunPage>("classification_log_runs", { offset, limit }),
+  classificationEntries: (runId: number, offset = 0, limit = 100) =>
+    call<ClassificationEntry[]>("classification_log_entries", { runId, offset, limit }),
+  searchClassificationEntries: (query: string, limit = 200) =>
+    call<ClassificationEntry[]>("classification_log_search", { query, limit }),
+  unresolvedNames: () => call<UnresolvedNameCount[]>("classification_unresolved_names"),
+  undoClassificationEntry: (entryId: number) =>
+    call<void>("undo_classification_entry", { entryId }),
   managedProducts: () => call<ManagedProduct[]>("list_managed_products"),
   setProductExcluded: (boothId: string, excluded: boolean) => call<void>("set_product_excluded", { boothId, excluded }),
   productOptions: () => call<ProductOption[]>("list_product_options"),
@@ -232,10 +245,6 @@ export const api = {
   completeSetup: () => call<void>("complete_setup"),
   reopenSetup: () => call<void>("reopen_setup"),
   pullOllamaModel: (model: string) => call<void>("pull_ollama_model", { model }),
-  avatarCandidates: () => call<AvatarCandidate[]>("avatar_candidates"),
-  registerAvatarCandidate: (name: string) => call<string>("register_avatar_candidate", { name }),
-  aliasAvatarCandidate: (name: string, avatarId: string) =>
-    call<void>("alias_avatar_candidate", { name, avatarId }),
   markOwnedAvatar: (boothId: string) => call<string>("mark_owned_avatar", { boothId }),
   addFreeProduct: (url: string) => call<string>("add_free_product", { url }),
   pullRemoteFile: (boothId: string, variation: string, filename: string) =>

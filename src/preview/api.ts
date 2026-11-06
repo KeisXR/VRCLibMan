@@ -24,10 +24,15 @@ import type {
   Knowledge,
   RemoteProductProbe,
   LibraryStats,
+  ProductEditView,
   ProductUpdate,
-  QueueFile,
-  QueuePage,
-  QueueProduct,
+  ClassificationEntry,
+  ClassificationLink,
+  ClassificationRunPage,
+  ClassificationRunView,
+  UnlinkedFile,
+  UnlinkedFilesPage,
+  UnresolvedNameCount,
   Section,
   Settings,
   AppUpdateStatus,
@@ -297,6 +302,7 @@ const store: Store = {
       title: "架空ちゃん対応パーカー",
       shop: "サンプル工房",
       category: "outfit",
+      categoryLocked: false,
       confidence: 0.42,
       needsReview: true,
       compatibleAvatars: ["架空ちゃん"],
@@ -563,7 +569,7 @@ for (let index = 1; index <= 12; index += 1) {
       needsReview: true,
       confidence: 0.4,
       unresolvedNames: [name],
-      descriptionSnippet: "確認キューの見本です。",
+      descriptionSnippet: "未収録の名前の見本です。",
     }),
   );
 }
@@ -623,7 +629,7 @@ if (stressPreview) {
     store.products.push(
       product({
         boothId: String(900000 + index),
-        title: `要確認の商品 ${index}`,
+        title: `計測用の商品 ${index}`,
         shop: "計測工房",
         category: "outfit",
         needsReview: true,
@@ -861,83 +867,174 @@ function detail(id: string): AvatarDetail {
   };
 }
 
-function candidates() {
-  const counts = new Map<string, number>();
-  for (const product of activeProducts()) {
-    for (const name of product.unresolvedNames) {
-      counts.set(name, (counts.get(name) ?? 0) + 1);
-    }
-  }
-  return [...counts.entries()]
-    .map(([name, productCount]) => ({ name, productCount }))
-    .sort((left, right) => right.productCount - left.productCount || left.name.localeCompare(right.name, "ja"));
+function productForEdit(boothId: string): ProductEditView {
+  const item = activeProducts().find((product) => product.boothId === boothId);
+  if (!item) throw new Error("商品が見つかりません");
+  return {
+    boothId: item.boothId,
+    title: item.title,
+    shop: item.shop,
+    url: item.url,
+    thumbnailUrl: item.thumbnailUrl,
+    thumbnailPath: item.thumbnailPath,
+    category: item.category,
+    genre: item.genre ?? null,
+    isGeneric: item.isGeneric,
+    linkedAvatarIds: linksOf(item.boothId),
+  };
 }
 
-function queuePresence(boothId: string): ReturnType<typeof filePresence> {
-  const downloads = store.downloads.filter((row) => row.boothId === boothId);
-  const names = new Set(downloads.map((row) => row.filename));
-  const extra = store.files.filter(
-    (file) => file.linkedProductId === boothId && !file.isDir && !names.has(file.filename),
-  ).length;
-  return filePresence(
-    downloads.map((row) => ({ state: row.state })),
-    extra,
-  );
-}
-
-function queue(kind: string): QueuePage {
-  const unextracted = activeProducts().filter((item) => item.category == null).length;
-  const needsReview = activeProducts().filter((item) => item.needsReview && item.category != null).length;
+function unlinkedFiles(offset: number, limit: number): UnlinkedFilesPage {
   const unlinked = store.files.filter((file) => file.linkedProductId == null && !excludedProducts.has(file.candidateProductId ?? ""));
-  const products: QueueProduct[] = activeProducts()
-    .filter((item) => (kind === "unextracted" ? item.category == null : item.needsReview && item.category != null))
-    .map((item) => ({
-      boothId: item.boothId,
-      title: item.title,
-      shop: item.shop,
-      url: item.url,
-      descriptionSnippet: item.descriptionSnippet,
-      thumbnailUrl: item.thumbnailUrl,
-      thumbnailPath: item.thumbnailPath,
-      category: item.category,
-      genre: item.genre ?? null,
-      classificationPinned: Boolean(item.categoryLocked && item.genreLocked),
-      isGeneric: item.isGeneric,
-      confidence: item.confidence,
-      compatibleAvatars: item.compatibleAvatars,
-      unresolvedNames: item.unresolvedNames,
-      linkedAvatarIds: linksOf(item.boothId),
-      userConfirmed: item.userConfirmed,
-      filePresence: queuePresence(item.boothId),
-    }));
-  const files: QueueFile[] = unlinked.map((file) => ({
+  const files: UnlinkedFile[] = unlinked.map((file) => ({
     path: file.path,
     filename: file.filename,
     isDir: file.isDir,
     size: file.size,
     matchScore: file.matchScore,
     candidateProductId: file.candidateProductId,
-    candidateTitle:
-      activeProducts().find((item) => item.boothId === file.candidateProductId)?.title ?? null,
+    candidateTitle: activeProducts().find((item) => item.boothId === file.candidateProductId)?.title ?? null,
   }));
+  return { total: files.length, files: files.slice(offset, offset + limit) };
+}
+
+/** 見本の分類記録。Rust の記録と安全条件を画面用に写したもので、見本の操作は記録しない。 */
+interface PreviewLogEntry {
+  id: number;
+  runId: number;
+  boothId: string;
+  beforeCategory: Category | null;
+  afterCategory: Category | null;
+  beforeLinks: string[];
+  afterLinks: string[];
+  confidence: number | null;
+  unresolvedNames: string[];
+  undone: boolean;
+}
+
+const previewLogRuns: Omit<ClassificationRunView, "changedCount">[] = [
+  { id: 1, startedAt: "2026-11-01T10:15:00+09:00", kind: "import", classifier: "catalog", note: null },
+  { id: 2, startedAt: "2026-11-02T21:40:00+09:00", kind: "reclassify", classifier: "ollama", note: "unclassified" },
+  { id: 3, startedAt: "2026-11-03T09:05:00+09:00", kind: "reclassify", classifier: "apple", note: "stale" },
+];
+
+const previewLogEntries: PreviewLogEntry[] = [
+  { id: 1, runId: 1, boothId: "8800101", beforeCategory: null, afterCategory: "outfit", beforeLinks: [], afterLinks: ["lime", "shinano", "manuka"], confidence: 0.9, unresolvedNames: [], undone: false },
+  { id: 2, runId: 2, boothId: "8800104", beforeCategory: null, afterCategory: "outfit", beforeLinks: [], afterLinks: [], confidence: 0.42, unresolvedNames: ["架空ちゃん"], undone: false },
+  { id: 3, runId: 2, boothId: "8800201", beforeCategory: null, afterCategory: "other", beforeLinks: [], afterLinks: [], confidence: 0.5, unresolvedNames: ["未収録の見本"], undone: false },
+  // 後の実行で変わった商品。安全条件で戻せない。
+  { id: 4, runId: 3, boothId: "8800111", beforeCategory: "accessory", afterCategory: "hair", beforeLinks: [], afterLinks: [], confidence: 0.8, unresolvedNames: [], undone: false },
+];
+
+function logLinks(ids: string[]): ClassificationLink[] {
+  return ids.map((id) => ({ id, name: store.avatars.find((avatar) => avatar.id === id)?.displayName ?? id }));
+}
+
+function logBlocker(entry: PreviewLogEntry, kind: string): string | null {
+  if (entry.undone) return "すでに元に戻しています";
+  if (kind === "undo") return "Undo の記録は元に戻せません";
+  const item = store.products.find((product) => product.boothId === entry.boothId);
+  if (!item) return "商品が見つかりません";
+  if (excludedProducts.has(item.boothId)) return "この商品は除外されています";
+  if (item.linksLocked) return "対応アバターが手動で固定されているため戻せません";
+  const current = [...linksOf(item.boothId)].sort();
+  const after = [...entry.afterLinks].sort();
+  if (item.category !== entry.afterCategory || current.join() !== after.join()) {
+    return "この記録のあとに分類が変わったため戻せません";
+  }
+  if (item.categoryLocked && item.category !== entry.beforeCategory) return "カテゴリが手動で固定されているため戻せません";
+  return null;
+}
+
+function logEntryView(entry: PreviewLogEntry): ClassificationEntry {
+  const run = previewLogRuns.find((item) => item.id === entry.runId);
+  if (!run) throw new Error("記録が見つかりません");
   return {
-    unextracted,
-    needsReview,
-    unlinkedFiles: unlinked.length,
-    products: kind === "files" ? [] : products,
-    files: kind === "files" ? files : [],
+    id: entry.id,
+    runId: entry.runId,
+    startedAt: run.startedAt,
+    kind: run.kind,
+    classifier: run.classifier,
+    boothId: entry.boothId,
+    title: store.products.find((product) => product.boothId === entry.boothId)?.title ?? null,
+    beforeCategory: entry.beforeCategory,
+    afterCategory: entry.afterCategory,
+    beforeLinks: logLinks(entry.beforeLinks),
+    afterLinks: logLinks(entry.afterLinks),
+    confidence: entry.confidence,
+    unresolvedNames: entry.unresolvedNames,
+    undone: entry.undone,
+    undoBlocked: logBlocker(entry, run.kind),
   };
 }
 
+function logRunPage(offset: number, limit: number): ClassificationRunPage {
+  const runs = previewLogRuns
+    .map((run) => ({ ...run, changedCount: previewLogEntries.filter((entry) => entry.runId === run.id).length }))
+    .filter((run) => run.changedCount > 0)
+    .sort((left, right) => right.id - left.id);
+  return { total: runs.length, runs: runs.slice(offset, offset + limit) };
+}
+
+function logSearch(query: string): ClassificationEntry[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return [];
+  return previewLogEntries
+    .map(logEntryView)
+    .filter((entry) => entry.boothId === needle || (entry.title ?? "").toLowerCase().includes(needle))
+    .sort((left, right) => right.id - left.id);
+}
+
+function logUnresolved(): UnresolvedNameCount[] {
+  const products = new Map<string, Set<string>>();
+  for (const entry of previewLogEntries) {
+    const run = previewLogRuns.find((item) => item.id === entry.runId);
+    if (entry.undone || run?.kind === "undo" || excludedProducts.has(entry.boothId)) continue;
+    for (const name of entry.unresolvedNames) {
+      if (store.avatars.some((avatar) => avatar.displayName === name || avatar.aliases.includes(name))) continue;
+      products.set(name, (products.get(name) ?? new Set()).add(entry.boothId));
+    }
+  }
+  return [...products.entries()]
+    .map(([name, ids]) => ({ name, productCount: ids.size }))
+    .sort((left, right) => right.productCount - left.productCount || left.name.localeCompare(right.name, "ja"));
+}
+
+function logUndo(entryId: number) {
+  const entry = previewLogEntries.find((item) => item.id === entryId);
+  if (!entry) throw new Error("記録が見つかりません");
+  const run = previewLogRuns.find((item) => item.id === entry.runId);
+  const blocked = logBlocker(entry, run?.kind ?? "");
+  if (blocked) throw new Error(blocked);
+  const item = store.products.find((product) => product.boothId === entry.boothId);
+  if (!item) throw new Error("商品が見つかりません");
+  item.category = entry.beforeCategory;
+  item.unresolvedNames = [];
+  store.links = store.links.filter((link) => link.productId !== item.boothId);
+  for (const avatarId of entry.beforeLinks) store.links.push({ productId: item.boothId, avatarId });
+  entry.undone = true;
+  const runId = Math.max(...previewLogRuns.map((candidate) => candidate.id)) + 1;
+  previewLogRuns.push({ id: runId, startedAt: new Date().toISOString(), kind: "undo", classifier: "", note: null });
+  previewLogEntries.push({
+    id: Math.max(...previewLogEntries.map((candidate) => candidate.id)) + 1,
+    runId,
+    boothId: entry.boothId,
+    beforeCategory: entry.afterCategory,
+    afterCategory: entry.beforeCategory,
+    beforeLinks: entry.afterLinks,
+    afterLinks: entry.beforeLinks,
+    confidence: null,
+    unresolvedNames: [],
+    undone: false,
+  });
+}
+
 function stats(): LibraryStats {
-  const page = queue("review");
   return {
     products: activeProducts().length,
     ownedAvatars: activeAvatars().filter((avatar) => avatar.owned).length,
-    unextracted: page.unextracted,
-    needsReview: page.needsReview,
-    queueCount: page.unextracted + page.needsReview,
-    unlinkedFiles: page.unlinkedFiles,
+    unextracted: activeProducts().filter((item) => item.category == null).length,
+    unlinkedFiles: unlinkedFiles(0, 0).total,
     ollamaModel: store.settings.ollamaModel,
   };
 }
@@ -983,11 +1080,9 @@ function updateProduct(update: ProductUpdate) {
       }
     }
     item.linksLocked = true;
-    item.unresolvedNames = [];
     store.links = store.links.filter((link) => link.productId !== item.boothId);
     for (const id of update.avatarIds) store.links.push({ productId: item.boothId, avatarId: id });
   }
-  if (typeof update.confirm === "boolean") item.userConfirmed = update.confirm;
   item.needsReview = needsReview(item, linksOf(item.boothId).length);
   item.updatedAt = new Date().toISOString();
 }
@@ -2030,8 +2125,24 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
         }),
       ) as T;
     }
-    case "list_queue":
-      return queue(String(args.kind ?? "review")) as T;
+    case "product_for_edit":
+      return productForEdit(String(args.boothId ?? "")) as T;
+    case "list_unlinked_files":
+      return unlinkedFiles(Number(args.offset ?? 0), Number(args.limit ?? 50)) as T;
+    case "classification_log_runs":
+      return logRunPage(Number(args.offset ?? 0), Number(args.limit ?? 50)) as T;
+    case "classification_log_entries":
+      return previewLogEntries
+        .filter((entry) => entry.runId === Number(args.runId))
+        .map(logEntryView)
+        .slice(Number(args.offset ?? 0), Number(args.offset ?? 0) + Number(args.limit ?? 100)) as T;
+    case "classification_log_search":
+      return logSearch(String(args.query ?? "")) as T;
+    case "classification_unresolved_names":
+      return logUnresolved() as T;
+    case "undo_classification_entry":
+      logUndo(Number(args.entryId));
+      return undefined as T;
     case "list_product_options":
       return activeProducts()
         .map((item) => ({ boothId: item.boothId, title: item.title, shop: item.shop, category: item.category }))
@@ -2316,8 +2427,6 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     case "reopen_setup":
       store.setupComplete = false;
       return undefined as T;
-    case "avatar_candidates":
-      return candidates() as T;
     case "add_free_product": {
       const url = String(args.url ?? "");
       const match = url.match(/\/items\/(\d{4,12})/);
@@ -2461,34 +2570,6 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       product.needsReview = false;
       product.userConfirmed = true;
       return avatarId as T;
-    }
-    case "register_avatar_candidate": {
-      const name = String(args.name ?? "").trim();
-      if (!store.avatars.some((avatar) => avatar.displayName === name)) {
-        store.avatars.push({
-          id: slug(name),
-          displayName: name,
-          aliases: [],
-          baseBody: null,
-          notes: "",
-          isBuiltin: false,
-          owned: false,
-        });
-      }
-      for (const product of store.products) {
-        product.unresolvedNames = product.unresolvedNames.filter((item) => item !== name);
-      }
-      return slug(name) as T;
-    }
-    case "alias_avatar_candidate": {
-      const name = String(args.name ?? "").trim();
-      const avatar = store.avatars.find((item) => item.id === String(args.avatarId ?? ""));
-      if (!avatar) throw new Error("アバターが見つかりません");
-      if (!avatar.aliases.includes(name) && avatar.displayName !== name) avatar.aliases.push(name);
-      for (const product of store.products) {
-        product.unresolvedNames = product.unresolvedNames.filter((item) => item !== name);
-      }
-      return undefined as T;
     }
     case "pull_ollama_model": {
       const model = String(args.model ?? "").trim();

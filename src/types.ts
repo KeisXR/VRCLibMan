@@ -142,27 +142,20 @@ export interface AvatarDetail {
   unsupportedOutfits: ItemView[];
 }
 
-export interface QueueProduct {
+export interface ProductEditView {
   boothId: string;
   title: string;
   shop: string;
   url: string;
-  descriptionSnippet: string;
   thumbnailUrl: string | null;
   thumbnailPath: string | null;
   category: Category | null;
   genre: string | null;
-  classificationPinned: boolean;
   isGeneric: boolean;
-  confidence: number | null;
-  compatibleAvatars: string[];
-  unresolvedNames: string[];
   linkedAvatarIds: string[];
-  userConfirmed: boolean;
-  filePresence: "local" | "partial" | "remote" | "missing" | "unknown";
 }
 
-export interface QueueFile {
+export interface UnlinkedFile {
   path: string;
   filename: string;
   isDir: boolean;
@@ -172,12 +165,52 @@ export interface QueueFile {
   candidateTitle: string | null;
 }
 
-export interface QueuePage {
-  unextracted: number;
-  needsReview: number;
-  unlinkedFiles: number;
-  products: QueueProduct[];
-  files: QueueFile[];
+export interface UnlinkedFilesPage {
+  total: number;
+  files: UnlinkedFile[];
+}
+
+export interface ClassificationRunView {
+  id: number;
+  startedAt: string;
+  kind: string;
+  classifier: string;
+  note: string | null;
+  changedCount: number;
+}
+
+export interface ClassificationRunPage {
+  total: number;
+  runs: ClassificationRunView[];
+}
+
+export interface ClassificationLink {
+  id: string;
+  name: string;
+}
+
+export interface ClassificationEntry {
+  id: number;
+  runId: number;
+  startedAt: string;
+  kind: string;
+  classifier: string;
+  boothId: string;
+  title: string | null;
+  beforeCategory: string | null;
+  afterCategory: string | null;
+  beforeLinks: ClassificationLink[];
+  afterLinks: ClassificationLink[];
+  confidence: number | null;
+  unresolvedNames: string[];
+  undone: boolean;
+  /** 元に戻せない理由。null なら戻せる。 */
+  undoBlocked: string | null;
+}
+
+export interface UnresolvedNameCount {
+  name: string;
+  productCount: number;
 }
 
 export interface ProductOption {
@@ -367,8 +400,6 @@ export interface LibraryStats {
   products: number;
   ownedAvatars: number;
   unextracted: number;
-  needsReview: number;
-  queueCount: number;
   unlinkedFiles: number;
   ollamaModel: string;
 }
@@ -480,11 +511,6 @@ export interface AppleFmStatus {
   message: string;
 }
 
-export interface AvatarCandidate {
-  name: string;
-  productCount: number;
-}
-
 /** 進捗の状態。省略時は running（古い送り方との互換。`src/progress.ts` の `progressState`）。 */
 export type JobProgressState = "running" | "done" | "error" | "cancelled";
 
@@ -572,7 +598,6 @@ export interface ProductUpdate {
   genre?: string | null;
   isGeneric?: boolean | null;
   avatarIds?: string[] | null;
-  confirm?: boolean | null;
 }
 
 export interface AvatarInput {
