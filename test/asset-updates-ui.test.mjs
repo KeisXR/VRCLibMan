@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const css = readFileSync(join(root, "src/styles.css"), "utf8");
 const component = readFileSync(join(root, "src/components/AssetUpdates.tsx"), "utf8");
+const avatarDetail = readFileSync(join(root, "src/pages/AvatarDetailPage.tsx"), "utf8");
 
 async function withModule(path, run) {
   const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
@@ -82,4 +83,10 @@ test("expanded list scrolls inside max-height; title ellipsizes; motion is opaci
   assert.match(css, /\.asset-update-title\s*\{[^}]*text-overflow:\s*ellipsis/s);
   assert.match(css, /\.asset-update-panel\s*\{[^}]*animation:\s*switch-rise\s+var\(--motion\)/s);
   assert.doesNotMatch(css, /\.asset-update-(panel|list|summary)[^}]*transition:[^;}]*(width|height|max-height)/);
+});
+
+test("product card shows new-file badge and folds superseded missing files", () => {
+  assert.match(avatarDetail, /file\.isNew \? <span className="badge new-file">新しいファイル<\/span> : null/);
+  assert.match(avatarDetail, /以前のファイル \{superseded\.length\}件/);
+  assert.match(component, /内蔵ブラウザが有効なら BOOTH ライブラリから最新のファイル情報も読み直して商品カードへ反映/);
 });

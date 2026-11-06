@@ -669,16 +669,37 @@ function filesFor(boothId: string): FileBrief[] {
 function placedDownloads(boothId: string): DownloadView[] {
   const configured = store.settings.remoteLibraryFolder.trim().length > 0;
   const reachable = configured && store.remoteReachable;
-  return store.downloads
+  const rows = store.downloads
     .filter((row) => row.boothId === boothId)
-    .map((row) => ({
-      variation: row.variation,
-      filename: row.filename,
-      sizeBytes: row.sizeBytes,
-      state: row.state === "remote" && !reachable ? "missing" : row.state,
-      localPath: row.localPath,
-      remotePath: row.remotePath,
-    }));
+    .map((row) => {
+      const state: DownloadView["state"] = row.state === "remote" && !reachable ? "missing" : row.state;
+      return {
+        variation: row.variation,
+        filename: row.filename,
+        sizeBytes: row.sizeBytes,
+        state,
+        localPath: row.localPath,
+        remotePath: row.remotePath,
+        downloadableId: row.downloadableId ?? null,
+        isNew: Boolean(row.isNew),
+        superseded: state === "missing" && Boolean(row.superseded),
+      };
+    });
+  rows.sort((left, right) => {
+    if (Boolean(left.superseded) !== Boolean(right.superseded)) {
+      return left.superseded ? 1 : -1;
+    }
+    if (Boolean(left.isNew) !== Boolean(right.isNew)) {
+      return left.isNew ? -1 : 1;
+    }
+    const lId = left.downloadableId && /^\d+$/.test(left.downloadableId) ? Number(left.downloadableId) : null;
+    const rId = right.downloadableId && /^\d+$/.test(right.downloadableId) ? Number(right.downloadableId) : null;
+    if (lId !== null && rId !== null && lId !== rId) return rId - lId;
+    if (lId !== null && rId === null) return -1;
+    if (lId === null && rId !== null) return 1;
+    return left.filename.localeCompare(right.filename);
+  });
+  return rows;
 }
 
 function hasLocalCopy(boothId: string): boolean {
@@ -1938,7 +1959,13 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
         }
         if (row) {
           if (input.enabled !== undefined) row.enabled = input.enabled;
-          if (input.acknowledge) { row.changes = []; row.revision++; }
+          if (input.acknowledge) {
+            row.changes = [];
+            row.revision++;
+            for (const d of store.downloads) {
+              if (d.boothId === input.boothId) d.isNew = false;
+            }
+          }
         }
       }
       return assetWatchStatus() as T;
@@ -2393,6 +2420,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       }
       row.state = "local";
       row.localPath = `${store.settings.libraryFolder}\\${boothId}\\${filename}`;
+      row.isNew = false;
       // Rust の再読み込みはリモートを確認しないので、画面は確認をやり直す。
       store.remoteChecked = false;
       return row.localPath as T;

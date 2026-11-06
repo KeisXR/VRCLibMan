@@ -1455,6 +1455,7 @@ a.tab { display: inline-flex; align-items: center; gap: 6px; text-decoration: no
   vertical-align: 1px;
 }
 .badge.adult { color: var(--warn); }
+.badge.new-file { color: var(--good); }
 .presence {
   display: inline-flex;
   align-items: center;
