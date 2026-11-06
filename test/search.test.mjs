@@ -148,6 +148,8 @@ test("the shell wires the search page, nav item and sidebar box", () => {
   assert.match(app, /href: "#\/search", label: "検索"/, "nav item");
   assert.match(app, /route\.page === "search" && <SearchPage \/>/, "route renders the search page");
   assert.match(app, /className="sidebar-search"/, "sidebar search box");
+  assert.match(app, /onCompositionStart/, "sidebar box tracks IME composition");
+  assert.match(app, /onCompositionEnd/, "sidebar box navigates after IME composition ends");
   const icons = readFileSync("src/components/navIcons.tsx", "utf8");
   assert.match(icons, /"search"/, "search icon name exists");
 });

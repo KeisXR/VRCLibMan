@@ -119,6 +119,9 @@ export default function App() {
   useAssetUpdateNotice(notify);
   const [revision, setRevision] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
+  // While an IME composition is open in the sidebar box, moving to the search page would
+  // unmount the input mid-composition and drop the text being converted.
+  const searchComposing = useRef(false);
   const [builtinBrowser, setBuiltinBrowser] = useState(false);
   const [accountView, setAccountView] = useState<AccountSnapshot>(checkingAccount());
   const accountReload = useRef<() => void>(() => {});
@@ -407,6 +410,11 @@ export default function App() {
                 value={searchQuery}
                 onChange={(event) => {
                   setSearchQuery(event.target.value);
+                  if (!searchComposing.current && route.page !== "search") window.location.hash = "#/search";
+                }}
+                onCompositionStart={() => { searchComposing.current = true; }}
+                onCompositionEnd={() => {
+                  searchComposing.current = false;
                   if (route.page !== "search") window.location.hash = "#/search";
                 }}
               />
