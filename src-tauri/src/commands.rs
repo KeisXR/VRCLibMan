@@ -1165,7 +1165,7 @@ pub fn restore_seed(state: State<'_, AppState>) -> Result<u32, String> {
 #[tauri::command]
 pub fn reresolve(state: State<'_, AppState>) -> Result<u32, String> {
     let mut connection = db(&state)?;
-    db::reresolve_all(&mut connection)
+    db::reapply_catalog(&mut connection)
 }
 
 #[tauri::command]
@@ -1251,6 +1251,10 @@ pub async fn extract_products(
     } else {
         false
     };
+    // The log's run. Each step locks the database and logs on its own, so an edit made while
+    // the model is working is not attributed to this run.
+    let mut run = db::ClassificationRun::new(db::KIND_RECLASSIFY, &settings.llm_backend)
+        .with_note(&target);
     let total = jobs.len() as u32;
     let mut processed = 0;
     let mut failed = 0;
@@ -1280,13 +1284,17 @@ pub async fn extract_products(
         );
         if job.description == crate::model::UNAVAILABLE_DESCRIPTION {
             let mut connection = db(&state)?;
-            db::mark_description_seen(&mut connection, &job.booth_id)?;
+            db::observe(&mut connection, &mut run, &job.booth_id, |connection| {
+                db::mark_description_seen(connection, &job.booth_id)
+            })?;
             processed += 1;
             continue;
         }
         let settled = {
             let mut connection = db(&state)?;
-            db::skip_model(&mut connection, &job.booth_id)?
+            db::observe(&mut connection, &mut run, &job.booth_id, |connection| {
+                db::skip_model(connection, &job.booth_id)
+            })?
         };
         if settled {
             processed += 1;
@@ -1294,7 +1302,9 @@ pub async fn extract_products(
         }
         let from_booth = {
             let mut connection = db(&state)?;
-            db::apply_booth_settlement(&mut connection, &job.booth_id)?
+            db::observe(&mut connection, &mut run, &job.booth_id, |connection| {
+                db::apply_booth_settlement(connection, &job.booth_id)
+            })?
         };
         if from_booth {
             booth_settled += 1;
@@ -1337,8 +1347,9 @@ pub async fn extract_products(
                     break;
                 }
                 let mut connection = db(&state)?;
-                db::apply_extraction(
+                db::apply_extraction_in_run(
                     &mut connection,
+                    &mut run,
                     &job.booth_id,
                     &extraction,
                     settings.confidence_threshold,
@@ -1346,8 +1357,10 @@ pub async fn extract_products(
                 processed += 1;
             }
             Ok(Classified::Review) => {
-                let connection = db(&state)?;
-                db::mark_guardrail_review(&connection, &job.booth_id)?;
+                let mut connection = db(&state)?;
+                db::observe(&mut connection, &mut run, &job.booth_id, |connection| {
+                    db::mark_guardrail_review(connection, &job.booth_id)
+                })?;
                 processed += 1;
             }
             Ok(Classified::Withheld) => {
@@ -1380,7 +1393,7 @@ pub async fn extract_products(
     if processed > 0 {
         emit_progress(&app, "extract", total, total, "分類結果を整理しています");
         let mut connection = db(&state)?;
-        db::reresolve_all(&mut connection)?;
+        db::reresolve_all_in_run(&mut connection, &mut run)?;
     }
     emit_progress(
         &app,

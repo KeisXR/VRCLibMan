@@ -631,7 +631,7 @@ mod tests {
         let path = data.path().join("library.sqlite");
         {
             let connection = db::open(&path).unwrap();
-            assert_eq!(version(&connection), 9);
+            assert_eq!(version(&connection), 10);
             assert!(has_column(&connection));
             avatar(&connection, "my-avatar");
             connection
@@ -642,7 +642,7 @@ mod tests {
             assert!(!has_column(&connection));
         }
         let connection = db::open(&path).unwrap();
-        assert_eq!(version(&connection), 9);
+        assert_eq!(version(&connection), 10);
         assert!(has_column(&connection));
         assert_eq!(hero_path(&connection, "my-avatar"), None);
     }
