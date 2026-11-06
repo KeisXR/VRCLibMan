@@ -14,7 +14,7 @@ VRCLibMan を変更するときは、このファイルを先に読む。実装�
 
 持っている VRChat / Booth のアバターを開き、同じ素体の衣装・髪・ギミックを手元だけで見る。製品名は VRCLibMan、識別子は `app.vrclibman.desktop`。UI は日本語。
 
-共有フォルダでのメタデータ同期は [リモート同期](docs/remote-sync.md) に従う。現在は書き出しだけで、API キー・Cookie・ローカルのパス・説明文は書き出さない。
+PC 間の移行は [データ移行](docs/remote-sync.md) に従う。現在は書き出しだけで、商品情報・サムネイル・ヒーロー画像は ZIP に含め、API キー・Cookie・ローカルのパスは書き出さない。
 
 アプリは Booth のパスワードを独自に取得・保存しない。代替手段のブラウザ拡張は既存のログインセッションから商品情報を JSON にし、Cookie はアプリへ送らない。本人が拡張で選んだ1件はブラウザ自身が取得する。推奨する内蔵ブラウザは専用 WebView データストアにログイン状態を保持する。1件の購入済みファイルを「ダウンロード」操作時は WebView の Cookie を Rust 側で読み、BOOTH へのダウンロード要求にだけ使用する。分類の文章抽出には、既定で同じ PC の Ollama または対応する Mac の Apple オンデバイスモデルを使う。利用者が「クラウド(APIキー)」を選んだときだけ、OpenAI 互換 API へ送る（下の「抽出と安全境界」）。Apple が処理を拒否した場合は文字列を伏せて再試行し、カテゴリを読めない場合も含め導入済み Ollama が使えればそちらでも再試行し、無ければ要確認に残す。どの商品がどのアバターか、どのアバターが同じ素体かは、編集できる対応表が決める。
 
@@ -46,7 +46,7 @@ VRCLibMan を変更するときは、このファイルを先に読む。実装�
 - フロントは React + TypeScript。画面は `invoke` だけの薄い層。
 - インポート、正規化、突合、名前解決、抽出、SQLite は Rust。`rusqlite` の bundled を使い、`tauri-plugin-sql` は使わない。WebView なしでテストするため。
 - クレート名は雛形の `tauri-app` / `tauri_app_lib` のまま。`main.rs` が `tauri_app_lib::run()` を呼ぶ。配布する実行ファイルは `mainBinaryName` の `VRCLibMan.exe`。NSIS のファイル名は productName から `VRCLibMan_<version>_x64-setup.exe`。
-- DB はアプリデータディレクトリの `library.sqlite`。サムネイルは同じ場所の `thumbs`。選択した商品の大きいプレビューは隣の `previews`。アバターごとのヒーロー画像は隣の `hero_images`（`avatars.hero_image_path`、DB版9）で、ファイルもパスも同期しない。識別子 `app.vrclibman.desktop` は、インストールしたアプリと `tauri dev` で同じなので、Windows では `%APPDATA%\app.vrclibman.desktop` の DB と `%LOCALAPPDATA%\app.vrclibman.desktop\EBWebView` の WebView プロファイルを共有する。Mac の DB は `~/Library/Application Support/app.vrclibman.desktop`。内蔵ブラウザのログインは WebKit のデータストアにあり、メイン画面とは別である。`npm run dev` の見本はこのディレクトリを使わない。
+- DB はアプリデータディレクトリの `library.sqlite`。サムネイルは同じ場所の `thumbs`。選択した商品の大きいプレビューは隣の `previews`。アバターごとのヒーロー画像は隣の `hero_images`（`avatars.hero_image_path`、DB版9）で、データ移行の ZIP にファイルだけを含め、パスは書き出さない。識別子 `app.vrclibman.desktop` は、インストールしたアプリと `tauri dev` で同じなので、Windows では `%APPDATA%\app.vrclibman.desktop` の DB と `%LOCALAPPDATA%\app.vrclibman.desktop\EBWebView` の WebView プロファイルを共有する。Mac の DB は `~/Library/Application Support/app.vrclibman.desktop`。内蔵ブラウザのログインは WebKit のデータストアにあり、メイン画面とは別である。`npm run dev` の見本はこのディレクトリを使わない。
 - アンインストールの `src-tauri/windows/hooks.nsh` は `NSIS_HOOK_POSTUNINSTALL` で `HKCU\Software\VRCLibMan` だけを消す。アプリデータのディレクトリは消さない。
 - `user_version` が 0 のときだけ `SCHEMA` を流す。既存 DB の列を変えるときは、新しい版の移行を足す。`SCHEMA` 定数の書き換えだけでは入らない。
 - 変更系の関数は `&mut Connection`。`transaction()` が可変借用を要求するため。
@@ -368,7 +368,7 @@ Mac の内蔵ブラウザは `data_directory` を使わない。固定の 16 バ
 | `src-tauri/src/hero_image.rs` | アバターごとのヒーロー画像の検証、縮小、保存、掃除 |
 | `src-tauri/src/view.rs` | 一覧、詳細、キューの形 |
 | `src-tauri/src/sync_meta.rs` | 端末 ID と端末名、変更メタ（`sync_meta`、DB版8）、Config の許可リスト |
-| `src-tauri/src/sync_export.rs` | 同期データの JSON の組み立てと保存 |
+| `src-tauri/src/sync_export.rs` | データ移行の manifest の組み立てと ZIP の保存 |
 | `src-tauri/src/unity.rs` | Unity エディタの検出（Hub の記録と既定のインストール先） |
 | `src-tauri/src/unity_import.rs` | 「Unityで開く」の一覧、取り出し、キャッシュ、`-openfile` での起動 |
 | `src-tauri/src/commands.rs` | Tauri コマンド |

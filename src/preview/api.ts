@@ -1090,7 +1090,7 @@ function previewDeviceName(value: unknown): string {
   return name;
 }
 
-/** 形式の確認用の小さな JSON。見本の全件は出さず、分類の規則も複製しない。 */
+/** 形式の確認用の小さな manifest。見本に画像ファイルは無いので参照は null。全件は出さず、分類の規則も複製しない。 */
 function previewSyncExport(): string {
   const device = { id: store.settings.deviceId, name: store.settings.deviceName };
   const values = {
@@ -1112,7 +1112,10 @@ function previewSyncExport(): string {
     .map((item) => ({
       boothId: item.boothId,
       title: item.title,
+      shop: item.shop,
+      descriptionSnippet: item.descriptionSnippet,
       url: `https://booth.pm/ja/items/${item.boothId}`,
+      thumbnail: null,
       classification: {
         category: item.category,
         categoryLocked: item.categoryLocked,
@@ -1129,7 +1132,7 @@ function previewSyncExport(): string {
     }));
   return `${JSON.stringify({
     format: "vrclibman-sync",
-    version: 1,
+    version: 2,
     device,
     appVersion: "preview",
     exportedAt: new Date().toISOString(),
@@ -1137,7 +1140,7 @@ function previewSyncExport(): string {
     products,
     avatars: [],
     fileLinks: [],
-    counts: { products: products.length, links: 0, avatars: 0, fileLinks: 0, config: Object.keys(values).length },
+    counts: { products: products.length, links: 0, avatars: 0, fileLinks: 0, config: Object.keys(values).length, thumbnails: 0, heroImages: 0 },
   }, null, 2)}\n`;
 }
 
@@ -2104,7 +2107,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     case "sync_export_json":
       return previewSyncExport() as T;
     case "save_sync_export":
-      if (!String(args.path ?? "").toLowerCase().endsWith(".json")) throw new Error("保存先は JSON ファイルにしてください");
+      if (!String(args.path ?? "").toLowerCase().endsWith(".zip")) throw new Error("保存先は ZIP ファイルにしてください");
       return { counts: JSON.parse(previewSyncExport()).counts } as T;
     case "register_owned_body":
       return registerPreviewOwnedBody(String(args.boothId ?? ""), args.name == null ? null : String(args.name)) as T;

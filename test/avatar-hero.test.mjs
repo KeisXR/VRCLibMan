@@ -194,13 +194,15 @@ test("hero image menu stays quiet until hover or focus and draws no accent", () 
   assert.doesNotMatch(block, /--line-accent|--accent/);
 });
 
-test("hero images stay out of remote sync", () => {
+test("hero image files travel in the migration package, their paths do not", () => {
   const sync = readFileSync("docs/remote-sync.md", "utf8");
+  const included = sync.slice(sync.indexOf("## 含めるもの"), sync.indexOf("## 含めないもの"));
+  assert.match(included, /ヒーロー画像/);
   const excluded = sync.slice(sync.indexOf("## 含めないもの"), sync.indexOf("## 変更メタ"));
-  assert.match(excluded, /アバターのカスタムヒーロー画像（ファイルとパス）/);
-  for (const file of ["src-tauri/src/sync_export.rs", "src-tauri/src/sync_meta.rs"]) {
-    const code = readFileSync(file, "utf8");
-    const production = code.slice(0, code.indexOf("#[cfg(test)]"));
-    assert.doesNotMatch(production, /hero_image/, file);
-  }
+  assert.match(excluded, /ローカルのパス/);
+  const code = readFileSync("src-tauri/src/sync_export.rs", "utf8");
+  const production = code.slice(0, code.indexOf("#[cfg(test)]"));
+  // ファイル名はアプリ内の安全な名前を使う。古い行の ID をそのままパスにしない。
+  assert.match(production, /hero_image::file_stem\(&avatar\.id\)/);
+  assert.doesNotMatch(readFileSync("src-tauri/src/sync_meta.rs", "utf8"), /hero_image/);
 });

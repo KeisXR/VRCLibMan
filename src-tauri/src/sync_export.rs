@@ -1,17 +1,28 @@
-//! The `vrclibman-sync` export file. Columns are an explicit list: descriptions, thumbnails, and
-//! local paths are never read here, and settings leave only through `config_entries`.
+//! The data migration package: a ZIP holding the `vrclibman-sync` manifest and the images the
+//! receiving PC would otherwise fetch again. Manifest columns are an explicit list, local paths
+//! stay in `PackageImages` so they cannot be serialized, and settings leave only through
+//! `config_entries`.
 
 use crate::db;
+use crate::hero_image;
+use crate::library_files::valid_booth_id;
 use crate::sync_meta::{self, SyncMeta};
 use rusqlite::Connection;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::io::Write;
-use std::path::Path;
+use std::io::{Seek, Write};
+use std::path::{Path, PathBuf};
+use zip::write::SimpleFileOptions;
+use zip::{CompressionMethod, ZipWriter};
 
 const FORMAT: &str = "vrclibman-sync";
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
+const MANIFEST_ENTRY: &str = "manifest.json";
+const THUMBNAIL_ENTRIES: &str = "files/thumbnails";
+const HERO_ENTRIES: &str = "files/heroes";
+/// Longer than any image extension. A stored path can hold anything, and entry names come from it.
+const MAX_EXTENSION_LEN: usize = 8;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -47,7 +58,11 @@ pub(crate) struct SyncConfig {
 pub(crate) struct SyncProduct {
     pub booth_id: String,
     pub title: String,
+    pub shop: String,
+    pub description_snippet: String,
     pub url: String,
+    /// Package-relative path. `None` until `save_package` has written the file.
+    pub thumbnail: Option<String>,
     pub classification: SyncClassification,
     pub links: SyncLinks,
 }
@@ -93,6 +108,8 @@ pub(crate) struct SyncAvatar {
     pub owned: bool,
     pub aliases: Vec<String>,
     pub notes: String,
+    /// Package-relative path. `None` until `save_package` has written the file.
+    pub hero_image: Option<String>,
     pub meta: Option<SyncMeta>,
 }
 
@@ -113,12 +130,21 @@ pub(crate) struct SyncCounts {
     pub avatars: usize,
     pub file_links: usize,
     pub config: usize,
+    pub thumbnails: usize,
+    pub hero_images: usize,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SyncExportReport {
     pub counts: SyncCounts,
+}
+
+/// The cached files behind a manifest, by product and avatar id. Kept apart from `SyncFile` so
+/// that a local path has no route into the serialized output.
+pub(crate) struct PackageImages {
+    thumbnails: HashMap<String, PathBuf>,
+    heroes: HashMap<String, PathBuf>,
 }
 
 fn sql<T>(result: rusqlite::Result<T>) -> Result<T, String> {
@@ -167,7 +193,7 @@ fn load_products(connection: &Connection) -> Result<Vec<SyncProduct>, String> {
     let mut statement = sql(connection.prepare(
         "SELECT booth_id, title, category, category_locked, genre, genre_locked, confidence,
                 classifier_version, user_confirmed, needs_review, is_generic, links_locked,
-                compatible_avatars_json, unresolved_names_json
+                compatible_avatars_json, unresolved_names_json, shop, description_snippet
          FROM products
          WHERE booth_id NOT IN (SELECT booth_id FROM product_exclusions)
          ORDER BY booth_id",
@@ -197,6 +223,9 @@ fn load_products(connection: &Connection) -> Result<Vec<SyncProduct>, String> {
             url: product_url(&booth_id),
             booth_id,
             title: row.get(1)?,
+            shop: row.get(14)?,
+            description_snippet: row.get(15)?,
+            thumbnail: None,
             classification,
             links: group,
         })
@@ -212,8 +241,8 @@ fn load_products(connection: &Connection) -> Result<Vec<SyncProduct>, String> {
     Ok(products)
 }
 
-/// Avatars another device needs: owned, linked, user-made, or changed here. The untouched bundled
-/// catalog is left out because every install already has it.
+/// Avatars another device needs: owned, linked, user-made, changed here, or given a hero image.
+/// The untouched bundled catalog is left out because every install already has it.
 fn load_avatars(connection: &Connection, products: &[SyncProduct]) -> Result<Vec<SyncAvatar>, String> {
     let mut meta = sync_meta::load_meta(connection, sync_meta::ENTITY_AVATAR)?;
     let referenced: HashSet<&str> = products
@@ -222,7 +251,8 @@ fn load_avatars(connection: &Connection, products: &[SyncProduct]) -> Result<Vec
         .map(|link| link.avatar_id.as_str())
         .collect();
     let mut statement = sql(connection.prepare(
-        "SELECT id, display_name, base_body, aliases_json, owned, notes, is_builtin
+        "SELECT id, display_name, base_body, aliases_json, owned, notes, is_builtin,
+                hero_image_path IS NOT NULL
          FROM avatars ORDER BY id",
     ))?;
     let rows = sql(statement.query_map([], |row| {
@@ -234,17 +264,20 @@ fn load_avatars(connection: &Connection, products: &[SyncProduct]) -> Result<Vec
                 aliases: parse_names(&row.get::<_, String>(3)?),
                 owned: row.get(4)?,
                 notes: row.get(5)?,
+                hero_image: None,
                 meta: None,
             },
             row.get::<_, bool>(6)?,
+            row.get::<_, bool>(7)?,
         ))
     }))?;
     let mut avatars = Vec::new();
     for row in rows {
-        let (mut avatar, builtin) = sql(row)?;
+        let (mut avatar, builtin, has_hero) = sql(row)?;
         let changed = meta.remove(&avatar.id);
         if avatar.owned
             || !builtin
+            || has_hero
             || changed.is_some()
             || referenced.contains(avatar.id.as_str())
         {
@@ -299,6 +332,8 @@ pub(crate) fn build(connection: &mut Connection, app_version: &str) -> Result<Sy
         avatars: avatars.len(),
         file_links: file_links.len(),
         config: config.values.len(),
+        thumbnails: 0,
+        hero_images: 0,
     };
     Ok(SyncFile {
         format: FORMAT,
@@ -323,21 +358,106 @@ pub(crate) fn to_json(file: &SyncFile) -> Result<String, String> {
     Ok(json)
 }
 
-/// Write beside the destination and rename, so a failure never leaves a partial file there.
-pub(crate) fn save(path: &Path, body: &str) -> Result<(), String> {
-    let destination = db::checked_json_destination(path)?;
+fn image_paths(connection: &Connection, query: &str) -> Result<HashMap<String, PathBuf>, String> {
+    let mut statement = sql(connection.prepare(query))?;
+    let rows = sql(statement.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, PathBuf::from(row.get::<_, String>(1)?)))
+    }))?;
+    sql(rows.collect())
+}
+
+/// Every stored image path. `save_package` looks these up from manifest rows only, so an excluded
+/// product has no way into the package.
+pub(crate) fn package_images(connection: &Connection) -> Result<PackageImages, String> {
+    Ok(PackageImages {
+        thumbnails: image_paths(
+            connection,
+            "SELECT booth_id, thumbnail_path FROM products WHERE thumbnail_path IS NOT NULL",
+        )?,
+        heroes: image_paths(
+            connection,
+            "SELECT id, hero_image_path FROM avatars WHERE hero_image_path IS NOT NULL",
+        )?,
+    })
+}
+
+fn save_failed<E>(_: E) -> String {
+    "ファイルを保存できません".to_string()
+}
+
+fn image_extension(source: &Path) -> Option<String> {
+    let extension = source.extension()?.to_str()?.to_ascii_lowercase();
+    let plain = !extension.is_empty()
+        && extension.len() <= MAX_EXTENSION_LEN
+        && extension.bytes().all(|byte| byte.is_ascii_alphanumeric());
+    plain.then_some(extension)
+}
+
+/// Adds one image and returns its entry name. A file that cannot be read gets no entry, because
+/// one lost cache file must not cost the whole migration. A write failure stops the export.
+fn add_image<W: Write + Seek>(
+    zip: &mut ZipWriter<W>,
+    directory: &str,
+    stem: &str,
+    source: &Path,
+) -> Result<Option<String>, String> {
+    let Some(extension) = image_extension(source) else {
+        return Ok(None);
+    };
+    // Read whole before the entry starts, so a failed read cannot leave half an entry.
+    let is_file = std::fs::symlink_metadata(source).is_ok_and(|meta| meta.is_file());
+    let Some(bytes) = is_file.then(|| std::fs::read(source).ok()).flatten() else {
+        return Ok(None);
+    };
+    let entry = format!("{directory}/{stem}.{extension}");
+    // These formats are compressed already.
+    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+    zip.start_file(entry.as_str(), options).map_err(save_failed)?;
+    zip.write_all(&bytes).map_err(save_failed)?;
+    Ok(Some(entry))
+}
+
+/// Writes the package and returns the counts it records. Call without the database lock.
+/// The manifest goes last so that it can name only the files really written. The ZIP is built
+/// beside the destination and renamed, so a failure never leaves a partial file there.
+pub(crate) fn save_package(
+    path: &Path,
+    mut file: SyncFile,
+    images: &PackageImages,
+) -> Result<SyncCounts, String> {
+    let destination = db::checked_zip_destination(path)?;
     let parent = destination.parent().ok_or("保存先が不正です")?;
-    let failed = |_| "ファイルを保存できません".to_string();
     let mut temp = tempfile::Builder::new()
         .prefix(".vrclibman-export-")
         .suffix(".tmp")
         .tempfile_in(parent)
-        .map_err(failed)?;
-    temp.write_all(body.as_bytes()).map_err(failed)?;
-    temp.as_file().sync_all().map_err(failed)?;
-    temp.persist(&destination)
-        .map_err(|_| "ファイルを保存できません".to_string())?;
-    Ok(())
+        .map_err(save_failed)?;
+    let mut zip = ZipWriter::new(temp.as_file_mut());
+    for product in &mut file.products {
+        let Some(source) = images.thumbnails.get(&product.booth_id) else {
+            continue;
+        };
+        // The id becomes an entry name, and a later importer unpacks these names.
+        if valid_booth_id(&product.booth_id) {
+            product.thumbnail = add_image(&mut zip, THUMBNAIL_ENTRIES, &product.booth_id, source)?;
+        }
+    }
+    for avatar in &mut file.avatars {
+        let Some(source) = images.heroes.get(&avatar.id) else {
+            continue;
+        };
+        let stem = hero_image::file_stem(&avatar.id);
+        avatar.hero_image = add_image(&mut zip, HERO_ENTRIES, &stem, source)?;
+    }
+    file.counts.thumbnails = file.products.iter().filter(|item| item.thumbnail.is_some()).count();
+    file.counts.hero_images = file.avatars.iter().filter(|item| item.hero_image.is_some()).count();
+    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+    zip.start_file(MANIFEST_ENTRY, options).map_err(save_failed)?;
+    zip.write_all(to_json(&file)?.as_bytes()).map_err(save_failed)?;
+    zip.finish().map_err(save_failed)?;
+    temp.as_file().sync_all().map_err(save_failed)?;
+    temp.persist(&destination).map_err(save_failed)?;
+    Ok(file.counts)
 }
 
 #[cfg(test)]
@@ -346,6 +466,7 @@ mod tests {
     use crate::model::{ProductUpdate, SettingsPatch};
     use rusqlite::params;
     use serde_json::json;
+    use std::io::Read;
 
     const CONFIG_KEYS: [&str; 10] = [
         "avatarHero",
@@ -392,6 +513,57 @@ mod tests {
         connection
     }
 
+    fn set_thumbnail(connection: &Connection, id: &str, path: &Path) {
+        connection
+            .execute(
+                "UPDATE products SET thumbnail_path = ?1 WHERE booth_id = ?2",
+                params![path.to_str().unwrap(), id],
+            )
+            .unwrap();
+    }
+
+    fn set_hero(connection: &Connection, id: &str, path: &Path) {
+        db::set_avatar_hero_path(connection, id, path.to_str()).unwrap();
+    }
+
+    fn write_file(path: &Path, bytes: &[u8]) -> PathBuf {
+        std::fs::write(path, bytes).unwrap();
+        path.to_path_buf()
+    }
+
+    fn entry_bytes(package: &Path, name: &str) -> Vec<u8> {
+        let mut archive = zip::ZipArchive::new(std::fs::File::open(package).unwrap()).unwrap();
+        let mut entry = archive.by_name(name).unwrap();
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes).unwrap();
+        bytes
+    }
+
+    /// Saves a package into `directory`, and returns its sorted entry names and manifest.
+    /// Every caller also proves that the returned counts are the recorded ones.
+    fn export_package(connection: &mut Connection, directory: &Path) -> (Vec<String>, Value) {
+        let path = directory.join("export.zip");
+        let file = build(connection, "9.9.9").unwrap();
+        let images = package_images(connection).unwrap();
+        let counts = save_package(&path, file, &images).unwrap();
+        let archive = zip::ZipArchive::new(std::fs::File::open(&path).unwrap()).unwrap();
+        let mut names: Vec<String> = archive.file_names().map(str::to_string).collect();
+        names.sort();
+        let manifest: Value =
+            serde_json::from_slice(&entry_bytes(&path, MANIFEST_ENTRY)).unwrap();
+        assert_eq!(manifest["counts"], serde_json::to_value(counts).unwrap());
+        (names, manifest)
+    }
+
+    fn avatar<'a>(file: &'a Value, id: &str) -> &'a Value {
+        file["avatars"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["id"] == id)
+            .unwrap()
+    }
+
     fn product<'a>(file: &'a Value, id: &str) -> &'a Value {
         file["products"]
             .as_array()
@@ -421,7 +593,7 @@ mod tests {
             assert!(file.get(key).is_some(), "{key}");
         }
         assert_eq!(file["format"], "vrclibman-sync");
-        assert_eq!(file["version"], 1);
+        assert_eq!(file["version"], 2);
         assert_eq!(file["appVersion"], "9.9.9");
         assert_eq!(file["products"].as_array().unwrap().len(), 0);
         assert_eq!(file["config"]["values"].as_object().unwrap().len(), 10);
@@ -479,12 +651,7 @@ mod tests {
             .unwrap();
         assert!(!owned);
         let file = export(&mut connection);
-        let lime = file["avatars"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|item| item["id"] == "lime")
-            .unwrap();
+        let lime = avatar(&file, "lime");
         assert_eq!(lime["owned"], false);
         assert!(lime["displayName"].is_string());
         assert_eq!(lime["baseBody"], "komado");
@@ -568,7 +735,7 @@ mod tests {
         let body = json!({ "products": [{
             "boothId": "1001",
             "title": "見本の衣装",
-            "description": "DESCRIPTION-SECRET 本文",
+            "description": "見本の説明本文",
             "url": "https://booth.pm/ja/items/1001?token=URL-SECRET",
             "thumbnailUrl": "https://booth.pximg.net/c/150x150/THUMB-SECRET.jpg",
         }] });
@@ -595,7 +762,6 @@ mod tests {
             .unwrap();
         let text = to_json(&build(&mut connection, "1").unwrap()).unwrap();
         for secret in [
-            "DESCRIPTION-SECRET",
             "URL-SECRET",
             "THUMB-SECRET",
             "PATH-SECRET",
@@ -615,6 +781,10 @@ mod tests {
         }
         let file: Value = serde_json::from_str(&text).unwrap();
         assert_eq!(file["fileLinks"][0]["filename"], "a.zip");
+        assert_eq!(
+            product(&file, "1001")["descriptionSnippet"],
+            "見本の説明本文"
+        );
     }
 
     #[test]
@@ -653,6 +823,8 @@ mod tests {
         assert_eq!(file["counts"]["avatars"], file["avatars"].as_array().unwrap().len());
         assert_eq!(file["counts"]["fileLinks"], file["fileLinks"].as_array().unwrap().len());
         assert_eq!(file["counts"]["config"], 10);
+        assert_eq!(file["counts"]["thumbnails"], 0);
+        assert_eq!(file["counts"]["heroImages"], 0);
     }
 
     #[test]
@@ -736,26 +908,233 @@ mod tests {
     }
 
     #[test]
-    fn save_rejects_non_json_and_symlink() {
+    fn package_holds_the_manifest_and_the_images() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(save(&dir.path().join("export.txt"), "{}").is_err());
-        assert!(save(&dir.path().join(".json"), "{}").is_err());
-        assert!(save(&dir.path().join("missing").join("export.json"), "{}").is_err());
+        let mut connection = db::open_memory().unwrap();
+        let body = json!({ "products": [{
+            "boothId": "1001",
+            "title": "見本の衣装",
+            "shop": "見本工房",
+            "description": "見本の説明本文",
+            "thumbnailUrl": "https://booth.pximg.net/c/150x150/sample.jpg",
+        }] });
+        db::import_export_json(&mut connection, &body.to_string()).unwrap();
+        import(&mut connection, "1002", "画像の無い見本", "説明");
+        lock_as_outfit(&mut connection, "1001", Some(vec!["lime".into()]));
+        let thumbnail = write_file(&dir.path().join("1001.jpg"), b"jpeg-bytes");
+        let hero = write_file(&dir.path().join("lime.png"), b"png-bytes");
+        set_thumbnail(&connection, "1001", &thumbnail);
+        set_hero(&connection, "lime", &hero);
+
+        let (names, file) = export_package(&mut connection, dir.path());
+
+        assert_eq!(
+            names,
+            ["files/heroes/lime.png", "files/thumbnails/1001.jpg", "manifest.json"]
+        );
+        assert_eq!(file["format"], "vrclibman-sync");
+        assert_eq!(file["version"], 2);
+        let item = product(&file, "1001");
+        assert_eq!(item["shop"], "見本工房");
+        assert_eq!(item["descriptionSnippet"], "見本の説明本文");
+        assert_eq!(item["thumbnail"], "files/thumbnails/1001.jpg");
+        assert!(product(&file, "1002")["thumbnail"].is_null());
+        assert_eq!(avatar(&file, "lime")["heroImage"], "files/heroes/lime.png");
+        assert_eq!(file["counts"]["thumbnails"], 1);
+        assert_eq!(file["counts"]["heroImages"], 1);
+        let package = dir.path().join("export.zip");
+        assert_eq!(entry_bytes(&package, "files/thumbnails/1001.jpg"), b"jpeg-bytes");
+        assert_eq!(entry_bytes(&package, "files/heroes/lime.png"), b"png-bytes");
+    }
+
+    #[test]
+    fn package_of_empty_db_has_only_the_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut connection = db::open_memory().unwrap();
+        let (names, file) = export_package(&mut connection, dir.path());
+        assert_eq!(names, [MANIFEST_ENTRY]);
+        assert_eq!(file["counts"]["products"], 0);
+    }
+
+    #[test]
+    fn missing_thumbnail_becomes_null_and_the_export_succeeds() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut connection = db::open_memory().unwrap();
+        import(&mut connection, "1001", "ファイルが消えた", "説明");
+        import(&mut connection, "1002", "フォルダを指す", "説明");
+        import(&mut connection, "1003", "読める", "説明");
+        set_thumbnail(&connection, "1001", &dir.path().join("gone.jpg"));
+        let folder = dir.path().join("folder.jpg");
+        std::fs::create_dir(&folder).unwrap();
+        set_thumbnail(&connection, "1002", &folder);
+        let kept = write_file(&dir.path().join("1003.png"), b"png-bytes");
+        set_thumbnail(&connection, "1003", &kept);
+
+        let (names, file) = export_package(&mut connection, dir.path());
+
+        assert_eq!(names, ["files/thumbnails/1003.png", "manifest.json"]);
+        assert!(product(&file, "1001")["thumbnail"].is_null());
+        assert!(product(&file, "1002")["thumbnail"].is_null());
+        assert_eq!(product(&file, "1003")["thumbnail"], "files/thumbnails/1003.png");
+        assert_eq!(file["counts"]["products"], 3);
+        assert_eq!(file["counts"]["thumbnails"], 1);
+    }
+
+    #[test]
+    fn missing_hero_image_becomes_null_and_the_export_succeeds() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut connection = sample_with_links();
+        set_hero(&connection, "lime", &dir.path().join("gone.png"));
+        let (names, file) = export_package(&mut connection, dir.path());
+        assert_eq!(names, [MANIFEST_ENTRY]);
+        assert!(avatar(&file, "lime")["heroImage"].is_null());
+        assert_eq!(file["counts"]["heroImages"], 0);
+    }
+
+    #[test]
+    fn excluded_product_contributes_no_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut connection = db::open_memory().unwrap();
+        import(&mut connection, "1001", "残す", "説明");
+        import(&mut connection, "1002", "除外する", "除外する説明");
+        let kept = write_file(&dir.path().join("1001.jpg"), b"kept");
+        let excluded = write_file(&dir.path().join("1002.jpg"), b"excluded");
+        set_thumbnail(&connection, "1001", &kept);
+        set_thumbnail(&connection, "1002", &excluded);
+        connection
+            .execute(
+                "INSERT INTO product_exclusions (booth_id, excluded_at) VALUES ('1002', 't')",
+                [],
+            )
+            .unwrap();
+
+        let (names, file) = export_package(&mut connection, dir.path());
+
+        assert_eq!(names, ["files/thumbnails/1001.jpg", "manifest.json"]);
+        assert_eq!(file["counts"]["products"], 1);
+        assert_eq!(file["counts"]["thumbnails"], 1);
+        assert!(!file.to_string().contains("除外する"));
+    }
+
+    #[test]
+    fn hero_image_brings_an_otherwise_untouched_builtin_avatar() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut connection = db::open_memory().unwrap();
+        let hero = write_file(&dir.path().join("lime.webp"), b"webp-bytes");
+        set_hero(&connection, "lime", &hero);
+
+        let (names, file) = export_package(&mut connection, dir.path());
+
+        assert_eq!(avatar_ids(&file), ["lime"]);
+        assert_eq!(avatar(&file, "lime")["heroImage"], "files/heroes/lime.webp");
+        assert_eq!(names, ["files/heroes/lime.webp", "manifest.json"]);
+    }
+
+    #[test]
+    fn entry_names_stay_inside_the_package() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut connection = db::open_memory().unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO avatars (id, display_name) VALUES ('../evil', '古い行');
+                 INSERT INTO products (booth_id, title, imported_at, updated_at)
+                 VALUES ('../1001', '古い行', 't', 't');",
+            )
+            .unwrap();
+        let image = write_file(&dir.path().join("image.png"), b"png-bytes");
+        set_hero(&connection, "../evil", &image);
+        set_thumbnail(&connection, "../1001", &image);
+
+        let (names, file) = export_package(&mut connection, dir.path());
+
+        let hero = avatar(&file, "../evil")["heroImage"].as_str().unwrap();
+        assert_eq!(hero, format!("files/heroes/{}.png", hero_image::file_stem("../evil")));
+        assert!(!hero.contains(".."), "{hero}");
+        assert_eq!(names, [hero, MANIFEST_ENTRY]);
+        assert!(product(&file, "../1001")["thumbnail"].is_null());
+    }
+
+    #[test]
+    fn entry_extension_comes_from_the_cached_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut connection = db::open_memory().unwrap();
+        import(&mut connection, "1001", "大文字", "説明");
+        import(&mut connection, "1002", "拡張子なし", "説明");
+        import(&mut connection, "1003", "長い拡張子", "説明");
+        import(&mut connection, "1004", "記号の拡張子", "説明");
+        let upper = write_file(&dir.path().join("a.WEBP"), b"a");
+        let none = write_file(&dir.path().join("noext"), b"b");
+        let long = write_file(&dir.path().join("c.toolongextension"), b"c");
+        let odd = write_file(&dir.path().join("d.p-g"), b"d");
+        set_thumbnail(&connection, "1001", &upper);
+        set_thumbnail(&connection, "1002", &none);
+        set_thumbnail(&connection, "1003", &long);
+        set_thumbnail(&connection, "1004", &odd);
+
+        let (names, file) = export_package(&mut connection, dir.path());
+
+        assert_eq!(names, ["files/thumbnails/1001.webp", "manifest.json"]);
+        for id in ["1002", "1003", "1004"] {
+            assert!(product(&file, id)["thumbnail"].is_null(), "{id}");
+        }
+    }
+
+    #[test]
+    fn package_has_no_local_paths_or_private_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut connection = db::open_memory().unwrap();
+        let body = json!({ "products": [{
+            "boothId": "1001",
+            "title": "見本の衣装",
+            "thumbnailUrl": "https://booth.pximg.net/c/150x150/THUMB-SECRET.jpg",
+        }] });
+        db::import_export_json(&mut connection, &body.to_string()).unwrap();
+        for key in ["extension_token", "library_folder", "remote_library_folder"] {
+            db::set_setting(&connection, key, &format!("LEAK-{key}")).unwrap();
+        }
+        let thumbnail = write_file(&dir.path().join("1001.jpg"), b"jpeg-bytes");
+        let hero = write_file(&dir.path().join("lime.png"), b"png-bytes");
+        set_thumbnail(&connection, "1001", &thumbnail);
+        set_hero(&connection, "lime", &hero);
+
+        let (names, file) = export_package(&mut connection, dir.path());
+
+        let text = file.to_string();
+        let root = dir.path().to_str().unwrap();
+        for secret in [root, "LEAK-", "THUMB-SECRET", "thumbnailUrl", "thumbnailPath", "heroImagePath"] {
+            assert!(!text.contains(secret), "{secret}");
+        }
+        assert!(names.iter().all(|name| !name.contains(root)), "{names:?}");
+    }
+
+    fn save_empty(path: &Path) -> Result<SyncCounts, String> {
+        let mut connection = db::open_memory().unwrap();
+        let file = build(&mut connection, "9.9.9").unwrap();
+        let images = package_images(&connection).unwrap();
+        save_package(path, file, &images)
+    }
+
+    #[test]
+    fn save_rejects_non_zip_and_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(save_empty(&dir.path().join("export.json")).is_err());
+        assert!(save_empty(&dir.path().join(".zip")).is_err());
+        assert!(save_empty(&dir.path().join("missing").join("export.zip")).is_err());
         #[cfg(unix)]
         {
-            let target = dir.path().join("target.json");
+            let target = dir.path().join("target.zip");
             std::fs::write(&target, "kept").unwrap();
-            let link = dir.path().join("link.json");
+            let link = dir.path().join("link.zip");
             std::os::unix::fs::symlink(&target, &link).unwrap();
             assert_eq!(
-                save(&link, "{}").unwrap_err(),
+                save_empty(&link).unwrap_err(),
                 "シンボリックリンクには保存できません"
             );
             assert_eq!(std::fs::read_to_string(&target).unwrap(), "kept");
         }
         // A directory at the destination makes the final rename fail.
-        std::fs::create_dir(dir.path().join("taken.json")).unwrap();
-        assert!(save(&dir.path().join("taken.json"), "{}").is_err());
+        std::fs::create_dir(dir.path().join("taken.zip")).unwrap();
+        assert!(save_empty(&dir.path().join("taken.zip")).is_err());
         let left: Vec<_> = std::fs::read_dir(dir.path())
             .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
@@ -767,10 +1146,11 @@ mod tests {
     #[test]
     fn save_replaces_existing_file() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("export.json");
-        std::fs::write(&path, "older and much longer content than the new body").unwrap();
-        save(&path, "{}\n").unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{}\n");
+        let path = dir.path().join("export.zip");
+        std::fs::write(&path, "older content that is not a package").unwrap();
+        save_empty(&path).unwrap();
+        let manifest: Value = serde_json::from_slice(&entry_bytes(&path, MANIFEST_ENTRY)).unwrap();
+        assert_eq!(manifest["version"], 2);
         let names = std::fs::read_dir(dir.path()).unwrap().count();
         assert_eq!(names, 1);
     }

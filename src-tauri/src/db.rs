@@ -2285,18 +2285,30 @@ pub(crate) fn save_classification_feedback_body(path: &std::path::Path, body: &s
     Ok(())
 }
 
-/// The save path for a chosen JSON file: a `.json` name in an existing folder, and not a symlink.
 pub(crate) fn checked_json_destination(path: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    checked_destination(path, ".json", "保存先は JSON ファイルにしてください")
+}
+
+pub(crate) fn checked_zip_destination(path: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    checked_destination(path, ".zip", "保存先は ZIP ファイルにしてください")
+}
+
+/// The save path for a chosen file: a name with `suffix` in an existing folder, and not a symlink.
+fn checked_destination(
+    path: &std::path::Path,
+    suffix: &str,
+    wrong_kind: &str,
+) -> Result<std::path::PathBuf, String> {
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
         .filter(|name| {
             !name.is_empty()
-                && *name != ".json"
-                && name.to_ascii_lowercase().ends_with(".json")
+                && *name != suffix
+                && name.to_ascii_lowercase().ends_with(suffix)
                 && !name.contains(['/', '\\', '\0'])
         })
-        .ok_or("保存先は JSON ファイルにしてください")?;
+        .ok_or(wrong_kind)?;
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
