@@ -3920,6 +3920,9 @@ pub(crate) fn route_staged_download(connection: &mut Connection, source: &Path) 
         title: String::new(),
     };
     let plan = prepare_download(connection, &notice)?;
+    if crate::library_files::file_looks_like_login_page(&plan.source) {
+        return Err(BROWSER_LOGIN_MESSAGE.into());
+    }
     let placed = crate::library_files::place_into_library(
         &plan.source,
         plan.library.as_deref(),
@@ -10218,6 +10221,8 @@ mod tests {
             .join("body.unitypackage");
         std::fs::create_dir_all(source.parent().unwrap()).unwrap();
         std::fs::write(&source, b"pkg").unwrap();
+        let rejected_html = source.parent().unwrap().join("login.zip");
+        std::fs::write(&rejected_html, b"<!doctype html><html>login</html>").unwrap();
         let nested = downloads
             .join("VRCLibMan")
             .join("616161")
@@ -10303,6 +10308,9 @@ mod tests {
         assert!(foreign.exists());
         let report = sweep_staged_downloads(&mut connection);
         assert_eq!(report.moved, 1);
+        assert!(rejected_html.exists());
+        assert!(!library.join("616161/login.zip").exists());
+        assert!(report.left.iter().any(|entry| entry.filename == "login.zip"));
         assert!(!source.exists());
         let placed = library.join("616161").join("body.unitypackage");
         assert_eq!(std::fs::read(&placed).unwrap(), b"pkg");

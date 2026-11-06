@@ -79,7 +79,6 @@ fn db(state: &AppState) -> Result<MutexGuard<'_, rusqlite::Connection>, String> 
         .map_err(|_| "データベースをロックできません".to_string())
 }
 
-pub(crate) use crate::progress::emit_progress;
 use crate::progress::ProgressGuard;
 
 #[tauri::command]
@@ -1212,6 +1211,7 @@ pub async fn extract_products(
     }
     state.cancel_extract.store(false, Ordering::SeqCst);
     let _clear = ClearRunning(running);
+    let progress = ProgressGuard::new(app.clone(), "extract");
     let jobs: Vec<ExtractJob> = {
         let mut connection = db(&state)?;
         db::products_for_extract(&mut connection, db::parse_extract_target(&target)?)?
@@ -1271,9 +1271,7 @@ pub async fn extract_products(
             }
         }
         let label: String = job.title.chars().take(40).collect();
-        emit_progress(
-            &app,
-            "extract",
+        progress.update(
             index as u32,
             total,
             crate::progress::counted_message("分類中", index as u32 + 1, total, &label),
@@ -1378,25 +1376,20 @@ pub async fn extract_products(
         ),
     );
     if processed > 0 {
-        emit_progress(&app, "extract", total, total, "分類結果を整理しています");
+        progress.update(total, total, "分類結果を整理しています");
         let mut connection = db(&state)?;
         db::reresolve_all(&mut connection)?;
     }
-    emit_progress(
-        &app,
-        "extract",
-        total,
-        total,
-        if cancelled {
-            "分類を中断しました".into()
+    if cancelled {
+        progress.cancel("分類を中断しました");
+    } else {
+        let message = if cloud_withheld > 0 {
+            format!("{processed} 件分類、{failed} 件失敗（カテゴリとタグ {booth_settled}、モデル {model_used}）。年齢制限の {cloud_withheld} 件はクラウドに送らず未分類のままです")
         } else {
-            if cloud_withheld > 0 {
-                format!("{processed} 件分類、{failed} 件失敗（カテゴリとタグ {booth_settled}、モデル {model_used}）。年齢制限の {cloud_withheld} 件はクラウドに送らず未分類のままです")
-            } else {
-                format!("{processed} 件分類、{failed} 件失敗（カテゴリとタグ {booth_settled}、モデル {model_used}）")
-            }
-        },
-    );
+            format!("{processed} 件分類、{failed} 件失敗（カテゴリとタグ {booth_settled}、モデル {model_used}）")
+        };
+        progress.done_with(total, message);
+    }
     if settings.llm_backend == "ollama" && settings.unload_ollama_after_classification {
         let _ = ollama::unload_model(
             &client,

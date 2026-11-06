@@ -10,7 +10,7 @@ const product={boothId:'123456',title:'テスト衣装',downloads:[{filename:'sa
 function event(){const listeners=[];return {listeners,addListener(fn){listeners.push(fn);}};}
 function worker(initial={}, previousItems=[]) {
   const data={pairingToken:'ABCD-2345',routeDownloads:true,...structuredClone(initial)};
-  const items=structuredClone(previousItems);const sent=[];let online=true;let httpStatus=200;
+  const items=structuredClone(previousItems);const sent=[];let online=true;let httpStatus=200;let rejectId='';
   const changes=event();const messages=event();const filenames=event();const alarms=event();const startup=event();const installed=event();
   const chrome={runtime:{id:'a'.repeat(32),onMessage:messages,onStartup:startup,onInstalled:installed,getManifest:()=>({version:'0.1.16'}),getURL:p=>`chrome-extension://${'a'.repeat(32)}/${p}`},
     storage:{local:{async get(defaults){return {...defaults,...structuredClone(data)};},async set(values){Object.assign(data,structuredClone(values));}},session:{async get(defaults){return defaults;}}},
@@ -21,10 +21,10 @@ function worker(initial={}, previousItems=[]) {
       async download(options){const id=items.length+1;const item={id,url:options.url,filename:`/Downloads/${options.filename}`,state:'in_progress',mime:'application/zip',fileSize:42};items.push(item);return id;}}
   };
   const context=vm.createContext({chrome,URL,AbortSignal,crypto:webcrypto,setTimeout,clearTimeout,
-    async fetch(url,options){if(!online)throw new Error('offline');sent.push({url,body:JSON.parse(options.body),options});return {ok:httpStatus===200,status:httpStatus,async json(){return {ok:true,products:[]};}};}});
+    async fetch(url,options){if(!online)throw new Error('offline');const body=JSON.parse(options.body);sent.push({url,body,options});const status=body.notificationId===rejectId?400:httpStatus;return {ok:status===200,status,async json(){return {ok:true,products:[]};}};}});
   context.importScripts=(...paths)=>{for(const p of paths)vm.runInContext(readFileSync(new URL(`../extension/${p}`,import.meta.url),'utf8'),context);};
   vm.runInContext(readFileSync(new URL('../extension/background.js',import.meta.url),'utf8'),context);
-  return {data,items,sent,context,chrome,offline(){online=false;},online(){online=true;},status(value){httpStatus=value;},
+  return {data,items,sent,context,chrome,offline(){online=false;},online(){online=true;},status(value){httpStatus=value;},reject(value){rejectId=value;},
     async idle(){await vm.runInContext('serial',context);},
     async message(message,sender={id:chrome.runtime.id,url:chrome.runtime.getURL('popup.html')}){return new Promise(resolve=>{const result=messages.listeners[0](message,sender,resolve);if(result!==true)resolve(undefined);});},
     async finish(index=0){items[index].state='complete';changes.listeners[0]({id:items[index].id,state:{current:'complete'}});await vm.runInContext('serial',context);},
@@ -66,6 +66,13 @@ test('non-2xx replies keep notification pending and token changes do not send to
   const w=worker();await w.message({type:'start-download',tabId:1,downloadableId:'555555'});w.status(400);await w.finish();
   assert.equal(w.data.pendingDeliveries.length,1);w.status(200);w.data.pairingToken='ZZZZ-9999';const count=w.sent.length;await w.retry();
   assert.equal(w.sent.length,count);assert.equal(w.data.pendingDeliveries.length,1);
+});
+test('one rejected notification does not block later deliveries',async()=>{
+  const entries=['bad','good'].map(id=>({id,token:'ABCD2345',notice:{notificationId:id}}));
+  const w=worker({pendingDeliveries:entries});w.reject('bad');await w.retry();
+  assert.deepEqual(w.data.pendingDeliveries.map(row=>row.id),['bad']);
+  assert.deepEqual(w.sent.map(row=>row.body.notificationId),['bad','good']);
+  assert.match(w.data.deliveryError,/400/);
 });
 test('reconcile recovers complete downloads after shutdown before the completion event',async()=>{
   const w=worker();await w.message({type:'start-download',tabId:1,downloadableId:'555555'});w.items[0].state='complete';
