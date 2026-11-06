@@ -1013,6 +1013,7 @@ fn sync_export_app_version(app: &AppHandle) -> String {
     app.package_info().version.to_string()
 }
 
+/// The manifest alone, so every image reference is `null`. Only `save_sync_export` adds files.
 #[tauri::command]
 pub fn sync_export_json(
     view: tauri::Webview,
@@ -1020,14 +1021,15 @@ pub fn sync_export_json(
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     if view.label() != "main" {
-        return Err("この画面から同期データは書き出せません".into());
+        return Err("この画面からデータ移行のファイルは書き出せません".into());
     }
     let mut connection = db(&state)?;
     let file = crate::sync_export::build(&mut connection, &sync_export_app_version(&app))?;
     crate::sync_export::to_json(&file)
 }
 
-/// The database lock covers building the JSON only, so a slow share cannot hold up the app.
+/// The database lock covers reading the rows only, so copying images to a slow share cannot hold
+/// up the app.
 #[tauri::command]
 pub async fn save_sync_export(
     view: tauri::Webview,
@@ -1035,20 +1037,20 @@ pub async fn save_sync_export(
     path: String,
 ) -> Result<crate::sync_export::SyncExportReport, String> {
     if view.label() != "main" {
-        return Err("この画面から同期データは書き出せません".into());
+        return Err("この画面からデータ移行のファイルは書き出せません".into());
     }
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        let (json, counts) = {
+        let (file, images) = {
             let mut connection = db(&state)?;
             let file = crate::sync_export::build(&mut connection, &sync_export_app_version(&app))?;
-            (crate::sync_export::to_json(&file)?, file.counts)
+            (file, crate::sync_export::package_images(&connection)?)
         };
-        crate::sync_export::save(Path::new(&path), &json)?;
+        let counts = crate::sync_export::save_package(Path::new(&path), file, &images)?;
         Ok(crate::sync_export::SyncExportReport { counts })
     })
     .await
-    .map_err(|err| format!("同期データを保存できません: {err}"))?
+    .map_err(|err| format!("データ移行のファイルを保存できません: {err}"))?
 }
 
 #[tauri::command]
