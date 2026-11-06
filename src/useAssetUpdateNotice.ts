@@ -14,7 +14,7 @@ export function useAssetUpdateNotice(notify: (message: string, action?: NoticeAc
         if (!alive) return;
         const rows = status.rows.filter((r) => r.changes.length && !seen.current.has(`${r.boothId}:${r.revision}:${r.changes.join(",")}`));
         for (const row of rows) seen.current.add(`${row.boothId}:${row.revision}:${row.changes.join(",")}`);
-        if (rows.length) notify(`${rows.length} 件のアセットに更新候補があります`, { label: "更新候補を確認", run: () => { window.location.hash = "#/settings"; window.setTimeout(() => document.getElementById("settings-asset-updates")?.scrollIntoView(), 300); } });
+        if (rows.length) notify(`${rows.length} 件のアセットに更新候補があります`, { label: "更新設定を開く", run: () => { window.location.hash = "#/settings"; window.setTimeout(() => document.getElementById("settings-asset-updates")?.scrollIntoView(), 300); } });
         for (const key of seen.current) if (!status.rows.some((r) => r.changes.length && key === `${r.boothId}:${r.revision}:${r.changes.join(",")}`)) seen.current.delete(key);
       } catch { /* The settings screen reports read failures; do not repeat background banners. */ }
     }
