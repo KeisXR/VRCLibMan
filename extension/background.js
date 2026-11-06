@@ -26,18 +26,19 @@ async function localRequest(path, body, token) {
 async function flush() {
   const stored = await settings();
   if (!stored.pairingToken) return;
+  let failure = '';
   for (const entry of stored.pendingDeliveries) {
     if (entry.token !== normalized(stored.pairingToken)) continue;
     try {
       if (entry.product) await localRequest('/import', { format:'vrclibman.booth-export', version:1, products:[entry.product] }, stored.pairingToken);
       await localRequest('/download-finished', entry.notice, stored.pairingToken);
       const current = await settings();
-      await chrome.storage.local.set({ pendingDeliveries:current.pendingDeliveries.filter(row => row.id !== entry.id), deliveryError:'' });
+      await chrome.storage.local.set({ pendingDeliveries:current.pendingDeliveries.filter(row => row.id !== entry.id) });
     } catch (error) {
-      await chrome.storage.local.set({ deliveryError: error.message });
-      break;
+      failure ||= error.message;
     }
   }
+  await chrome.storage.local.set({ deliveryError: failure });
 }
 async function queueNotice(notice, intent, downloadId) {
   const stored = await settings();

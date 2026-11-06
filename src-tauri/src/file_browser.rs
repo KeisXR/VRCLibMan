@@ -133,6 +133,15 @@ pub(crate) fn resolve(path: &Path) -> Result<PathBuf, String> {
     }
 }
 
+fn file_type(path: &Path) -> Result<std::fs::FileType, String> {
+    let path = path.to_path_buf();
+    match wait_for(LIST_TIMEOUT, move || std::fs::metadata(path)) {
+        None => Err(NO_ANSWER.into()),
+        Some(Err(_)) => Err(NOT_FOUND.into()),
+        Some(Ok(meta)) => Ok(meta.file_type()),
+    }
+}
+
 /// A configured root that may be missing or offline. Never fails the listing.
 pub(crate) fn optional_root(value: &str) -> Option<PathBuf> {
     let value = value.trim();
@@ -143,7 +152,7 @@ pub(crate) fn optional_root(value: &str) -> Option<PathBuf> {
     if !path.is_absolute() {
         return None;
     }
-    resolve(path).ok().filter(|path| path.is_dir())
+    resolve(path).ok().filter(|path| file_type(path).is_ok_and(|kind| kind.is_dir()))
 }
 
 fn display(path: &Path) -> String {
@@ -191,7 +200,7 @@ pub(crate) fn sort_entries(entries: &mut [DirEntryView]) {
 pub(crate) fn list_directory(raw: &str, library: &str, remote: &str) -> Result<DirListing, String> {
     let requested = requested_path(raw, library)?;
     let resolved = resolve(&requested)?;
-    if !resolved.is_dir() {
+    if !file_type(&resolved)?.is_dir() {
         return Err("フォルダではありません".into());
     }
     let read_from = resolved.clone();
@@ -365,7 +374,7 @@ pub(crate) fn list_zip(raw: &str, library: &str, remote: &str) -> Result<ZipList
         return Err("zip ファイルではありません".into());
     }
     let resolved = resolve(&requested)?;
-    if !resolved.is_file() {
+    if !file_type(&resolved)?.is_file() {
         return Err("zip ファイルではありません".into());
     }
     let read_from = resolved.clone();

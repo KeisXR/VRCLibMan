@@ -975,7 +975,8 @@ pub(crate) fn staged_download_candidates(downloads: &Path) -> Vec<PathBuf> {
             if meta.is_dir() && !meta.file_type().is_symlink() {
                 continue;
             }
-            if meta.is_file() || meta.file_type().is_symlink() {
+            let incomplete = path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| matches!(ext.to_ascii_lowercase().as_str(), "crdownload" | "part" | "download" | "tmp"));
+            if !incomplete && (meta.is_file() || meta.file_type().is_symlink()) {
                 found.push(path);
             }
         }
@@ -987,6 +988,21 @@ pub(crate) fn staged_download_candidates(downloads: &Path) -> Vec<PathBuf> {
 mod tests {
     use super::*;
     use std::time::Instant;
+
+    #[test]
+    fn staged_candidates_skip_incomplete_downloads() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("VRCLibMan/123456");
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["complete.zip", "pending.zip.crdownload", "pending.zip.part", "pending.DOWNLOAD", "pending.tmp"] {
+            std::fs::write(dir.join(name), b"data").unwrap();
+        }
+        // Compare the tail components only: the returned paths may carry the platform's
+        // resolved prefix (macOS /private, Windows verbatim), the tempdir path does not.
+        let found = staged_download_candidates(root.path());
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].ends_with(std::path::Path::new("VRCLibMan").join("123456").join("complete.zip")), "{found:?}");
+    }
 
     #[cfg(target_os = "linux")]
     #[test]

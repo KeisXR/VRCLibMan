@@ -1431,7 +1431,17 @@ fn apply_listed_compatibility(connection: &mut Connection, booth_id: &str) -> Re
     let category = if existing.category_locked {
         existing.category.unwrap_or(Category::Outfit)
     } else {
-        crate::compat::category_for_listed_product(&existing.title, &existing.description_snippet)
+        // The list adds links. Title keywords that find nothing must not undo a settled category.
+        match (
+            crate::compat::category_for_listed_product(
+                &existing.title,
+                &existing.description_snippet,
+            ),
+            existing.category,
+        ) {
+            (Category::Other, Some(current)) => current,
+            (listed, _) => listed,
+        }
     };
     let threshold = settings(connection)?.confidence_threshold;
     apply_extraction(
@@ -3932,6 +3942,9 @@ pub(crate) fn route_staged_download(connection: &mut Connection, source: &Path) 
         title: String::new(),
     };
     let plan = prepare_download(connection, &notice)?;
+    if crate::library_files::file_looks_like_login_page(&plan.source) {
+        return Err(BROWSER_LOGIN_MESSAGE.into());
+    }
     let placed = crate::library_files::place_into_library(
         &plan.source,
         plan.library.as_deref(),
@@ -8878,6 +8891,25 @@ mod tests {
     }
 
     #[test]
+    fn a_plain_compat_list_keeps_a_category_the_title_cannot_decide() {
+        let mut connection = open_memory().unwrap();
+        let json = r#"[{"boothId":"8800773","title":"見本の品","description":"対応アバター\nうらら\nライム\n基本仕様\n布です。"}]"#;
+        import_products(&mut connection, &parse_export(json).unwrap()).unwrap();
+        apply_extraction(
+            &mut connection,
+            "8800773",
+            &extraction(Category::Outfit, &[], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        // The same payload again is an unchanged product, which still runs compatibility.
+        import_products(&mut connection, &parse_export(json).unwrap()).unwrap();
+        let kept = require_product(&connection, "8800773").unwrap();
+        assert_eq!(kept.category, Some(Category::Outfit));
+        assert!(link_ids(&connection, "8800773").unwrap().iter().any(|id| id == "lime"));
+    }
+
+    #[test]
     fn quoted_body_identity_wins_over_known_names_outside_the_quotation() {
         for (index, title, expected_name, expected_id) in [
             (0, "オリジナル3Dモデル「輝夜」 ライム対応", "輝夜", "owned-8800780"),
@@ -10230,6 +10262,8 @@ mod tests {
             .join("body.unitypackage");
         std::fs::create_dir_all(source.parent().unwrap()).unwrap();
         std::fs::write(&source, b"pkg").unwrap();
+        let rejected_html = source.parent().unwrap().join("login.zip");
+        std::fs::write(&rejected_html, b"<!doctype html><html>login</html>").unwrap();
         let nested = downloads
             .join("VRCLibMan")
             .join("616161")
@@ -10315,6 +10349,9 @@ mod tests {
         assert!(foreign.exists());
         let report = sweep_staged_downloads(&mut connection);
         assert_eq!(report.moved, 1);
+        assert!(rejected_html.exists());
+        assert!(!library.join("616161/login.zip").exists());
+        assert!(report.left.iter().any(|entry| entry.filename == "login.zip"));
         assert!(!source.exists());
         let placed = library.join("616161").join("body.unitypackage");
         assert_eq!(std::fs::read(&placed).unwrap(), b"pkg");
