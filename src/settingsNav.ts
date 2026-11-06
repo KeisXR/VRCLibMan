@@ -7,7 +7,7 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{ id: string; label: string }> = 
   { id: "settings-asset-updates", label: "更新候補" },
   { id: "settings-booth", label: "BOOTH" },
   { id: "settings-classify", label: "分類モデル" },
-  { id: "settings-data", label: "データ" },
+  { id: "settings-data", label: "バージョン情報" },
   { id: "settings-knowledge", label: "対応表を編集" },
   { id: "settings-debug", label: "デバッグ" },
 ];

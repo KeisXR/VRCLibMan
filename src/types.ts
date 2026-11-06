@@ -72,6 +72,9 @@ export interface DownloadView {
   state: FilePlace;
   localPath: string | null;
   remotePath: string | null;
+  downloadableId?: string | null;
+  isNew?: boolean;
+  superseded?: boolean;
 }
 
 export interface RemoteProductProbe {
@@ -316,7 +319,7 @@ export interface Settings {
   uiUpdateDismissedVersion: string;
   /** 初回起動で作る端末 ID。変更しない。 */
   deviceId: string;
-  /** 同期データに記録する端末名。既定は OS のホスト名。 */
+  /** データ移行のファイルに記録する端末名。既定は OS のホスト名。 */
   deviceName: string;
 }
 
@@ -326,6 +329,9 @@ export interface SyncCounts {
   avatars: number;
   fileLinks: number;
   config: number;
+  /** パッケージに実際に入れた画像の数。 */
+  thumbnails: number;
+  heroImages: number;
 }
 
 export interface SyncExportReport {

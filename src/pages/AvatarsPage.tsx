@@ -74,6 +74,24 @@ export function AvatarsPage() {
   );
 }
 
+/** One avatar card linking to its detail page. Shared with the library search results. */
+export function AvatarCardLink({ card }: { card: AvatarCard }) {
+  return (
+    <a className="card avatar-card" href={`#/avatar/${encodeURIComponent(card.id)}`}>
+      <Thumb path={card.thumbnailPath} url={card.thumbnailUrl} name={card.displayName} />
+      <div>
+        <h2 className="card-title">{card.displayName}</h2>
+        <div className="pills">
+          <span className="pill">{CATEGORY_LABEL.outfit} {card.outfitCount}</span>
+          <span className="pill">{CATEGORY_LABEL.hair} {card.hairCount}</span>
+          <span className="pill">{CATEGORY_LABEL.gimmick} {card.gimmickCount}</span>
+          {card.genericCount > 0 && <span className="pill">汎用 {card.genericCount}</span>}
+        </div>
+      </div>
+    </a>
+  );
+}
+
 function AvatarGroups({
   title,
   note,
@@ -117,18 +135,7 @@ function AvatarGroups({
           {group.title && <h2>{group.title}</h2>}
           <div className="cards">
             {group.cards.map((card) => (
-              <a className="card avatar-card" key={card.id} href={`#/avatar/${encodeURIComponent(card.id)}`}>
-                <Thumb path={card.thumbnailPath} url={card.thumbnailUrl} name={card.displayName} />
-                <div>
-                  <h2 className="card-title">{card.displayName}</h2>
-                  <div className="pills">
-                    <span className="pill">{CATEGORY_LABEL.outfit} {card.outfitCount}</span>
-                    <span className="pill">{CATEGORY_LABEL.hair} {card.hairCount}</span>
-                    <span className="pill">{CATEGORY_LABEL.gimmick} {card.gimmickCount}</span>
-                    {card.genericCount > 0 && <span className="pill">汎用 {card.genericCount}</span>}
-                  </div>
-                </div>
-              </a>
+              <AvatarCardLink key={card.id} card={card} />
             ))}
           </div>
         </div>

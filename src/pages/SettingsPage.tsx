@@ -456,7 +456,7 @@ export function SettingsPage() {
           </section>
 
           <section className="settings-section" id="settings-data">
-            <header><h2>データ</h2><p>バージョン、アバター対応表と初期データを確認します。</p></header>
+            <header><h2>バージョン情報</h2><p>バージョンと更新、同梱の対応表を確認します。</p></header>
             <SettingRow label="バージョン" help="アプリと拡張機能は別のバージョン番号です。">
               <div className="version-info"><p>アプリ v{version || "確認中"}</p>
                 {integration && integration.mode !== "browser" && <>
@@ -482,9 +482,6 @@ export function SettingsPage() {
               <div className="inline-control"><button className="button primary" type="button" onClick={() => void refreshCatalog()}>対応表を更新</button><button className="button" type="button" onClick={() => void openExternal(catalog.sourceUrl)}>出典</button><button className="button" type="button" onClick={() => void openExternal(catalog.termsUrl)}>利用規約</button></div>
             </SettingRow>}
             {catalog && <details className="settings-details"><summary>対応表について詳しく</summary><p>取得日：{catalog.fetchedOn || "未記録"}{catalog.upstreamUpdated ? `・元データの更新日：${catalog.upstreamUpdated}` : ""}</p><p>「対応表を更新」を押すと GitHub から取得します。規約ではコピー、保存、二次利用、商用利用が許されています。正確性の保証はなく、アバターの著作権は各作者にあります。</p></details>}
-            <SettingRow label="メンテナンス" help="不足している初期データの追加や、商品の対応アバターの見直しを行います。通常は更新・編集時に自動で見直します。">
-              <div className="inline-control"><button className="button" type="button" onClick={() => void restore()}>初期データを追加</button><button className="button" type="button" onClick={() => void reresolve()}>対応表を再適用</button><button className="button" type="button" onClick={() => void reopenSetup()}>セットアップを再表示</button></div>
-            </SettingRow>
             <details className="settings-details privacy-notice">
               <summary>プライバシー</summary>
               <p>本アプリには、利用者の情報を開発者へ送信する機能はありません。</p>
@@ -493,7 +490,7 @@ export function SettingsPage() {
               <p>内蔵ブラウザでの閲覧やログインには、開いたサイトとの通信を行います。ログイン状態とブックマークは端末内に保存し、選択したファイルのダウンロード時には BOOTH の Cookie を利用します。</p>
               <p>各サイトのログイン状態と閲覧データは「内蔵ブラウザの閲覧データを削除」で削除できます。ライブラリ情報・設定・ブックマークは残ります。</p>
               <p>更新を確認・ダウンロードするときは GitHub と通信します。ライブラリや購入情報は送信しません。</p>
-              <p>エクスポートしたファイルには商品名とファイル名が含まれます。保存先の管理はご自身で行ってください。</p>
+              <p>エクスポートしたファイルには商品名、ショップ名、説明文、サムネイル、ヒーロー画像、ファイル名が含まれます。保存先の管理はご自身で行ってください。</p>
             </details>
           </section>
 
@@ -514,6 +511,9 @@ export function SettingsPage() {
               <span className="debug-summary-help">分類ルールの改善に渡すデータです。普段は閉じておきます。</span>
             </summary>
             <ClassificationFeedback />
+            <SettingRow label="メンテナンス" help="不足している初期データの追加や、商品の対応アバターの見直しを行います。通常は更新・編集時に自動で見直します。">
+              <div className="inline-control"><button className="button" type="button" onClick={() => void restore()}>初期データを追加</button><button className="button" type="button" onClick={() => void reresolve()}>対応表を再適用</button><button className="button" type="button" onClick={() => void reopenSetup()}>セットアップを再表示</button></div>
+            </SettingRow>
           </details>
           </div>
         </div>

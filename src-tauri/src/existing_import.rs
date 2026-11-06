@@ -90,8 +90,8 @@ fn record(c: &mut Connection,s: &Selection,path: &Path) -> Result<(),String> {
     let tx=c.transaction().map_err(sql)?;
     validate(&catalog(&tx)?,s)?;
     let path=library_files::without_verbatim_prefix(path).display().to_string();
-    let linked: Option<String>=tx.query_row("SELECT linked_product_id FROM local_files WHERE path=?1",[&path],|r|r.get::<_,Option<String>>(0)).optional().map_err(sql)?.flatten();
-    if linked.is_some_and(|id|id!=s.booth_id) { return Err("別の商品への手動登録を保持しました".into()); }
+    let linked: Option<(Option<String>, Option<String>)>=tx.query_row("SELECT linked_product_id, link_source FROM local_files WHERE path=?1",[&path],|r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(sql)?;
+    if linked.is_some_and(|(id, source)|id.is_some_and(|id|id!=s.booth_id) && source.as_deref()!=Some("auto")) { return Err("別の商品への登録を保持しました".into()); }
     let existing: Option<String>=tx.query_row("SELECT local_path FROM product_files WHERE booth_id=?1 AND variation=?2 AND filename=?3",params![s.booth_id,s.variation,s.filename],|r|r.get(0)).map_err(sql)?;
     // Do not replace a different registered path, even when its disk is temporarily unavailable.
     if existing.as_deref().is_some_and(|p|p!=path) { return Err("登録済みの保存先を保持しました".into()); }
@@ -186,6 +186,16 @@ mod tests {
         assert_eq!(preview(catalog(&c).unwrap(),dir.path()).unwrap().entries[0].status,"registered");
         c.execute_batch("INSERT INTO products(booth_id,title,imported_at,updated_at) VALUES('123457','別の商品','t','t'); UPDATE local_files SET linked_product_id='123457';").unwrap();
         assert!(record(&mut c,&s,&p).is_err());
+    }
+    #[test]
+    fn explicit_registration_replaces_an_automatic_link() {
+        let (dir,mut c)=fixture(); let s=selection(dir.path());
+        let p=source(dir.path(),&s).unwrap();
+        c.execute_batch("INSERT INTO products(booth_id,title,imported_at,updated_at) VALUES('123457','別の商品','t','t');").unwrap();
+        c.execute("INSERT INTO local_files(path,filename,linked_product_id,link_source,scanned_at) VALUES(?1,'outfit_v1.zip','123457','auto','t')",[p.display().to_string()]).unwrap();
+        record(&mut c,&s,&p).unwrap();
+        let link: (String,String)=c.query_row("SELECT linked_product_id,link_source FROM local_files WHERE path=?1",[p.display().to_string()],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
+        assert_eq!(link, ("123456".into(),"manual".into()));
     }
     #[test]
     fn copy_never_overwrites_and_source_stays_present() {

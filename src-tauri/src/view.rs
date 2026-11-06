@@ -16,6 +16,7 @@ pub struct Snapshot {
     pub download_rows: Vec<DownloadFact>,
     pub placed_downloads: Vec<PlacedDownload>,
     pub product_flags: Vec<ProductFlag>,
+    pub file_watches: HashMap<String, crate::asset_updates::ProductFileWatch>,
     pub remote_configured: bool,
     pub remote_checked: bool,
     pub remote_reachable: bool,
@@ -47,6 +48,9 @@ pub struct DownloadView {
     pub state: FilePlace,
     pub local_path: Option<String>,
     pub remote_path: Option<String>,
+    pub downloadable_id: Option<String>,
+    pub is_new: bool,
+    pub superseded: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -670,18 +674,68 @@ fn variation_views(snapshot: &Snapshot, booth_id: &str) -> Vec<VariationView> {
     rows
 }
 
+fn numeric_downloadable_id(id: Option<&str>) -> Option<u64> {
+    id?.trim().parse::<u64>().ok()
+}
+
+fn file_matches_set(
+    set: &HashSet<String>,
+    downloadable_id: Option<&str>,
+    filename: &str,
+) -> bool {
+    if let Some(id) = downloadable_id.map(str::trim).filter(|id| !id.is_empty()) {
+        if set.contains(id) {
+            return true;
+        }
+    }
+    set.contains(filename.trim())
+}
+
+fn build_download_view(
+    watch: Option<&crate::asset_updates::ProductFileWatch>,
+    variation: String,
+    filename: String,
+    size_bytes: Option<u64>,
+    state: FilePlace,
+    local_path: Option<String>,
+    remote_path: Option<String>,
+    downloadable_id: Option<String>,
+) -> DownloadView {
+    let is_new = watch.is_some_and(|w| file_matches_set(&w.new_files, downloadable_id.as_deref(), &filename));
+    let superseded = state == FilePlace::Missing
+        && watch
+            .and_then(|w| w.current_files.as_ref())
+            .is_some_and(|current| !current.is_empty() && !file_matches_set(current, downloadable_id.as_deref(), &filename));
+    DownloadView {
+        variation,
+        filename,
+        size_bytes,
+        state,
+        local_path,
+        remote_path,
+        downloadable_id,
+        is_new,
+        superseded,
+    }
+}
+
 fn download_views(snapshot: &Snapshot, booth_id: &str) -> Vec<DownloadView> {
+    let watch = snapshot.file_watches.get(booth_id);
     let mut rows: Vec<DownloadView> = snapshot
         .placed_downloads
         .iter()
         .filter(|row| row.booth_id == booth_id)
-        .map(|row| DownloadView {
-            variation: row.variation.clone(),
-            filename: row.filename.clone(),
-            size_bytes: row.size_bytes,
-            state: row.state,
-            local_path: row.local_path.clone(),
-            remote_path: row.remote_path.clone(),
+        .map(|row| {
+            build_download_view(
+                watch,
+                row.variation.clone(),
+                row.filename.clone(),
+                row.size_bytes,
+                row.state,
+                row.local_path.clone(),
+                row.remote_path.clone(),
+                row.downloadable_id.clone(),
+            )
         })
         .collect();
     if rows.is_empty() {
@@ -689,17 +743,37 @@ fn download_views(snapshot: &Snapshot, booth_id: &str) -> Vec<DownloadView> {
             .download_rows
             .iter()
             .filter(|row| row.booth_id == booth_id)
-            .map(|row| DownloadView {
-                variation: row.variation.clone(),
-                filename: row.filename.clone(),
-                size_bytes: row.size_bytes,
-                state: FilePlace::Missing,
-                local_path: row.local_path.clone(),
-                remote_path: None,
+            .map(|row| {
+                build_download_view(
+                    watch,
+                    row.variation.clone(),
+                    row.filename.clone(),
+                    row.size_bytes,
+                    FilePlace::Missing,
+                    row.local_path.clone(),
+                    None,
+                    row.downloadable_id.clone(),
+                )
             })
             .collect();
     }
-    rows.sort_by(|left, right| left.filename.cmp(&right.filename));
+    rows.sort_by(|left, right| {
+        left.superseded
+            .cmp(&right.superseded)
+            .then_with(|| right.is_new.cmp(&left.is_new))
+            .then_with(|| {
+                match (
+                    numeric_downloadable_id(left.downloadable_id.as_deref()),
+                    numeric_downloadable_id(right.downloadable_id.as_deref()),
+                ) {
+                    (Some(l), Some(r)) => r.cmp(&l),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => std::cmp::Ordering::Equal,
+                }
+            })
+            .then_with(|| left.filename.cmp(&right.filename))
+    });
     rows
 }
 
@@ -836,6 +910,7 @@ mod tests {
             download_rows: Vec::new(),
             placed_downloads: Vec::new(),
             product_flags: Vec::new(),
+            file_watches: HashMap::new(),
             remote_configured: false,
             remote_checked: true,
             remote_reachable: false,
@@ -949,6 +1024,7 @@ mod tests {
             state: FilePlace::Missing,
             local_path: None,
             remote_path: None,
+            downloadable_id: None,
         });
         let lime = avatar_detail(&snapshot, "lime").unwrap();
         let body = lime
@@ -1207,6 +1283,7 @@ mod tests {
             } else {
                 None
             },
+            downloadable_id: None,
         }
     }
 
@@ -1274,6 +1351,7 @@ mod tests {
             size_bytes: Some(4),
             downloaded: true,
             local_path: Some("C:\\Assets\\saved.unitypackage".into()),
+            downloadable_id: None,
         });
         snapshot.files.push(local_file("37", "folder", true));
 
@@ -1355,5 +1433,56 @@ mod tests {
         assert_eq!(worlds.counts.get("furniture_props"), None);
         assert_eq!(worlds.items[0].booth_id, "33");
         assert_eq!(worlds.items[0].category, Some(Category::World));
+    }
+
+    #[test]
+    fn downloads_order_new_and_higher_downloadable_ids_first_and_mark_superseded_missing_rows() {
+        let mut snapshot = sample();
+        snapshot.download_rows = vec![
+            DownloadFact {
+                booth_id: "1".into(),
+                variation: String::new(),
+                filename: "MochiFitter73r.zip".into(),
+                size_bytes: Some(10),
+                downloaded: false,
+                local_path: None,
+                downloadable_id: Some("9871769".into()),
+            },
+            DownloadFact {
+                booth_id: "1".into(),
+                variation: String::new(),
+                filename: "MochiFitter74r.zip".into(),
+                size_bytes: Some(10),
+                downloaded: false,
+                local_path: None,
+                downloadable_id: Some("9992758".into()),
+            },
+            DownloadFact {
+                booth_id: "1".into(),
+                variation: String::new(),
+                filename: "MochiFitter75r.zip".into(),
+                size_bytes: Some(10),
+                downloaded: false,
+                local_path: None,
+                downloadable_id: Some("10050000".into()),
+            },
+        ];
+        snapshot.file_watches.insert(
+            "1".into(),
+            crate::asset_updates::ProductFileWatch {
+                new_files: HashSet::from(["10050000".into()]),
+                current_files: Some(HashSet::from(["9992758".into(), "10050000".into()])),
+            },
+        );
+        let rows = download_views(&snapshot, "1");
+        assert_eq!(
+            rows.iter().map(|r| r.filename.as_str()).collect::<Vec<_>>(),
+            vec!["MochiFitter75r.zip", "MochiFitter74r.zip", "MochiFitter73r.zip"]
+        );
+        assert!(rows[0].is_new);
+        assert!(!rows[0].superseded);
+        assert!(!rows[1].is_new);
+        assert!(!rows[1].superseded);
+        assert!(rows[2].superseded);
     }
 }

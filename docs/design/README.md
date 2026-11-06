@@ -271,7 +271,7 @@ VRCLibMan の見た目の決まりを、ほかのプロジェクトへ持ち出�
 
 #### 設定のカテゴリ一覧（`.settings-nav`）
 
-- 部品は `src/components/SettingsNav.tsx`、項目と並びは `src/settingsNav.ts` の `SETTINGS_NAV_ITEMS`。ライブラリ・Unity・起動と常駐・デザイン・更新候補・BOOTH・分類モデル・データ・対応表を編集・デバッグの 10 つで、画面の節の並びと同じです。節の `id`（`settings-unity`、`settings-asset-updates` など）は他の画面からの移動先なので変えません。`settings-app-update` は「データ」の中にあります。
+- 部品は `src/components/SettingsNav.tsx`、項目と並びは `src/settingsNav.ts` の `SETTINGS_NAV_ITEMS`。ライブラリ・Unity・起動と常駐・デザイン・更新候補・BOOTH・分類モデル・バージョン情報・対応表を編集・デバッグの 10 つで、画面の節の並びと同じです。節の `id`（`settings-unity`、`settings-asset-updates` など）は他の画面からの移動先なので変えません。`settings-app-update` は「バージョン情報」（`settings-data`）の中にあります。
 - 「対応表を編集」（`settings-knowledge`）と「デバッグ」（`settings-debug`、閉じた `<details>`）も一覧と同じ列に置きます。一覧から「デバッグ」を押すと開いてから移動します。
 - 広い幅: 左の縦の列（168px）で、上に固定（`position: sticky; top: 0`）。今いるカテゴリはサイドバーと同じ示し方（`--surface`＋650＋`--shadow`＋左端の朱の直線の縦棒。[部品2](#線のアクセントの部品)）。
 - 設定ページの幅が 800px 以下（コンテナクエリ。窓幅ではないので、左サイドバーの開閉や右パネルの有無に関係なく、設定ページの実幅で決まる）: 上に固定した1行の帯にします。折り返さず横にスクロールし、地は `--bg`、下に `1px` の `--line`。今いるカテゴリは影を消し、`.tab.active` と同じ朱の直線の下線（[部品3](#線のアクセントの部品)、両端は 2px の丸み）にします。縦棒は出しません。帯からはみ出していれば帯の中で見える位置へ寄せます。

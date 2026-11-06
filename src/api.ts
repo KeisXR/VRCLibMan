@@ -308,15 +308,16 @@ export async function saveClassificationFeedback(
 export async function exportSyncData(deviceName: string): Promise<SyncExportReport | "cancelled"> {
   const filename = syncExportFilename(deviceName, new Date());
   if (!isTauri()) {
+    // 見本は ZIP を作らず、形式の確認用に manifest だけを落とす。
     const json = await api.syncExportJson();
-    downloadJson(filename, json);
+    downloadJson(filename.replace(/\.zip$/, "-manifest.json"), json);
     return { counts: (JSON.parse(json) as SyncExportReport).counts };
   }
   const { save } = await import("@tauri-apps/plugin-dialog");
   const selected = await save({
-    title: "同期データをエクスポート",
+    title: "データ移行のファイルをエクスポート",
     defaultPath: filename,
-    filters: [{ name: "JSON", extensions: ["json"] }],
+    filters: [{ name: "ZIP", extensions: ["zip"] }],
   });
   if (typeof selected !== "string") return "cancelled";
   return api.saveSyncExport(selected);

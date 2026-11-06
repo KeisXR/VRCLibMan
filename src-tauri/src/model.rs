@@ -192,6 +192,7 @@ pub struct DownloadFact {
     pub size_bytes: Option<u64>,
     pub downloaded: bool,
     pub local_path: Option<String>,
+    pub downloadable_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -221,6 +222,7 @@ pub struct PlacedDownload {
     pub state: FilePlace,
     pub local_path: Option<String>,
     pub remote_path: Option<String>,
+    pub downloadable_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -741,7 +743,7 @@ pub struct ClassificationSnapshot {
 
 /// Result of registering a misclassified product as an owned avatar body.
 #[derive(Debug, Clone, Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum RegisterOwnedBodyResult {
     Registered {
         snapshot: ClassificationSnapshot,
@@ -752,6 +754,36 @@ pub enum RegisterOwnedBodyResult {
         suggested_name: String,
         candidates: Vec<String>,
     },
+}
+
+#[cfg(test)]
+mod owned_body_json_tests {
+    use super::*;
+
+    #[test]
+    fn needs_name_uses_ipc_camel_case_fields() {
+        let value = serde_json::to_value(RegisterOwnedBodyResult::NeedsName {
+            suggested_name: "見本".into(), candidates: vec![],
+        }).unwrap();
+        assert_eq!(value["kind"], "needsName");
+        assert_eq!(value["suggestedName"], "見本");
+        assert!(value.get("suggested_name").is_none());
+    }
+
+    #[test]
+    fn registered_uses_ipc_camel_case_fields() {
+        let snapshot: ClassificationSnapshot = serde_json::from_value(serde_json::json!({
+            "boothId": "123456", "category": null, "genre": null,
+            "categoryLocked": false, "genreLocked": false,
+            "userConfirmed": false, "needsReview": false
+        })).unwrap();
+        let value = serde_json::to_value(RegisterOwnedBodyResult::Registered {
+            snapshot, avatar_id: "sample".into(), display_name: "見本".into(),
+        }).unwrap();
+        assert_eq!(value["avatarId"], "sample");
+        assert_eq!(value["displayName"], "見本");
+        assert!(value.get("avatar_id").is_none());
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -9,6 +9,7 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { BrowserPage } from "./pages/BrowserPage";
 import { WorldsPage } from "./pages/WorldsPage";
 import { AssetsPage } from "./pages/AssetsPage";
+import { SearchPage } from "./pages/SearchPage";
 import { SetupWizard } from "./pages/SetupWizard";
 import { GenreColumn } from "./components/GenreColumn";
 import { ResizeSeparator } from "./components/ResizeSeparator";
@@ -46,7 +47,7 @@ import { noticeAction, useBanners } from "./useBanners";
 
 export type { NoticeAction, NotifyOptions } from "./notice";
 
-type Page = "avatars" | "avatar" | "assets" | "worlds" | "classification-log" | "import" | "settings" | "browser";
+type Page = "avatars" | "avatar" | "assets" | "worlds" | "search" | "classification-log" | "import" | "settings" | "browser";
 
 interface Route {
   page: Page;
@@ -74,6 +75,9 @@ interface ShellValue {
   builtinBrowser: boolean;
   refreshAccount: () => void;
   workInProgress: boolean;
+  /** Library-wide search text, shared by the sidebar search box and the search page. */
+  searchQuery: string;
+  setSearchQuery: (query: string) => void;
 }
 
 const ShellContext = createContext<ShellValue | null>(null);
@@ -102,7 +106,7 @@ function parseRoute(hash: string): Route {
   if (parts[0] === "classification-log") {
     return { page: "classification-log", id: parts[1] ? decodeURIComponent(parts[1]) : undefined };
   }
-  if (parts[0] === "import" || parts[0] === "settings" || parts[0] === "browser") {
+  if (parts[0] === "search" || parts[0] === "import" || parts[0] === "settings" || parts[0] === "browser") {
     return { page: parts[0] };
   }
   return { page: "avatars" };
@@ -117,6 +121,10 @@ export default function App() {
   const { notice, error, notify, fail, setError, dismissNotice, dismissError, runNoticeAction } = useBanners();
   useAssetUpdateNotice(notify);
   const [revision, setRevision] = useState(0);
+  const [searchQuery, setSearchQuery] = useState("");
+  // While an IME composition is open in the sidebar box, moving to the search page would
+  // unmount the input mid-composition and drop the text being converted.
+  const searchComposing = useRef(false);
   const [builtinBrowser, setBuiltinBrowser] = useState(false);
   const [accountView, setAccountView] = useState<AccountSnapshot>(checkingAccount());
   const accountReload = useRef<() => void>(() => {});
@@ -287,14 +295,14 @@ export default function App() {
 
   const working = anyWorkInProgress(progressBoard);
   const shell = useMemo<ShellValue>(
-    () => ({ revision, refresh, notify, fail, builtinBrowser, refreshAccount, workInProgress: working }),
-    [revision, refresh, notify, fail, builtinBrowser, refreshAccount, working],
+    () => ({ revision, refresh, notify, fail, builtinBrowser, refreshAccount, workInProgress: working, searchQuery, setSearchQuery }),
+    [revision, refresh, notify, fail, builtinBrowser, refreshAccount, working, searchQuery],
   );
   const strip = progressStrip(progressBoard);
   const density =
     route.page === "settings"
       ? "density-roomy"
-      : route.page === "avatars" || route.page === "avatar" || route.page === "assets" || route.page === "worlds" || route.page === "classification-log"
+      : route.page === "avatars" || route.page === "avatar" || route.page === "assets" || route.page === "worlds" || route.page === "search" || route.page === "classification-log"
         ? "density-compact"
         : "";
   const browseKind = route.page === "assets" ? "asset" : route.page === "worlds" ? "world" : null;
@@ -306,6 +314,7 @@ export default function App() {
     { href: "#/", label: "アバター", icon: "avatars", active: route.page === "avatars" || route.page === "avatar", count: stats?.ownedAvatars ?? 0 },
     { href: "#/assets", label: "アセット", icon: "assets", active: route.page === "assets" },
     { href: "#/worlds", label: "ワールド", icon: "worlds", active: route.page === "worlds" },
+    { href: "#/search", label: "検索", icon: "search", active: route.page === "search" },
     { href: "#/classification-log", label: "分類記録", icon: "log", active: route.page === "classification-log" },
     { href: "#/import", label: "インポート", icon: "import", active: route.page === "import" },
     { href: "#/settings", label: "設定", icon: "settings", active: route.page === "settings" },
@@ -345,6 +354,7 @@ export default function App() {
         )}
         {route.page === "assets" && <AssetsPage />}
         {route.page === "worlds" && <WorldsPage />}
+        {route.page === "search" && <SearchPage />}
         {route.page === "classification-log" && <ClassificationLogPage boothId={route.id} />}
         {route.page === "import" && <ImportPage />}
         {route.page === "settings" && <SettingsPage />}
@@ -393,6 +403,26 @@ export default function App() {
             </button>
             )}
           </div>
+          {!collapsed && (
+            <div className="sidebar-search">
+              <input
+                className="search"
+                type="search"
+                aria-label="ライブラリを検索"
+                placeholder="ライブラリを検索"
+                value={searchQuery}
+                onChange={(event) => {
+                  setSearchQuery(event.target.value);
+                  if (!searchComposing.current && route.page !== "search") window.location.hash = "#/search";
+                }}
+                onCompositionStart={() => { searchComposing.current = true; }}
+                onCompositionEnd={() => {
+                  searchComposing.current = false;
+                  if (route.page !== "search") window.location.hash = "#/search";
+                }}
+              />
+            </div>
+          )}
           <nav id="main-sidebar-nav" aria-label="メイン">
             {navItems.map((item) => (
               <a
