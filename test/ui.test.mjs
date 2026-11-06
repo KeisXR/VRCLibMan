@@ -317,7 +317,7 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       const nav = document.querySelector(".settings-layout > .settings-nav");
       assert.ok(nav, "nav sits in the settings layout");
       const buttons = [...nav.querySelectorAll("button")];
-      assert.deepEqual(buttons.map((node) => node.textContent), ["ライブラリ", "Unity", "起動と常駐", "デザイン", "更新候補", "BOOTH", "分類モデル", "データ", "対応表を編集", "デバッグ"]);
+      assert.deepEqual(buttons.map((node) => node.textContent), ["ライブラリ", "Unity", "起動と常駐", "デザイン", "更新候補", "BOOTH", "分類モデル", "バージョン情報", "対応表を編集", "デバッグ"]);
       for (const node of buttons) {
         const target = document.getElementById(node.dataset.target);
         assert.ok(target, `section exists: ${node.dataset.target}`);
@@ -328,6 +328,10 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       const debug = document.getElementById("settings-debug");
       assert.equal(debug.tagName, "DETAILS");
       assert.ok(!debug.hasAttribute("open"));
+      for (const name of ["初期データを追加", "対応表を再適用", "セットアップを再表示"]) {
+        assert.ok(button(name, debug), `maintenance lives in debug: ${name}`);
+        assert.equal(button(name, document.getElementById("settings-data")), undefined);
+      }
       await click(buttons.find((node) => node.textContent === "デバッグ"));
       assert.ok(debug.hasAttribute("open"), "jumping to debug opens it");
       assert.equal(nav.querySelector("[aria-current]").textContent, "デバッグ");
