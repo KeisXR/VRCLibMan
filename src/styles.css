@@ -971,6 +971,11 @@ button.account-pill:hover { background: var(--hover); }
   box-shadow: inset 0 0 0 1px var(--text);
 }
 .search { min-width: 220px; }
+.sidebar-search { padding: 0 var(--space-1); }
+.sidebar-search .search { width: 100%; min-width: 0; }
+.search-page-input { width: 100%; min-width: 0; margin-bottom: var(--space-3); }
+.search-group { margin-top: var(--space-4); }
+.search-group > h2 { margin-bottom: var(--space-2); }
 .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: var(--space-3); }
 .field span { color: var(--text-secondary); font-size: 13px; }
 .field textarea { min-height: 88px; resize: vertical; }
@@ -1455,6 +1460,7 @@ a.tab { display: inline-flex; align-items: center; gap: 6px; text-decoration: no
   vertical-align: 1px;
 }
 .badge.adult { color: var(--warn); }
+.badge.new-file { color: var(--good); }
 .presence {
   display: inline-flex;
   align-items: center;

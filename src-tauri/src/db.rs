@@ -823,6 +823,14 @@ pub(crate) fn import_export_json(
     connection: &mut Connection,
     json: &str,
 ) -> Result<ImportReport, String> {
+    import_export_json_with_mode(connection, json, false)
+}
+
+pub(crate) fn import_export_json_with_mode(
+    connection: &mut Connection,
+    json: &str,
+    authoritative_files: bool,
+) -> Result<ImportReport, String> {
     let parsed = crate::import_data::parse_export(json)?;
     if parsed.products.is_empty() {
         return Err(parsed
@@ -831,7 +839,7 @@ pub(crate) fn import_export_json(
             .cloned()
             .unwrap_or_else(|| "商品が1件もありません".into()));
     }
-    import_products(connection, &parsed)
+    import_products_with_mode(connection, &parsed, authoritative_files)
 }
 
 pub(crate) fn extension_token(connection: &Connection) -> Result<String, String> {
@@ -897,16 +905,34 @@ pub(crate) fn import_products(
     connection: &mut Connection,
     parsed: &ParsedExport,
 ) -> Result<ImportReport, String> {
+    import_products_with_mode(connection, parsed, false)
+}
+
+pub(crate) fn import_products_with_mode(
+    connection: &mut Connection,
+    parsed: &ParsedExport,
+    authoritative_files: bool,
+) -> Result<ImportReport, String> {
     let mut run = ClassificationRun::new(KIND_IMPORT, CLASSIFIER_CATALOG);
     observe_all(connection, &mut run, |connection| {
-        import_products_unlogged(connection, parsed)
+        import_products_unlogged(connection, parsed, authoritative_files)
     })
 }
 
 fn import_products_unlogged(
     connection: &mut Connection,
     parsed: &ParsedExport,
+    authoritative_files: bool,
 ) -> Result<ImportReport, String> {
+    let mut before_files = std::collections::HashMap::new();
+    for product in &parsed.products {
+        if !product.downloads.is_empty() {
+            if let Ok(keys) = crate::asset_updates::existing_file_keys(connection, &product.booth_id)
+            {
+                before_files.insert(product.booth_id.clone(), keys);
+            }
+        }
+    }
     let tx = connection.transaction().sql()?;
     let mut inserted = 0;
     let mut updated = 0;
@@ -929,6 +955,12 @@ fn import_products_unlogged(
         }
     }
     tx.commit().sql()?;
+    let _ = crate::asset_updates::record_imported_files(
+        connection,
+        &before_files,
+        &parsed.products,
+        authoritative_files,
+    );
     for booth_id in touched {
         apply_listed_compatibility(connection, &booth_id)?;
     }
@@ -1464,7 +1496,17 @@ fn apply_listed_compatibility(connection: &mut Connection, booth_id: &str) -> Re
     let category = if existing.category_locked {
         existing.category.unwrap_or(Category::Outfit)
     } else {
-        crate::compat::category_for_listed_product(&existing.title, &existing.description_snippet)
+        // The list adds links. Title keywords that find nothing must not undo a settled category.
+        match (
+            crate::compat::category_for_listed_product(
+                &existing.title,
+                &existing.description_snippet,
+            ),
+            existing.category,
+        ) {
+            (Category::Other, Some(current)) => current,
+            (listed, _) => listed,
+        }
     };
     let threshold = settings(connection)?.confidence_threshold;
     apply_extraction_inner(
@@ -2361,18 +2403,30 @@ pub(crate) fn save_classification_feedback_body(path: &std::path::Path, body: &s
     Ok(())
 }
 
-/// The save path for a chosen JSON file: a `.json` name in an existing folder, and not a symlink.
 pub(crate) fn checked_json_destination(path: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    checked_destination(path, ".json", "保存先は JSON ファイルにしてください")
+}
+
+pub(crate) fn checked_zip_destination(path: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    checked_destination(path, ".zip", "保存先は ZIP ファイルにしてください")
+}
+
+/// The save path for a chosen file: a name with `suffix` in an existing folder, and not a symlink.
+fn checked_destination(
+    path: &std::path::Path,
+    suffix: &str,
+    wrong_kind: &str,
+) -> Result<std::path::PathBuf, String> {
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
         .filter(|name| {
             !name.is_empty()
-                && *name != ".json"
-                && name.to_ascii_lowercase().ends_with(".json")
+                && *name != suffix
+                && name.to_ascii_lowercase().ends_with(suffix)
                 && !name.contains(['/', '\\', '\0'])
         })
-        .ok_or("保存先は JSON ファイルにしてください")?;
+        .ok_or(wrong_kind)?;
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -3224,6 +3278,7 @@ pub(crate) fn load_snapshot(connection: &Connection) -> Result<Snapshot, String>
         download_rows: load_download_rows(connection)?,
         placed_downloads: Vec::new(),
         product_flags: load_product_flags(connection)?,
+        file_watches: crate::asset_updates::file_watches(connection).unwrap_or_default(),
         remote_configured: false,
         remote_checked: true,
         remote_reachable: false,
@@ -3317,7 +3372,7 @@ fn load_variations(connection: &Connection) -> Result<Vec<VariationFact>, String
 fn load_download_rows(connection: &Connection) -> Result<Vec<DownloadFact>, String> {
     let mut statement = connection
         .prepare(
-            "SELECT booth_id, variation, filename, size_bytes, downloaded, local_path
+            "SELECT booth_id, variation, filename, size_bytes, downloaded, local_path, downloadable_id
              FROM product_files",
         )
         .sql()?;
@@ -3331,6 +3386,10 @@ fn load_download_rows(connection: &Connection) -> Result<Vec<DownloadFact>, Stri
                 size_bytes: size.and_then(|value| u64::try_from(value).ok()),
                 downloaded: row.get::<_, i64>(4)? != 0,
                 local_path: row.get(5)?,
+                downloadable_id: row
+                    .get::<_, Option<String>>(6)?
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty()),
             })
         })
         .sql()?;
@@ -3491,6 +3550,10 @@ pub(crate) fn store_free_files(
     is_adult: Option<bool>,
 ) -> Result<usize, String> {
     free_files_target(connection, booth_id)?;
+    let mut before_files = std::collections::HashMap::new();
+    if let Ok(keys) = crate::asset_updates::existing_file_keys(connection, booth_id) {
+        before_files.insert(booth_id.to_string(), keys);
+    }
     let incoming = IncomingProduct {
         booth_id: booth_id.to_string(),
         title: String::new(),
@@ -3516,6 +3579,12 @@ pub(crate) fn store_free_files(
         )
         .sql()?;
     transaction.commit().sql()?;
+    let _ = crate::asset_updates::record_imported_files(
+        connection,
+        &before_files,
+        std::slice::from_ref(&incoming),
+        true,
+    );
     Ok(count.max(0) as usize)
 }
 
@@ -3716,6 +3785,22 @@ pub(crate) fn record_extension_download(
         )
         .sql()?;
     crate::sync_meta::touch_file_links(connection, booth_id)?;
+    let stored_id: Option<String> = connection
+        .query_row(
+            "SELECT downloadable_id FROM product_files WHERE booth_id = ?1 AND variation = ?2 AND filename = ?3",
+            params![booth_id, variation, filename],
+            |row| row.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten()
+        .or_else(|| downloadable_id.map(str::to_string));
+    let _ = crate::asset_updates::clear_new_file_on_download(
+        connection,
+        booth_id,
+        stored_id.as_deref(),
+        &filename,
+    );
     Ok(())
 }
 
@@ -4008,6 +4093,9 @@ pub(crate) fn route_staged_download(connection: &mut Connection, source: &Path) 
         title: String::new(),
     };
     let plan = prepare_download(connection, &notice)?;
+    if crate::library_files::file_looks_like_login_page(&plan.source) {
+        return Err(BROWSER_LOGIN_MESSAGE.into());
+    }
     let placed = crate::library_files::place_into_library(
         &plan.source,
         plan.library.as_deref(),
@@ -8978,6 +9066,25 @@ mod tests {
     }
 
     #[test]
+    fn a_plain_compat_list_keeps_a_category_the_title_cannot_decide() {
+        let mut connection = open_memory().unwrap();
+        let json = r#"[{"boothId":"8800773","title":"見本の品","description":"対応アバター\nうらら\nライム\n基本仕様\n布です。"}]"#;
+        import_products(&mut connection, &parse_export(json).unwrap()).unwrap();
+        apply_extraction(
+            &mut connection,
+            "8800773",
+            &extraction(Category::Outfit, &[], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        // The same payload again is an unchanged product, which still runs compatibility.
+        import_products(&mut connection, &parse_export(json).unwrap()).unwrap();
+        let kept = require_product(&connection, "8800773").unwrap();
+        assert_eq!(kept.category, Some(Category::Outfit));
+        assert!(link_ids(&connection, "8800773").unwrap().iter().any(|id| id == "lime"));
+    }
+
+    #[test]
     fn quoted_body_identity_wins_over_known_names_outside_the_quotation() {
         for (index, title, expected_name, expected_id) in [
             (0, "オリジナル3Dモデル「輝夜」 ライム対応", "輝夜", "owned-8800780"),
@@ -10330,6 +10437,8 @@ mod tests {
             .join("body.unitypackage");
         std::fs::create_dir_all(source.parent().unwrap()).unwrap();
         std::fs::write(&source, b"pkg").unwrap();
+        let rejected_html = source.parent().unwrap().join("login.zip");
+        std::fs::write(&rejected_html, b"<!doctype html><html>login</html>").unwrap();
         let nested = downloads
             .join("VRCLibMan")
             .join("616161")
@@ -10415,6 +10524,9 @@ mod tests {
         assert!(foreign.exists());
         let report = sweep_staged_downloads(&mut connection);
         assert_eq!(report.moved, 1);
+        assert!(rejected_html.exists());
+        assert!(!library.join("616161/login.zip").exists());
+        assert!(report.left.iter().any(|entry| entry.filename == "login.zip"));
         assert!(!source.exists());
         let placed = library.join("616161").join("body.unitypackage");
         assert_eq!(std::fs::read(&placed).unwrap(), b"pkg");

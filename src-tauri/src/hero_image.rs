@@ -1,5 +1,5 @@
 //! Per-avatar hero images, kept as copies in `app_data_dir/hero_images`.
-//! Neither the files nor their paths are part of remote sync.
+//! The files travel in the data migration package under these same safe names. Their paths do not.
 //! Paths and file names stay out of error text and logs: age-restricted products are in play.
 
 use crate::db;
@@ -121,7 +121,7 @@ fn shrink(image: &DynamicImage, format: ImageFormat) -> Result<Vec<u8>, String> 
 
 /// Avatar ids are `[a-z0-9_-]` today, but rows may predate that check. Anything that needed
 /// changing gets a hash, so two ids never share a file. Windows reserves names like `con`.
-fn file_stem(avatar_id: &str) -> String {
+pub(crate) fn file_stem(avatar_id: &str) -> String {
     let safe: String = avatar_id
         .chars()
         .map(|ch| match ch {

@@ -1,5 +1,5 @@
 use crate::model::{Avatar, Category};
-use crate::normalize::{is_blocked_avatar_label, is_punct, nfkc};
+use crate::normalize::{is_blocked_avatar_label, is_cjk, is_punct, nfkc, preferred_display_name};
 use crate::resolve::{known_name_in, known_names_in};
 use regex::Regex;
 use std::sync::OnceLock;
@@ -10,8 +10,9 @@ pub fn listed_avatar_names(description: &str, avatars: &[Avatar]) -> Vec<String>
     let Some(section) = compatibility_section(description) else {
         return Vec::new();
     };
+    let bare_heading = section_heading(description).is_some_and(heading_stands_alone);
     let mut names = Vec::new();
-    for entry in entries(&section) {
+    for entry in entries(&section, bare_heading) {
         let label = label_from_entry(&entry);
         if label.chars().count() < 2 {
             continue;
@@ -796,10 +797,7 @@ pub fn clip_description(description: &str, budget: usize) -> String {
 
 fn compatibility_section(description: &str) -> Option<String> {
     let lines: Vec<&str> = description.lines().collect();
-    let start = lines.iter().position(|line| {
-        let trimmed = line.trim();
-        trimmed.chars().count() <= 80 && !trimmed.contains('。') && line_has_marker(trimmed)
-    })?;
+    let start = lines.iter().position(|line| is_section_heading(line.trim()))?;
     let mut section = String::new();
     for line in lines.iter().skip(start + 1) {
         let trimmed = line.trim();
@@ -817,6 +815,56 @@ fn compatibility_section(description: &str) -> Option<String> {
     } else {
         Some(section)
     }
+}
+
+fn is_section_heading(trimmed: &str) -> bool {
+    trimmed.chars().count() <= 80 && !trimmed.contains('。') && line_has_marker(trimmed)
+}
+
+fn section_heading(description: &str) -> Option<&str> {
+    description
+        .lines()
+        .map(str::trim)
+        .find(|line| is_section_heading(line))
+}
+
+/// Plain lines are read only under a line that is the heading and nothing else.
+/// 「対応アバター：ライム」 or a sentence naming the list says nothing about the lines below it.
+fn heading_stands_alone(heading: &str) -> bool {
+    const TITLES: &[&str] = &[
+        "対応キャラクター",
+        "対応アバター",
+        "対応モデル",
+        "対応キャラ",
+        "対応素体",
+        "対応一覧",
+    ];
+    const REMAINDERS: &[&str] = &[
+        "",
+        "一覧",
+        "リスト",
+        "順不同",
+        "について",
+        "は以下",
+        "は下記",
+        "は以下の通り",
+        "は下記の通り",
+        "は以下のとおり",
+        "は下記のとおり",
+    ];
+    let mut rest: String = heading
+        .chars()
+        .filter(|ch| is_cjk(*ch) || ch.is_ascii_alphanumeric())
+        .collect();
+    for title in TITLES {
+        rest = rest.replace(title, "");
+    }
+    if REMAINDERS.contains(&rest.as_str()) {
+        return true;
+    }
+    // 「対応アバター / Compatible Avatars」のような併記。
+    let lower = rest.to_lowercase();
+    lower.is_ascii() && (lower.contains("avatar") || lower.contains("model"))
 }
 
 fn line_has_marker(line: &str) -> bool {
@@ -869,10 +917,13 @@ fn is_cjk_char(ch: char) -> bool {
     ('\u{3040}'..='\u{30ff}').contains(&ch) || ('\u{3400}'..='\u{9fff}').contains(&ch)
 }
 
-fn entries(section: &str) -> Vec<String> {
+fn entries(section: &str, bare_heading: bool) -> Vec<String> {
     let mut parts = Vec::new();
     if section.contains("booth.pm") {
         parts.extend(split_on_item_urls(section));
+        if !parts.is_empty() {
+            parts.extend(line_entries(after_item_urls(section), bare_heading));
+        }
     }
     if parts.is_empty() && (section.contains('"') || section.contains('“') || section.contains('”'))
     {
@@ -884,14 +935,7 @@ fn entries(section: &str) -> Vec<String> {
         }
     }
     if parts.is_empty() {
-        for line in section.lines() {
-            let trimmed = line
-                .trim()
-                .trim_matches(|ch| ch == '"' || ch == '“' || ch == '”');
-            if looks_like_entry(trimmed) {
-                parts.push(trimmed.to_string());
-            }
-        }
+        parts.extend(line_entries(section, bare_heading));
     }
     parts
         .into_iter()
@@ -899,12 +943,148 @@ fn entries(section: &str) -> Vec<String> {
         .collect()
 }
 
+/// Marked lines always count. Plain name lines count only under a bare heading, and
+/// the first line that does not read as a name ends them, because what follows
+/// a note is more notes. Marked lines further down still count.
+fn line_entries(text: &str, bare_heading: bool) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut plain_open = bare_heading;
+    for line in text.lines() {
+        let trimmed = line
+            .trim()
+            .trim_matches(|ch| ch == '"' || ch == '“' || ch == '”');
+        let bare = strip_bullet(trimmed);
+        if looks_like_entry(bare) {
+            parts.push(bare.to_string());
+            continue;
+        }
+        if type_tail_re().is_match(bare)
+            && plain_name_line(type_tail_re().replace_all(bare, " ").trim())
+        {
+            parts.push(bare.to_string());
+            continue;
+        }
+        if !plain_open || is_list_note(bare) {
+            continue;
+        }
+        if plain_name_line(bare) {
+            parts.push(bare.to_string());
+        } else {
+            plain_open = false;
+        }
+    }
+    parts
+}
+
+/// `/ オリジナル3Dモデル` after a name says what the name is. Only the name is kept.
+fn type_tail_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(
+            r"(?i)\s*[/／]\s*(?:vrchat\s*(?:向け|用)?\s*)?(?:オリジナル\s*)?(?:[3３]\s*[dｄ]\s*)?(?:モデル|アバター|素体|models?|avatars?)(?:\s|\z)",
+        )
+        .unwrap()
+    })
+}
+
+fn strip_bullet(line: &str) -> &str {
+    line.trim_start_matches(|ch: char| {
+        ch.is_whitespace()
+            || matches!(
+                ch,
+                '・' | '･'
+                    | '•'
+                    | '‣'
+                    | '∙'
+                    | '◦'
+                    | '●'
+                    | '○'
+                    | '◯'
+                    | '▪'
+                    | '▫'
+                    | '*'
+                    | '＊'
+                    | '-'
+                    | '－'
+                    | '‐'
+                    | '−'
+                    | '–'
+                    | '—'
+            )
+    })
+}
+
+/// 「※順不同」や「(順不同)」は一覧の補足であり、一覧の終わりではない。
+fn is_list_note(line: &str) -> bool {
+    line.starts_with('※') || strip_parentheticals(line).trim().is_empty()
+}
+
+/// A short line that can be one name. Names are not checked against the avatar list,
+/// so anything that reads as a note, or holds more than one name, is left out.
+fn plain_name_line(line: &str) -> bool {
+    const HEADING_MARKS: &str = "■□◆◇★☆♥♡❤✤✦✧◎▼▽▲△【〔《≪<୨";
+    const NOT_A_NAME: &[&str] = &[
+        "：",
+        ":",
+        "/",
+        "／",
+        "、",
+        ",",
+        "，",
+        "!",
+        "?",
+        "http",
+        "です",
+        "でした",
+        "ました",
+        "ません",
+        "について",
+        "場合",
+        "予定",
+        "可能",
+        "確認",
+        "以下",
+        "以上",
+        "以外",
+        "下記",
+        "上記",
+        "その他",
+        "こちら",
+        "順次",
+        "追加",
+        "必要",
+        "動作",
+        "詳細",
+        "対象",
+        "購入",
+    ];
+    let has_cjk = line.chars().any(is_cjk);
+    // ASCII の文は、最後の単語だけが名前として残ってしまう。
+    let max_words = if has_cjk { 3 } else { 1 };
+    (2..=30).contains(&line.chars().count())
+        && line.split_whitespace().count() <= max_words
+        && (has_cjk || line.chars().any(|ch| ch.is_ascii_alphabetic()))
+        && !line.starts_with(|ch: char| HEADING_MARKS.contains(ch))
+        && !line.ends_with("など")
+        && !NOT_A_NAME.iter().any(|word| line.contains(word))
+}
+
+fn item_url_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"https?://\S*booth\.pm\S*").unwrap())
+}
+
+fn after_item_urls(section: &str) -> &str {
+    item_url_re()
+        .find_iter(section)
+        .last()
+        .map_or(section, |found| &section[found.end()..])
+}
+
 fn split_on_item_urls(section: &str) -> Vec<String> {
-    static URL_RE: OnceLock<Regex> = OnceLock::new();
-    let url_re = URL_RE.get_or_init(|| Regex::new(r"https?://\S*booth\.pm\S*").unwrap());
     let mut parts = Vec::new();
     let mut last = 0;
-    for found in url_re.find_iter(section) {
+    for found in item_url_re().find_iter(section) {
         let chunk = section[last..found.end()]
             .trim()
             .trim_matches(|ch: char| ch == '"' || ch == '“' || ch == '”' || ch.is_whitespace());
@@ -937,7 +1117,7 @@ fn acceptable_entry(text: &str) -> bool {
     {
         return false;
     }
-    looks_like_entry(text)
+    true
 }
 
 fn looks_like_entry(text: &str) -> bool {
@@ -958,7 +1138,8 @@ fn label_from_entry(entry: &str) -> String {
     let version_re = VERSION_RE
         .get_or_init(|| Regex::new(r"(?i)(?:_+|\s)(?:ver\.?|v)[\d_.]+|_{2,}[\d.]+").unwrap());
     let without_url = url_re.replace_all(entry, " ");
-    let without_paren = strip_parentheticals(&without_url);
+    let without_type = type_tail_re().replace_all(&without_url, " ");
+    let without_paren = strip_parentheticals(&without_type);
     let without_version = version_re.replace_all(&without_paren, " ");
     without_version
         .split_whitespace()
@@ -1032,10 +1213,24 @@ fn choose_name(label: &str, avatars: &[Avatar]) -> Option<String> {
         })
     {
         quoted
+    } else if let Some(name) = reading_pair_name(label) {
+        name
     } else {
         tidy_name(&strip_shop(label))
     };
     plausible_avatar_name(&candidate).then_some(candidate)
+}
+
+/// `うらら -Urara-` is one name in two scripts, not a shop followed by a name.
+fn reading_pair_name(label: &str) -> Option<String> {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r"^(\S+)\s+[-－–—]\s*(\S+?)\s*[-－–—]?$").unwrap());
+    let found = re.captures(label.trim())?;
+    let has_cjk = |text: &str| text.chars().any(is_cjk);
+    if has_cjk(&found[1]) == has_cjk(&found[2]) {
+        return None;
+    }
+    preferred_display_name(label)
 }
 
 fn tidy_name(name: &str) -> String {
@@ -1617,6 +1812,111 @@ Avatar
         );
         assert!(listed.iter().any(|name| name == "クルミ"), "{listed:?}");
         assert!(listed.iter().all(|name| name != "ソラネ"), "{listed:?}");
+    }
+
+    #[test]
+    fn a_name_followed_by_a_type_word_is_listed() {
+        let text = "対応アバター\nうらら / オリジナル3Dモデル\nまめひなた／3Dモデル\nライム / 素体\n基本仕様\n布です。\n";
+        assert_eq!(
+            listed_avatar_names(text, &[]),
+            vec![
+                "うらら".to_string(),
+                "まめひなた".to_string(),
+                "ライム".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn a_reading_after_the_name_stays_one_avatar() {
+        let text = "対応アバター\nうらら -Urara- / オリジナル3Dモデル\n基本仕様\n";
+        assert_eq!(listed_avatar_names(text, &[]), vec!["うらら".to_string()]);
+
+        let mut urara = avatar("urara", "うらら");
+        urara.aliases = vec!["Urara".into()];
+        let alias_only = "対応アバター\n-Urara- / オリジナル3Dモデル\n";
+        assert_eq!(
+            listed_avatar_names(alias_only, &[urara]),
+            vec!["うらら".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_type_word_is_dropped_from_lines_with_a_url_too() {
+        let linked = "対応アバター\nうらら -Urara- / オリジナル3Dモデル\nhttps://booth.pm/ja/items/1\nプラム / オリジナル3Dモデル https://booth.pm/ja/items/2\n基本仕様\n";
+        assert_eq!(
+            listed_avatar_names(linked, &[]),
+            vec!["うらら".to_string(), "プラム".to_string()]
+        );
+        let mixed =
+            "対応アバター\nライム_ver1.00 https://booth.pm/ja/items/1001\nうらら / オリジナル3Dモデル\n";
+        assert_eq!(
+            listed_avatar_names(mixed, &[]),
+            vec!["ライム".to_string(), "うらら".to_string()]
+        );
+    }
+
+    #[test]
+    fn plain_and_bulleted_names_are_listed_under_a_bare_heading() {
+        let text = "♥対応アバター♥\n(順不同)\n・うらら\n- Milfy\n＊ライム\nシフォン(Chiffon)\n◆サイズ\n1024px\n";
+        assert_eq!(
+            listed_avatar_names(text, &[]),
+            vec![
+                "うらら".to_string(),
+                "Milfy".to_string(),
+                "ライム".to_string(),
+                "シフォン".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn prose_in_the_section_ends_the_plain_names() {
+        let text = "対応アバター\nうらら\nご購入前に動作をご確認ください\nサポート対象外\n";
+        assert_eq!(listed_avatar_names(text, &[]), vec!["うらら".to_string()]);
+        let plain_note = "対応アバター\nうらら\nその他のモデルも順次追加予定です\nミルティナ\n";
+        assert_eq!(
+            listed_avatar_names(plain_note, &[]),
+            vec!["うらら".to_string()]
+        );
+        let english = "対応アバター\nUrara\nPlease read the terms\nMilfy\n";
+        assert_eq!(listed_avatar_names(english, &[]), vec!["Urara".to_string()]);
+        let typed_sentence = "対応アバター\nモデルごとに調整しています / オリジナル3Dモデル\n";
+        assert!(listed_avatar_names(typed_sentence, &[]).is_empty());
+        let after_heading = "対応アバター\nうらら\n利用規約\nミルティナ\n";
+        assert_eq!(
+            listed_avatar_names(after_heading, &[]),
+            vec!["うらら".to_string()]
+        );
+    }
+
+    #[test]
+    fn plain_names_need_a_heading_that_is_only_a_heading() {
+        let inline = "対応アバター：ライム\n高品質テクスチャ\nサイズ自由\n";
+        assert!(listed_avatar_names(inline, &[]).is_empty());
+        let sentence = "対応モデルは順次増やしていきます\n見本の小物\n";
+        assert!(listed_avatar_names(sentence, &[]).is_empty());
+        let typed = "対応アバター：ライム\nうらら / オリジナル3Dモデル\n";
+        assert_eq!(listed_avatar_names(typed, &[]), vec!["うらら".to_string()]);
+        for heading in [
+            "対応アバター",
+            "【対応アバター】",
+            "対応アバター一覧",
+            "対応アバター(順不同)",
+            "対応キャラクター",
+            "対応アバター / Compatible Avatars",
+        ] {
+            assert!(heading_stands_alone(heading), "{heading}");
+        }
+    }
+
+    #[test]
+    fn lines_outside_a_compatibility_section_are_not_names() {
+        assert!(listed_avatar_names("うらら / オリジナル3Dモデル\nライム\n", &[]).is_empty());
+        let before = "うらら / オリジナル3Dモデル\n対応アバター\nライム\n";
+        assert_eq!(listed_avatar_names(before, &[]), vec!["ライム".to_string()]);
+        let after = "対応アバター\nライム\n基本仕様\nうらら / オリジナル3Dモデル\n";
+        assert_eq!(listed_avatar_names(after, &[]), vec!["ライム".to_string()]);
     }
 
     #[test]

@@ -47,7 +47,8 @@ chrono = { version = "0.4.45", default-features = false, features = ["clock", "s
 tokio = { version = "1", features = ["sync", "time"] }
 # File tab: list zip entries from the central directory. "Unityで開く" also inflates the chosen
 # .unitypackage entries, so only Deflate is enabled, through flate2 + zlib-rs which are already
-# in the tree (reqwest, tauri). No other compression methods or crates come in.
+# in the tree (reqwest, tauri). No other compression methods or crates come in. The data
+# migration export writes its package with the same crate.
 zip = { version = "4.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 # Zip entry names without the UTF-8 flag are usually Shift_JIS on Japanese Windows.
 encoding_rs = "0.8"

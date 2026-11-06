@@ -79,7 +79,6 @@ fn db(state: &AppState) -> Result<MutexGuard<'_, rusqlite::Connection>, String> 
         .map_err(|_| "データベースをロックできません".to_string())
 }
 
-pub(crate) use crate::progress::emit_progress;
 use crate::progress::ProgressGuard;
 
 #[tauri::command]
@@ -1014,6 +1013,7 @@ fn sync_export_app_version(app: &AppHandle) -> String {
     app.package_info().version.to_string()
 }
 
+/// The manifest alone, so every image reference is `null`. Only `save_sync_export` adds files.
 #[tauri::command]
 pub fn sync_export_json(
     view: tauri::Webview,
@@ -1021,14 +1021,15 @@ pub fn sync_export_json(
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     if view.label() != "main" {
-        return Err("この画面から同期データは書き出せません".into());
+        return Err("この画面からデータ移行のファイルは書き出せません".into());
     }
     let mut connection = db(&state)?;
     let file = crate::sync_export::build(&mut connection, &sync_export_app_version(&app))?;
     crate::sync_export::to_json(&file)
 }
 
-/// The database lock covers building the JSON only, so a slow share cannot hold up the app.
+/// The database lock covers reading the rows only, so copying images to a slow share cannot hold
+/// up the app.
 #[tauri::command]
 pub async fn save_sync_export(
     view: tauri::Webview,
@@ -1036,20 +1037,20 @@ pub async fn save_sync_export(
     path: String,
 ) -> Result<crate::sync_export::SyncExportReport, String> {
     if view.label() != "main" {
-        return Err("この画面から同期データは書き出せません".into());
+        return Err("この画面からデータ移行のファイルは書き出せません".into());
     }
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        let (json, counts) = {
+        let (file, images) = {
             let mut connection = db(&state)?;
             let file = crate::sync_export::build(&mut connection, &sync_export_app_version(&app))?;
-            (crate::sync_export::to_json(&file)?, file.counts)
+            (file, crate::sync_export::package_images(&connection)?)
         };
-        crate::sync_export::save(Path::new(&path), &json)?;
+        let counts = crate::sync_export::save_package(Path::new(&path), file, &images)?;
         Ok(crate::sync_export::SyncExportReport { counts })
     })
     .await
-    .map_err(|err| format!("同期データを保存できません: {err}"))?
+    .map_err(|err| format!("データ移行のファイルを保存できません: {err}"))?
 }
 
 #[tauri::command]
@@ -1212,6 +1213,7 @@ pub async fn extract_products(
     }
     state.cancel_extract.store(false, Ordering::SeqCst);
     let _clear = ClearRunning(running);
+    let progress = ProgressGuard::new(app.clone(), "extract");
     let jobs: Vec<ExtractJob> = {
         let mut connection = db(&state)?;
         db::products_for_extract(&mut connection, db::parse_extract_target(&target)?)?
@@ -1275,9 +1277,7 @@ pub async fn extract_products(
             }
         }
         let label: String = job.title.chars().take(40).collect();
-        emit_progress(
-            &app,
-            "extract",
+        progress.update(
             index as u32,
             total,
             crate::progress::counted_message("分類中", index as u32 + 1, total, &label),
@@ -1391,25 +1391,20 @@ pub async fn extract_products(
         ),
     );
     if processed > 0 {
-        emit_progress(&app, "extract", total, total, "分類結果を整理しています");
+        progress.update(total, total, "分類結果を整理しています");
         let mut connection = db(&state)?;
         db::reresolve_all_in_run(&mut connection, &mut run)?;
     }
-    emit_progress(
-        &app,
-        "extract",
-        total,
-        total,
-        if cancelled {
-            "分類を中断しました".into()
+    if cancelled {
+        progress.cancel("分類を中断しました");
+    } else {
+        let message = if cloud_withheld > 0 {
+            format!("{processed} 件分類、{failed} 件失敗（カテゴリとタグ {booth_settled}、モデル {model_used}）。年齢制限の {cloud_withheld} 件はクラウドに送らず未分類のままです")
         } else {
-            if cloud_withheld > 0 {
-                format!("{processed} 件分類、{failed} 件失敗（カテゴリとタグ {booth_settled}、モデル {model_used}）。年齢制限の {cloud_withheld} 件はクラウドに送らず未分類のままです")
-            } else {
-                format!("{processed} 件分類、{failed} 件失敗（カテゴリとタグ {booth_settled}、モデル {model_used}）")
-            }
-        },
-    );
+            format!("{processed} 件分類、{failed} 件失敗（カテゴリとタグ {booth_settled}、モデル {model_used}）")
+        };
+        progress.done_with(total, message);
+    }
     if settings.llm_backend == "ollama" && settings.unload_ollama_after_classification {
         let _ = ollama::unload_model(
             &client,

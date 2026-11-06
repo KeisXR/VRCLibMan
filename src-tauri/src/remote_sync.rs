@@ -130,7 +130,8 @@ fn run_pass<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<(), String> {
                 Ok(false) => status.skipped += 1,
                 Err(error) => {
                     status.error = Some(error);
-                    break;
+                    // A bad source or a conflicting destination must not block
+                    // unrelated files in this pass.
                 }
             }
             *sync.status.lock().map_err(|_| "同期状態を更新できません")? = status.clone();

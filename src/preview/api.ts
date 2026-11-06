@@ -669,16 +669,37 @@ function filesFor(boothId: string): FileBrief[] {
 function placedDownloads(boothId: string): DownloadView[] {
   const configured = store.settings.remoteLibraryFolder.trim().length > 0;
   const reachable = configured && store.remoteReachable;
-  return store.downloads
+  const rows = store.downloads
     .filter((row) => row.boothId === boothId)
-    .map((row) => ({
-      variation: row.variation,
-      filename: row.filename,
-      sizeBytes: row.sizeBytes,
-      state: row.state === "remote" && !reachable ? "missing" : row.state,
-      localPath: row.localPath,
-      remotePath: row.remotePath,
-    }));
+    .map((row) => {
+      const state: DownloadView["state"] = row.state === "remote" && !reachable ? "missing" : row.state;
+      return {
+        variation: row.variation,
+        filename: row.filename,
+        sizeBytes: row.sizeBytes,
+        state,
+        localPath: row.localPath,
+        remotePath: row.remotePath,
+        downloadableId: row.downloadableId ?? null,
+        isNew: Boolean(row.isNew),
+        superseded: state === "missing" && Boolean(row.superseded),
+      };
+    });
+  rows.sort((left, right) => {
+    if (Boolean(left.superseded) !== Boolean(right.superseded)) {
+      return left.superseded ? 1 : -1;
+    }
+    if (Boolean(left.isNew) !== Boolean(right.isNew)) {
+      return left.isNew ? -1 : 1;
+    }
+    const lId = left.downloadableId && /^\d+$/.test(left.downloadableId) ? Number(left.downloadableId) : null;
+    const rId = right.downloadableId && /^\d+$/.test(right.downloadableId) ? Number(right.downloadableId) : null;
+    if (lId !== null && rId !== null && lId !== rId) return rId - lId;
+    if (lId !== null && rId === null) return -1;
+    if (lId === null && rId !== null) return 1;
+    return left.filename.localeCompare(right.filename);
+  });
+  return rows;
 }
 
 function hasLocalCopy(boothId: string): boolean {
@@ -1090,7 +1111,7 @@ function previewDeviceName(value: unknown): string {
   return name;
 }
 
-/** 形式の確認用の小さな JSON。見本の全件は出さず、分類の規則も複製しない。 */
+/** 形式の確認用の小さな manifest。見本に画像ファイルは無いので参照は null。全件は出さず、分類の規則も複製しない。 */
 function previewSyncExport(): string {
   const device = { id: store.settings.deviceId, name: store.settings.deviceName };
   const values = {
@@ -1112,7 +1133,10 @@ function previewSyncExport(): string {
     .map((item) => ({
       boothId: item.boothId,
       title: item.title,
+      shop: item.shop,
+      descriptionSnippet: item.descriptionSnippet,
       url: `https://booth.pm/ja/items/${item.boothId}`,
+      thumbnail: null,
       classification: {
         category: item.category,
         categoryLocked: item.categoryLocked,
@@ -1129,7 +1153,7 @@ function previewSyncExport(): string {
     }));
   return `${JSON.stringify({
     format: "vrclibman-sync",
-    version: 1,
+    version: 2,
     device,
     appVersion: "preview",
     exportedAt: new Date().toISOString(),
@@ -1137,7 +1161,7 @@ function previewSyncExport(): string {
     products,
     avatars: [],
     fileLinks: [],
-    counts: { products: products.length, links: 0, avatars: 0, fileLinks: 0, config: Object.keys(values).length },
+    counts: { products: products.length, links: 0, avatars: 0, fileLinks: 0, config: Object.keys(values).length, thumbnails: 0, heroImages: 0 },
   }, null, 2)}\n`;
 }
 
@@ -1935,7 +1959,13 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
         }
         if (row) {
           if (input.enabled !== undefined) row.enabled = input.enabled;
-          if (input.acknowledge) { row.changes = []; row.revision++; }
+          if (input.acknowledge) {
+            row.changes = [];
+            row.revision++;
+            for (const d of store.downloads) {
+              if (d.boothId === input.boothId) d.isNew = false;
+            }
+          }
         }
       }
       return assetWatchStatus() as T;
@@ -2104,7 +2134,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     case "sync_export_json":
       return previewSyncExport() as T;
     case "save_sync_export":
-      if (!String(args.path ?? "").toLowerCase().endsWith(".json")) throw new Error("保存先は JSON ファイルにしてください");
+      if (!String(args.path ?? "").toLowerCase().endsWith(".zip")) throw new Error("保存先は ZIP ファイルにしてください");
       return { counts: JSON.parse(previewSyncExport()).counts } as T;
     case "register_owned_body":
       return registerPreviewOwnedBody(String(args.boothId ?? ""), args.name == null ? null : String(args.name)) as T;
@@ -2390,6 +2420,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       }
       row.state = "local";
       row.localPath = `${store.settings.libraryFolder}\\${boothId}\\${filename}`;
+      row.isNew = false;
       // Rust の再読み込みはリモートを確認しないので、画面は確認をやり直す。
       store.remoteChecked = false;
       return row.localPath as T;

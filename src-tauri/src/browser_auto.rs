@@ -75,10 +75,7 @@ fn changed(app: &AppHandle, prompt: bool) {
     let _ = app.emit("library-changed", ());
     let _ = app.emit_to("main", "browser-auto-pending", ());
     if prompt {
-        if let Some(main) = app.get_webview_window("main") {
-            let _ = main.show();
-            let _ = main.set_focus();
-        }
+        crate::presence::show_main_later(app);
     }
 }
 
