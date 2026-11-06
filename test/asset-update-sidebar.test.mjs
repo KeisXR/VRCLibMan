@@ -55,7 +55,7 @@ test("sidebar asset update button runs the configured check and reports a quiet 
     const shell = {
       revision: 0,
       refresh() {},
-      notify(message) { notes.push(message); },
+      notify(message, action, options) { notes.push({ message, options }); },
       fail(message) { throw new Error(message); },
       builtinBrowser: false,
       refreshAccount() {},
@@ -88,7 +88,24 @@ test("sidebar asset update button runs the configured check and reports a quiet 
     assert.match(button.textContent, /アセットの更新を確認/);
     await act(async () => { button.click(); await tick(); });
     assert.equal(checks, 1, "press runs the check");
-    assert.ok(notes.some((m) => m.includes("更新候補なし")), "a quiet result is reported");
+    assert.ok(notes.some((n) => n.message.includes("更新候補なし")), "a quiet result is reported");
+
+    // A result with failures stays on screen as a persistent notice.
+    notes.length = 0;
+    assetUpdates.check = async () => status([row("1", { error: "取得に失敗しました" }), row("2")]);
+    await act(async () => { document.querySelector(".sidebar-asset-update").click(); await tick(); });
+    const failure = notes.find((n) => n.message.includes("確認失敗"));
+    assert.ok(failure, "failures are reported");
+    assert.equal(failure.options?.persist, true, "failure notice persists");
+
+    // Enabling the first target in settings surfaces the button without a reload:
+    // the mounted button re-reads its status when the screen changes.
+    assetUpdates.status = async () => status([row("1", { enabled: false })]);
+    await render();
+    assert.equal(document.querySelector(".sidebar-asset-update"), null, "hidden again with no targets");
+    assetUpdates.status = async () => status([row("1")]);
+    await act(async () => { window.dispatchEvent(new window.Event("hashchange")); await tick(); });
+    assert.ok(document.querySelector(".sidebar-asset-update"), "button appears after the settings change");
 
     // Pending changes show as a count on the button.
     assetUpdates.status = async () => status([row("1", { changes: ["新しいファイルの追加"] }), row("2", { changes: ["商品説明の変更"] })]);

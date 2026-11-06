@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { assetUpdates, isTauri } from "../api";
 import { useShell } from "../App";
 import { assetUpdateListSummary } from "../assetUpdatesUi";
@@ -16,15 +16,31 @@ export function SidebarAssetUpdateButton({ compact = false }: { compact?: boolea
   const { notify, fail } = useShell();
   const [status, setStatus] = useState<AssetUpdateStatus | null>(null);
   const [checking, setChecking] = useState(false);
-  const load = useCallback(() => assetUpdates.status().then(setStatus), []);
   useEffect(() => {
     let alive = true;
-    void assetUpdates.status().then((s) => { if (alive) setStatus(s); }, () => {});
-    if (!isTauri()) return () => { alive = false; };
+    const refresh = () => {
+      void assetUpdates.status().then((s) => { if (alive) setStatus(s); }, () => {});
+    };
+    refresh();
+    // Configuration changes in the settings screen do not emit an event, so the
+    // mounted button also refreshes when the screen changes and once a minute;
+    // otherwise the first target enabled in settings would not surface here
+    // until some check happened to run.
+    const timer = window.setInterval(refresh, 60000);
+    window.addEventListener("hashchange", refresh);
     let stop = () => {};
-    void import("@tauri-apps/api/event").then(({ listen }) => listen("asset-updates-changed", () => { void load().catch(() => {}); })).then((unlisten) => { if (alive) stop = unlisten; else unlisten(); });
-    return () => { alive = false; stop(); };
-  }, [load]);
+    if (isTauri()) {
+      void import("@tauri-apps/api/event")
+        .then(({ listen }) => listen("asset-updates-changed", refresh))
+        .then((unlisten) => { if (alive) stop = unlisten; else unlisten(); });
+    }
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+      window.removeEventListener("hashchange", refresh);
+      stop();
+    };
+  }, []);
   const enabled = status?.rows.filter((r) => r.enabled).length ?? 0;
   if (!status || enabled === 0) return null;
   const running = checking || status.running;
@@ -35,9 +51,14 @@ export function SidebarAssetUpdateButton({ compact = false }: { compact?: boolea
     try {
       const next = await assetUpdates.check();
       setStatus(next);
-      // Changes raise the shared banner through the asset-updates-changed event;
-      // a quiet result still needs an answer to the press.
-      if (!next.rows.some((r) => r.changes.length > 0)) notify(assetUpdateListSummary(next));
+      // A result containing failures must stay on screen (the notification
+      // rules in AGENTS.md); the check resolves even when some rows failed.
+      // Changes raise the shared banner through the asset-updates-changed
+      // event; a quiet result still needs an answer to the press.
+      const failed = next.rows.filter((r) => r.error).length;
+      const changedAny = next.rows.some((r) => r.changes.length > 0);
+      if (failed > 0) notify(assetUpdateListSummary(next), undefined, { persist: true });
+      else if (!changedAny) notify(assetUpdateListSummary(next));
     } catch (err) {
       fail(errorText(err));
     } finally {
