@@ -192,6 +192,7 @@ pub struct DownloadFact {
     pub size_bytes: Option<u64>,
     pub downloaded: bool,
     pub local_path: Option<String>,
+    pub downloadable_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -221,6 +222,7 @@ pub struct PlacedDownload {
     pub state: FilePlace,
     pub local_path: Option<String>,
     pub remote_path: Option<String>,
+    pub downloadable_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

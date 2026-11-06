@@ -802,6 +802,14 @@ pub(crate) fn import_export_json(
     connection: &mut Connection,
     json: &str,
 ) -> Result<ImportReport, String> {
+    import_export_json_with_mode(connection, json, false)
+}
+
+pub(crate) fn import_export_json_with_mode(
+    connection: &mut Connection,
+    json: &str,
+    authoritative_files: bool,
+) -> Result<ImportReport, String> {
     let parsed = crate::import_data::parse_export(json)?;
     if parsed.products.is_empty() {
         return Err(parsed
@@ -810,7 +818,7 @@ pub(crate) fn import_export_json(
             .cloned()
             .unwrap_or_else(|| "商品が1件もありません".into()));
     }
-    import_products(connection, &parsed)
+    import_products_with_mode(connection, &parsed, authoritative_files)
 }
 
 pub(crate) fn extension_token(connection: &Connection) -> Result<String, String> {
@@ -874,6 +882,23 @@ pub(crate) fn import_products(
     connection: &mut Connection,
     parsed: &ParsedExport,
 ) -> Result<ImportReport, String> {
+    import_products_with_mode(connection, parsed, false)
+}
+
+pub(crate) fn import_products_with_mode(
+    connection: &mut Connection,
+    parsed: &ParsedExport,
+    authoritative_files: bool,
+) -> Result<ImportReport, String> {
+    let mut before_files = std::collections::HashMap::new();
+    for product in &parsed.products {
+        if !product.downloads.is_empty() {
+            if let Ok(keys) = crate::asset_updates::existing_file_keys(connection, &product.booth_id)
+            {
+                before_files.insert(product.booth_id.clone(), keys);
+            }
+        }
+    }
     let tx = connection.transaction().sql()?;
     let mut inserted = 0;
     let mut updated = 0;
@@ -896,6 +921,12 @@ pub(crate) fn import_products(
         }
     }
     tx.commit().sql()?;
+    let _ = crate::asset_updates::record_imported_files(
+        connection,
+        &before_files,
+        &parsed.products,
+        authoritative_files,
+    );
     for booth_id in touched {
         apply_listed_compatibility(connection, &booth_id)?;
     }
@@ -3136,6 +3167,7 @@ pub(crate) fn load_snapshot(connection: &Connection) -> Result<Snapshot, String>
         download_rows: load_download_rows(connection)?,
         placed_downloads: Vec::new(),
         product_flags: load_product_flags(connection)?,
+        file_watches: crate::asset_updates::file_watches(connection).unwrap_or_default(),
         remote_configured: false,
         remote_checked: true,
         remote_reachable: false,
@@ -3229,7 +3261,7 @@ fn load_variations(connection: &Connection) -> Result<Vec<VariationFact>, String
 fn load_download_rows(connection: &Connection) -> Result<Vec<DownloadFact>, String> {
     let mut statement = connection
         .prepare(
-            "SELECT booth_id, variation, filename, size_bytes, downloaded, local_path
+            "SELECT booth_id, variation, filename, size_bytes, downloaded, local_path, downloadable_id
              FROM product_files",
         )
         .sql()?;
@@ -3243,6 +3275,10 @@ fn load_download_rows(connection: &Connection) -> Result<Vec<DownloadFact>, Stri
                 size_bytes: size.and_then(|value| u64::try_from(value).ok()),
                 downloaded: row.get::<_, i64>(4)? != 0,
                 local_path: row.get(5)?,
+                downloadable_id: row
+                    .get::<_, Option<String>>(6)?
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty()),
             })
         })
         .sql()?;
@@ -3403,6 +3439,10 @@ pub(crate) fn store_free_files(
     is_adult: Option<bool>,
 ) -> Result<usize, String> {
     free_files_target(connection, booth_id)?;
+    let mut before_files = std::collections::HashMap::new();
+    if let Ok(keys) = crate::asset_updates::existing_file_keys(connection, booth_id) {
+        before_files.insert(booth_id.to_string(), keys);
+    }
     let incoming = IncomingProduct {
         booth_id: booth_id.to_string(),
         title: String::new(),
@@ -3428,6 +3468,12 @@ pub(crate) fn store_free_files(
         )
         .sql()?;
     transaction.commit().sql()?;
+    let _ = crate::asset_updates::record_imported_files(
+        connection,
+        &before_files,
+        std::slice::from_ref(&incoming),
+        true,
+    );
     Ok(count.max(0) as usize)
 }
 
@@ -3628,6 +3674,22 @@ pub(crate) fn record_extension_download(
         )
         .sql()?;
     crate::sync_meta::touch_file_links(connection, booth_id)?;
+    let stored_id: Option<String> = connection
+        .query_row(
+            "SELECT downloadable_id FROM product_files WHERE booth_id = ?1 AND variation = ?2 AND filename = ?3",
+            params![booth_id, variation, filename],
+            |row| row.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten()
+        .or_else(|| downloadable_id.map(str::to_string));
+    let _ = crate::asset_updates::clear_new_file_on_download(
+        connection,
+        booth_id,
+        stored_id.as_deref(),
+        &filename,
+    );
     Ok(())
 }
 

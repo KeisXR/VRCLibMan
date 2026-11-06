@@ -1938,6 +1938,7 @@ pub async fn import_library(app: AppHandle) -> Result<LibraryWalkReport, String>
         unchanged: 0,
     };
     if !collected.products.is_empty() {
+        let authoritative = collected.stop == WalkStop::Finished;
         let json = export_json(serde_json::Value::Array(collected.products));
         let app_for_db = app.clone();
         let imported = tauri::async_runtime::spawn_blocking(move || {
@@ -1946,7 +1947,8 @@ pub async fn import_library(app: AppHandle) -> Result<LibraryWalkReport, String>
                 .db
                 .lock()
                 .map_err(|_| "データベースをロックできません".to_string())?;
-            let report = db::import_export_json(&mut connection, &json)?;
+            let report =
+                db::import_export_json_with_mode(&mut connection, &json, authoritative)?;
             let _ = crate::integration::record_import(&connection, "browser", &report);
             Ok::<_, String>(report)
         })

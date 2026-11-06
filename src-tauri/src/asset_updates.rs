@@ -1,7 +1,9 @@
 //! Opt-in public metadata checks. Never downloads files or uses a BOOTH session.
 use crate::{AppState, booth_detail, db};
+use crate::model::{IncomingDownload, IncomingProduct};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -30,6 +32,10 @@ struct Row {
     error: Option<String>,
     baseline: Option<Snapshot>,
     latest: Option<Snapshot>,
+    #[serde(default)]
+    new_files: Vec<String>,
+    #[serde(default)]
+    current_files: Option<Vec<String>>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 struct Snapshot {
@@ -37,6 +43,20 @@ struct Snapshot {
     description: String,
     files: Vec<(String, String, String)>,
 }
+
+struct FetchedObservation {
+    snapshot: Snapshot,
+    free_files: Vec<IncomingDownload>,
+    is_free: Option<bool>,
+    is_adult: Option<bool>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ProductFileWatch {
+    pub new_files: HashSet<String>,
+    pub current_files: Option<HashSet<String>>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Status {
@@ -91,6 +111,8 @@ fn new_row(id: String) -> Row {
         error: None,
         baseline: None,
         latest: None,
+        new_files: Vec::new(),
+        current_files: None,
     }
 }
 fn include_products(w: &mut Watch, ids: impl Iterator<Item = String>) {
@@ -132,6 +154,9 @@ fn active(c: &Connection, id: &str) -> Result<bool, String> {
 }
 fn changes(row: &Row) -> Vec<String> {
     let mut changes = Vec::new();
+    if !row.new_files.is_empty() {
+        changes.push("新しいファイルの追加".into());
+    }
     if let (Some(before), Some(after)) = (&row.baseline, &row.latest) {
         if before.description != after.description {
             changes.push("商品説明の変更".into());
@@ -141,6 +166,170 @@ fn changes(row: &Row) -> Vec<String> {
         }
     }
     changes
+}
+
+pub(crate) fn file_watches(c: &Connection) -> Result<HashMap<String, ProductFileWatch>, String> {
+    let w = load(c)?;
+    let mut map = HashMap::new();
+    for row in w.rows {
+        if row.new_files.is_empty() && row.current_files.is_none() {
+            continue;
+        }
+        map.insert(
+            row.booth_id,
+            ProductFileWatch {
+                new_files: row.new_files.into_iter().collect(),
+                current_files: row.current_files.map(|files| files.into_iter().collect()),
+            },
+        );
+    }
+    Ok(map)
+}
+
+fn clean_file_key(download: &IncomingDownload) -> Option<String> {
+    let id = download.downloadable_id.trim();
+    if (1..=12).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_digit()) {
+        return Some(id.to_string());
+    }
+    let name = download.filename.trim();
+    if !name.is_empty() {
+        return Some(name.to_string());
+    }
+    None
+}
+
+pub(crate) fn existing_file_keys(
+    c: &Connection,
+    booth_id: &str,
+) -> Result<HashSet<String>, String> {
+    let mut stmt = c
+        .prepare("SELECT downloadable_id, filename FROM product_files WHERE booth_id = ?1")
+        .map_err(|_| "ファイル情報を確認できません")?;
+    let rows = stmt
+        .query_map([booth_id], |r| {
+            Ok((r.get::<_, Option<String>>(0)?, r.get::<_, String>(1)?))
+        })
+        .map_err(|_| "ファイル情報を確認できません")?;
+    let mut keys = HashSet::new();
+    for row in rows {
+        let (id, name) = row.map_err(|_| "ファイル情報を確認できません")?;
+        if let Some(id) = id.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+            keys.insert(id);
+        }
+        let trimmed = name.trim();
+        if !trimmed.is_empty() {
+            keys.insert(trimmed.to_string());
+        }
+    }
+    Ok(keys)
+}
+
+/// Records newly discovered files for products that already had file rows before this import.
+/// When `authoritative` is true (e.g. a completed full library walk), also updates `current_files`
+/// so files no longer listed on BOOTH can be folded under "以前のファイル".
+pub(crate) fn record_imported_files(
+    c: &Connection,
+    before_files: &HashMap<String, HashSet<String>>,
+    products: &[IncomingProduct],
+    authoritative: bool,
+) -> Result<(), String> {
+    let mut w = load(c)?;
+    let mut dirty = false;
+    for product in products {
+        if !booth_detail::item_json_url(&product.booth_id).is_ok()
+            || !active(c, &product.booth_id)?
+        {
+            continue;
+        }
+        let incoming_keys: Vec<String> = product
+            .downloads
+            .iter()
+            .filter_map(clean_file_key)
+            .collect();
+        if incoming_keys.is_empty() {
+            continue;
+        }
+        let had_before = before_files
+            .get(&product.booth_id)
+            .is_some_and(|keys| !keys.is_empty());
+        let added: Vec<String> = if let Some(prev) = before_files.get(&product.booth_id) {
+            if prev.is_empty() {
+                Vec::new()
+            } else {
+                incoming_keys
+                    .iter()
+                    .filter(|key| !prev.contains(*key))
+                    .cloned()
+                    .collect()
+            }
+        } else {
+            Vec::new()
+        };
+        if !had_before && !authoritative {
+            continue;
+        }
+        let row = if let Some(row) = w.rows.iter_mut().find(|r| r.booth_id == product.booth_id) {
+            row
+        } else {
+            w.rows.push(new_row(product.booth_id.clone()));
+            w.rows.last_mut().unwrap()
+        };
+        let mut row_changed = false;
+        for key in added {
+            if !row.new_files.contains(&key) {
+                row.new_files.push(key);
+                row_changed = true;
+            }
+        }
+        if authoritative {
+            let mut sorted = incoming_keys.clone();
+            sorted.sort();
+            sorted.dedup();
+            if row.current_files.as_ref() != Some(&sorted) {
+                row.current_files = Some(sorted);
+                row_changed = true;
+            }
+        }
+        if row_changed {
+            row.generation += 1;
+            row.checked_at = Some(crate::model::now_iso());
+            dirty = true;
+        }
+    }
+    if dirty {
+        db::set_setting(
+            c,
+            KEY,
+            &serde_json::to_string(&w).map_err(|_| "更新確認の設定を保存できません")?,
+        )?;
+    }
+    Ok(())
+}
+
+pub(crate) fn clear_new_file_on_download(
+    c: &Connection,
+    booth_id: &str,
+    downloadable_id: Option<&str>,
+    filename: &str,
+) -> Result<(), String> {
+    let mut w = load(c)?;
+    let Some(row) = w.rows.iter_mut().find(|r| r.booth_id == booth_id) else {
+        return Ok(());
+    };
+    let before = row.new_files.len();
+    let id = downloadable_id.map(str::trim).unwrap_or("");
+    let name = filename.trim();
+    row.new_files
+        .retain(|key| key != id && key != name);
+    if row.new_files.len() != before {
+        row.generation += 1;
+        db::set_setting(
+            c,
+            KEY,
+            &serde_json::to_string(&w).map_err(|_| "更新確認の設定を保存できません")?,
+        )?;
+    }
+    Ok(())
 }
 pub fn status(c: &Connection) -> Result<Status, String> {
     let w = load(c)?;
@@ -198,6 +387,7 @@ pub fn configure(c: &mut Connection, input: Configure) -> Result<Status, String>
             }
             if input.acknowledge == Some(true) {
                 row.baseline = row.latest.clone();
+                row.new_files.clear();
             }
         } else if input.enabled == Some(true) {
             w.rows.push(new_row(id));
@@ -212,7 +402,7 @@ pub fn configure(c: &mut Connection, input: Configure) -> Result<Status, String>
     save(c, &w)?;
     status(c)
 }
-fn interpret(id: &str, body: &str) -> Result<Snapshot, String> {
+fn interpret_observation(id: &str, body: &str) -> Result<FetchedObservation, String> {
     let v: serde_json::Value = serde_json::from_str(body).map_err(|_| "商品情報を読めません")?;
     let actual_id = v.get("id").map(|id| {
         id.as_str()
@@ -237,19 +427,35 @@ fn interpret(id: &str, body: &str) -> Result<Snapshot, String> {
     } else {
         String::new()
     };
-    let mut files = match crate::free_files::interpret(body) {
-        crate::free_files::FreeFilesOutcome::Free { files, .. } => files
-            .into_iter()
-            .map(|f| (f.downloadable_id, f.variation, f.filename))
-            .collect(),
+    let (mut files, free_files, is_free, is_adult) = match crate::free_files::interpret(body) {
+        crate::free_files::FreeFilesOutcome::Free {
+            files,
+            is_free,
+            is_adult,
+        } => {
+            let tuples = files
+                .iter()
+                .map(|f| (f.downloadable_id.clone(), f.variation.clone(), f.filename.clone()))
+                .collect();
+            (tuples, files, is_free, is_adult)
+        }
         crate::free_files::FreeFilesOutcome::NotFree
-        | crate::free_files::FreeFilesOutcome::NoFiles => Vec::new(),
+        | crate::free_files::FreeFilesOutcome::NoFiles => (Vec::new(), Vec::new(), None, None),
         _ => return Err("ファイル一覧を確認できません".into()),
     };
     files.sort();
-    Ok(Snapshot { description, files })
+    Ok(FetchedObservation {
+        snapshot: Snapshot { description, files },
+        free_files,
+        is_free,
+        is_adult,
+    })
 }
-async fn fetch(id: &str) -> Result<Snapshot, String> {
+#[cfg(test)]
+fn interpret(id: &str, body: &str) -> Result<Snapshot, String> {
+    interpret_observation(id, body).map(|obs| obs.snapshot)
+}
+async fn fetch(id: &str) -> Result<FetchedObservation, String> {
     use booth_detail::ItemDocument;
     match booth_detail::fetch_item_document(id).await?.1 {
         ItemDocument::Body {
@@ -269,7 +475,7 @@ async fn fetch(id: &str) -> Result<Snapshot, String> {
                 }
                 .into());
             }
-            interpret(id, &body)
+            interpret_observation(id, &body)
         }
         ItemDocument::AgeGate => Err("ログインまたは年齢確認が必要です".into()),
         ItemDocument::Again => Err("商品情報を確認できません".into()),
@@ -302,6 +508,26 @@ pub async fn check(app: &AppHandle, manual: bool) -> Result<Status, String> {
         .try_lock()
         .map_err(|_| "更新確認はすでに実行中です")?;
     let state = app.state::<AppState>();
+    if manual {
+        let use_browser = {
+            let c = state.db.lock().map_err(|_| "設定を読めません")?;
+            let w = load(&c)?;
+            db::settings(&c)?.builtin_browser && w.rows.iter().any(|r| r.enabled)
+        };
+        if use_browser {
+            let walk = crate::browser::import_library(app.clone()).await?;
+            let _ = app.emit("library-changed", ());
+            let _ = app.emit_to("main", "asset-updates-changed", ());
+            if walk.cancelled || !walk.notice.is_empty() {
+                drop(guard);
+                if !walk.notice.is_empty() {
+                    return Err(walk.notice);
+                }
+                let c = state.db.lock().map_err(|_| "設定を読めません")?;
+                return status(&c);
+            }
+        }
+    }
     let (ids, generation) = {
         let c = state.db.lock().map_err(|_| "設定を読めません")?;
         let w = load(&c)?;
@@ -350,6 +576,7 @@ pub async fn check(app: &AppHandle, manual: bool) -> Result<Status, String> {
         let stop = result.as_ref().err().is_some_and(|e| {
             e.contains("BOOTH が") || e.contains("ログイン") || e == "商品情報を確認できません"
         });
+        let mut files_updated = false;
         {
             let mut c = state.db.lock().map_err(|_| "設定を読めません")?;
             let mut w = load(&c)?;
@@ -358,14 +585,30 @@ pub async fn check(app: &AppHandle, manual: bool) -> Result<Status, String> {
                     && row.generation == revision
                     && active(&c, id)?
                 {
+                    if let Ok(obs) = &result {
+                        if !obs.free_files.is_empty() {
+                            let _ = db::store_free_files(
+                                &mut c,
+                                id,
+                                &obs.free_files,
+                                obs.is_free,
+                                obs.is_adult,
+                            );
+                            files_updated = true;
+                            w = load(&c)?;
+                        }
+                    }
                     let row = w.rows.iter_mut().find(|r| &r.booth_id == id).unwrap();
-                    record(row, result);
+                    record(row, result.map(|obs| obs.snapshot));
                     if stop {
                         w.retry_after = Some(chrono::Utc::now().timestamp() + 3600);
                     }
                     save(&mut c, &w)?;
                 }
             }
+        }
+        if files_updated {
+            let _ = app.emit("library-changed", ());
         }
         let _ = app.emit_to("main", "asset-updates-changed", ());
         // A gate or rate limit ends the batch; do not continue requesting other products.
@@ -402,6 +645,8 @@ mod tests {
             error: None,
             baseline: None,
             latest: None,
+            new_files: Vec::new(),
+            current_files: None,
         }
     }
     fn snapshot(text: &str) -> Snapshot {
@@ -633,5 +878,55 @@ mod tests {
         assert_eq!(legacy.rows.len(), 1);
         assert!(configure(&mut c, config(Some(true), Some("424242"), Some(false))).is_err());
         assert_eq!(db::setting(&c, KEY).unwrap().unwrap(), raw);
+    }
+
+    #[test]
+    fn imported_files_record_new_files_and_authoritative_current_set() {
+        let c = library();
+        let mut before = HashMap::new();
+        before.insert(
+            "424242".to_string(),
+            HashSet::from(["9871769".to_string(), "MochiFitter73r.zip".to_string()]),
+        );
+        let incoming = vec![IncomingProduct {
+            booth_id: "424242".into(),
+            title: "既存商品".into(),
+            shop: String::new(),
+            description_snippet: String::new(),
+            url: String::new(),
+            thumbnail_url: None,
+            variations: Vec::new(),
+            downloads: vec![IncomingDownload {
+                filename: "MochiFitter75r.zip".into(),
+                size_bytes: None,
+                variation: String::new(),
+                downloadable_id: "10000100".into(),
+            }],
+            is_free: None,
+            is_adult: None,
+            unpublished: None,
+            booth_category: None,
+            booth_tags: None,
+        }];
+        record_imported_files(&c, &before, &incoming, false).unwrap();
+        let partial = file_watches(&c).unwrap();
+        let watch = partial.get("424242").unwrap();
+        assert!(watch.new_files.contains("10000100"));
+        assert!(watch.current_files.is_none());
+        assert_eq!(
+            status(&c).unwrap().rows[0].changes,
+            vec!["新しいファイルの追加"]
+        );
+
+        record_imported_files(&c, &before, &incoming, true).unwrap();
+        let full = file_watches(&c).unwrap();
+        let watch = full.get("424242").unwrap();
+        assert_eq!(
+            watch.current_files.as_ref().unwrap(),
+            &HashSet::from(["10000100".to_string()])
+        );
+
+        clear_new_file_on_download(&c, "424242", Some("10000100"), "MochiFitter75r.zip").unwrap();
+        assert!(status(&c).unwrap().rows[0].changes.is_empty());
     }
 }

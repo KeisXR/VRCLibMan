@@ -861,7 +861,8 @@ function DownloadFiles({
   }
 
   const present = item.downloads.filter((file) => file.state !== "missing");
-  const missing = item.downloads.filter((file) => file.state === "missing");
+  const missing = item.downloads.filter((file) => file.state === "missing" && !file.superseded);
+  const superseded = item.downloads.filter((file) => file.state === "missing" && Boolean(file.superseded));
   const foldMissing = missing.length >= 4;
   const unnamed = item.downloads.some((file) => !hasRealFileName(file.filename));
   const row = (file: DownloadView) => (
@@ -898,6 +899,14 @@ function DownloadFiles({
           </li>
         ) : (
           missing.map(row)
+        )}
+        {superseded.length > 0 && (
+          <li className="download-fold superseded-fold">
+            <details>
+              <summary>以前のファイル {superseded.length}件</summary>
+              <ul className="file-list">{superseded.map(row)}</ul>
+            </details>
+          </li>
         )}
       </ul>
     </>
@@ -965,6 +974,7 @@ function DownloadRow({
     >
       <div>
         <span className="download-name">{file.filename}</span>
+        {file.isNew ? <span className="badge new-file">新しいファイル</span> : null}
         {file.variation ? <span className="meta"> {file.variation}</span> : null}
         <span className={status?.phase === "error" ? "meta warn-text" : `meta state-${file.state}`}>
           {" "}

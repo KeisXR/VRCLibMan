@@ -72,6 +72,9 @@ export interface DownloadView {
   state: FilePlace;
   localPath: string | null;
   remotePath: string | null;
+  downloadableId?: string | null;
+  isNew?: boolean;
+  superseded?: boolean;
 }
 
 export interface RemoteProductProbe {

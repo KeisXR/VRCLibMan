@@ -923,6 +923,7 @@ fn fill_places_inner(snapshot: &mut Snapshot, remote_folder: &str, probe_remote:
             state,
             local_path: local.map(|path| path.display().to_string()),
             remote_path: remote_path.map(|path| path.display().to_string()),
+            downloadable_id: row.downloadable_id.clone(),
         });
     }
     snapshot.remote_reachable = reachable;
@@ -1554,6 +1555,7 @@ mod tests {
             size_bytes: Some(1),
             downloaded: false,
             local_path: None,
+            downloadable_id: None,
         }
     }
 
@@ -1577,6 +1579,7 @@ mod tests {
             download_rows: vec![probe_download(booth_a, "a.zip"), probe_download(booth_b, "b.zip")],
             placed_downloads: Vec::new(),
             product_flags: Vec::new(),
+            file_watches: std::collections::HashMap::new(),
             remote_configured: false,
             remote_checked: false,
             remote_reachable: false,
@@ -1614,6 +1617,7 @@ mod tests {
             download_rows: vec![probe_download("424242", "a.zip")],
             placed_downloads: Vec::new(),
             product_flags: Vec::new(),
+            file_watches: std::collections::HashMap::new(),
             remote_configured: false,
             remote_checked: false,
             remote_reachable: false,
