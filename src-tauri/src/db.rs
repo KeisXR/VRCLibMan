@@ -1431,7 +1431,17 @@ fn apply_listed_compatibility(connection: &mut Connection, booth_id: &str) -> Re
     let category = if existing.category_locked {
         existing.category.unwrap_or(Category::Outfit)
     } else {
-        crate::compat::category_for_listed_product(&existing.title, &existing.description_snippet)
+        // The list adds links. Title keywords that find nothing must not undo a settled category.
+        match (
+            crate::compat::category_for_listed_product(
+                &existing.title,
+                &existing.description_snippet,
+            ),
+            existing.category,
+        ) {
+            (Category::Other, Some(current)) => current,
+            (listed, _) => listed,
+        }
     };
     let threshold = settings(connection)?.confidence_threshold;
     apply_extraction(
@@ -8863,6 +8873,25 @@ mod tests {
         let after = load_snapshot(&mut connection).unwrap();
         assert_eq!(after.avatars.iter().filter(|a| a.display_name == "輝夜").count(), 1);
         assert!(after.avatars.iter().any(|a| a.display_name == "輝夜" && a.owned));
+    }
+
+    #[test]
+    fn a_plain_compat_list_keeps_a_category_the_title_cannot_decide() {
+        let mut connection = open_memory().unwrap();
+        let json = r#"[{"boothId":"8800773","title":"見本の品","description":"対応アバター\nうらら\nライム\n基本仕様\n布です。"}]"#;
+        import_products(&mut connection, &parse_export(json).unwrap()).unwrap();
+        apply_extraction(
+            &mut connection,
+            "8800773",
+            &extraction(Category::Outfit, &[], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        // The same payload again is an unchanged product, which still runs compatibility.
+        import_products(&mut connection, &parse_export(json).unwrap()).unwrap();
+        let kept = require_product(&connection, "8800773").unwrap();
+        assert_eq!(kept.category, Some(Category::Outfit));
+        assert!(link_ids(&connection, "8800773").unwrap().iter().any(|id| id == "lime"));
     }
 
     #[test]
