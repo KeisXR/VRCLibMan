@@ -500,7 +500,6 @@ mod tests {
                 genre: None,
                 is_generic: None,
                 avatar_ids: avatars,
-                confirm: None,
             },
         )
         .unwrap();

@@ -1,7 +1,7 @@
 use crate::AppState;
 use crate::db::{self, ExtractJob};
 use crate::model::{
-    AvatarCandidate, AvatarInput, BaseBodyInput, CatalogInfo, CatalogRefresh, ClassificationSnapshot,
+    AvatarInput, BaseBodyInput, CatalogInfo, CatalogRefresh, ClassificationSnapshot,
     RegisterOwnedBodyResult,
     ExtractReport, ImportReport, Knowledge, LibraryStats, OllamaStatus, ProductUpdate,
     ScanReport, Category, Settings, SettingsInput, SetupStatus, StagedLeftover,
@@ -10,7 +10,10 @@ use crate::apple_fm::{self, AppleError};
 use crate::model::Extraction;
 use crate::ollama::{self, model_ready};
 use crate::scan;
-use crate::view::{self, AvatarCard, AvatarDetail, GenreProducts, ItemView, ProductOption, QueuePage};
+use crate::view::{
+    self, AvatarCard, AvatarDetail, GenreProducts, ItemView, ProductEditView, ProductOption,
+    UnlinkedFilesPage,
+};
 use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, MutexGuard};
@@ -337,23 +340,86 @@ pub async fn set_unity_editor(
 }
 
 #[tauri::command]
-pub fn list_queue(
+#[allow(non_snake_case)]
+pub fn product_for_edit(
     state: State<'_, AppState>,
-    kind: String,
+    boothId: String,
+) -> Result<ProductEditView, String> {
+    let connection = db(&state)?;
+    let snapshot = db::load_snapshot(&connection)?;
+    view::product_edit_view(&snapshot, &boothId).ok_or_else(|| "商品が見つかりません".to_string())
+}
+
+#[tauri::command]
+pub fn list_unlinked_files(
+    state: State<'_, AppState>,
     offset: u32,
     limit: u32,
-) -> Result<QueuePage, String> {
-    if !matches!(kind.as_str(), "unextracted" | "review" | "files") {
-        return Err("キューの種類が不正です".into());
+) -> Result<UnlinkedFilesPage, String> {
+    let connection = db(&state)?;
+    let snapshot = db::load_snapshot(&connection)?;
+    Ok(view::unlinked_files_page(&snapshot, offset, limit.clamp(1, 200)))
+}
+
+#[tauri::command]
+pub fn classification_log_runs(
+    state: State<'_, AppState>,
+    offset: u32,
+    limit: u32,
+) -> Result<db::ClassificationRunPage, String> {
+    let connection = db(&state)?;
+    db::run_page(&connection, offset, limit.clamp(1, 200))
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn classification_log_entries(
+    state: State<'_, AppState>,
+    runId: i64,
+    offset: u32,
+    limit: u32,
+) -> Result<Vec<db::ClassificationEntryView>, String> {
+    let connection = db(&state)?;
+    db::run_entries(&connection, runId, offset, limit.clamp(1, 200))
+}
+
+#[tauri::command]
+pub fn classification_log_search(
+    state: State<'_, AppState>,
+    query: String,
+    limit: u32,
+) -> Result<Vec<db::ClassificationEntryView>, String> {
+    let connection = db(&state)?;
+    db::search_entries(&connection, &query, limit.clamp(1, 200))
+}
+
+#[tauri::command]
+pub fn classification_unresolved_names(
+    state: State<'_, AppState>,
+) -> Result<Vec<db::UnresolvedNameCount>, String> {
+    let connection = db(&state)?;
+    db::unresolved_name_counts(&connection)
+}
+
+/// Main window only. Not during a classification run, whose entries are still being written.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn undo_classification_entry(
+    view: tauri::Webview,
+    state: State<'_, AppState>,
+    entryId: i64,
+) -> Result<(), String> {
+    if view.label() != "main" {
+        return Err("この画面から分類は戻せません".into());
+    }
+    if state.extract_running.load(Ordering::SeqCst) {
+        return Err("分類の実行中は戻せません".into());
     }
     let mut connection = db(&state)?;
-    let snapshot = db::load_snapshot(&mut connection)?;
-    Ok(view::queue_page(
-        &snapshot,
-        &kind,
-        offset,
-        limit.clamp(1, 200),
-    ))
+    db::undo_entry(&mut connection, entryId)?;
+    // Undoing a registered body can remove its placeholder avatar and that avatar's image.
+    let _ = crate::hero_image::prune(&connection, &state.hero_images_dir);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1824,36 +1890,10 @@ pub async fn pull_ollama_model(app: AppHandle, state: State<'_, AppState>, model
 }
 
 #[tauri::command]
-pub fn avatar_candidates(state: State<'_, AppState>) -> Result<Vec<AvatarCandidate>, String> {
-    let connection = db(&state)?;
-    db::avatar_candidates(&connection)
-}
-
-#[tauri::command]
-pub fn register_avatar_candidate(
-    state: State<'_, AppState>,
-    name: String,
-) -> Result<String, String> {
-    let mut connection = db(&state)?;
-    db::register_candidate(&mut connection, &name)
-}
-
-#[tauri::command]
 #[allow(non_snake_case)]
 pub fn mark_owned_avatar(state: State<'_, AppState>, boothId: String) -> Result<String, String> {
     let mut connection = db(&state)?;
     db::mark_owned_body(&mut connection, &boothId)
-}
-
-#[tauri::command]
-#[allow(non_snake_case)]
-pub fn alias_avatar_candidate(
-    state: State<'_, AppState>,
-    name: String,
-    avatarId: String,
-) -> Result<(), String> {
-    let mut connection = db(&state)?;
-    db::alias_candidate(&mut connection, &name, &avatarId)
 }
 
 #[tauri::command]

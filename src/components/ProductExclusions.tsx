@@ -1,9 +1,11 @@
-import { useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { useShell } from "../App";
+import { classificationLogHref } from "../classificationLog";
 import { CATEGORY_LABEL, GENRE_LABEL, genresForKind } from "../types";
 import type { GenreKind, ManagedProduct } from "../types";
 import { errorText } from "../ui";
+import { ProductEditDialog } from "./ProductEditDialog";
 import { useGenreMove, useRegisterOwnedBody, useUnpinProduct } from "../useGenreMove";
 
 export function ExcludeProductButton({
@@ -27,6 +29,7 @@ export function ExcludeProductButton({
   const [open, setOpen] = useState(false);
   const [picking, setPicking] = useState(false);
   const [naming, setNaming] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [candidates, setCandidates] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
   const [kind, setKind] = useState<GenreKind>(category === "world" ? "world" : "asset");
@@ -37,6 +40,8 @@ export function ExcludeProductButton({
   const holdFocus = useRef(false);
   const canMove = category !== "avatar";
   const canRegisterBody = category !== "avatar";
+
+  const closeEditor = useCallback(() => setEditing(false), []);
 
   useEffect(() => {
     if (!open) {
@@ -116,6 +121,30 @@ export function ExcludeProductButton({
       </button>
       {open && !picking && !naming && (
         <div className="product-actions-panel" role="menu">
+          <button
+            className="button"
+            type="button"
+            role="menuitem"
+            disabled={busy}
+            onClick={() => {
+              setOpen(false);
+              setEditing(true);
+            }}
+          >
+            分類を編集
+          </button>
+          <button
+            className="button"
+            type="button"
+            role="menuitem"
+            disabled={busy}
+            onClick={() => {
+              setOpen(false);
+              window.location.hash = classificationLogHref(boothId);
+            }}
+          >
+            分類記録を見る
+          </button>
           {canMove && (
             <button
               className="button"
@@ -245,6 +274,7 @@ export function ExcludeProductButton({
           <button className="button" type="button" onClick={() => setNaming(false)}>戻る</button>
         </div>
       )}
+      {editing && <ProductEditDialog boothId={boothId} onClose={closeEditor} />}
     </div>
   );
 }
@@ -255,6 +285,8 @@ export function ProductExclusions() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
   const [pending, setPending] = useState<Set<string>>(new Set());
+  const [editing, setEditing] = useState<string | null>(null);
+  const closeEditor = useCallback(() => setEditing(null), []);
   const needle = useDeferredValue(query.trim().toLocaleLowerCase("ja"));
 
   useEffect(() => {
@@ -277,6 +309,7 @@ export function ProductExclusions() {
       (products ?? []).filter((product) => {
         if (filter === "excluded" && !product.excluded) return false;
         if (filter === "active" && product.excluded) return false;
+        if (filter === "uncategorized" && (product.excluded || product.category != null)) return false;
         return `${product.title} ${product.shop} ${product.boothId}`
           .toLocaleLowerCase("ja")
           .includes(needle);
@@ -327,6 +360,7 @@ export function ProductExclusions() {
           >
             <option value="all">すべて</option>
             <option value="active">対象の商品</option>
+            <option value="uncategorized">未分類</option>
             <option value="excluded">除外中</option>
           </select>
         </label>
@@ -357,6 +391,16 @@ export function ProductExclusions() {
                       : CATEGORY_LABEL[product.category ?? "uncategorized"]}
                   </span>
                 </div>
+                {!product.excluded && (
+                  <button
+                    className="button"
+                    type="button"
+                    aria-label={`${product.title}の分類を編集`}
+                    onClick={() => setEditing(product.boothId)}
+                  >
+                    編集
+                  </button>
+                )}
                 <button
                   className="button"
                   type="button"
@@ -369,6 +413,7 @@ export function ProductExclusions() {
               </li>
             ))}
           </ul>
+          {editing && <ProductEditDialog boothId={editing} onClose={closeEditor} />}
         </>
       )}
     </div>

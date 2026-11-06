@@ -899,6 +899,121 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         assert.equal(filterItems(freeAssets.items, "一致しない見本文字列").length, 0);
       },
     );
+    await t.test("classification log text helpers stay readable for values they do not know", async () => {
+      const log = await server.ssrLoadModule("/src/classificationLog.ts");
+      assert.equal(log.runKindLabel("import"), "BOOTH 取り込み");
+      assert.equal(log.runKindLabel("from-a-newer-version"), "from-a-newer-version");
+      assert.equal(log.classifierLabel(""), "");
+      assert.equal(log.classifierLabel("ollama"), "Ollama");
+      assert.equal(log.runNoteLabel("reclassify", "unclassified"), "未分類");
+      assert.equal(log.runNoteLabel("import", null), "");
+      assert.equal(log.categoryName(null), "未分類");
+      assert.equal(log.categoryName("outfit"), "衣装");
+      assert.equal(log.linkNames([]), "なし");
+      assert.equal(log.linkNames([{ id: "a", name: "ライム" }, { id: "b", name: "プラム" }]), "ライム、プラム");
+      assert.equal(log.confidenceText(0.5), "0.50");
+      assert.equal(log.confidenceText(null), "");
+      assert.equal(log.formatLogTime("not a date"), "not a date");
+      assert.equal(
+        log.unresolvedListText([{ name: "架空ちゃん", productCount: 2 }, { name: "別人", productCount: 1 }]),
+        "- 架空ちゃん（2 件）\n- 別人（1 件）",
+      );
+      assert.equal(log.classificationLogHref("8800104"), "#/classification-log/8800104");
+      assert.equal(log.classificationLogHref(), "#/classification-log");
+    });
+    await t.test("the classification log shows runs and entries, and undoes one entry", async () => {
+      const copied = [];
+      const writeText = navigator.clipboard.writeText;
+      navigator.clipboard.writeText = async (value) => {
+        copied.push(value);
+      };
+      const entryNamed = (title) =>
+        [...document.querySelectorAll(".log-entry")].find((node) => node.textContent.includes(title));
+      const runNamed = (label) =>
+        [...document.querySelectorAll(".log-run-head")].find((node) => node.textContent.includes(label));
+      try {
+        await route("#/classification-log");
+        await wait(() => document.querySelector("main h1")?.textContent === "分類記録");
+        await wait(() => document.querySelectorAll(".log-run").length === 3);
+        const kinds = [...document.querySelectorAll(".log-run-head strong")].map((node) => node.textContent);
+        assert.deepEqual(kinds, ["再分類", "再分類", "BOOTH 取り込み"], "newest first");
+        assert.match(runNamed("Ollama").textContent, /未分類.*Ollama.*2 件/);
+        assert.equal(runNamed("Ollama").getAttribute("aria-expanded"), "false");
+
+        await wait(() => document.querySelector(".log-unresolved"));
+        const unresolved = document.querySelector(".log-unresolved");
+        assert.match(unresolved.textContent, /未収録の見本/);
+        await click(button("一覧をコピー", unresolved));
+        assert.equal(copied.length, 1);
+        assert.match(copied[0], /^- 未収録の見本（1 件）$/m);
+
+        await click(runNamed("Ollama"));
+        await wait(() => entryNamed("架空ちゃん対応パーカー"));
+        assert.equal(runNamed("Ollama").getAttribute("aria-expanded"), "true");
+        const entry = entryNamed("架空ちゃん対応パーカー");
+        assert.match(entry.textContent, /未分類 → 衣装/);
+        assert.match(entry.textContent, /なし → なし/);
+        assert.match(entry.textContent, /0\.42/);
+        assert.match(entry.textContent, /未収録の名前架空ちゃん/);
+
+        // 後の実行で変わった商品は、押せないボタンと理由を出す。
+        await click(runNamed("Apple"));
+        await wait(() => entryNamed("この記録のあとに分類が変わった"));
+        const blocked = entryNamed("この記録のあとに分類が変わった");
+        assert.equal(button("元に戻す", blocked).disabled, true);
+        assert.match(button("元に戻す", blocked).getAttribute("title"), /あとに分類が変わった/);
+
+        assert.equal((await api.productForEdit("8800104")).category, "outfit");
+        await click(button("元に戻す", entry));
+        await wait(() => entryNamed("架空ちゃん対応パーカー")?.textContent.includes("元に戻しました"));
+        assert.equal(button("元に戻す", entryNamed("架空ちゃん対応パーカー")), undefined);
+        assert.equal((await api.productForEdit("8800104")).category, null);
+        await wait(() => runNamed("元に戻す"));
+        assert.match(runNamed("元に戻す").textContent, /1 件/);
+        await assert.rejects(api.undoClassificationEntry(2), /すでに元に戻しています/);
+        // 取り消した明細の名前は、未収録の一覧から外れる。
+        await click(button("元に戻す", entryNamed("分類できなかった小物")));
+        await wait(() => document.querySelector(".log-unresolved") === null);
+
+        // 商品から来たときは、その商品の履歴だけを出す。
+        await route("#/classification-log/8800104");
+        await wait(() => document.querySelector(".log-search input")?.value === "8800104");
+        await wait(() => document.querySelectorAll(".log-entry").length === 2);
+        assert.equal(document.querySelectorAll(".log-run").length, 0);
+        assert.equal(button("元に戻す"), undefined, "undo entries and undone entries have no button");
+      } finally {
+        navigator.clipboard.writeText = writeText;
+      }
+    });
+    await t.test("product edits send only what changed, and file linking stays on the import page", async () => {
+      const updates = [];
+      const updateProduct = api.updateProduct;
+      api.updateProduct = async (update) => {
+        updates.push(update);
+        return updateProduct(update);
+      };
+      try {
+        await route("#/import");
+        await wait(() => document.querySelector("main h1")?.textContent === "インポート");
+        const editButton = () => document.querySelector('button[aria-label="しなの・ライム・マヌカ対応 ワンピースの分類を編集"]');
+        await wait(editButton);
+        await wait(() => [...document.querySelectorAll("summary")].some((node) => /商品未設定のファイル \d+ 件/.test(node.textContent)));
+        await click(editButton());
+        await wait(() => document.querySelector(".product-edit-dialog .edit-card"));
+        const dialog = document.querySelector(".product-edit-dialog");
+        assert.equal(button("確認済みにする", dialog), undefined);
+        await click(dialog.querySelector(".pills .chip"));
+        await click(button("保存", dialog));
+        await wait(() => document.querySelector(".product-edit-dialog") === null);
+        assert.equal(updates.length, 1);
+        assert.equal(updates[0].category, null, "an untouched category is not pinned");
+        assert.equal(updates[0].genre, null);
+        assert.equal(updates[0].isGeneric, null);
+        assert.ok(Array.isArray(updates[0].avatarIds));
+      } finally {
+        api.updateProduct = updateProduct;
+      }
+    });
     await t.test("left sidebar collapses to icons, keeps navigation and remembers the choice", async () => {
       const rail = () => document.querySelector("aside.rail");
       const toggle = () => rail().querySelector("button.rail-toggle");
@@ -935,7 +1050,9 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       assert.ok(assets.classList.contains("active"));
       assert.equal(assets.getAttribute("aria-current"), "page");
       assert.match(rail().querySelector('a[href="#/"]').getAttribute("title"), /^アバター（\d+）$/);
-      assert.match(rail().querySelector('a[href="#/queue"]').getAttribute("title"), /^確認（\d+）$/);
+      // 分類記録は仕事の一覧ではないので、件数を出さない。
+      assert.equal(rail().querySelector('a[href="#/classification-log"]').getAttribute("title"), "分類記録");
+      assert.equal(rail().querySelector('a[href="#/queue"]'), null);
       assert.equal(rail().querySelector(".rail-status"), null);
       assert.equal(separator(), null);
       // The mark stays; the wordmark is hidden by CSS but keeps naming the app.

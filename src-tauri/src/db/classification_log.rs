@@ -8,12 +8,18 @@
 //! catalog, owned-body, ended-listing, and re-resolve paths all change the same columns, and a
 //! comparison covers them with one rule. A run holds one entry per product: a later step in the
 //! same run updates that entry, and a step that restores the original state removes it.
+//!
+//! Undo returns one entry to its "before". It refuses when the product no longer matches the
+//! entry's "after", so an old entry cannot overwrite a newer change.
 
-use super::{Sql, parse_list, to_json};
-use crate::model::now_iso;
+use super::{
+    Sql, apply_owned_restore, avatar_exists, delete_links, load_avatars, parse_list,
+    product_excluded, require_product, to_json,
+};
+use crate::model::{OwnedAvatarRestore, now_iso};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 pub(super) const TABLES: &str = "
 CREATE TABLE IF NOT EXISTS classification_runs (
@@ -426,6 +432,405 @@ pub(crate) fn observe_all<T>(
     result
 }
 
+pub(crate) const KIND_UNDO: &str = "undo";
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassificationRunView {
+    pub id: i64,
+    pub started_at: String,
+    pub kind: String,
+    pub classifier: String,
+    pub note: Option<String>,
+    pub changed_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassificationRunPage {
+    pub total: u32,
+    pub runs: Vec<ClassificationRunView>,
+}
+
+/// An avatar in an entry. A deleted avatar keeps its id as the name.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassificationLink {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassificationEntryView {
+    pub id: i64,
+    pub run_id: i64,
+    pub started_at: String,
+    pub kind: String,
+    pub classifier: String,
+    pub booth_id: String,
+    pub title: Option<String>,
+    pub before_category: Option<String>,
+    pub after_category: Option<String>,
+    pub before_links: Vec<ClassificationLink>,
+    pub after_links: Vec<ClassificationLink>,
+    pub confidence: Option<f64>,
+    pub unresolved_names: Vec<String>,
+    pub undone: bool,
+    /// Why Undo is not available now. `None` means it is.
+    pub undo_blocked: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnresolvedNameCount {
+    pub name: String,
+    pub product_count: u32,
+}
+
+pub(crate) fn run_page(
+    connection: &Connection,
+    offset: u32,
+    limit: u32,
+) -> Result<ClassificationRunPage, String> {
+    let total: u32 = connection
+        .query_row(
+            "SELECT COUNT(DISTINCT run_id) FROM classification_entries",
+            [],
+            |row| row.get(0),
+        )
+        .sql()?;
+    let mut statement = connection
+        .prepare(
+            "SELECT r.id, r.started_at, r.kind, r.classifier, r.note, COUNT(e.id)
+             FROM classification_runs r
+             JOIN classification_entries e ON e.run_id = r.id
+             GROUP BY r.id
+             ORDER BY r.id DESC
+             LIMIT ?1 OFFSET ?2",
+        )
+        .sql()?;
+    let rows = statement
+        .query_map(params![limit, offset], |row| {
+            Ok(ClassificationRunView {
+                id: row.get(0)?,
+                started_at: row.get(1)?,
+                kind: row.get(2)?,
+                classifier: row.get(3)?,
+                note: row.get(4)?,
+                changed_count: row.get(5)?,
+            })
+        })
+        .sql()?;
+    let runs = rows.collect::<Result<Vec<_>, _>>().sql()?;
+    Ok(ClassificationRunPage { total, runs })
+}
+
+struct EntryRow {
+    id: i64,
+    run_id: i64,
+    started_at: String,
+    kind: String,
+    classifier: String,
+    booth_id: String,
+    title: Option<String>,
+    before_category: Option<String>,
+    after_category: Option<String>,
+    before_links: String,
+    after_links: String,
+    confidence: Option<f64>,
+    unresolved_names: String,
+    before_state: String,
+    undone: bool,
+}
+
+const ENTRY_SELECT: &str = "SELECT e.id, e.run_id, r.started_at, r.kind, r.classifier, e.booth_id, p.title,
+       e.before_category, e.after_category, e.before_links, e.after_links, e.confidence,
+       e.unresolved_names, e.before_state, e.undone
+     FROM classification_entries e
+     JOIN classification_runs r ON r.id = e.run_id
+     LEFT JOIN products p ON p.booth_id = e.booth_id";
+
+fn map_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<EntryRow> {
+    Ok(EntryRow {
+        id: row.get(0)?,
+        run_id: row.get(1)?,
+        started_at: row.get(2)?,
+        kind: row.get(3)?,
+        classifier: row.get(4)?,
+        booth_id: row.get(5)?,
+        title: row.get(6)?,
+        before_category: row.get(7)?,
+        after_category: row.get(8)?,
+        before_links: row.get(9)?,
+        after_links: row.get(10)?,
+        confidence: row.get(11)?,
+        unresolved_names: row.get(12)?,
+        before_state: row.get(13)?,
+        undone: row.get::<_, i64>(14)? != 0,
+    })
+}
+
+fn entry_views(
+    connection: &Connection,
+    rows: Vec<EntryRow>,
+) -> Result<Vec<ClassificationEntryView>, String> {
+    let names: HashMap<String, String> = load_avatars(connection)?
+        .into_iter()
+        .map(|avatar| (avatar.id, avatar.display_name))
+        .collect();
+    let named = |json: &str| -> Vec<ClassificationLink> {
+        parse_list(json)
+            .into_iter()
+            .map(|id| ClassificationLink {
+                name: names.get(&id).cloned().unwrap_or_else(|| id.clone()),
+                id,
+            })
+            .collect()
+    };
+    let mut views = Vec::with_capacity(rows.len());
+    for row in rows {
+        let undo_blocked = undo_blocker(connection, &row)?;
+        views.push(ClassificationEntryView {
+            before_links: named(&row.before_links),
+            after_links: named(&row.after_links),
+            unresolved_names: parse_list(&row.unresolved_names),
+            undo_blocked,
+            id: row.id,
+            run_id: row.run_id,
+            started_at: row.started_at,
+            kind: row.kind,
+            classifier: row.classifier,
+            booth_id: row.booth_id,
+            title: row.title,
+            before_category: row.before_category,
+            after_category: row.after_category,
+            confidence: row.confidence,
+            undone: row.undone,
+        });
+    }
+    Ok(views)
+}
+
+pub(crate) fn run_entries(
+    connection: &Connection,
+    run_id: i64,
+    offset: u32,
+    limit: u32,
+) -> Result<Vec<ClassificationEntryView>, String> {
+    let mut statement = connection
+        .prepare(&format!(
+            "{ENTRY_SELECT} WHERE e.run_id = ?1 ORDER BY e.id LIMIT ?2 OFFSET ?3"
+        ))
+        .sql()?;
+    let rows = statement
+        .query_map(params![run_id, limit, offset], map_entry)
+        .sql()?
+        .collect::<Result<Vec<_>, _>>()
+        .sql()?;
+    entry_views(connection, rows)
+}
+
+/// One product's history, by exact id or part of the title, newest first.
+pub(crate) fn search_entries(
+    connection: &Connection,
+    query: &str,
+    limit: u32,
+) -> Result<Vec<ClassificationEntryView>, String> {
+    let needle = query.trim();
+    if needle.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut statement = connection
+        .prepare(&format!(
+            "{ENTRY_SELECT}
+             WHERE e.booth_id = ?1 OR instr(lower(IFNULL(p.title, '')), lower(?1)) > 0
+             ORDER BY e.id DESC LIMIT ?2"
+        ))
+        .sql()?;
+    let rows = statement
+        .query_map(params![needle, limit], map_entry)
+        .sql()?
+        .collect::<Result<Vec<_>, _>>()
+        .sql()?;
+    entry_views(connection, rows)
+}
+
+/// Names the dictionary still lacks, by how many products mentioned them. An undone entry and a
+/// name that resolves now are left out, so the list stays usable as a list of gaps to report.
+pub(crate) fn unresolved_name_counts(
+    connection: &Connection,
+) -> Result<Vec<UnresolvedNameCount>, String> {
+    let avatars = load_avatars(connection)?;
+    let mut statement = connection
+        .prepare(
+            "SELECT e.booth_id, e.unresolved_names
+             FROM classification_entries e
+             JOIN classification_runs r ON r.id = e.run_id
+             WHERE e.undone = 0 AND r.kind <> ?1
+               AND e.booth_id NOT IN (SELECT booth_id FROM product_exclusions)",
+        )
+        .sql()?;
+    let rows = statement
+        .query_map(params![KIND_UNDO], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .sql()?;
+    let mut products: HashMap<String, HashSet<String>> = HashMap::new();
+    for row in rows {
+        let (booth_id, names) = row.sql()?;
+        for name in parse_list(&names) {
+            if !name.trim().is_empty() {
+                products.entry(name).or_default().insert(booth_id.clone());
+            }
+        }
+    }
+    let mut counts: Vec<UnresolvedNameCount> = products
+        .into_iter()
+        .filter(|(name, _)| crate::resolve::resolve_name(name, &avatars).is_none())
+        .map(|(name, ids)| UnresolvedNameCount {
+            name,
+            product_count: ids.len() as u32,
+        })
+        .collect();
+    counts.sort_by(|left, right| {
+        right
+            .product_count
+            .cmp(&left.product_count)
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    Ok(counts)
+}
+
+/// The reason Undo must refuse this entry. Every check protects something newer than the entry:
+/// a later run, or a choice the person made by hand.
+fn undo_blocker(connection: &Connection, row: &EntryRow) -> Result<Option<String>, String> {
+    if row.undone {
+        return Ok(Some("すでに元に戻しています".into()));
+    }
+    if row.kind == KIND_UNDO {
+        return Ok(Some("Undo の記録は元に戻せません".into()));
+    }
+    let Some(current) = product_state(connection, &row.booth_id)? else {
+        return Ok(Some("商品が見つかりません".into()));
+    };
+    if product_excluded(connection, &row.booth_id)? {
+        return Ok(Some("この商品は除外されています".into()));
+    }
+    let product = require_product(connection, &row.booth_id)?;
+    if product.links_locked {
+        return Ok(Some("対応アバターが手動で固定されているため戻せません".into()));
+    }
+    if current.category != row.after_category || current.links != parse_list(&row.after_links) {
+        return Ok(Some("この記録のあとに分類が変わったため戻せません".into()));
+    }
+    let before = decode_before(row.before_category.clone(), &row.before_links, &row.before_state)?;
+    if product.category_locked && current.category != before.category {
+        return Ok(Some("カテゴリが手動で固定されているため戻せません".into()));
+    }
+    if product.genre_locked && current.detail.genre != before.detail.genre {
+        return Ok(Some("ジャンルが手動で固定されているため戻せません".into()));
+    }
+    for avatar_id in &before.links {
+        if !avatar_exists(connection, avatar_id)? {
+            return Ok(Some("元の対応アバターが対応表から消えているため戻せません".into()));
+        }
+    }
+    Ok(None)
+}
+
+/// Restores the entry's "before" and records the restore as its own run.
+/// This is not a pin: a later run may classify the product the same way again.
+pub(crate) fn undo_entry(connection: &mut Connection, entry_id: i64) -> Result<(), String> {
+    let row = connection
+        .query_row(
+            &format!("{ENTRY_SELECT} WHERE e.id = ?1"),
+            params![entry_id],
+            map_entry,
+        )
+        .optional()
+        .sql()?
+        .ok_or("記録が見つかりません")?;
+    if let Some(reason) = undo_blocker(connection, &row)? {
+        return Err(reason);
+    }
+    let before = decode_before(row.before_category.clone(), &row.before_links, &row.before_state)?;
+    let current = product_state(connection, &row.booth_id)?.ok_or("商品が見つかりません")?;
+    // A link this run added may be the only thing holding a body or a placeholder.
+    let released: Vec<String> = current
+        .links
+        .iter()
+        .filter(|id| !before.links.contains(*id))
+        .filter(|id| {
+            let source = current.detail.link_sources.get(*id).map(String::as_str);
+            id.starts_with("owned-") || matches!(source, Some("owned" | "catalog"))
+        })
+        .cloned()
+        .collect();
+    let tx = connection.transaction().sql()?;
+    tx.execute(
+        "UPDATE products SET category = ?1, genre = ?2, compatible_avatars_json = ?3,
+         unresolved_names_json = ?4, is_generic = ?5, confidence = ?6, extracted_at = ?7,
+         classifier_version = ?8, user_confirmed = ?9, needs_review = ?10, updated_at = ?11
+         WHERE booth_id = ?12",
+        params![
+            before.category,
+            before.detail.genre,
+            to_json(&before.detail.compatible_avatars)?,
+            to_json(&before.detail.unresolved_names)?,
+            before.detail.is_generic,
+            before.detail.confidence,
+            before.detail.extracted_at,
+            before.detail.classifier_version,
+            before.detail.user_confirmed,
+            before.detail.needs_review,
+            now_iso(),
+            row.booth_id
+        ],
+    )
+    .sql()?;
+    delete_links(&tx, &row.booth_id)?;
+    for avatar_id in &before.links {
+        let source = before
+            .detail
+            .link_sources
+            .get(avatar_id)
+            .map(String::as_str)
+            .unwrap_or("extracted");
+        tx.execute(
+            "INSERT OR IGNORE INTO product_avatars (product_id, avatar_id, source) VALUES (?1, ?2, ?3)",
+            params![row.booth_id, avatar_id, source],
+        )
+        .sql()?;
+    }
+    for avatar_id in &released {
+        apply_owned_restore(
+            &tx,
+            &OwnedAvatarRestore {
+                id: avatar_id.clone(),
+                display_name: String::new(),
+                aliases: Vec::new(),
+                owned: false,
+                remove_if_unused: true,
+            },
+        )?;
+    }
+    tx.execute(
+        "UPDATE classification_entries SET undone = 1 WHERE id = ?1",
+        params![entry_id],
+    )
+    .sql()?;
+    let after = product_state(&tx, &row.booth_id)?.ok_or("商品が見つかりません")?;
+    let mut run = ClassificationRun::new(KIND_UNDO, CLASSIFIER_NONE);
+    record(&tx, &mut run, &row.booth_id, &current, &after)?;
+    crate::sync_meta::touch_product(&tx, &row.booth_id)?;
+    for avatar_id in &released {
+        crate::sync_meta::touch_avatar(&tx, avatar_id)?;
+    }
+    tx.commit().sql()?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::*;
@@ -806,5 +1211,239 @@ mod tests {
         });
         assert_eq!(result.unwrap_err(), "途中で失敗");
         assert_eq!(entries(&connection, "7014").len(), 1);
+    }
+
+    fn latest_entry(connection: &Connection, booth_id: &str) -> i64 {
+        connection
+            .query_row(
+                "SELECT id FROM classification_entries WHERE booth_id = ?1 ORDER BY id DESC LIMIT 1",
+                params![booth_id],
+                |row| row.get(0),
+            )
+            .unwrap()
+    }
+
+    fn blocked(connection: &Connection, booth_id: &str, entry_id: i64) -> Option<String> {
+        search_entries(connection, booth_id, 50)
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.id == entry_id)
+            .unwrap()
+            .undo_blocked
+    }
+
+    #[test]
+    fn undo_restores_the_before_state_and_records_itself() {
+        let mut connection = open_memory().unwrap();
+        product(&mut connection, "7101");
+        apply_extraction(&mut connection, "7101", &outfit_for(&["ライム"], 0.9), 0.6).unwrap();
+        let lime = lime_id(&connection);
+        let original = require_product(&connection, "7101").unwrap();
+        apply_extraction(
+            &mut connection,
+            "7101",
+            &Extraction {
+                category: Category::Hair,
+                genre: None,
+                compatible_avatars: vec!["架空ちゃん".to_string()],
+                is_generic: false,
+                confidence: 0.7,
+            },
+            0.6,
+        )
+        .unwrap();
+        let entry_id = latest_entry(&connection, "7101");
+        assert_eq!(blocked(&connection, "7101", entry_id), None);
+        undo_entry(&mut connection, entry_id).unwrap();
+
+        let restored = require_product(&connection, "7101").unwrap();
+        assert_eq!(restored.category, original.category);
+        assert_eq!(restored.genre, original.genre);
+        assert_eq!(restored.compatible_avatars, original.compatible_avatars);
+        assert!(restored.unresolved_names.is_empty());
+        assert_eq!(restored.confidence, original.confidence);
+        assert_eq!(restored.extracted_at, original.extracted_at);
+        assert_eq!(link_ids(&connection, "7101").unwrap(), vec![lime.clone()]);
+
+        let logged = entries(&connection, "7101");
+        assert_eq!(logged.len(), 3);
+        assert_eq!(logged[2].before_category.as_deref(), Some("hair"));
+        assert_eq!(logged[2].after_category.as_deref(), Some("outfit"));
+        assert_eq!(logged[2].after_links, vec![lime.clone()]);
+        assert_eq!(run_of(&connection, logged[2].run_id).0, KIND_UNDO);
+
+        // Re-resolve rebuilds links from the stored names, so they have to come back too.
+        reresolve_all(&mut connection).unwrap();
+        assert_eq!(link_ids(&connection, "7101").unwrap(), vec![lime]);
+        assert_eq!(entries(&connection, "7101").len(), 3);
+    }
+
+    #[test]
+    fn undo_refuses_an_entry_a_later_run_has_replaced() {
+        let mut connection = open_memory().unwrap();
+        product(&mut connection, "7102");
+        apply_extraction(&mut connection, "7102", &outfit_for(&["ライム"], 0.9), 0.6).unwrap();
+        let older = latest_entry(&connection, "7102");
+        apply_extraction(&mut connection, "7102", &outfit_for(&["架空ちゃん"], 0.9), 0.6).unwrap();
+        let reason = blocked(&connection, "7102", older).unwrap();
+        assert!(reason.contains("あとに分類が変わった"));
+        let category = require_product(&connection, "7102").unwrap().category;
+        assert_eq!(undo_entry(&mut connection, older).unwrap_err(), reason);
+        assert_eq!(require_product(&connection, "7102").unwrap().category, category);
+        assert!(entries(&connection, "7102").len() == 2, "a refused undo writes nothing");
+    }
+
+    #[test]
+    fn undo_refuses_a_product_with_locked_links() {
+        let mut connection = open_memory().unwrap();
+        product(&mut connection, "7103");
+        apply_extraction(&mut connection, "7103", &outfit_for(&["ライム"], 0.9), 0.6).unwrap();
+        let entry_id = latest_entry(&connection, "7103");
+        let lime = lime_id(&connection);
+        update_product(
+            &mut connection,
+            &ProductUpdate {
+                booth_id: "7103".into(),
+                category: None,
+                genre: None,
+                is_generic: None,
+                avatar_ids: Some(vec![lime]),
+            },
+        )
+        .unwrap();
+        let reason = undo_entry(&mut connection, entry_id).unwrap_err();
+        assert!(reason.contains("固定"));
+        assert_eq!(blocked(&connection, "7103", entry_id), Some(reason));
+    }
+
+    #[test]
+    fn undo_refuses_to_overwrite_a_manual_category() {
+        let mut connection = open_memory().unwrap();
+        product(&mut connection, "7104");
+        apply_extraction(&mut connection, "7104", &outfit_for(&["ライム"], 0.9), 0.6).unwrap();
+        let entry_id = latest_entry(&connection, "7104");
+        connection
+            .execute("UPDATE products SET category_locked = 1 WHERE booth_id = '7104'", [])
+            .unwrap();
+        assert!(undo_entry(&mut connection, entry_id).unwrap_err().contains("カテゴリ"));
+    }
+
+    #[test]
+    fn undo_runs_once_and_an_undo_entry_cannot_be_undone() {
+        let mut connection = open_memory().unwrap();
+        product(&mut connection, "7105");
+        apply_extraction(&mut connection, "7105", &outfit_for(&["ライム"], 0.9), 0.6).unwrap();
+        let entry_id = latest_entry(&connection, "7105");
+        undo_entry(&mut connection, entry_id).unwrap();
+        assert!(undo_entry(&mut connection, entry_id).unwrap_err().contains("すでに"));
+        let undo_id = latest_entry(&connection, "7105");
+        assert_ne!(undo_id, entry_id);
+        assert!(undo_entry(&mut connection, undo_id).unwrap_err().contains("Undo"));
+        assert!(undo_entry(&mut connection, 999_999).is_err());
+    }
+
+    #[test]
+    fn undo_refuses_when_the_original_avatar_is_gone() {
+        let mut connection = open_memory().unwrap();
+        product(&mut connection, "7106");
+        let avatar = save_avatar(
+            &mut connection,
+            &AvatarInput {
+                id: None,
+                display_name: "架空ちゃん".into(),
+                base_body: None,
+                aliases: Vec::new(),
+                notes: String::new(),
+            },
+        )
+        .unwrap();
+        apply_extraction(&mut connection, "7106", &outfit_for(&["架空ちゃん"], 0.9), 0.6).unwrap();
+        apply_extraction(&mut connection, "7106", &outfit_for(&["ライム"], 0.9), 0.6).unwrap();
+        let entry_id = latest_entry(&connection, "7106");
+        connection
+            .execute("DELETE FROM avatars WHERE id = ?1", params![avatar])
+            .unwrap();
+        assert!(undo_entry(&mut connection, entry_id).unwrap_err().contains("消えている"));
+    }
+
+    #[test]
+    fn undoing_a_registered_body_releases_ownership_and_the_placeholder() {
+        let mut connection = open_memory().unwrap();
+        import_export_json(
+            &mut connection,
+            r#"{"boothId":"7107","title":"九尾オリジナル3Dモデル「輝夜」-kaguya-","description":"見本です。"}"#,
+        )
+        .unwrap();
+        let avatar = link_ids(&connection, "7107").unwrap().remove(0);
+        assert!(avatar_is_owned(&connection, &avatar).unwrap());
+        let entry_id = latest_entry(&connection, "7107");
+        undo_entry(&mut connection, entry_id).unwrap();
+        let product = require_product(&connection, "7107").unwrap();
+        assert_eq!(product.category, None);
+        assert!(!product.user_confirmed);
+        assert!(link_ids(&connection, "7107").unwrap().is_empty());
+        assert!(!avatar_exists(&connection, &avatar).unwrap());
+    }
+
+    #[test]
+    fn views_name_avatars_and_page_runs_newest_first() {
+        let mut connection = open_memory().unwrap();
+        product(&mut connection, "7108");
+        apply_extraction(&mut connection, "7108", &outfit_for(&["ライム"], 0.9), 0.6).unwrap();
+        apply_extraction(&mut connection, "7108", &outfit_for(&["架空ちゃん"], 0.9), 0.6).unwrap();
+        let page = run_page(&connection, 0, 1).unwrap();
+        assert_eq!(page.total, 2);
+        assert_eq!(page.runs.len(), 1);
+        assert_eq!(page.runs[0].changed_count, 1);
+        let newest = run_entries(&connection, page.runs[0].id, 0, 50).unwrap();
+        assert_eq!(newest.len(), 1);
+        assert_eq!(newest[0].title.as_deref(), Some("見本の服"));
+        assert_eq!(newest[0].before_links[0].name, "ライム");
+        assert!(newest[0].after_links.is_empty());
+        assert_eq!(newest[0].unresolved_names, vec!["架空ちゃん".to_string()]);
+        assert_eq!(search_entries(&connection, "見本", 50).unwrap().len(), 2);
+        assert_eq!(search_entries(&connection, "7108", 50).unwrap().len(), 2);
+        assert!(search_entries(&connection, "71", 50).unwrap().is_empty());
+        assert!(search_entries(&connection, "  ", 50).unwrap().is_empty());
+    }
+
+    #[test]
+    fn unresolved_names_count_products_and_drop_what_resolves_now() {
+        let mut connection = open_memory().unwrap();
+        product(&mut connection, "7109");
+        product(&mut connection, "7110");
+        product(&mut connection, "7111");
+        apply_extraction(&mut connection, "7109", &outfit_for(&["架空ちゃん"], 0.9), 0.6).unwrap();
+        // A second entry for the same product is still one product.
+        apply_extraction(&mut connection, "7109", &outfit_for(&["架空ちゃん", "別人"], 0.9), 0.6)
+            .unwrap();
+        apply_extraction(&mut connection, "7110", &outfit_for(&["架空ちゃん"], 0.9), 0.6).unwrap();
+        apply_extraction(&mut connection, "7111", &outfit_for(&["取り消す名"], 0.9), 0.6).unwrap();
+        let entry_id = latest_entry(&connection, "7111");
+        undo_entry(&mut connection, entry_id).unwrap();
+        assert_eq!(
+            unresolved_name_counts(&connection).unwrap(),
+            vec![
+                UnresolvedNameCount { name: "架空ちゃん".into(), product_count: 2 },
+                UnresolvedNameCount { name: "別人".into(), product_count: 1 },
+            ]
+        );
+        save_avatar(
+            &mut connection,
+            &AvatarInput {
+                id: None,
+                display_name: "別人".into(),
+                base_body: None,
+                aliases: Vec::new(),
+                notes: String::new(),
+            },
+        )
+        .unwrap();
+        let names: Vec<String> = unresolved_name_counts(&connection)
+            .unwrap()
+            .into_iter()
+            .map(|item| item.name)
+            .collect();
+        assert_eq!(names, vec!["架空ちゃん".to_string()]);
     }
 }

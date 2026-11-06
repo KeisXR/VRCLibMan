@@ -5,7 +5,7 @@
  */
 import type { ReactNode } from "react";
 
-export type NavIconName = "avatars" | "assets" | "worlds" | "search" | "queue" | "import" | "settings" | "browser";
+export type NavIconName = "avatars" | "assets" | "worlds" | "search" | "log" | "import" | "settings" | "browser";
 
 function Icon({ children, className = "nav-icon" }: { children: ReactNode; className?: string }) {
   return (
@@ -45,12 +45,11 @@ const PATHS: Record<NavIconName, ReactNode> = {
       <path d="m11.5 11.5 3.8 3.8" />
     </>
   ),
-  // A tray with a check: items to review.
-  queue: (
+  // A page of lines: a record to read.
+  log: (
     <>
-      <path d="M2.8 10.5h3.4l1.2 1.8h3.2l1.2-1.8h3.4" />
-      <path d="M4.2 4.5h9.6l1.4 6v4H2.8v-4z" />
-      <path d="m6.8 7.2 1.5 1.5 3-3" />
+      <path d="M4.2 2.5h9.6v13H4.2z" />
+      <path d="M6.6 6.2h4.8M6.6 9h4.8M6.6 11.8h3" />
     </>
   ),
   // An arrow into a tray.

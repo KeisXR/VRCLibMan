@@ -691,13 +691,6 @@ pub struct SetupStatus {
     pub backend: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AvatarCandidate {
-    pub name: String,
-    pub product_count: u32,
-}
-
 /// One avatar link captured so a manual placement can be undone.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -801,7 +794,6 @@ pub struct ProductUpdate {
     pub genre: Option<String>,
     pub is_generic: Option<bool>,
     pub avatar_ids: Option<Vec<String>>,
-    pub confirm: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -835,8 +827,6 @@ pub struct LibraryStats {
     pub products: u32,
     pub owned_avatars: u32,
     pub unextracted: u32,
-    pub needs_review: u32,
-    pub queue_count: u32,
     pub unlinked_files: u32,
     pub ollama_model: String,
 }

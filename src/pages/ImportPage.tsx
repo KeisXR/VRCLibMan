@@ -19,6 +19,7 @@ import type {
 import { errorText } from "../ui";
 import { SettingRow } from "../components/SettingRow";
 import { ProductExclusions } from "../components/ProductExclusions";
+import { UnlinkedFiles } from "../components/UnlinkedFiles";
 import { ExtensionInstructions } from "../components/BoothImportSettings";
 import { OllamaMemoryControls } from "../components/OllamaMemoryControls";
 
@@ -555,6 +556,7 @@ export function ImportPage() {
               </ul>
             </div>
           )}
+          <UnlinkedFiles />
         </section>
         <section className="settings-section">
           <header>
@@ -614,7 +616,7 @@ export function ImportPage() {
                   .then(
                     (id) => {
                       notify(
-                        `商品 ${id} を無料商品として登録しました。確認画面の未分類に表示されます`,
+                        `商品 ${id} を無料商品として登録しました。「未分類を分類」で分類できます`,
                       );
                       setFreeUrl("");
                       refresh();

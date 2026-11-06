@@ -511,7 +511,6 @@ mod tests {
             genre: None,
             is_generic: None,
             avatar_ids: None,
-            confirm: None,
         }
     }
 
