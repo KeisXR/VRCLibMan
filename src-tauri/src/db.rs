@@ -16,8 +16,17 @@ use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+mod classification_log;
 #[cfg(test)]
 mod classification_regressions;
+
+#[cfg(test)]
+pub(crate) use classification_log::KIND_IMPLICIT;
+pub(crate) use classification_log::{
+    CLASSIFIER_CATALOG, CLASSIFIER_NONE, ClassificationRun, KIND_BOOTH_DETAIL, KIND_CATALOG,
+    KIND_EDIT, KIND_IMPORT, KIND_RECLASSIFY, KIND_STARTUP, observe,
+};
+use classification_log::observe_all;
 
 const SCHEMA: &str = "
 CREATE TABLE products (
@@ -147,10 +156,14 @@ fn finish_open(mut connection: Connection, wal: bool) -> Result<Connection, Stri
     let added = merge_catalog(&connection)?;
     // New seed and catalog rows are not changes. This must run before the startup settling below.
     crate::sync_meta::baseline_missing(&connection)?;
-    settle_dictionary(&mut connection)?;
-    if added > 0 || seeded > 0 {
-        reresolve_all(&mut connection)?;
-    }
+    let mut run = ClassificationRun::new(KIND_STARTUP, CLASSIFIER_CATALOG);
+    observe_all(&mut connection, &mut run, |connection| {
+        settle_dictionary(connection)?;
+        if added > 0 || seeded > 0 {
+            reresolve_products(connection)?;
+        }
+        Ok(())
+    })?;
     Ok(connection)
 }
 
@@ -328,6 +341,14 @@ fn migrate(connection: &Connection) -> Result<(), String> {
         connection
             .execute_batch("PRAGMA user_version = 9;")
             .sql()?;
+    }
+    // v10 is only the classification log. It is local display history, outside the sync export.
+    // Older libraries have no history, and product rows stay as they are.
+    if version < 10 {
+        let tx = connection.unchecked_transaction().sql()?;
+        tx.execute_batch(classification_log::TABLES).sql()?;
+        tx.execute_batch("PRAGMA user_version = 10;").sql()?;
+        tx.commit().sql()?;
     }
     Ok(())
 }
@@ -878,6 +899,8 @@ pub(crate) fn set_setting(connection: &Connection, key: &str, value: &str) -> Re
     Ok(())
 }
 
+/// One import is one run of the log. The whole pass is compared, because a changed description
+/// clears a row before the listed-compatibility pass and dictionary settling write it again.
 pub(crate) fn import_products(
     connection: &mut Connection,
     parsed: &ParsedExport,
@@ -886,6 +909,17 @@ pub(crate) fn import_products(
 }
 
 pub(crate) fn import_products_with_mode(
+    connection: &mut Connection,
+    parsed: &ParsedExport,
+    authoritative_files: bool,
+) -> Result<ImportReport, String> {
+    let mut run = ClassificationRun::new(KIND_IMPORT, CLASSIFIER_CATALOG);
+    observe_all(connection, &mut run, |connection| {
+        import_products_unlogged(connection, parsed, authoritative_files)
+    })
+}
+
+fn import_products_unlogged(
     connection: &mut Connection,
     parsed: &ParsedExport,
     authoritative_files: bool,
@@ -1475,7 +1509,7 @@ fn apply_listed_compatibility(connection: &mut Connection, booth_id: &str) -> Re
         }
     };
     let threshold = settings(connection)?.confidence_threshold;
-    apply_extraction(
+    apply_extraction_inner(
         connection,
         booth_id,
         &Extraction {
@@ -1486,16 +1520,33 @@ fn apply_listed_compatibility(connection: &mut Connection, booth_id: &str) -> Re
             confidence: 0.9,
         },
         threshold,
+        true,
     )
 }
 
+/// Applies one extraction and logs it under `run`.
+pub(crate) fn apply_extraction_in_run(
+    connection: &mut Connection,
+    run: &mut ClassificationRun,
+    booth_id: &str,
+    extraction: &Extraction,
+    threshold: f64,
+) -> Result<(), String> {
+    observe(connection, run, booth_id, |connection| {
+        apply_extraction_inner(connection, booth_id, extraction, threshold, true)
+    })
+}
+
+/// `apply_extraction_in_run` with a run of its own, for a call that has no entry point.
+#[cfg(test)]
 pub(crate) fn apply_extraction(
     connection: &mut Connection,
     booth_id: &str,
     extraction: &Extraction,
     threshold: f64,
 ) -> Result<(), String> {
-    apply_extraction_inner(connection, booth_id, extraction, threshold, true)
+    let mut run = ClassificationRun::new(KIND_IMPLICIT, CLASSIFIER_NONE);
+    apply_extraction_in_run(connection, &mut run, booth_id, extraction, threshold)
 }
 
 fn apply_extraction_inner(
@@ -1830,7 +1881,33 @@ fn created_names_are_grounded(
     })
 }
 
+/// Re-resolves every product and logs the changes under `run`.
+pub(crate) fn reresolve_all_in_run(
+    connection: &mut Connection,
+    run: &mut ClassificationRun,
+) -> Result<u32, String> {
+    observe_all(connection, run, reresolve_products)
+}
+
+/// `reresolve_all_in_run` with a run of its own, for a call that has no entry point.
+#[cfg(test)]
 pub(crate) fn reresolve_all(connection: &mut Connection) -> Result<u32, String> {
+    let mut run = ClassificationRun::new(KIND_IMPLICIT, CLASSIFIER_NONE);
+    reresolve_all_in_run(connection, &mut run)
+}
+
+/// The catalog applied again, from the settings maintenance button.
+pub(crate) fn reapply_catalog(connection: &mut Connection) -> Result<u32, String> {
+    let mut run = ClassificationRun::new(KIND_CATALOG, CLASSIFIER_CATALOG);
+    reresolve_all_in_run(connection, &mut run)
+}
+
+fn reresolve_after_edit(connection: &mut Connection) -> Result<u32, String> {
+    let mut run = ClassificationRun::new(KIND_EDIT, CLASSIFIER_CATALOG);
+    reresolve_all_in_run(connection, &mut run)
+}
+
+fn reresolve_products(connection: &mut Connection) -> Result<u32, String> {
     let threshold = settings(connection)?.confidence_threshold;
     let tx = connection.transaction().sql()?;
     let mut processed = 0;
@@ -2981,7 +3058,19 @@ pub(crate) fn products_needing_booth_detail(connection: &Connection) -> Result<V
 }
 
 /// `true` means stop the batch. RetryLater and a transport error leave the row unchecked.
+/// A changed description clears the classification, so that reset goes in the log.
 pub(crate) fn store_booth_detail(
+    connection: &mut Connection,
+    booth_id: &str,
+    outcome: &crate::booth_detail::DetailOutcome,
+) -> Result<bool, String> {
+    let mut run = ClassificationRun::new(KIND_BOOTH_DETAIL, CLASSIFIER_NONE);
+    observe(connection, &mut run, booth_id, |connection| {
+        store_booth_detail_unlogged(connection, booth_id, outcome)
+    })
+}
+
+fn store_booth_detail_unlogged(
     connection: &mut Connection,
     booth_id: &str,
     outcome: &crate::booth_detail::DetailOutcome,
@@ -4210,7 +4299,7 @@ pub(crate) fn save_avatar(
         )
         .sql()?;
     crate::sync_meta::touch_avatar(connection, &id)?;
-    reresolve_all(connection)?;
+    reresolve_after_edit(connection)?;
     Ok(id)
 }
 
@@ -4239,7 +4328,15 @@ pub(crate) fn avatar_hero_paths(connection: &Connection) -> Result<Vec<String>, 
     rows.collect::<Result<Vec<_>, _>>().sql()
 }
 
+/// The links go before the re-resolve, so the log has to start before they do.
 pub(crate) fn delete_avatar(connection: &mut Connection, id: &str) -> Result<(), String> {
+    let mut run = ClassificationRun::new(KIND_EDIT, CLASSIFIER_CATALOG);
+    observe_all(connection, &mut run, |connection| {
+        delete_avatar_unlogged(connection, id)
+    })
+}
+
+fn delete_avatar_unlogged(connection: &mut Connection, id: &str) -> Result<(), String> {
     let avatar = avatar_by_id(connection, id)?.ok_or("アバターが見つかりません")?;
     if avatar.is_builtin {
         return Err("初期データのアバターは削除できません".into());
@@ -4253,7 +4350,7 @@ pub(crate) fn delete_avatar(connection: &mut Connection, id: &str) -> Result<(),
     connection
         .execute("DELETE FROM avatars WHERE id = ?1", params![id])
         .sql()?;
-    reresolve_all(connection)?;
+    reresolve_products(connection)?;
     Ok(())
 }
 
@@ -4305,7 +4402,19 @@ pub(crate) fn delete_base_body(connection: &Connection, id: &str) -> Result<(), 
     crate::sync_meta::reconcile_all(connection)
 }
 
+/// Links move before the re-resolve, so the log has to start before they do.
 pub(crate) fn merge_avatars(
+    connection: &mut Connection,
+    from_id: &str,
+    into_id: &str,
+) -> Result<(), String> {
+    let mut run = ClassificationRun::new(KIND_EDIT, CLASSIFIER_CATALOG);
+    observe_all(connection, &mut run, |connection| {
+        merge_avatars_unlogged(connection, from_id, into_id)
+    })
+}
+
+fn merge_avatars_unlogged(
     connection: &mut Connection,
     from_id: &str,
     into_id: &str,
@@ -4361,13 +4470,13 @@ pub(crate) fn merge_avatars(
     tx.execute("DELETE FROM avatars WHERE id = ?1", params![from_id])
         .sql()?;
     tx.commit().sql()?;
-    reresolve_all(connection)?;
+    reresolve_products(connection)?;
     Ok(())
 }
 
 pub(crate) fn restore_seed(connection: &mut Connection) -> Result<u32, String> {
     let merged = merge_seed(connection, 0)?;
-    reresolve_all(connection)?;
+    reapply_catalog(connection)?;
     Ok(merged.inserted + merged.filled)
 }
 
@@ -4559,8 +4668,11 @@ pub(crate) fn install_catalog(
         "catalog_count",
         &parsed.entries.len().to_string(),
     )?;
-    settle_dictionary(connection)?;
-    reresolve_all(connection)?;
+    let mut run = ClassificationRun::new(KIND_CATALOG, CLASSIFIER_CATALOG);
+    observe_all(connection, &mut run, |connection| {
+        settle_dictionary(connection)?;
+        reresolve_products(connection)
+    })?;
     Ok(CatalogRefresh {
         added,
         total: parsed.entries.len() as u32,
@@ -4897,7 +5009,7 @@ fn settle_one(connection: &mut Connection, booth_id: &str, redo: bool) -> Result
         return Ok(false);
     }
     let threshold = settings(connection)?.confidence_threshold;
-    apply_extraction(
+    apply_extraction_inner(
         connection,
         booth_id,
         &Extraction {
@@ -4908,6 +5020,7 @@ fn settle_one(connection: &mut Connection, booth_id: &str, redo: bool) -> Result
             confidence: 0.95,
         },
         threshold,
+        true,
     )?;
     Ok(true)
 }
@@ -5615,7 +5728,7 @@ pub(crate) fn register_candidate(
             remember_alias(connection, &existing, alias)?;
         }
         crate::sync_meta::touch_avatar(connection, &existing)?;
-        reresolve_all(connection)?;
+        reresolve_after_edit(connection)?;
         return Ok(existing);
     }
     let id = generate_id(connection, &display)?;
@@ -5627,7 +5740,7 @@ pub(crate) fn register_candidate(
         )
         .sql()?;
     crate::sync_meta::touch_avatar(connection, &id)?;
-    reresolve_all(connection)?;
+    reresolve_after_edit(connection)?;
     Ok(id)
 }
 
@@ -5647,7 +5760,7 @@ pub(crate) fn alias_candidate(
     for alias in aliases {
         remember_alias(connection, avatar_id, &alias)?;
     }
-    reresolve_all(connection)?;
+    reresolve_after_edit(connection)?;
     Ok(())
 }
 
@@ -6368,7 +6481,7 @@ mod tests {
             connection
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
-            9
+            10
         );
         let detail_at: Option<String> = connection
             .query_row(
@@ -7084,7 +7197,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 9);
+        assert_eq!(version, 10);
         let json = r#"{
             "products": [
                 {
@@ -7685,7 +7798,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 9);
+        assert_eq!(version, 10);
         let report = import_products(&mut connection, &parsed).unwrap();
         assert_eq!(report.inserted, 7);
         assert_eq!(report.skipped, 0);
@@ -7967,7 +8080,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 9);
+        assert_eq!(version, 10);
         assert!(!settings(&connection).unwrap().ui_rail_collapsed);
         let saved = update_settings(
             &connection,
@@ -8036,7 +8149,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 9);
+        assert_eq!(version, 10);
         assert!(!settings(&connection).unwrap().preview_pane);
         assert_eq!(settings(&connection).unwrap().preview_pane_width, 300);
         let saved = update_settings(
@@ -8085,7 +8198,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 9);
+        assert_eq!(version, 10);
     }
 
     #[test]
@@ -8094,7 +8207,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 9);
+        assert_eq!(version, 10);
         assert!(!settings(&connection).unwrap().browser_force_dark);
         connection
             .execute("DELETE FROM settings WHERE key = 'browser_force_dark'", [])
@@ -8142,7 +8255,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 9);
+        assert_eq!(version, 10);
     }
 
     #[test]
@@ -8222,7 +8335,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 9);
+        assert_eq!(version, 10);
     }
 
     #[test]
