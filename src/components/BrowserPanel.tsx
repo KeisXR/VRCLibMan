@@ -1,46 +1,56 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
-import { api, listenBrowserChanged } from "../api";
+import { api, listenBrowserChanged, reportBrowserPanel } from "../api";
 import { useShell } from "../App";
-import { browserPanelVisible, coveringRects, panelRect, sameReport } from "../browserPanel";
-import type { BrowserPanelRect, BrowserState } from "../types";
+import { browserPanelVisible, coveringRects, panelRect } from "../browserPanel";
+import type { BrowserState } from "../types";
 import { errorText } from "../ui";
 import { BrowserChrome } from "./BrowserChrome";
 import type { RightPanelValue } from "./RightPanel";
 
 type HostInfo = Pick<BrowserState, "open" | "host" | "panelSupported">;
-type Report = { area: BrowserPanelRect | null; visible: boolean };
 
 /** Where the browser is shown. Only the host and the OS support are read, never page addresses. */
 function useBrowserHost() {
   const [info, setInfo] = useState<HostInfo | null>(null);
-  const load = useCallback(() => {
+  const [error, setError] = useState("");
+  const reading = useRef(false);
+  const again = useRef(false);
+  const alive = useRef(false);
+  const load = useCallback(function load() {
+    if (reading.current) { again.current = true; return; }
+    reading.current = true;
     void api.browserState().then(
-      (state) => setInfo({ open: state.open, host: state.host, panelSupported: state.panelSupported }),
-      () => undefined,
-    );
+      (state) => { if (alive.current) { setInfo({ open: state.open, host: state.host, panelSupported: state.panelSupported }); setError(""); } },
+      (err: unknown) => { if (alive.current) { setInfo(null); setError(errorText(err)); } },
+    ).finally(() => {
+      reading.current = false;
+      if (again.current && alive.current) { again.current = false; load(); }
+    });
   }, []);
   useEffect(() => {
-    let alive = true;
+    let cancelled = false;
+    alive.current = true;
     let stop = () => {};
     load();
     void listenBrowserChanged(() => {
-      if (alive) load();
+      if (!cancelled) load();
     }).then((unlisten) => {
-      if (alive) stop = unlisten;
+      if (!cancelled) stop = unlisten;
       else unlisten();
     });
     // The separate window can also be closed from the OS; a slow re-read keeps this in step.
     const poll = window.setInterval(() => {
-      if (alive) load();
+      if (!cancelled) load();
     }, 2000);
     return () => {
-      alive = false;
+      cancelled = true;
+      alive.current = false;
       stop();
       window.clearInterval(poll);
     };
   }, [load]);
-  return { info, reload: load };
+  return { info, error, reload: load };
 }
 
 /**
@@ -60,20 +70,20 @@ function useDockedArea(
     const element = viewport.current;
     if (!docked || !element) return;
     let frame = 0;
+    let disposed = false;
     let dragging = false;
-    let last: Report | null = null;
+    let covered = false;
     const send = () => {
+      if (disposed) return;
       frame = 0;
       const area = panelRect(element.getBoundingClientRect());
       const visible = browserPanelVisible(area, { overlay, dragging, covers: coveringRects(document, element) });
-      const next = { area, visible };
-      if (sameReport(last, next)) return;
-      last = next;
-      if (!visible && area) coveredRef.current?.();
-      void api.browserAction({ kind: "panelArea", area, visible }).catch(() => undefined);
+      if (!visible && area && !covered) coveredRef.current?.();
+      covered = !visible && area !== null;
+      reportBrowserPanel({ area, visible });
     };
     const schedule = () => {
-      if (frame) return;
+      if (disposed || frame) return;
       frame = typeof requestAnimationFrame === "function" ? requestAnimationFrame(send) : window.setTimeout(send, 16);
     };
     const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
@@ -105,6 +115,7 @@ function useDockedArea(
     const safety = window.setInterval(schedule, 500);
     schedule();
     return () => {
+      disposed = true;
       if (frame) {
         if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(frame);
         window.clearTimeout(frame);
@@ -116,7 +127,7 @@ function useDockedArea(
       document.removeEventListener("pointerdown", startDrag, true);
       document.removeEventListener("dragstart", startDrag, true);
       for (const type of endTypes) document.removeEventListener(type, endDrag, true);
-      void api.browserAction({ kind: "panelArea", area: null, visible: false }).catch(() => undefined);
+      reportBrowserPanel({ area: null, visible: false });
     };
   }, [docked, overlay, viewport]);
 }
@@ -141,7 +152,7 @@ export function BrowserPanelTab({
   unified?: boolean;
 }) {
   const { refresh, refreshAccount, fail } = useShell();
-  const { info, reload } = useBrowserHost();
+  const { info, error: hostError, reload } = useBrowserHost();
   const [working, setWorking] = useState(false);
   const [snapshot, setSnapshot] = useState<string | null>(null);
   const viewport = useRef<HTMLDivElement>(null);
@@ -202,7 +213,9 @@ export function BrowserPanelTab({
   const undock = () => void run(() => api.browserAction({ kind: "undock" }));
   const raiseWindow = () => void run(() => api.openBoothBrowser());
 
-  if (!info) return <PanelMessage text="ブラウザを確認しています…" />;
+  if (!info) return <PanelMessage text={hostError || "ブラウザを確認しています…"}>
+    {hostError && <button className="button" type="button" onClick={reload}>もう一度確認</button>}
+  </PanelMessage>;
   if (!info.panelSupported) {
     return (
       <PanelMessage text="この環境では、ブラウザは別ウィンドウで開きます。">

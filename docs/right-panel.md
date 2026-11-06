@@ -541,6 +541,8 @@ interface RightPanelTab { id: string; kind: RightPanelKind | "web"; tabId?: stri
 
 ## 8. IPC のコマンドとイベント
 
+配置・非表示通知の再送、アンマウント後の通知、Windowsの通信経路の復旧は [画面の通信と読み込みの復旧](communication-recovery.md) を参照。
+
 ### 8.1 コマンド
 
 すべて `src-tauri/src/commands.rs` にあります。フロントからの呼び出しは `src/api.ts` です。ブラウザ見本では `src/preview/browser.ts` が代わりに応えます。
