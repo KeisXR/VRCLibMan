@@ -997,7 +997,11 @@ mod tests {
         for name in ["complete.zip", "pending.zip.crdownload", "pending.zip.part", "pending.DOWNLOAD", "pending.tmp"] {
             std::fs::write(dir.join(name), b"data").unwrap();
         }
-        assert_eq!(staged_download_candidates(root.path()), vec![dir.join("complete.zip")]);
+        // Compare the tail components only: the returned paths may carry the platform's
+        // resolved prefix (macOS /private, Windows verbatim), the tempdir path does not.
+        let found = staged_download_candidates(root.path());
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].ends_with(std::path::Path::new("VRCLibMan").join("123456").join("complete.zip")), "{found:?}");
     }
 
     #[cfg(target_os = "linux")]
