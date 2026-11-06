@@ -1376,7 +1376,8 @@ mod tests {
         .unwrap();
         let avatar = link_ids(&connection, "7107").unwrap().remove(0);
         assert!(avatar_is_owned(&connection, &avatar).unwrap());
-        undo_entry(&mut connection, latest_entry(&connection, "7107")).unwrap();
+        let entry_id = latest_entry(&connection, "7107");
+        undo_entry(&mut connection, entry_id).unwrap();
         let product = require_product(&connection, "7107").unwrap();
         assert_eq!(product.category, None);
         assert!(!product.user_confirmed);
@@ -1418,7 +1419,8 @@ mod tests {
             .unwrap();
         apply_extraction(&mut connection, "7110", &outfit_for(&["架空ちゃん"], 0.9), 0.6).unwrap();
         apply_extraction(&mut connection, "7111", &outfit_for(&["取り消す名"], 0.9), 0.6).unwrap();
-        undo_entry(&mut connection, latest_entry(&connection, "7111")).unwrap();
+        let entry_id = latest_entry(&connection, "7111");
+        undo_entry(&mut connection, entry_id).unwrap();
         assert_eq!(
             unresolved_name_counts(&connection).unwrap(),
             vec![
