@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
@@ -66,6 +67,7 @@ export function BrowserChrome({
   const input = useRef<HTMLInputElement>(null);
   const controls = useRef<HTMLDivElement>(null);
   const moreRef = useRef<HTMLDivElement>(null);
+  const morePopover = useRef<HTMLDivElement>(null);
   const editingAddress = useRef(false);
   const activeId = useRef<string | null>(null);
   const epoch = useRef(0);
@@ -151,7 +153,7 @@ export function BrowserChrome({
   useEffect(() => {
     if (!moreOpen) return;
     const onPointer = (event: PointerEvent) => {
-      if (!moreRef.current?.contains(event.target as Node)) setMoreOpen(false);
+      if (!moreRef.current?.contains(event.target as Node) && !morePopover.current?.contains(event.target as Node)) setMoreOpen(false);
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
@@ -160,9 +162,12 @@ export function BrowserChrome({
       setMoreOpen(false);
       moreRef.current?.querySelector<HTMLButtonElement>(".browser-more-button")?.focus();
     };
+    const close = () => setMoreOpen(false);
+    window.addEventListener("resize", close);
     document.addEventListener("pointerdown", onPointer);
     document.addEventListener("keydown", onKey, true);
     return () => {
+      window.removeEventListener("resize", close);
       document.removeEventListener("pointerdown", onPointer);
       document.removeEventListener("keydown", onKey, true);
     };
@@ -525,8 +530,9 @@ export function BrowserChrome({
             >
               <MoreGlyph />
             </button>
-            {moreOpen && (
-              <div className="account-popover browser-more-popover" role="menu" aria-label="ブラウザのメニュー">
+            {moreOpen && createPortal(
+              <div ref={morePopover} className="account-popover browser-more-popover" role="menu" aria-label="ブラウザのメニュー"
+                style={{ top: (moreRef.current?.getBoundingClientRect().bottom ?? 0) + 6, right: Math.max(8, window.innerWidth - (moreRef.current?.getBoundingClientRect().right ?? window.innerWidth)) }}>
                 <div className="browser-more-row" role="group" aria-label="ズーム">
                   <span className="browser-more-label">ズーム</span>
                   <div className="browser-more-zoom">
@@ -619,7 +625,7 @@ export function BrowserChrome({
                     </button>
                   </>
                 )}
-              </div>
+              </div>, document.body
             )}
           </div>
         )}

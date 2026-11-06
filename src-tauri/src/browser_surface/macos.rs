@@ -53,7 +53,7 @@ pub async fn capture_snapshot(view: &Webview) -> Result<Option<String>, String> 
     let (sender, receiver) = tokio::sync::oneshot::channel::<Option<String>>();
     let sender = std::sync::Mutex::new(Some(sender));
     view.with_webview(move |native| unsafe {
-        let send = |value: Option<String>| {
+        let send = move |value: Option<String>| {
             if let Ok(mut guard) = sender.lock() {
                 if let Some(tx) = guard.take() {
                     let _ = tx.send(value);

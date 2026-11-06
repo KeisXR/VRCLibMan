@@ -1903,17 +1903,17 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .browser-chrome .glyph.filled { fill: currentColor; }
 .browser-tabs-row .browser-new-tab { align-self: center; flex-basis: 28px; width: 28px; height: 28px; border-radius: var(--radius-pill); }
 .browser-navigation { display: flex; align-items: center; gap: 4px; height: 44px; padding: 4px 8px; box-sizing: border-box; background: var(--surface); }
-.browser-chrome button { appearance: none; border: 0; border-radius: 6px; background-color: transparent; box-shadow: none; cursor: pointer; white-space: nowrap; }
-.browser-chrome button:hover:not(:disabled) { background-color: var(--hover); }
+:is(.browser-chrome, .browser-more-popover) button { appearance: none; border: 0; border-radius: 6px; background-color: transparent; box-shadow: none; cursor: pointer; white-space: nowrap; }
+:is(.browser-chrome, .browser-more-popover) button:hover:not(:disabled) { background-color: var(--hover); }
 .browser-chrome .button.primary { background: var(--button); color: var(--button-text); }
-.browser-chrome button:disabled { cursor: default; opacity: .4; }
+:is(.browser-chrome, .browser-more-popover) button:disabled { cursor: default; opacity: .4; }
 .browser-icon { display: inline-grid; place-items: center; flex: 0 0 32px; height: 32px; padding: 0; font-size: 19px; background: none; color: var(--text-secondary); }
 .browser-icon:hover:not(:disabled) { color: var(--text); }
 .browser-address { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 100px; }
-.browser-address input { width: 100%; min-width: 0; height: 32px; box-sizing: border-box; border: 1px solid var(--line); border-radius: var(--radius-pill); background: var(--sunken); padding: 0 14px; }
-.browser-address button { height: 30px; padding: 0 10px; border-radius: var(--radius-pill); }
-/* Back, forward and reload share one pill (as in the ChatGPT app's browser). */
-.browser-nav-group { display: inline-flex; align-items: center; flex: 0 0 auto; height: 32px; padding: 0 2px; box-sizing: border-box; border: 1px solid var(--line); border-radius: var(--radius-pill); }
+.browser-address input { width: 100%; min-width: 0; height: 32px; box-sizing: border-box; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--sunken); padding: 0 14px; }
+.browser-address button { height: 30px; padding: 0 10px; border-radius: var(--radius-control); }
+/* Back, forward and reload share one framed group. */
+.browser-nav-group { display: inline-flex; align-items: center; flex: 0 0 auto; height: 32px; padding: 0 2px; box-sizing: border-box; border: 1px solid var(--line); border-radius: var(--radius-control); }
 .browser-nav-group .browser-icon { flex-basis: 28px; width: 28px; height: 28px; border-radius: var(--radius-pill); }
 .browser-nav-group-sep { flex: 0 0 1px; width: 1px; height: 16px; margin: 0 2px; background: var(--line); }
 .browser-chrome .browser-icon { border-radius: var(--radius-pill); }
@@ -1921,10 +1921,12 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .browser-more-button { background: var(--sunken); color: var(--text); }
 .browser-more-button[aria-expanded="true"] { background: var(--surface-secondary); }
 .account-popover.browser-more-popover {
+  position: fixed;
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
   left: auto;
   right: 0;
   bottom: auto;
-  top: calc(100% + 6px);
   min-width: 248px;
   padding: 6px;
   animation-name: switch-pop-down;

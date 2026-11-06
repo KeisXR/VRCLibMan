@@ -73,6 +73,27 @@ test("right panel tabs switch on a real pointer click in Chromium", { timeout: 6
       await page("Input.dispatchMouseEvent", { type: "mouseReleased", x: box.x + dx, y: box.y, ...base });
       await pause(150);
     }
+    await t.test("browser menu remains visible and clickable outside the toolbar", async () => {
+      for (let attempt = 0; !(await evaluate("!!document.querySelector('.browser-more-button')")); attempt++) {
+        if (attempt > 100) throw new Error("browser controls did not load");
+        await pause(50);
+      }
+      await press('.browser-more-button');
+      const menu = await evaluate(`(() => {
+        const menu = document.querySelector('.browser-more-popover');
+        const buttons = [...menu.querySelectorAll('button')];
+        return { portal: menu.parentElement === document.body, reachable: buttons.filter(b => !b.disabled).every(b => {
+          const r = b.getBoundingClientRect();
+          return b.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2));
+        }) };
+      })()`);
+      assert.deepEqual(menu, { portal: true, reachable: true });
+      await press('.browser-more-popover button[aria-label="ページを縮小"]');
+      assert.equal(await evaluate("document.querySelector('.browser-more-zoom-value').textContent"), '90%');
+      await page('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape' });
+      await page('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape' });
+      assert.equal(await evaluate("!!document.querySelector('.browser-more-popover')"), false);
+    });
     const pageId = await evaluate("window.layoutFixture.pageId");
     const pageTab = `#right-panel-tab-web-${pageId}`;
     assert.equal(await selected(), pageTab.slice(1), "the new page tab starts selected");

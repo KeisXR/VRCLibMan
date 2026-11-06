@@ -65,13 +65,13 @@ test("page tabs fill the right panel in a real browser", { timeout: 60000 }, asy
       // Until browserState() lands, the docked controls show "ブラウザを開くか…".
       // That first frame already matches the viewport, so wait until the status row is gone.
       if (chrome.querySelector('.browser-status')) return null;
-      return { viewport:rect, body:box(body), tabs:box(document.querySelector('.right-panel-tabs')), chrome:box(chrome), navigation:box(chrome.querySelector('.browser-navigation')), tools:box(chrome.querySelector('.browser-tools')), status:!!chrome.querySelector('.browser-status'), area:area.area };
+      return { viewport:rect, body:box(body), head:box(document.querySelector('.right-panel-head')), tabs:box(document.querySelector('.right-panel-tabs')), chrome:box(chrome), navigation:box(chrome.querySelector('.browser-navigation')), tools:box(chrome.querySelector('.browser-tools')), status:!!chrome.querySelector('.browser-status'), area:area.area };
     `), "measured browser viewport");
     assert.ok(metrics.viewport.height > 200, `Page viewport collapsed: ${JSON.stringify(metrics)}`);
     assert.ok(Math.abs(metrics.viewport.bottom - metrics.body.bottom) <= 2, `Page must fill the panel vertically: ${JSON.stringify(metrics)}`);
     assert.ok(Math.abs(metrics.viewport.width - metrics.body.width) <= 2, `Page must fill the panel horizontally: ${JSON.stringify(metrics)}`);
     assert.equal(metrics.status, false, "Idle controls must not reserve a status row");
-    assert.ok(metrics.navigation.top - metrics.tabs.bottom <= 5, `Tab strip must sit close to navigation: ${JSON.stringify(metrics)}`);
+    assert.ok(Math.abs(metrics.navigation.top - metrics.head.bottom) <= 2, `Navigation must follow the tab header and card border: ${JSON.stringify(metrics)}`);
     assert.ok(Math.abs(metrics.navigation.top - metrics.body.top) <= 2, `Controls must follow the tab strip without top padding: ${JSON.stringify(metrics)}`);
     assert.ok(Math.abs(metrics.viewport.top - metrics.tools.bottom) <= 2, `Page must follow the last visible control without padding or margins: ${JSON.stringify(metrics)}`);
     return metrics;
