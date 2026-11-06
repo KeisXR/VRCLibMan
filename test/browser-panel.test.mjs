@@ -141,6 +141,7 @@ test("the right panel's browser tab docks, hides under menus and drags, and move
       assert.ok(document.querySelector('[aria-label="別ウィンドウで開く"]'));
       await wait(() => preview.previewBrowserPanelArea().visible, "visible");
       assert.deepEqual(preview.previewBrowserPanelArea().area, rect(820, 180, 420, 560));
+      await wait(() => document.querySelector(".browser-panel-snapshot"), "snapshot rendered");
     });
 
     await t.test("a menu over the panel hides the pages until it closes", async () => {
@@ -152,11 +153,40 @@ test("the right panel's browser tab docks, hides under menus and drags, and move
         await tick();
       });
       await wait(() => !preview.previewBrowserPanelArea().visible, "hidden by menu");
+      assert.ok(document.querySelector(".browser-panel-snapshot"), "snapshot stays visible under the menu");
       await act(async () => {
         menu.remove();
         await tick();
       });
       await wait(() => preview.previewBrowserPanelArea().visible, "menu closed");
+
+      const more = document.querySelector('[aria-label="ブラウザのメニュー"]');
+      assert.ok(more, "more menu button exists");
+      boxes.set(more, rect(1190, 96, 32, 32));
+      await click(more);
+      const popover = document.querySelector(".browser-more-popover");
+      assert.ok(popover, "more menu popover opens");
+      boxes.set(popover, rect(980, 132, 248, 220));
+      await act(async () => {
+        popover.setAttribute("data-measured", "1");
+        await tick();
+      });
+      await wait(() => !preview.previewBrowserPanelArea().visible, "hidden by more menu");
+      const beforeSnap = document.querySelector(".browser-panel-snapshot")?.getAttribute("src");
+      assert.match(beforeSnap ?? "", /100%25/);
+      const zoomIn = popover.querySelector('[aria-label="ページを拡大"]');
+      await click(zoomIn);
+      await wait(
+        () => document.querySelector(".browser-more-zoom-value")?.textContent === "110%",
+        "zoom updated in more menu",
+      );
+      await wait(
+        () => (document.querySelector(".browser-panel-snapshot")?.getAttribute("src") ?? "").includes("110%25"),
+        "snapshot refreshed while menu is open",
+      );
+      await click(more);
+      await wait(() => preview.previewBrowserPanelArea().visible, "more menu closed");
+
       const far = document.createElement("div");
       far.setAttribute("role", "dialog");
       boxes.set(far, rect(10, 10, 200, 100));

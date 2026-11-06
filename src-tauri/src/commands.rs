@@ -2122,6 +2122,16 @@ pub async fn browser_state(
 }
 
 #[tauri::command]
+pub async fn browser_panel_snapshot(
+    app: AppHandle,
+    webview: tauri::Webview,
+) -> Result<Option<String>, String> {
+    trusted_browser_controls(&webview)?;
+    main_window_only(webview.label())?;
+    crate::browser_surface::panel_snapshot(&app).await
+}
+
+#[tauri::command]
 pub async fn browser_action(
     app: AppHandle,
     webview: tauri::Webview,

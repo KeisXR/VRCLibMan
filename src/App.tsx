@@ -38,7 +38,7 @@ import {
 } from "./accountStatus";
 import { SidebarClassificationHint } from "./components/SidebarClassificationHint";
 import { BrandMark, NavIcon, SidebarToggleIcon, type NavIconName } from "./components/navIcons";
-import { RightPanelColumn, RightPanelProvider, useRightPanelState } from "./components/RightPanel";
+import { RightPanelColumn, RightPanelLauncher, RightPanelProvider, useRightPanelState } from "./components/RightPanel";
 import { ProgressTrack, errorText } from "./ui";
 import { BrowserAutoClassification } from "./components/BrowserAutoClassification";
 import { ErrorBanner, NoticeBanner } from "./components/NoticeBanner";
@@ -326,6 +326,7 @@ export default function App() {
   const mainPane = (
     <div className="main" ref={contentRef} hidden={layout.panelMaximized}>
       <div className="topbar" ref={topbarRef}>
+        <RightPanelLauncher panel={rightPanel} />
         {error && <ErrorBanner key={error.id} error={error} onDismiss={dismissError} />}
         {notice && <NoticeBanner key={notice.id} notice={notice} onDismiss={dismissNotice} onAction={runNoticeAction} />}
         {strip && (

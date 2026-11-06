@@ -141,6 +141,12 @@ export function activeTab(state: RightPanelTabs, gates: RightPanelGates = {}): R
   return shown.find((tab) => tab.id === state.activeId) ?? shown[0] ?? null;
 }
 
+/** The closed panel's launcher badge: the tabs the panel would show, at most "99+". */
+export function launcherCountLabel(state: RightPanelTabs, gates: RightPanelGates = {}): string {
+  const count = visibleTabs(state, gates).length;
+  return count > 99 ? "99+" : String(count);
+}
+
 export function canAddTab(state: RightPanelTabs, kind: RightPanelKind, gates: RightPanelGates = {}): boolean {
   const info = RIGHT_PANEL_KIND_INFO[kind];
   if (!kindAvailable(kind, gates)) return false;

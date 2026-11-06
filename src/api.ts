@@ -180,6 +180,7 @@ export const api = {
   boothPageInterval: () => call<number>("get_booth_page_interval"),
   setBoothPageInterval: (intervalMs: number) => call<void>("set_booth_page_interval", { intervalMs }),
   browserState: () => call<BrowserState>("browser_state"),
+  browserPanelSnapshot: () => call<string | null>("browser_panel_snapshot"),
   browserAction: (action: BrowserAction) => call<BrowserState>("browser_action", { action }),
   saveBrowserBookmark: (originalUrl: string | null, title: string, url: string) => call<BrowserState>("save_browser_bookmark", { originalUrl, title, url }),
   deleteBrowserBookmark: (url: string) => call<BrowserState>("delete_browser_bookmark", { url }),

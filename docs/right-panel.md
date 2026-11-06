@@ -43,7 +43,7 @@
 | 項目 | 挙動 | 実装 |
 | --- | --- | --- |
 | 位置 | アプリ全体のグリッドの右端の列 | `src/useAppLayout.tsx`、`src/components/RightPanel.tsx` の `RightPanelColumn` |
-| 開閉 | Ctrl+Shift+B（Mac は ⌘⇧B も可）、ヘッダーの × | `isRightPanelShortcut`（`src/rightPanel.ts`） |
+| 開閉 | Ctrl+Shift+B（Mac は ⌘⇧B も可）、ヘッダーの ×。閉じている間は、ページ右上のタブ数のボタンでも開く | `isRightPanelShortcut`（`src/rightPanel.ts`）、`RightPanelLauncher` |
 | 幅 | 左端の区切りをドラッグする。矢印キーなら16px ずつ。Home かダブルクリックで既定幅 | `ResizeSeparator grows="left"` |
 | 狭い窓 | 窓幅が 1000px 未満なら、列にせず重ねて表示 | `useAppLayout` の `narrow` |
 | 全面表示 | 一覧を隠し、パネルが中央の列を使う。その場限りで保存しない | `maximized`。このとき `.main` に `hidden` を付ける |
@@ -311,7 +311,9 @@ interface RightPanelTab { id: string; kind: RightPanelKind | "web"; tabId?: stri
 
 - 右パネルの操作バー（`BrowserChrome` の panel 表示）は次のとおりです。
   - ページのタブ列は出しません（`unified` のため）。ページのタブは右パネルのタブ列そのものです（#95）。
-  - 戻る、進む、再読み込み/停止、ホーム（`https://accounts.booth.pm/library`）、アドレス欄、ブックマークの☆があります。
+  - 戻る、進む、再読み込み/停止、アドレス欄、ブックマークの☆、別ウィンドウで開く（`undock`）、および右端の「⋯」メニュー（`.browser-more`）があります。
+  - メニューは `document.body` にポータルして、ツールバーや本文カードの overflow に切られない位置に固定表示します。
+  - 「⋯」メニュー（`.browser-more-popover`、`role="menu"`）には、ズーム（`−` / 倍率 / `+` と 100% リセット）、購入ライブラリを開く、ブックマーク追加・編集、BOOTH のライブラリをインポート、別ウィンドウで開くをまとめています。
   - 「インポート」は booth.pm の `/library` のときだけ出します。
   - 「別ウィンドウで開く」（`undock`）があります。
   - ツール行は、ブックマークバー（Ctrl か中クリックで新しいタブ、右クリックで編集）と、ズーム（− / 倍率 / ＋）です。
@@ -458,7 +460,7 @@ interface RightPanelTab { id: string; kind: RightPanelKind | "web"; tabId?: stri
 
 - ヘッダーの「全面表示」「全面表示をやめる」で切り替えます。重ね表示中は出しません。
 - `.main` を `hidden` にし（`App.tsx`）、パネルが中央の `1fr` 列を使います。
-- `.right-panel.maximized` は左の線を消し、本文の子要素を `max-width: 960px` で中央に寄せます。
+- `.right-panel.maximized` は本文のカードの左にも余白を付け、本文の子要素を `max-width: 960px` で中央に寄せます。
   - プレビュー画像は `max-height: min(720px, 64vh)` です。
   - ページのタブ（`.right-panel-body-web > .browser-panel`）には 960px の制限を掛けません（#97）。
 
@@ -632,7 +634,7 @@ settings はキーと値の表です。どのキーも `INSERT OR IGNORE` で足
 | `--surface-secondary` | `#f7f7f9` | `#26262b` | 押された・開いたアイコン |
 | `--sunken` | `#f7f7f9` | `#26262b` | アドレス欄 |
 | `--text` / `--text-secondary` | `#20222b` / `#858995` | `#f3f3f5` / `#9b9ba6` | 選択中 / 通常のタブ |
-| `--line` | `#e9eaf0` | `#2e2e34` | パネル左の線、操作バーの上下の線 |
+| `--line` | `#e9eaf0` | `#2e2e34` | 本文のカードの枠、選択中のタブの輪郭、ツール行の下の線、移動ボタンのまとまりとアドレス欄の枠 |
 | `--hover` | `#f4f5f8` | `#2a2a30` | ホバー |
 | `--button` | `#20222b` | `#f5f5f7` | 並べ替えの挿入線 |
 | `--shadow` | `0 4px 16px rgba(0,0,0,.06)` | `0 4px 16px rgba(0,0,0,.28)` | 選択中のタブ、重ね表示のパネル |
@@ -646,14 +648,15 @@ settings はキーと値の表です。どのキーも `INSERT OR IGNORE` で足
 
 **枠とタブ列**
 
-- `.right-panel`：`border-left: 1px solid var(--line)`、地は `--bg`。全面表示では左の線を消します。
-- `.right-panel-head`：`padding: var(--space-4) var(--space-3) var(--space-2)`、`gap: 4px`。
-  - ページのタブを選んでいるときは、上下の padding を 4px に詰めます（`:has(> .right-panel-body-web)`）。
-- `.right-panel-tabs`：横スクロールで、スクロールバーは出しません（`scrollbar-width: none`）。`gap: 4px`。
+ChatGPT アプリのサイドパネルにならい、タブ列はアプリの地（`--bg`）に置き、その下の本文を白いカードにします。左の区切り線は引きません。
+
+- `.right-panel`：枠線なし、地は `--bg`。
+- `.right-panel-head`：`padding: var(--space-2) var(--space-2) var(--space-2) 0`、`gap: 4px`。タブの種類を切り替えても高さは変わりません。重ね表示では `var(--space-3) var(--space-3) var(--space-2)`、全面表示では左にも `--space-2`。
+- `.right-panel-tabs`：横スクロールで、スクロールバーは出しません（`scrollbar-width: none`）。`gap: 4px`。`flex: 0 1 auto` なので ＋ はタブの直後に並び、全面表示と × は `.right-panel-actions` の `margin-left: auto` で右端に寄せます。
 - `.right-panel-tab`
   - 角丸は `--radius-sm`、文字は `--text-secondary` です。ホバーで `--hover` と `--text` になります。
-  - 選択中は `--surface`、`font-weight: 650`、`--shadow`、`flex-shrink: 0` です。狭くてもラベルが潰れません。
-  - ラベルは `padding: 6px 4px 6px 12px` で、省略記号付きの1行です。
+  - 選択中は `--surface`、`font-weight: 650`、`--line` の 1px の輪郭と弱い影、`flex-shrink: 0` です。狭くてもラベルが潰れません。
+  - タブのボタンは `padding: 6px 4px 6px 10px` で、種類のアイコン（`.right-panel-tab-icon`：プレビューは画像、ファイルはフォルダ、ページは地球儀）と、省略記号付きの1行のラベル（`.right-panel-tab-label`）を並べます。アイコンは `aria-hidden` で、タブの名前はラベルだけです。
   - **右パネルとブラウザのタブには、朱の線のアクセントを使いません**（[デザインガイド](design/README.md) の「タブ」）。
 - タブの ×（`.right-panel-tab-close`）：22×22px、`--radius-pill`。ホバー中、選択中、`:focus-visible` のときだけ `opacity: 1` で、それ以外は 0 です。
 - ヘッダーのアイコン（`.right-panel-icon`）：32×32px。`aria-pressed` / `aria-expanded` が true のときは `--surface-secondary` です。SVG は `stroke-width: 1.4`。
@@ -663,8 +666,19 @@ settings はキーと値の表です。どのキーも `INSERT OR IGNORE` で足
 **本文**
 
 - `.right-panel-body`：`padding: var(--space-2) var(--space-3) var(--space-4)`、`overflow-y: auto`、`overscroll-behavior: contain`。
-- ページのタブ（`.right-panel-body-web`）では padding を 0 にし、`overflow: hidden` にして、操作バーとページを縦に詰めます。
+- ドックと全面表示（`.right-panel:not(.overlay)`）では、本文を白いカードにします。`--surface`、`1px solid var(--line)`、角丸 `--radius-control`、`margin: 0 var(--space-2) var(--space-2) 0`。
+  - カードの中のプレビュー（`.panel.preview-pane`）は、カードを二重にしないよう地と影を外します。
+- ページのタブ（`.right-panel-body-web`）では padding を 0 にし、`overflow: hidden` にして、操作バーとページを縦に詰めます。カードは窓の下端まで伸ばし、下の枠と下の角丸を付けません。ネイティブのページは長方形で、HTML の角丸では切り抜けないからです。
+  - 表示域はカードの左右 1px の枠の内側になります。`test:tab-click` と `test:browser-layout` の「幅の差 2px 以内」はこの枠を含めた許容です。
 - 空の状態：「タブがありません。＋から追加できます。」
+
+**閉じているときの入口（`RightPanelLauncher`）**
+
+- パネルが閉じているときだけ、`.topbar` の右上（`position: absolute; top: 6px; right: var(--space-3)`）に 32×32px のボタンを出します。`.topbar` は sticky なので、一覧をスクロールしても同じ位置に残ります。
+- 中身は `1.5px` の枠・角丸 5px の四角に、パネルが表示するタブの数（`launcherCountLabel`：`visibleTabs` の件数、100 以上は「99+」）を `tabular-nums` で書きます。ページのタブは内蔵ブラウザが有効なときだけ数えます。
+- 押すと `panel.toggle` で開きます。狭い窓では重ね表示で開きます。aria-label は「右パネルを開く（タブ N 件）」、title にショートカットを出します。
+- ボタンと重ならないよう、`.topbar` のバナーと進捗（`.banner`、`.progress`）の右の余白を広げ、狭い窓のジャンルのチップ帯（`.chip-bar-track`）にも右の余白を足します。
+- 全面表示では `.main` ごと隠れますが、そのときパネルは開いているので入口は要りません。
 
 **重ね表示**
 
@@ -680,17 +694,17 @@ settings はキーと値の表です。どのキーも `INSERT OR IGNORE` で足
 | 部品 | 寸法 |
 | --- | --- |
 | 別窓のタブ列 | 36px（右パネルで出す場合は 40px） |
-| ナビゲーション | 44px。アイコン 32px、アドレス欄は高さ 32px・角丸 8px・`--sunken` |
+| ナビゲーション | 44px。戻る・進む・再読み込みは `.browser-nav-group`（高さ 32px、`--line` の枠のグループ、中のボタンは 28px、進むと再読み込みの間に 1px の仕切り）にまとめる。ほかのアイコンは 32px の円。アドレス欄は高さ 32px・`--radius-control` の角丸・`--sunken` |
 | ツール行（ブックマークとズーム） | 32px。下に `--line` の線。ズームの倍率ボタンは `min-width: 48px` で、`tabular-nums` |
 | ウィンドウ操作ボタン | 幅 46px。閉じるのホバーは `#c42b1c` |
 
-- 右パネルの中では `.browser-chrome.panel` の margin、padding、影、角丸をすべて外し、上に `--line` の線だけを付けます。
+- 右パネルの中では `.browser-chrome.panel` の margin、padding、枠、影、角丸をすべて外します。上の区切りは本文のカードの枠が兼ねます。
   - 通常のカード `.panel` と同じクラス名なので、打ち消しが必要です（#100、#113、#118）。
 - `.browser-panel-viewport`
-  - `flex: 1`、`--surface`、`padding: var(--space-4)` です。
-  - 中には、ネイティブのページがないときの案内文だけを出します（13px、中央寄せ、`max-width: 28em`）。
+  - `flex: 1`、`--surface`、`padding: var(--space-4)`、`overflow: hidden` です。
+  - メニューやダイアログが重なってネイティブ WebView を一時的に隠している間も、直前に取得したページの静止画（`.browser-panel-snapshot`、`browser_panel_snapshot` コマンド。macOS は `WKWebView` の `takeSnapshotWithConfiguration:`、見本画面は SVG）を同じ矩形に敷き、メニューの背後にページが見え続けるようにします。メモリ上だけで扱い、DB や設定には保存しません。静止画がまだないときだけ案内文を出します。
 - 幅への対応は container query です（`.browser-chrome { container-type: inline-size }`）。
-  - 520px 以下：「インポート」と、ナビゲーションの4番目のアイコン（ホーム）を隠す
+  - 520px 以下：「インポート」と、ホームのアイコン（`.browser-home`）を隠す
   - 360px 以下：アドレス欄の「開く」ボタンを隠す
 
 ### 10.3 フォーカスとキーボード

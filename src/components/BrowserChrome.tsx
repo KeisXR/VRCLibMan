@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
@@ -13,6 +14,7 @@ import {
   CloseGlyph,
   DockGlyph,
   HomeGlyph,
+  MoreGlyph,
   PlusGlyph,
   PopOutGlyph,
   ReloadGlyph,
@@ -61,8 +63,11 @@ export function BrowserChrome({
   const [message, setMessage] = useState("");
   const [address, setAddress] = useState("");
   const [edit, setEdit] = useState<BookmarkEdit | null>(null);
+  const [moreOpen, setMoreOpen] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const controls = useRef<HTMLDivElement>(null);
+  const moreRef = useRef<HTMLDivElement>(null);
+  const morePopover = useRef<HTMLDivElement>(null);
   const editingAddress = useRef(false);
   const activeId = useRef<string | null>(null);
   const epoch = useRef(0);
@@ -144,6 +149,29 @@ export function BrowserChrome({
     if (switched || !editingAddress.current) setAddress(active?.url ?? "");
     if (switched) setEdit(null);
   }, [active?.id, active?.url]);
+
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onPointer = (event: PointerEvent) => {
+      if (!moreRef.current?.contains(event.target as Node) && !morePopover.current?.contains(event.target as Node)) setMoreOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setMoreOpen(false);
+      moreRef.current?.querySelector<HTMLButtonElement>(".browser-more-button")?.focus();
+    };
+    const close = () => setMoreOpen(false);
+    window.addEventListener("resize", close);
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("resize", close);
+      document.removeEventListener("pointerdown", onPointer);
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, [moreOpen]);
 
   useEffect(() => {
     controls.current
@@ -358,40 +386,43 @@ export function BrowserChrome({
         </button>
       </BrowserTitleBar>}
       <div className="browser-navigation">
+        <div className="browser-nav-group" role="group" aria-label="ページの移動">
+          <button
+            className="browser-icon"
+            type="button"
+            disabled={disabled || !active?.canGoBack}
+            aria-label="戻る"
+            title="戻る"
+            onClick={() => void action({ kind: "back" })}
+          >
+            <ArrowGlyph direction="back" />
+          </button>
+          <button
+            className="browser-icon"
+            type="button"
+            disabled={disabled || !active?.canGoForward}
+            aria-label="進む"
+            title="進む"
+            onClick={() => void action({ kind: "forward" })}
+          >
+            <ArrowGlyph direction="forward" />
+          </button>
+          <span className="browser-nav-group-sep" aria-hidden="true" />
+          <button
+            className="browser-icon"
+            type="button"
+            disabled={disabled || !active}
+            aria-label={active?.loading ? "読み込みを停止" : "再読み込み"}
+            title={active?.loading ? "読み込みを停止" : "再読み込み"}
+            onClick={() =>
+              void action({ kind: active?.loading ? "stop" : "reload" })
+            }
+          >
+            {active?.loading ? <StopGlyph /> : <ReloadGlyph />}
+          </button>
+        </div>
         <button
-          className="browser-icon"
-          type="button"
-          disabled={disabled || !active?.canGoBack}
-          aria-label="戻る"
-          title="戻る"
-          onClick={() => void action({ kind: "back" })}
-        >
-          <ArrowGlyph direction="back" />
-        </button>
-        <button
-          className="browser-icon"
-          type="button"
-          disabled={disabled || !active?.canGoForward}
-          aria-label="進む"
-          title="進む"
-          onClick={() => void action({ kind: "forward" })}
-        >
-          <ArrowGlyph direction="forward" />
-        </button>
-        <button
-          className="browser-icon"
-          type="button"
-          disabled={disabled || !active}
-          aria-label={active?.loading ? "読み込みを停止" : "再読み込み"}
-          title={active?.loading ? "読み込みを停止" : "再読み込み"}
-          onClick={() =>
-            void action({ kind: active?.loading ? "stop" : "reload" })
-          }
-        >
-          {active?.loading ? <StopGlyph /> : <ReloadGlyph />}
-        </button>
-        <button
-          className="browser-icon"
+          className="browser-icon browser-home"
           type="button"
           disabled={disabled}
           aria-label="購入ライブラリを開く"
@@ -485,6 +516,118 @@ export function BrowserChrome({
           >
             <DockGlyph />
           </button>
+        )}
+        {embedded && (
+          <div className="browser-more" ref={moreRef}>
+            <button
+              className="browser-icon browser-more-button"
+              type="button"
+              aria-label="ブラウザのメニュー"
+              title="ブラウザのメニュー"
+              aria-haspopup="menu"
+              aria-expanded={moreOpen}
+              onClick={() => setMoreOpen((value) => !value)}
+            >
+              <MoreGlyph />
+            </button>
+            {moreOpen && createPortal(
+              <div ref={morePopover} className="account-popover browser-more-popover" role="menu" aria-label="ブラウザのメニュー"
+                style={{ top: (moreRef.current?.getBoundingClientRect().bottom ?? 0) + 6, right: Math.max(8, window.innerWidth - (moreRef.current?.getBoundingClientRect().right ?? window.innerWidth)) }}>
+                <div className="browser-more-row" role="group" aria-label="ズーム">
+                  <span className="browser-more-label">ズーム</span>
+                  <div className="browser-more-zoom">
+                    <div className="browser-more-zoom-pill">
+                      <button
+                        type="button"
+                        disabled={disabled || !active || zoom <= 0.25}
+                        aria-label="ページを縮小"
+                        title="縮小 (Ctrl/Cmd −)"
+                        onClick={() => void action({ kind: "zoom", action: "out" })}
+                      >
+                        −
+                      </button>
+                      <span className="browser-more-zoom-value">{Math.round(zoom * 100)}%</span>
+                      <button
+                        type="button"
+                        disabled={disabled || !active || zoom >= 5}
+                        aria-label="ページを拡大"
+                        title="拡大 (Ctrl/Cmd ＋)"
+                        onClick={() => void action({ kind: "zoom", action: "in" })}
+                      >
+                        +
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      className="browser-icon browser-more-zoom-reset"
+                      disabled={disabled || !active || Math.round(zoom * 100) === 100}
+                      aria-label="表示倍率を100%に戻す"
+                      title="100%に戻す (Ctrl/Cmd 0)"
+                      onClick={() => void action({ kind: "zoom", action: "reset" })}
+                    >
+                      <ReloadGlyph />
+                    </button>
+                  </div>
+                </div>
+                <div className="browser-more-sep" role="separator" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={disabled}
+                  onClick={() => {
+                    setMoreOpen(false);
+                    void action({ kind: "navigate", url: HOME });
+                  }}
+                >
+                  購入ライブラリを開く
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={working || !active}
+                  onClick={() => {
+                    setMoreOpen(false);
+                    if (bookmarked) editBookmark(bookmarked);
+                    else
+                      setEdit({
+                        originalUrl: null,
+                        title: active?.title ?? "",
+                        url: active?.url ?? "",
+                      });
+                  }}
+                >
+                  {bookmarked ? "ブックマークを編集…" : "このページをブックマーク…"}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={disabled || !canImport}
+                  onClick={() => {
+                    setMoreOpen(false);
+                    void importPage();
+                  }}
+                >
+                  BOOTHのライブラリをインポート
+                </button>
+                {panel && (
+                  <>
+                    <div className="browser-more-sep" role="separator" />
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={working}
+                      onClick={() => {
+                        setMoreOpen(false);
+                        void action({ kind: "undock" });
+                      }}
+                    >
+                      別ウィンドウで開く
+                    </button>
+                  </>
+                )}
+              </div>, document.body
+            )}
+          </div>
         )}
       </div>
       <div className="browser-tools">

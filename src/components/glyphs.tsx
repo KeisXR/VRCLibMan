@@ -18,6 +18,36 @@ export function PlusGlyph() {
   );
 }
 
+/** A web page tab. */
+export function GlobeGlyph() {
+  return (
+    <svg className="glyph" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+      <circle cx="7" cy="7" r="5.25" />
+      <path d="M1.75 7h10.5M7 1.75c-1.6 1.5-2.4 3.25-2.4 5.25s.8 3.75 2.4 5.25M7 1.75c1.6 1.5 2.4 3.25 2.4 5.25s-.8 3.75-2.4 5.25" />
+    </svg>
+  );
+}
+
+/** The preview tab: a picture. */
+export function PictureGlyph() {
+  return (
+    <svg className="glyph" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+      <rect x="2" y="2.5" width="10" height="9" rx="1.5" />
+      <path d="m2.5 10.5 3-3 2 2 1.5-1.5 2.5 2.5" />
+      <circle cx="9" cy="5.5" r=".9" />
+    </svg>
+  );
+}
+
+/** The file tab: a folder. */
+export function FolderGlyph() {
+  return (
+    <svg className="glyph" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+      <path d="M1.75 4V10.5a1 1 0 0 0 1 1h8.5a1 1 0 0 0 1-1v-5a1 1 0 0 0-1-1H7L5.75 3h-3a1 1 0 0 0-1 1z" />
+    </svg>
+  );
+}
+
 export function ArrowGlyph({ direction }: { direction: "back" | "forward" }) {
   return (
     <svg className="glyph" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
@@ -72,6 +102,16 @@ export function DockGlyph() {
   return (
     <svg className="glyph" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
       <path d="M2 2.5h10v9H2zM8.5 2.5v9" />
+    </svg>
+  );
+}
+/** Three horizontal dots: the browser's "more" menu. */
+export function MoreGlyph() {
+  return (
+    <svg className="glyph filled" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+      <circle cx="3" cy="7" r="1.15" stroke="none" />
+      <circle cx="7" cy="7" r="1.15" stroke="none" />
+      <circle cx="11" cy="7" r="1.15" stroke="none" />
     </svg>
   );
 }

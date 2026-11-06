@@ -48,7 +48,14 @@ function useBrowserHost() {
  * docked pages there. The pages are native views drawn above the HTML, so they are hidden while
  * a menu, dialog, overlay or drag would be under them, and when this tab leaves the screen.
  */
-function useDockedArea(viewport: RefObject<HTMLDivElement | null>, docked: boolean, overlay: boolean) {
+function useDockedArea(
+  viewport: RefObject<HTMLDivElement | null>,
+  docked: boolean,
+  overlay: boolean,
+  onCovered?: () => void,
+) {
+  const coveredRef = useRef(onCovered);
+  coveredRef.current = onCovered;
   useEffect(() => {
     const element = viewport.current;
     if (!docked || !element) return;
@@ -62,6 +69,7 @@ function useDockedArea(viewport: RefObject<HTMLDivElement | null>, docked: boole
       const next = { area, visible };
       if (sameReport(last, next)) return;
       last = next;
+      if (!visible && area) coveredRef.current?.();
       void api.browserAction({ kind: "panelArea", area, visible }).catch(() => undefined);
     };
     const schedule = () => {
@@ -135,9 +143,49 @@ export function BrowserPanelTab({
   const { refresh, refreshAccount, fail } = useShell();
   const { info, reload } = useBrowserHost();
   const [working, setWorking] = useState(false);
+  const [snapshot, setSnapshot] = useState<string | null>(null);
   const viewport = useRef<HTMLDivElement>(null);
   const docked = info?.host === "panel" && !overlay;
-  useDockedArea(viewport, info?.host === "panel", overlay);
+  const refreshSnapshot = useCallback(() => {
+    void api.browserPanelSnapshot().then(
+      (next) => {
+        if (next) setSnapshot(next);
+      },
+      () => undefined,
+    );
+  }, []);
+  useDockedArea(viewport, info?.host === "panel", overlay, refreshSnapshot);
+
+  useEffect(() => {
+    if (!docked) {
+      setSnapshot(null);
+      return;
+    }
+    let alive = true;
+    let stop = () => {};
+    const pull = () => {
+      void api.browserPanelSnapshot().then(
+        (next) => {
+          if (alive && next) setSnapshot(next);
+        },
+        () => undefined,
+      );
+    };
+    pull();
+    void listenBrowserChanged(() => {
+      if (alive) pull();
+    }).then((unlisten) => {
+      if (alive) stop = unlisten;
+      else unlisten();
+    });
+    const head = viewport.current?.closest(".right-panel")?.querySelector(".right-panel-head");
+    head?.addEventListener("pointerenter", pull);
+    return () => {
+      alive = false;
+      stop();
+      head?.removeEventListener("pointerenter", pull);
+    };
+  }, [docked]);
 
   async function run(task: () => Promise<unknown>) {
     setWorking(true);
@@ -198,7 +246,7 @@ export function BrowserPanelTab({
     );
   }
   return (
-    <div className="browser-panel">
+    <div className="browser-panel" onPointerEnter={refreshSnapshot} onFocusCapture={refreshSnapshot}>
       <BrowserChrome
         panel
         hostId="panel"
@@ -209,7 +257,11 @@ export function BrowserPanelTab({
         }}
       />
       <div className="browser-panel-viewport" ref={viewport} data-browser-panel-viewport="">
-        <p className="meta">メニューやダイアログを閉じると、ここにページを表示します。</p>
+        {snapshot ? (
+          <img className="browser-panel-snapshot" src={snapshot} alt="" aria-hidden="true" />
+        ) : (
+          <p className="meta">メニューやダイアログを閉じると、ここにページを表示します。</p>
+        )}
       </div>
     </div>
   );
