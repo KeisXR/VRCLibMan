@@ -556,6 +556,13 @@ fn layout_panel(
     tabs: &[browser_tabs::BrowserTab],
     active: Option<&str>,
 ) -> Result<(), String> {
+    if !host.visible {
+        if let (Some(area), Some(active)) = (panel_content(host.area, true), active) {
+            if let Some(view) = app.get_webview(active) {
+                let _ = set_view_bounds(&view, area, false, false);
+            }
+        }
+    }
     place_tabs(
         app,
         tabs,
@@ -1852,6 +1859,27 @@ pub fn stop(app: &AppHandle) -> Result<(), String> {
         .focused_tab()
         .ok_or("ブラウザを開いてから操作してください")?;
     stop_tab(app, &id)
+}
+
+/// Returns an in-memory PNG data URL of the active docked page so the HTML viewport can display
+/// the page while a menu, dialog, or drag temporarily hides the native WebView.
+pub async fn panel_snapshot(app: &AppHandle) -> Result<Option<String>, String> {
+    let active = surface().session.active_of(PANEL_HOST_ID);
+    let Some(id) = active else {
+        return Ok(None);
+    };
+    let Some(view) = app.get_webview(&id) else {
+        return Ok(None);
+    };
+    #[cfg(target_os = "macos")]
+    {
+        return macos::capture_snapshot(&view).await;
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = view;
+        Ok(None)
+    }
 }
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-import { previewBrowserState, previewBrowserAction, previewSaveBookmark, previewDeleteBookmark, previewOpenBrowser, previewCloseBrowser } from "./browser";
+import { previewBrowserState, previewBrowserPanelSnapshot, previewBrowserAction, previewSaveBookmark, previewDeleteBookmark, previewOpenBrowser, previewCloseBrowser } from "./browser";
 import extensionManifest from "../../extension/manifest.json";
 import { previewListDirectory, previewListZip, previewPrepareUnityPackages, previewUnityPackages } from "./files";
 import { filePresence } from "../media";
@@ -2500,6 +2500,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     case "booth_browser_log":
       return { path: "", text: "見本では記録はありません" } as T;
     case "browser_state": return previewBrowserState() as T;
+    case "browser_panel_snapshot": return previewBrowserPanelSnapshot() as T;
     case "browser_action": return previewBrowserAction(args.action as BrowserAction) as T;
     case "save_browser_bookmark": return previewSaveBookmark(args.originalUrl as string | null, String(args.title ?? ""), String(args.url ?? "")) as T;
     case "delete_browser_bookmark": return previewDeleteBookmark(String(args.url ?? "")) as T;

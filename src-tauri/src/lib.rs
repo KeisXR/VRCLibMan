@@ -288,6 +288,7 @@ pub fn run() {
             commands::cache_product_preview,
             commands::open_booth_browser,
             commands::browser_state,
+            commands::browser_panel_snapshot,
             commands::browser_action,
             commands::save_browser_bookmark,
             commands::delete_browser_bookmark,

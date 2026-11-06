@@ -61,6 +61,26 @@ function panelSupported() {
 export function previewBrowserPanelArea() {
   return { area: panelArea.area ? { ...panelArea.area } : null, visible: panelArea.visible };
 }
+/** In-memory SVG stand-in for the native page snapshot shown while a menu covers the panel. */
+export function previewBrowserPanelSnapshot(): string | null {
+  const host = hostById(PANEL);
+  const tab = tabById(host?.activeId);
+  if (!tab) return null;
+  const zoom = Math.round(tab.zoomFactor * 100);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480" viewBox="0 0 640 480">
+    <rect width="640" height="480" fill="#ffffff"/>
+    <rect x="24" y="24" width="592" height="56" rx="12" fill="#f5f6f8"/>
+    <rect x="44" y="42" width="120" height="20" rx="6" fill="#20222b" opacity="0.85"/>
+    <text x="592" y="57" text-anchor="end" font-family="sans-serif" font-size="13" fill="#858995">${zoom}%</text>
+    <rect x="24" y="100" width="180" height="150" rx="12" fill="#f5f6f8"/>
+    <rect x="220" y="100" width="180" height="150" rx="12" fill="#f5f6f8"/>
+    <rect x="416" y="100" width="180" height="150" rx="12" fill="#f5f6f8"/>
+    <rect x="24" y="268" width="180" height="150" rx="12" fill="#f5f6f8"/>
+    <rect x="220" y="268" width="180" height="150" rx="12" fill="#f5f6f8"/>
+    <rect x="416" y="268" width="180" height="150" rx="12" fill="#f5f6f8"/>
+  </svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
 /** Same rule as `start_in_panel` in `src-tauri/src/browser_surface.rs`. */
 function startHost(): BrowserHostKind {
   return panelSupported() && !preferWindow ? "panel" : "window";

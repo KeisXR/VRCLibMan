@@ -15,6 +15,7 @@ import {
   focusWebTab,
   isRightPanelShortcut,
   kindAvailable,
+  launcherCountLabel,
   mergePanelWebTabs,
   moveTab,
   openTab,
@@ -33,7 +34,7 @@ import { BrowserPanelTab } from "./BrowserPanel";
 import type { ItemView } from "../types";
 import { errorText } from "../ui";
 import { ResizeSeparator } from "./ResizeSeparator";
-import { CloseGlyph, PlusGlyph } from "./glyphs";
+import { CloseGlyph, FolderGlyph, GlobeGlyph, PictureGlyph, PlusGlyph } from "./glyphs";
 import { RIGHT_PANEL_RENDERERS } from "./rightPanelRegistry";
 
 /** What the asset or world list currently selects for the preview tab. */
@@ -354,6 +355,35 @@ function ExpandGlyph({ expanded }: { expanded: boolean }) {
   );
 }
 
+function TabGlyph({ kind }: { kind: RightPanelTab["kind"] }) {
+  if (kind === "web") return <GlobeGlyph />;
+  if (kind === "files") return <FolderGlyph />;
+  return <PictureGlyph />;
+}
+
+/**
+ * While the right panel is closed, a small button in the top-right corner of the page shows how
+ * many tabs it holds and opens it again (like the ChatGPT app's side panel).
+ */
+export function RightPanelLauncher({ panel }: { panel: RightPanelValue }) {
+  if (panel.open) return null;
+  const count = visibleTabs(panel.tabs, panel.gates).length;
+  return (
+    <button
+      className="right-panel-launcher"
+      type="button"
+      aria-label={`右パネルを開く（タブ ${count} 件）`}
+      title={`右パネルを開く（${RIGHT_PANEL_SHORTCUT_LABEL}）`}
+      aria-keyshortcuts="Control+Shift+B"
+      onClick={panel.toggle}
+    >
+      <span className="right-panel-launcher-count" aria-hidden="true">
+        {launcherCountLabel(panel.tabs, panel.gates)}
+      </span>
+    </button>
+  );
+}
+
 function AddTabMenu({ panel }: { panel: RightPanelValue }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -618,7 +648,10 @@ function PanelHeader({ panel, overlay, onDismiss }: { panel: RightPanelValue; ov
                   window.setTimeout(() => document.getElementById(`right-panel-tab-${next.id}`)?.focus(), 0);
                 }}
               >
-                {label}
+                <span className="right-panel-tab-icon" aria-hidden="true">
+                  <TabGlyph kind={tab.kind} />
+                </span>
+                <span className="right-panel-tab-label">{label}</span>
               </button>
               <button
                 className="right-panel-tab-close"

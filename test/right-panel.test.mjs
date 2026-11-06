@@ -121,6 +121,32 @@ test("the preview lives in the app's right panel instead of a split inside the l
   assert.match(readFileSync("src/components/RightPanel.tsx", "utf8"), /unified/);
 });
 
+test("a closed panel leaves a tab-count launcher in the top bar", async () => {
+  const app = readFileSync("src/App.tsx", "utf8");
+  assert.match(app, /<div className="topbar"[^>]*>\s*<RightPanelLauncher panel=\{rightPanel\} \/>/);
+  const source = readFileSync("src/components/RightPanel.tsx", "utf8");
+  assert.match(source, /if \(panel\.open\) return null;/);
+  assert.match(source, /onClick=\{panel\.toggle\}/);
+  const css = readFileSync("src/styles.css", "utf8");
+  assert.match(css, /\.right-panel-launcher \{[^}]*position: absolute;/);
+  assert.match(css, /\.topbar:has\(> \.right-panel-launcher\) > :is\(\.banner, \.progress\)/);
+
+  const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  try {
+    const panel = await server.ssrLoadModule("/src/rightPanel.ts");
+    const fixed = panel.parseRightPanelTabs('{"tabs":["preview","files"],"active":0}');
+    const withPage = panel.focusWebTab(fixed, "booth-tab-1", "page");
+    assert.equal(panel.launcherCountLabel(withPage), "2", "page tabs are not counted without the built-in browser");
+    assert.equal(panel.launcherCountLabel(withPage, { builtinBrowser: true }), "3");
+    assert.equal(panel.launcherCountLabel(panel.parseRightPanelTabs('{"tabs":[],"active":0}')), "0");
+    let many = fixed;
+    for (let index = 0; index < 120; index += 1) many = panel.focusWebTab(many, `booth-tab-${index}`, "page");
+    assert.equal(panel.launcherCountLabel(many, { builtinBrowser: true }), "99+");
+  } finally {
+    await server.close();
+  }
+});
+
 
 test("panel settings load independently of browser synchronization", async (t) => {
   const { parseHTML } = await import("linkedom");
