@@ -1967,7 +1967,7 @@ function previewUnityStatus(): UnityStatus {
 }
 
 let assetWatch: AssetUpdateStatus = { automatic: false, allProducts: false, totalProducts: 0, running: false, rows: [] };
-/** ブラウザ確認用。設定の更新候補一覧にダミー行を入れる。本番の Rust 側には無い。 */
+/** ブラウザ確認用。設定の更新設定の一覧にダミー行を入れる。本番の Rust 側には無い。 */
 export function seedPreviewAssetUpdates(count: number, opts?: { changed?: number; errors?: number }): AssetUpdateStatus {
   const n = Math.max(0, Math.min(500, Math.floor(count)));
   const changed = Math.max(0, Math.min(n, opts?.changed ?? 3));

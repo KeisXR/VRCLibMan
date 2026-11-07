@@ -55,6 +55,7 @@ PC 間の移行は [データ移行](docs/remote-sync.md) に従う。現在は�
 - `tauri` の feature に `protocol-asset` が必要。`tauri.conf.json` の asset scope は `$APPDATA/**`。
 - 画面遷移はハッシュ（`#/` `#/avatar/{id}` `#/classification-log` `#/import` `#/settings`）。ルータライブラリは無い。
 - `npm run dev` は Tauri の外で動く。`__TAURI_INTERNALS__` が無いときは `src/preview/api.ts` の見本に落ちる。見本は分類ロジックの複製であり、Rust を直しても自動では追従しない。
+- 通信の復旧で保存・インポート・ダウンロードを自動再実行しない。応答がなくても実行済みの可能性があるため。読み込みとパネル通知の復旧は [通信の復旧](docs/communication-recovery.md) に従う。
 
 ### 拡張
 

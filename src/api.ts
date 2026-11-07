@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { syncExportFilename } from "./syncExport";
+import { readWithTimeout } from "./ipcRecovery";
+import { createPanelReporter } from "./panelReporter";
 import type {
   AppUpdateStatus,
   AssetUpdateStatus,
@@ -115,6 +117,10 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
   return invoke<T>(command, args);
 }
 
+export const reportBrowserPanel = createPanelReporter((report) =>
+  call<BrowserState>("browser_action", { action: { kind: "panelArea", ...report } }),
+);
+
 export function listenBoothUsed(onUsed: () => void): Promise<() => void> {
   if (!isTauri()) {
     return Promise.resolve(() => undefined);
@@ -179,7 +185,7 @@ export const api = {
   },
   boothPageInterval: () => call<number>("get_booth_page_interval"),
   setBoothPageInterval: (intervalMs: number) => call<void>("set_booth_page_interval", { intervalMs }),
-  browserState: () => call<BrowserState>("browser_state"),
+  browserState: () => readWithTimeout(() => call<BrowserState>("browser_state"), "ブラウザの状態"),
   browserPanelSnapshot: () => call<string | null>("browser_panel_snapshot"),
   browserAction: (action: BrowserAction) => call<BrowserState>("browser_action", { action }),
   saveBrowserBookmark: (originalUrl: string | null, title: string, url: string) => call<BrowserState>("save_browser_bookmark", { originalUrl, title, url }),

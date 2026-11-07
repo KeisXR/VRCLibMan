@@ -72,6 +72,15 @@ test("the right panel's browser tab docks, hides under menus and drags, and move
   for (const name of ["window", "document", "location", "HTMLElement", "HTMLInputElement", "Element", "Event", "CustomEvent", "EventTarget", "MutationObserver"]) {
     Object.defineProperty(globalThis, name, { configurable: true, writable: true, value: window[name] });
   }
+  const queuedObservers = [];
+  const OriginalObserver = globalThis.MutationObserver;
+  globalThis.MutationObserver = class extends OriginalObserver {
+    constructor(callback) { super(callback); this.callback = callback; }
+    observe(target, options) {
+      if (options.attributeFilter?.includes("data-rail-hold")) queuedObservers.push(this.callback);
+      return super.observe(target, options);
+    }
+  };
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: { userAgent: "test" } });
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   // The viewport reports a fixed place in the main window; everything else has no size.
@@ -223,6 +232,12 @@ test("the right panel's browser tab docks, hides under menus and drags, and move
       await wait(() => button("別ウィンドウで開く"), "overlay message");
       assert.equal(document.querySelector(".browser-panel-viewport"), null);
       assert.deepEqual(preview.previewBrowserPanelArea(), { area: null, visible: false });
+      await act(async () => {
+        // Observer notifications already queued at disconnect may still run.
+        queuedObservers.forEach((callback) => callback([]));
+        await tick(); await tick();
+      });
+      assert.deepEqual(preview.previewBrowserPanelArea(), { area: null, visible: false }, "a disposed viewport cannot show a stale page again");
       await click(button("別ウィンドウで開く"));
       await wait(async () => (await api.browserState()).host === "window", "undocked");
       await render(false);
@@ -279,7 +294,7 @@ test("the docked browser keeps BOOTH addresses out of settings and follows the b
   assert.doesNotMatch(panel, /closeBoothBrowser/);
   assert.match(panel, /unified/);
   assert.match(browserPanel, /この環境では、ブラウザは別ウィンドウで開きます/);
-  assert.match(browserPanel, /kind: "panelArea", area: null, visible: false/);
+  assert.match(browserPanel, /reportBrowserPanel\(\{ area: null, visible: false \}\)/);
   assert.doesNotMatch(browserPanel, /closeTab|closeBoothBrowser/);
   // A press under 6px stays a click. Pointer capture starts only after the drag threshold.
   assert.match(readFileSync("src/tabStrip.ts", "utf8"), /TAB_DRAG_THRESHOLD_PX = 6/);

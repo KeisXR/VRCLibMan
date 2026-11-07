@@ -19,6 +19,7 @@ import { UnitySettings } from "../components/UnitySettings";
 import { SettingsNav } from "../components/SettingsNav";
 import { SyncExportSettings } from "../components/SyncExportSettings";
 import { AVATAR_HERO_CHOICES, AVATAR_HERO_BASE, normalizeAvatarHero } from "../avatarHero";
+import { readWithTimeout } from "../ipcRecovery";
 
 const emptyAvatar = {
   id: "",
@@ -57,6 +58,9 @@ export function SettingsPage() {
   const [catalog, setCatalog] = useState<CatalogInfo | null>(null);
   const [pulling, setPulling] = useState(false);
   const [remoteSync, setRemoteSync] = useState<RemoteSyncStatus | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [loadingSettings, setLoadingSettings] = useState(true);
+  const [loadErrors, setLoadErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!settings?.remoteAutoSync) return;
@@ -96,25 +100,27 @@ export function SettingsPage() {
   useEffect(() => {
     let cancelled = false;
     const settingsTicket = ticket();
-    Promise.all([api.settings(), api.knowledge(), api.integrationStatus(), api.catalogInfo(), api.appleFmStatus(), appVersion()]).then(
-      ([nextSettings, nextKnowledge, nextIntegration, nextCatalog, nextApple, nextVersion]) => {
-        if (cancelled) return;
-        hydrate(nextSettings, settingsTicket);
-        if (lastScannedFolder.current == null) lastScannedFolder.current = nextSettings.libraryFolder;
-        setApple(nextApple);
-        setCatalog(nextCatalog);
-        setKnowledge(nextKnowledge);
-        setIntegration(nextIntegration);
-        setVersion(nextVersion);
-      },
-      (err: unknown) => {
-        if (!cancelled) fail(errorText(err));
-      },
-    );
+    setLoadingSettings(true);
+    setLoadErrors({});
+    function load<T>(label: string, read: () => Promise<T>, apply: (value: T) => void) {
+      void readWithTimeout(read, label).then(
+        (value) => { if (!cancelled) apply(value); },
+        (err: unknown) => { if (!cancelled) setLoadErrors((errors) => ({ ...errors, [label]: errorText(err) })); },
+      ).finally(() => { if (!cancelled && label === "一般設定") setLoadingSettings(false); });
+    }
+    load("一般設定", api.settings, (nextSettings) => {
+      hydrate(nextSettings, settingsTicket);
+      if (lastScannedFolder.current == null) lastScannedFolder.current = nextSettings.libraryFolder;
+    });
+    load("対応表", api.knowledge, setKnowledge);
+    load("連携状態", api.integrationStatus, setIntegration);
+    load("カタログ情報", api.catalogInfo, setCatalog);
+    load("Appleモデルの状態", api.appleFmStatus, setApple);
+    load("アプリの版", appVersion, setVersion);
     return () => {
       cancelled = true;
     };
-  }, [revision, fail, hydrate, ticket]);
+  }, [revision, loadAttempt, hydrate, ticket]);
 
   function flushSettings() { void flush().catch(() => {}); }
 
@@ -295,6 +301,13 @@ export function SettingsPage() {
         <div><h1>設定</h1><p>一般設定は自動保存されます。対応表の編集は保存ボタンで確定してください。</p></div>
         {settings && <p className={savePhase === "error" ? "settings-save-state warn-text" : "settings-save-state meta"} role="status" aria-live="polite">{savePhase === "saving" ? "保存中…" : savePhase === "error" ? "未保存の設定があります" : "一般設定は保存済み"}</p>}
       </div>
+
+      {loadingSettings && !settings && <p className="meta" role="status">設定を読み込んでいます…</p>}
+      {Object.keys(loadErrors).length > 0 && <div className="panel" role="alert">
+        <p>一部の情報を読み込めませんでした。読み込み済みの設定は引き続き使えます。</p>
+        <ul>{Object.entries(loadErrors).map(([label, message]) => <li key={label}>{label}：{message}</li>)}</ul>
+        <button className="button" type="button" disabled={loadingSettings} onClick={() => setLoadAttempt((value) => value + 1)}>もう一度読み込む</button>
+      </div>}
 
       {settings && (
         <div className="settings-layout">
@@ -496,13 +509,13 @@ export function SettingsPage() {
 
           <section className="settings-section knowledge-section" id="settings-knowledge">
             <header><h2>対応表を編集</h2><p>アバターの別名と共通素体を編集します。</p></header>
-            <div className="knowledge">
+            {knowledge ? <div className="knowledge">
               <div><input className="search" value={filter} placeholder="対応表を検索" onChange={(e) => setFilter(e.target.value)} /><p className="meta">{knowledge?.avatars.length ?? 0} 件中 {avatars.length} 件を表示</p><div className="list">{avatars.map((record) => <button key={record.id} className={record.id === avatar.id ? "selected" : ""} type="button" onClick={() => selectAvatar(record)}>{record.displayName}{record.isBuiltin ? " ・初期" : ""}</button>)}</div><h2>素体</h2><div className="list">{(knowledge?.baseBodies ?? []).map((record) => <button key={record.id} type="button" onClick={() => setBody(record)}>{record.displayName}</button>)}</div></div>
               <div className="stack">
                 <div className="panel"><h2>{avatar.id ? "アバターを編集" : "アバターを追加"}</h2><label className="field"><span>表示名</span><input value={avatar.displayName} onChange={(e) => setAvatar({ ...avatar, displayName: e.target.value })} /></label><label className="field"><span>別名（カンマ区切り）</span><input value={avatar.aliases} onChange={(e) => setAvatar({ ...avatar, aliases: e.target.value })} /></label><label className="field"><span>素体</span><select value={avatar.baseBody} onChange={(e) => setAvatar({ ...avatar, baseBody: e.target.value })}><option value="">なし</option>{(knowledge?.baseBodies ?? []).map((record: BaseBody) => <option key={record.id} value={record.id}>{record.displayName}</option>)}</select></label><label className="field"><span>メモ</span><textarea value={avatar.notes} onChange={(e) => setAvatar({ ...avatar, notes: e.target.value })} /></label><div className="row-actions"><button className="button primary" type="button" onClick={() => void saveAvatar()}>保存</button><button className="button" type="button" onClick={() => setAvatar(emptyAvatar)}>新規</button><button className="button danger" type="button" disabled={!avatar.id || avatar.builtin} onClick={() => void removeAvatar()}>削除</button></div></div>
                 <div className="panel"><h2>{body.id ? "素体を編集" : "素体を追加"}</h2><label className="field"><span>表示名</span><input value={body.displayName} onChange={(e) => setBody({ ...body, displayName: e.target.value })} /></label><label className="field"><span>根拠のメモ</span><textarea value={body.note} onChange={(e) => setBody({ ...body, note: e.target.value })} /></label><div className="row-actions"><button className="button primary" type="button" onClick={() => void saveBody()}>保存</button><button className="button" type="button" onClick={() => setBody({ id: "", displayName: "", note: "" })}>新規</button><button className="button danger" type="button" disabled={!body.id} onClick={() => void removeBody()}>削除</button></div></div>
               </div>
-            </div>
+            </div> : <p className="section-body meta">対応表を読み込んでから編集できます。</p>}
           </section>
 
           <details className="settings-section debug-section" id="settings-debug">

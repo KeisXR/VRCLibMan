@@ -271,6 +271,8 @@ VRCLibMan の見た目の決まりを、ほかのプロジェクトへ持ち出�
 
 #### 設定のカテゴリ一覧（`.settings-nav`）
 
+設定の部分読み込みと、応答がない場合の再読み込み操作は [画面の通信と読み込みの復旧](../communication-recovery.md#設定画面) を参照。
+
 - 部品は `src/components/SettingsNav.tsx`、項目と並びは `src/settingsNav.ts` の `SETTINGS_NAV_ITEMS`。ライブラリ・Unity・起動と常駐・デザイン・更新設定・BOOTH・分類モデル・バージョン情報・対応表を編集・デバッグの 10 つで、画面の節の並びと同じです。節の `id`（`settings-unity`、`settings-asset-updates` など）は他の画面からの移動先なので変えません。`settings-app-update` は「バージョン情報」（`settings-data`）の中にあります。
 - 「対応表を編集」（`settings-knowledge`）と「デバッグ」（`settings-debug`、閉じた `<details>`）も一覧と同じ列に置きます。一覧から「デバッグ」を押すと開いてから移動します。
 - 広い幅: 左の縦の列（168px）で、上に固定（`position: sticky; top: 0`）。今いるカテゴリはサイドバーと同じ示し方（`--surface`＋650＋`--shadow`＋左端の朱の直線の縦棒。[部品2](#線のアクセントの部品)）。
