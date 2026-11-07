@@ -5,6 +5,7 @@ import { AvatarsPage } from "./pages/AvatarsPage";
 import { AvatarDetailPage } from "./pages/AvatarDetailPage";
 import { ImportPage } from "./pages/ImportPage";
 import { ClassificationLogPage } from "./pages/ClassificationLogPage";
+import { AssetUpdateLogPage } from "./pages/AssetUpdateLogPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { BrowserPage } from "./pages/BrowserPage";
 import { WorldsPage } from "./pages/WorldsPage";
@@ -48,7 +49,7 @@ import { noticeAction, useBanners } from "./useBanners";
 
 export type { NoticeAction, NotifyOptions } from "./notice";
 
-type Page = "avatars" | "avatar" | "assets" | "worlds" | "search" | "classification-log" | "import" | "settings" | "browser";
+type Page = "avatars" | "avatar" | "assets" | "worlds" | "search" | "classification-log" | "asset-update-log" | "import" | "settings" | "browser";
 
 interface Route {
   page: Page;
@@ -107,6 +108,7 @@ function parseRoute(hash: string): Route {
   if (parts[0] === "classification-log") {
     return { page: "classification-log", id: parts[1] ? decodeURIComponent(parts[1]) : undefined };
   }
+  if (parts[0] === "asset-update-log") return { page: "asset-update-log" };
   if (parts[0] === "search" || parts[0] === "import" || parts[0] === "settings" || parts[0] === "browser") {
     return { page: parts[0] };
   }
@@ -303,7 +305,7 @@ export default function App() {
   const density =
     route.page === "settings"
       ? "density-roomy"
-      : route.page === "avatars" || route.page === "avatar" || route.page === "assets" || route.page === "worlds" || route.page === "search" || route.page === "classification-log"
+      : route.page === "avatars" || route.page === "avatar" || route.page === "assets" || route.page === "worlds" || route.page === "search" || route.page === "classification-log" || route.page === "asset-update-log"
         ? "density-compact"
         : "";
   const browseKind = route.page === "assets" ? "asset" : route.page === "worlds" ? "world" : null;
@@ -316,7 +318,7 @@ export default function App() {
     { href: "#/assets", label: "アセット", icon: "assets", active: route.page === "assets" },
     { href: "#/worlds", label: "ワールド", icon: "worlds", active: route.page === "worlds" },
     { href: "#/search", label: "検索", icon: "search", active: route.page === "search" },
-    { href: "#/classification-log", label: "分類記録", icon: "log", active: route.page === "classification-log" },
+    { href: "#/classification-log", label: "分類記録", icon: "log", active: route.page === "classification-log" || route.page === "asset-update-log" },
     { href: "#/import", label: "インポート", icon: "import", active: route.page === "import" },
     { href: "#/settings", label: "設定", icon: "settings", active: route.page === "settings" },
     ...(builtinBrowser
@@ -357,7 +359,12 @@ export default function App() {
         {route.page === "assets" && <AssetsPage />}
         {route.page === "worlds" && <WorldsPage />}
         {route.page === "search" && <SearchPage />}
+        {(route.page === "classification-log" || route.page === "asset-update-log") && <nav className="record-tabs" aria-label="記録の種類">
+          <a className="button" href="#/classification-log" aria-current={route.page === "classification-log" ? "page" : undefined}>分類記録</a>
+          <a className="button" href="#/asset-update-log" aria-current={route.page === "asset-update-log" ? "page" : undefined}>アセット更新</a>
+        </nav>}
         {route.page === "classification-log" && <ClassificationLogPage boothId={route.id} />}
+        {route.page === "asset-update-log" && <AssetUpdateLogPage />}
         {route.page === "import" && <ImportPage />}
         {route.page === "settings" && <SettingsPage />}
         {route.page === "browser" && <BrowserPage enabled={builtinBrowser} />}

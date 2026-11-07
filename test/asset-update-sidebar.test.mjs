@@ -50,6 +50,7 @@ test("sidebar asset update button runs the configured check and reports a quiet 
     const { assetUpdates } = await server.ssrLoadModule("/src/api.ts");
     const { ShellProvider } = await server.ssrLoadModule("/src/App.tsx");
     const { SidebarAssetUpdateButton } = await server.ssrLoadModule("/src/components/SidebarAssetUpdateButton.tsx");
+    const { AssetUpdateLogPage } = await server.ssrLoadModule("/src/pages/AssetUpdateLogPage.tsx");
     const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
     const notes = [];
     const shell = {
@@ -117,6 +118,20 @@ test("sidebar asset update button runs the configured check and reports a quiet 
     const icon = document.querySelector(".rail-icon-button");
     assert.ok(icon, "compact icon button");
     assert.equal(icon.getAttribute("aria-label"), "アセットの更新を確認");
+    assetUpdates.status = async () => status([row("424242", { changes: ["新しいファイルの追加"] })], { running: true, progress: { done: 7, total: 159 } });
+    await render();
+    assert.match(document.querySelector(".sidebar-asset-update").textContent, /7 \/ 159 件/);
+    assetUpdates.status = async () => status([row("424242", { changes: ["新しいファイルの追加"] })]);
+    await act(async () => { window.dispatchEvent(new window.Event("hashchange")); await tick(); });
+    assert.equal(document.querySelector(".sidebar-asset-update").disabled, false);
+
+    assetUpdates.history = async () => [{ boothId: "424242", detectedAt: "2026-11-05T00:00:00.000Z", source: "library", descriptionChanged: false,
+      removed: [{ filename: "old.zip", variation: "通常", downloadableId: "123456" }], added: [{ filename: "new.zip", variation: "通常", downloadableId: "234567" }] }];
+    assetUpdates.configure = async () => status([row("424242")]);
+    await act(async () => { root.render(createElement(ShellProvider, { value: shell }, createElement(AssetUpdateLogPage))); await tick(); });
+    const timestamp = document.querySelector("time");
+    assert.equal(timestamp.getAttribute("datetime") ?? timestamp.getAttribute("dateTime"), "2026-11-05T00:00:00.000Z");
+    assert.deepEqual([...document.querySelectorAll(".log-changes code")].map(n => n.textContent), ["https://booth.pm/downloadables/123456", "https://booth.pm/downloadables/234567"]);
     await act(async () => { root.render(null); });
   } finally {
     await server.close();

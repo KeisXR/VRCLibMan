@@ -2035,6 +2035,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
   notePreviewCall(command);
   switch (command) {
     case "asset_update_status": return assetWatchStatus() as T;
+    case "asset_update_history": return [] as T;
     case "configure_asset_updates": {
       const input = args.input as AssetUpdateConfigure;
       enrollAssetProducts();

@@ -2303,6 +2303,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .log-changes { display: grid; grid-template-columns: max-content 1fr; gap: 2px var(--space-3); margin: 0; font-size: 13px; }
 .log-changes dt { color: var(--muted); }
 .log-changes dd { margin: 0; overflow-wrap: anywhere; }
+.record-tabs { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-3); }
+.record-tabs a[aria-current="page"] { border-color: var(--text); font-weight: 700; }
 .log-undo { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 
 .product-edit-dialog { width: min(640px, calc(100vw - 48px)); max-height: calc(100vh - 48px); overflow: auto; padding: 0; border: 0; border-radius: var(--radius); background: var(--surface); color: var(--text); }

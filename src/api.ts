@@ -5,6 +5,7 @@ import { createPanelReporter } from "./panelReporter";
 import type {
   AppUpdateStatus,
   AssetUpdateStatus,
+  AssetUpdateRecord,
   AssetUpdateConfigure,
   AvatarCard,
   BrowserState,
@@ -77,7 +78,8 @@ export function isTauri(): boolean {
 }
 
 export const assetUpdates = {
-  status: () => call<AssetUpdateStatus>("asset_update_status"),
+  status: () => readWithTimeout(() => call<AssetUpdateStatus>("asset_update_status"), "アセット更新の状態"),
+  history: () => readWithTimeout(() => call<AssetUpdateRecord[]>("asset_update_history"), "アセット更新の記録"),
   configure: (input: AssetUpdateConfigure) => call<AssetUpdateStatus>("configure_asset_updates", { input }),
   check: () => call<AssetUpdateStatus>("check_asset_updates"),
 };

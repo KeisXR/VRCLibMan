@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, assetUpdates, openExternal } from "../api";
 import { useShell } from "../App";
 import { assetUpdateListStartsOpen, assetUpdateListSummary } from "../assetUpdatesUi";
@@ -17,7 +17,17 @@ export function AssetUpdates() {
   const [pending, setPending] = useState(false);
   const [checking, setChecking] = useState(false);
   const [listOpen, setListOpen] = useState(false);
-  const load = useCallback(() => assetUpdates.status().then(setStatus), []);
+  const statusRequest = useRef(0);
+  const checkRequest = useRef(0);
+  const observedRunning = useRef(false);
+  const load = useCallback(async () => {
+    const request = ++statusRequest.current;
+    const next = await assetUpdates.status();
+    if (request !== statusRequest.current) return;
+    setStatus(next);
+    if (next.running) observedRunning.current = true;
+    else if (observedRunning.current) setChecking(false);
+  }, []);
   useEffect(() => {
     let alive = true;
     void Promise.all([assetUpdates.status(), api.productOptions()]).then(([s, p]) => {
@@ -29,22 +39,28 @@ export function AssetUpdates() {
     return () => { alive = false; };
   }, [fail]);
   useEffect(() => {
-    if (pending || checking) return;
+    if (pending) return;
     let alive = true;
     const timer = window.setInterval(() => { if (alive) void load().catch(() => {}); }, 5000);
     return () => { alive = false; window.clearInterval(timer); };
-  }, [pending, checking, load]);
+  }, [pending, load]);
   async function configure(input: AssetUpdateConfigure) {
+    statusRequest.current++;
     setPending(true);
     try { setStatus(await assetUpdates.configure(input)); }
     catch (err) { fail(errorText(err)); }
     finally { setPending(false); }
   }
   async function check() {
+    const request = ++checkRequest.current;
+    observedRunning.current = false;
     setChecking(true);
-    try { setStatus(await assetUpdates.check()); }
-    catch (err) { fail(errorText(err)); }
-    finally { setChecking(false); }
+    try {
+      const next = await assetUpdates.check();
+      if (request === checkRequest.current) { statusRequest.current++; setStatus(next); }
+    }
+    catch (err) { if (request === checkRequest.current) fail(errorText(err)); }
+    finally { if (request === checkRequest.current) setChecking(false); }
   }
   const options = products.filter((p) => !status?.rows.some((r) => r.boothId === p.boothId) && `${p.title} ${p.boothId}`.toLowerCase().includes(query.toLowerCase())).slice(0, 50);
   const matching = (status?.rows ?? []).filter((r) => `${r.title} ${r.boothId}`.toLowerCase().includes(listQuery.toLowerCase()) && (filter === "all" || (filter === "changed" ? r.changes.length > 0 : Boolean(r.error))));

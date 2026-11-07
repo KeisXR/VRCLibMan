@@ -2,6 +2,7 @@
 const RECOVERABLE_READS = new Set([
   "get_settings", "list_knowledge", "integration_status", "catalog_info",
   "plugin:app|version", "browser_state", "browser_panel_snapshot",
+  "asset_update_status", "asset_update_history",
 ]);
 
 export const IPC_TRANSPORT_TIMEOUT_MS = 5000;

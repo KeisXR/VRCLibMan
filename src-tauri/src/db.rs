@@ -964,6 +964,7 @@ fn import_products_unlogged(
         &before_files,
         &parsed.products,
         authoritative_files,
+        false,
     );
     for booth_id in touched {
         apply_listed_compatibility(connection, &booth_id)?;
@@ -3597,6 +3598,7 @@ pub(crate) fn store_free_files(
         connection,
         &before_files,
         std::slice::from_ref(&incoming),
+        true,
         true,
     );
     Ok(count.max(0) as usize)
