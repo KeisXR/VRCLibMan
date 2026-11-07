@@ -21,6 +21,7 @@ import { SettingRow } from "../components/SettingRow";
 import { ProductExclusions } from "../components/ProductExclusions";
 import { UnlinkedFiles } from "../components/UnlinkedFiles";
 import { ExtensionInstructions } from "../components/BoothImportSettings";
+import { BuiltinBrowserImport } from "../components/BuiltinBrowserControls";
 import { OllamaMemoryControls } from "../components/OllamaMemoryControls";
 
 function extractNotice(result: ExtractReport): string {
@@ -320,7 +321,7 @@ export function ImportPage() {
       <div className="settings-sections">
         <section className="settings-section">
           <header>
-            <h2>1. BOOTH から読み込む</h2>
+            <h2 id="import-booth">1. BOOTH から読み込む</h2>
             <p>
               拡張か内蔵ブラウザで商品情報を送ります。受け取った商品は、次の「分類」で整理できます。
             </p>
@@ -354,21 +355,13 @@ export function ImportPage() {
           )}
           </details></>}
           {integration?.mode !== "extension" && <>
-          <SettingRow
-            label="内蔵ブラウザ"
-            help={
-              builtinBrowser
-                ? "有効です。別ウィンドウで BOOTH にログインして読み込みます。"
-                : "無効です。設定で読み込み方を変更できます。"
-            }
-          >
-            <a
-              className="button"
-              href={builtinBrowser ? "#/browser" : "#/settings"}
-            >
-              {builtinBrowser ? "ブラウザ画面へ" : "読み込み方を選ぶ"}
-            </a>
-          </SettingRow>
+          {builtinBrowser ? (
+            <BuiltinBrowserImport />
+          ) : (
+            <SettingRow label="内蔵ブラウザ" help="無効です。設定で読み込み方を変更できます。">
+              <a className="button" href="#/settings">読み込み方を選ぶ</a>
+            </SettingRow>
+          )}
           {integration?.browserImport && (
             <details className="settings-details"><summary>内蔵ブラウザの受信履歴</summary><p className="section-note">
               内蔵ブラウザの最終読み込み:{" "}

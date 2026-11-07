@@ -144,9 +144,10 @@ export function SetupWizard({ onDone, onRefresh }: { onDone: () => void; onRefre
     setMessage("");
     setStep(next);
     setCollapsed(false);
-    window.location.hash = next === "library" ? "#/browser" : next === "manual" ? "#/classification-log" : "#/import";
-    if (next === "classify" || next === "files") {
-      window.setTimeout(() => document.getElementById(next === "classify" ? "import-classification" : "import-existing-files")?.scrollIntoView?.({ block: "start" }), 100);
+    window.location.hash = next === "manual" ? "#/classification-log" : "#/import";
+    if (next !== "manual") {
+      const target = next === "library" ? "import-booth" : next === "classify" ? "import-classification" : "import-existing-files";
+      window.setTimeout(() => document.getElementById(target)?.scrollIntoView?.({ block: "start" }), 100);
     }
   }
 
@@ -238,8 +239,8 @@ export function SetupWizard({ onDone, onRefresh }: { onDone: () => void; onRefre
         {step === "library" && <>
           {browserEnabled ? <>
             <ol className="setup-steps">
-              <li>ブラウザ画面の「ブラウザを開く」を押し、BOOTH にログインします。</li>
-              <li>ブラウザ画面に戻り、「ライブラリ全取得」を押します。</li>
+              <li>インポート画面の「1. BOOTH から読み込む」で「ブラウザを開く」を押し、BOOTH にログインします。</li>
+              <li>同じ場所の「ライブラリ全取得」を押します。</li>
             </ol>
           </> : <>
             <p>拡張機能を選択しています。</p>
@@ -252,7 +253,7 @@ export function SetupWizard({ onDone, onRefresh }: { onDone: () => void; onRefre
           <p className="meta">商品情報はあとからでも取得できます。</p>
           <div className="row-actions">
             <button className="button" type="button" onClick={() => setStep("extension")}>戻る</button>
-            {browserEnabled && <button className="button" type="button" onClick={() => { window.location.hash = "#/browser"; }}>ブラウザ画面へ</button>}
+            {browserEnabled && <button className="button" type="button" onClick={() => { window.location.hash = "#/import"; }}>インポート画面へ</button>}
             <button className="button primary" type="button" onClick={() => guide("classify")}>次へ</button>
           </div>
         </>}
