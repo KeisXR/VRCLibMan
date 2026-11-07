@@ -27,6 +27,56 @@ function rememberPage() {
 
 rememberPage();
 
+// A separate link preserves BOOTH's own download action and also works without auto sorting.
+(function downloadImports() {
+  const installed = new WeakMap();
+  function decorate() {
+    for (const anchor of document.querySelectorAll('a[href], [data-href]')) {
+      const value = anchor.getAttribute('href') || anchor.getAttribute('data-href');
+      const id = globalThis.VrcLibManCompanion?.downloadId(value ? new URL(value, location.href).href : '');
+      if (!id || installed.has(anchor)) continue;
+      const host = document.createElement('span');
+      const root = host.attachShadow({mode:'closed'});
+      const style = document.createElement('style');
+      style.textContent = 'a{display:inline-block;margin:6px 0;padding:5px 10px;border:1px solid #9dc9bc;border-radius:6px;color:#173e37;background:#effaf7;font:13px/1.5 system-ui;text-decoration:none}p{font:12px/1.5 system-ui;color:#a22}';
+      const link = document.createElement('a');
+      link.href = 'vrclibman://import';
+      link.textContent = 'LibManでインポート';
+      const status = document.createElement('p');
+      status.setAttribute('role','status');
+      installed.set(anchor, status);
+      link.addEventListener('click', event => {
+        event.preventDefault();
+        if (!event.isTrusted) return;
+        send(id, status);
+      });
+      root.append(style, link, status);
+      anchor.after(host);
+    }
+  }
+  async function send(id, status) {
+    status.textContent = 'LibManを開いています…';
+    try {
+      const result = await chrome.runtime.sendMessage({type:'import-download', downloadableId:id});
+      status.textContent = result?.error || 'LibManへ送りました';
+    } catch { status.textContent = '拡張機能を更新した場合はページを再読み込みしてください'; }
+  }
+  // Observe the original click; do not cancel, replace, or repeat the download.
+  document.addEventListener('click', event => {
+    if (!event.isTrusted || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    const anchor = event.target.closest?.('a[href], [data-href]');
+    const value = anchor?.getAttribute('href') || anchor?.getAttribute('data-href');
+    const id = globalThis.VrcLibManCompanion?.downloadId(value ? new URL(value,location.href).href : '');
+    if (!id) return;
+    if (!installed.has(anchor)) decorate();
+    const status = installed.get(anchor);
+    if (status) send(id,status);
+  },true);
+  const observer = new MutationObserver(decorate);
+  observer.observe(document.body,{subtree:true,childList:true});
+  decorate();
+})();
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!message || message.type !== "extract-page") return undefined;
   try {

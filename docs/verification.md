@@ -1,5 +1,17 @@
 # 検証記録
 
+## 拡張のダウンロード起点の分類と対応アバター入力（2026-11-07）
+
+対象は `4ae5371110d3add119ac16be278754a7336fa646` を基準にした作業ツリー（アプリ1.0.0、拡張0.1.17）。Windows x64 / Node.js 24.18.0 / Rust 1.99.1 / インストール済みChromeで確認した。操作は [拡張の仕様](browser-extension.md#ダウンロードから分類する) を参照。
+
+- `cargo test --offline --manifest-path src-tauri/Cargo.toml --lib`：484件成功、失敗0、1件無視。内蔵ブラウザオフでの分類待ち登録、重複の抑制、確定済み分類の保護、除外商品の拒否、対応欄の名前解決と共通素体を広げないこと、不正なアバターで分類だけを保存しないこと、追加受信口のOrigin・Bearer認証を確認した。ソケットを使う試験はサンドボックス外で実行した。
+- `CHROME_PATH` を指定した `npm test -- --test-concurrency=1`：230件成功、失敗0。並列実行時のViteキャッシュ競合によるfixture読み込み失敗は、直列実行では発生しなかった。
+- 最終の `node --test test/extension-companion.test.mjs test/extension-ui.test.mjs`：15件成功。起動用URLに情報を埋めず、認証済みHTTPへ選んだ1商品だけを送ること、自動整理オフでも送れること、追加リンクと元のダウンロードの実クリックから送信すること、合成クリックでは起動しないことを確認した。BOOTHのダウンロードは起動せず、合成ページ・Workerの代替APIを使用した。
+- `npm run dev -- --host 127.0.0.1 --port 1431 --strictPort` の画面に対し、`VRCLIBMAN_UI_TEST_URL` と `CHROME_PATH` を指定した `node --test test/browser-auto-ui.test.mjs` が成功。自動入力したライムの表示、ホバーでの×表示と削除、別名検索からのマヌカ追加、保存への反映、保存失敗・後回し・再開・複数商品の順次確定を、隔離Chromeプロファイルの実ポインター入力で確認した。
+- `npm run build`、`node scripts/check-release-version.mjs`、`git diff --check` が成功。操作の流れを変えるため、リポジトリの版番号規則に従いアプリを1.0.0へ上げた。
+
+実DB・Cookie・BOOTHへの通信は使っていない。実拡張からのOSプロトコル起動、ブラウザの外部アプリ確認、実BOOTHでのログインを伴う取得、macOS/Linuxの連携は未検証。ビルド・合成試験の成功をそれらの実機検証済みとは扱わない。
+
 ## 設定と右パネルの通信復旧（2026-11-07）
 
 対象は main `c4ea7029e61b6641714a887240faf5a9f018bd9a` を基準にした `codex/fix-ipc-settings-panel-recovery` の作業ツリー（0.6.1）。Windows x64 / Node.js 24.18.0で確認した。実装と操作の詳細は [画面の通信と読み込みの復旧](communication-recovery.md) にある。

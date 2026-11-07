@@ -590,7 +590,11 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
                 );
             }
         };
-        let imported = db::import_export_json(&mut connection, &text);
+        let imported = if request.url().split('?').next() == Some("/import-download") {
+            db::extension_import_product(&mut connection, &text)
+        } else {
+            db::import_export_json(&mut connection, &text)
+        };
         if let Ok(ref report) = imported {
             let _ = crate::integration::record_import(&connection, "extension", report);
         }
@@ -599,6 +603,15 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
     match imported {
         Ok(report) => {
             let _ = app.emit("library-changed", ());
+            if request.url().split('?').next() == Some("/import-download") {
+                crate::presence::show_main_later(app);
+                let _ = app.emit_to("main", "browser-auto-pending", ());
+                if let Ok(product) = serde_json::from_str::<serde_json::Value>(&text) {
+                    if let Some(id) = product.get("boothId").and_then(|v| v.as_str()) {
+                        let _ = app.emit_to("main", "extension-import-prompt", id);
+                    }
+                }
+            }
             response_for(origin.as_deref(), Gate::Import, Some(report))
         }
         Err(err) => response_for(
@@ -720,7 +733,7 @@ fn classify(request: RequestView<'_>, access: Access<'_>) -> Gate {
     if request.method.eq_ignore_ascii_case("GET") && path == "/health" {
         return Gate::Health;
     }
-    if request.method.eq_ignore_ascii_case("POST") && path == "/import" {
+    if request.method.eq_ignore_ascii_case("POST") && matches!(path, "/import" | "/import-download") {
         return Gate::Import;
     }
     if request.method.eq_ignore_ascii_case("POST") && path == "/product-status" {
@@ -978,6 +991,21 @@ mod tests {
         assert_eq!(bind_addr(), "127.0.0.1:17321");
         assert_ne!(LOCAL_IMPORT_PORT, 1420);
         assert_ne!(LOCAL_IMPORT_PORT, 9696);
+    }
+
+    #[test]
+    fn download_import_uses_the_same_origin_and_token_boundary() {
+        for (origin, auth, status) in [
+            (Some("https://booth.pm"), Some("Bearer ABCD2345"), 403),
+            (Some(EXTENSION), None, 401),
+        ] {
+            assert!(matches!(classify(view("POST", "/import-download", origin, auth), Access {
+                token: "ABCD2345", pinned: None, locked: false,
+            }), Gate::Reject { status: actual, .. } if actual == status));
+        }
+        assert!(matches!(classify(view("POST", "/import-download", Some(EXTENSION), Some("Bearer ABCD2345")), Access {
+            token: "ABCD2345", pinned: Some(EXTENSION), locked: false,
+        }), Gate::Import));
     }
 
     #[test]

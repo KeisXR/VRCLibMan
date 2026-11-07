@@ -11,6 +11,7 @@ const fixture = window.autoFixture = {
   error: null,
   pending: [{boothId:'123456', title:'見本の衣装'}, {boothId:'234567', title:'見本のワールド'}],
   saved: [],
+  savedAvatars: [],
   failNext: false,
   holdSave: false,
   releaseSave: () => {},
@@ -18,10 +19,14 @@ const fixture = window.autoFixture = {
   fetches: 0,
 };
 api.browserAutoPending = async () => { fixture.fetches += 1; return fixture.pending.slice(); };
-api.moveProductGenre = async (id, kind, genre) => {
+api.knowledge = async () => ({avatars:[{id:'lime',displayName:'ライム',aliases:['Lime']},{id:'manuka',displayName:'マヌカ',aliases:['Manuka']}],baseBodies:[]});
+api.productForEdit = async id => ({boothId:id,linkedAvatarIds:[]});
+api.productAvatarSuggestions = async () => ({avatarIds:['lime'],unresolvedNames:[]});
+api.moveProductGenre = async (id, kind, genre, avatarIds) => {
   if (fixture.failNext) { fixture.failNext = false; throw new Error('保存失敗の見本'); }
   if (fixture.holdSave) await new Promise(resolve => { fixture.releaseSave = resolve; });
   fixture.saved.push({id, kind, genre});
+  fixture.savedAvatars.push(avatarIds);
 };
 api.browserAutoFinish = async id => { fixture.pending = fixture.pending.filter(item => item.boothId !== id); };
 function Harness() {

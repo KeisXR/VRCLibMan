@@ -10,27 +10,49 @@ const product={boothId:'123456',title:'テスト衣装',downloads:[{filename:'sa
 function event(){const listeners=[];return {listeners,addListener(fn){listeners.push(fn);}};}
 function worker(initial={}, previousItems=[]) {
   const data={pairingToken:'ABCD-2345',routeDownloads:true,...structuredClone(initial)};
-  const items=structuredClone(previousItems);const sent=[];let online=true;let httpStatus=200;let rejectId='';
+  const items=structuredClone(previousItems);const sent=[];const opened=[];let online=true;let httpStatus=200;let rejectId='';
   const changes=event();const messages=event();const filenames=event();const alarms=event();const startup=event();const installed=event();
   const chrome={runtime:{id:'a'.repeat(32),onMessage:messages,onStartup:startup,onInstalled:installed,getManifest:()=>({version:'0.1.16'}),getURL:p=>`chrome-extension://${'a'.repeat(32)}/${p}`},
     storage:{local:{async get(defaults){return {...defaults,...structuredClone(data)};},async set(values){Object.assign(data,structuredClone(values));}},session:{async get(defaults){return defaults;}}},
     alarms:{onAlarm:alarms,create(){}},
-    tabs:{async get(){return {url:'https://booth.pm/ja/items/123456'};},async sendMessage(){return {products:[product]};}},
+    tabs:{async get(){return {url:'https://booth.pm/ja/items/123456'};},async sendMessage(){return {products:[product]};},async create(options){opened.push(options);return {id:99};},async remove(){}},
     downloads:{onChanged:changes,onDeterminingFilename:filenames,
       async search(q){return items.filter(row=>q.id!=null?row.id===q.id:row.url===q.url);},
       async download(options){const id=items.length+1;const item={id,url:options.url,filename:`/Downloads/${options.filename}`,state:'in_progress',mime:'application/zip',fileSize:42};items.push(item);return id;}}
   };
   const context=vm.createContext({chrome,URL,AbortSignal,crypto:webcrypto,setTimeout,clearTimeout,
-    async fetch(url,options){if(!online)throw new Error('offline');const body=JSON.parse(options.body);sent.push({url,body,options});const status=body.notificationId===rejectId?400:httpStatus;return {ok:status===200,status,async json(){return {ok:true,products:[]};}};}});
+    async fetch(url,options){if(!online)throw new Error('offline');const body=options.body ? JSON.parse(options.body) : {};sent.push({url,body,options});const status=body.notificationId===rejectId?400:httpStatus;return {ok:status===200,status,async json(){return {ok:true,products:[]};}};}});
   context.importScripts=(...paths)=>{for(const p of paths)vm.runInContext(readFileSync(new URL(`../extension/${p}`,import.meta.url),'utf8'),context);};
   vm.runInContext(readFileSync(new URL('../extension/background.js',import.meta.url),'utf8'),context);
-  return {data,items,sent,context,chrome,offline(){online=false;},online(){online=true;},status(value){httpStatus=value;},reject(value){rejectId=value;},
+  return {data,items,sent,opened,context,chrome,offline(){online=false;},online(){online=true;},status(value){httpStatus=value;},reject(value){rejectId=value;},
     async idle(){await vm.runInContext('serial',context);},
     async message(message,sender={id:chrome.runtime.id,url:chrome.runtime.getURL('popup.html')}){return new Promise(resolve=>{const result=messages.listeners[0](message,sender,resolve);if(result!==true)resolve(undefined);});},
     async finish(index=0){items[index].state='complete';changes.listeners[0]({id:items[index].id,state:{current:'complete'}});await vm.runInContext('serial',context);},
     async retry(){alarms.listeners[0]({name:'retry-deliveries'});await vm.runInContext('serial',context);}
   };
 }
+
+test('page download import wakes the app and sends exactly one product without downloading or requiring sorting', async()=>{
+  const w=worker({routeDownloads:false});
+  const sender={id:w.chrome.runtime.id,url:'https://booth.pm/ja/items/123456',tab:{id:1}};
+  assert.equal((await w.message({type:'import-download',downloadableId:'555555'},sender)).ok,true);
+  assert.deepEqual(structuredClone(w.opened),[{url:'vrclibman://import',active:true}]);
+  assert.deepEqual(w.sent.map(r=>r.url.split('/').pop()),['health','import-download']);
+  assert.deepEqual(w.sent[1].body,product);
+  assert.equal(w.items.length,0);
+  assert.equal(w.sent[1].options.credentials,'omit');
+  assert.equal(w.sent[1].options.headers.Cookie,undefined);
+  assert.equal(await w.message({type:'import-download',downloadableId:'555555'},{...sender,url:'https://evil.example/'}),undefined);
+});
+
+test('ambiguous file or missing pairing does not launch the app or import', async()=>{
+  const sender={id:'a'.repeat(32),url:'https://booth.pm/ja/items/123456',tab:{id:1}};
+  for (const [initial,id] of [[{pairingToken:''},'555555'],[{},'999999']]) {
+    const w=worker(initial);
+    assert.ok((await w.message({type:'import-download',downloadableId:id},sender)).error);
+    assert.equal(w.opened.length,0);assert.equal(w.sent.length,0);
+  }
+});
 test('strict BOOTH URLs and exact unambiguous file mapping',()=>{
   assert.equal(helper.downloadId('https://booth.pm/downloadables/555555'),'555555');
   for(const url of ['https://booth.pm.evil.test/downloadables/555555','https://booth.pm@evil.test/downloadables/555555','http://booth.pm/downloadables/555555','https://booth.pm:444/downloadables/555555'])assert.equal(helper.downloadId(url),'');

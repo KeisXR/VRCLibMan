@@ -59,6 +59,8 @@ PC 間の移行は [データ移行](docs/remote-sync.md) に従う。現在は�
 
 ### 拡張
 
+- ダウンロードからの起動・分類と対応アバターの自動入力は [拡張の仕様](docs/browser-extension.md#ダウンロードから分類する) に従う。起動URLは起動だけに使い、商品情報は認証済みのローカルHTTPで渡す。
+
 - ホストは `booth.pm` と `*.booth.pm`、それに受信口の `http://127.0.0.1:17321/*` だけ。「このページを送る」は今開いているページだけを読む。
 - 商品ページの説明は `section.shop__text` にある。`.json` や JSON-LD の description は導入文だけで、素体の記述が落ちる。
 - 商品ページ内の関連 `.item-card` は書き出さない。ライブラリは `img.l-library-item-thumbnail` を起点にし、ページ上の全リンクは拾わない。サムネイルのリンクには商品名が無いので、同じカード内で同じ商品IDを指す文字のあるリンク、または `.text-text-default` をタイトルにする。入口は `https://accounts.booth.pm/library`。ホスト権限の `*.booth.pm` に含まれる。
