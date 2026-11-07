@@ -1021,9 +1021,10 @@ pub fn move_product_genre(
     boothId: String,
     kind: String,
     genre: String,
+    avatarIds: Option<Vec<String>>,
 ) -> Result<ClassificationSnapshot, String> {
     let mut connection = db(&state)?;
-    db::move_product_genre(&mut connection, &boothId, &kind, &genre)
+    db::move_product_genre_with_avatars(&mut connection, &boothId, &kind, &genre, avatarIds)
 }
 
 #[tauri::command]
@@ -2287,6 +2288,13 @@ mod browser_action_tests {
         )
         .is_err());
     }
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn product_avatar_suggestions(state: State<'_, AppState>, boothId: String) -> Result<db::AvatarSuggestions, String> {
+    let connection = db(&state)?;
+    db::product_avatar_suggestions(&connection, &boothId)
 }
 
 #[tauri::command]

@@ -2157,6 +2157,8 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     }
     case "product_for_edit":
       return productForEdit(String(args.boothId ?? "")) as T;
+    case "product_avatar_suggestions":
+      return { avatarIds: linksOf(String(args.boothId ?? "")), unresolvedNames: [] } as T;
     case "list_unlinked_files":
       return unlinkedFiles(Number(args.offset ?? 0), Number(args.limit ?? 50)) as T;
     case "classification_log_runs":
@@ -2230,6 +2232,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       updateProduct(args.update as ProductUpdate);
       return undefined as T;
     case "move_product_genre":
+      if (Array.isArray(args.avatarIds)) updateProduct({boothId: String(args.boothId ?? ""), avatarIds: args.avatarIds as string[]});
       return movePreviewGenre(String(args.boothId ?? ""), String(args.kind ?? ""), String(args.genre ?? "")) as T;
     case "restore_product_classification":
       restorePreviewClassification(args.snapshot);

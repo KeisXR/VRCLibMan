@@ -51,6 +51,25 @@ test('browser companion badges, unknown-preserving avatar filter, disconnect rec
       ${content}
     })()`);
     await wait("window.roots.some(root=>root.textContent.includes('所持未確認'))");
+    await evaluate(`(() => {
+      window.importMessages=[];
+      const previous=chrome.runtime.sendMessage;
+      chrome.runtime.sendMessage=async message=>{window.importMessages.push(message);return message.type==='import-download'?{ok:true}:previous(message);};
+      const anchor=document.createElement('a');anchor.id='native-download';anchor.href='https://booth.pm/downloadables/555555';anchor.textContent='見本ファイルをダウンロード';
+      anchor.addEventListener('click',event=>event.preventDefault());document.querySelector('main').prepend(anchor);
+    })()`);
+    await wait("window.roots.some(root=>root.querySelector('a[href=\"vrclibman://import\"]'))");
+    const importPoint=await evaluate("(() => {const link=window.roots.flatMap(root=>[...root.querySelectorAll('a')]).find(a=>a.textContent==='LibManでインポート');const r=link.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()");
+    await page('Input.dispatchMouseEvent',{type:'mousePressed',...importPoint,button:'left',clickCount:1});
+    await page('Input.dispatchMouseEvent',{type:'mouseReleased',...importPoint,button:'left',clickCount:1});
+    await wait("window.importMessages.some(message=>message.type==='import-download')");
+    assert.equal(await evaluate("window.importMessages.filter(message=>message.type==='import-download').length"),1);
+    await evaluate("document.querySelector('#native-download').click()");
+    assert.equal(await evaluate("window.importMessages.filter(message=>message.type==='import-download').length"),1, 'synthetic page clicks must not open the app');
+    const nativePoint=await evaluate("(() => {const r=document.querySelector('#native-download').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()");
+    await page('Input.dispatchMouseEvent',{type:'mousePressed',...nativePoint,button:'left',clickCount:1});
+    await page('Input.dispatchMouseEvent',{type:'mouseReleased',...nativePoint,button:'left',clickCount:1});
+    await wait("window.importMessages.filter(message=>message.type==='import-download').length===2");
     assert.ok(await evaluate("window.roots.some(root=>root.textContent.includes('見本B（共通素体）'))"));
     await evaluate("(() => {const s=window.roots[0].querySelector('select');s.value='a';s.dispatchEvent(new Event('change'));})()");
     assert.equal(await evaluate("document.querySelector('#b').hidden"),true);
@@ -75,7 +94,7 @@ test('browser companion badges, unknown-preserving avatar filter, disconnect rec
     })()`);
     await wait("document.querySelector('#download-files button') !== null");
     assert.match(await evaluate("document.querySelector('#download-files button').textContent"),/見本A用/);
-    const box=await evaluate("(() => {const r=document.querySelector('#download-files button').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()");
+    const box=await evaluate("(() => {const node=document.querySelector('#download-files button');node.scrollIntoView({block:'center'});const r=node.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()");
     await page('Input.dispatchMouseEvent',{type:'mousePressed',...box,button:'left',clickCount:1});
     await page('Input.dispatchMouseEvent',{type:'mouseReleased',...box,button:'left',clickCount:1});
     await wait("window.started.some(message=>message.type==='start-download')");

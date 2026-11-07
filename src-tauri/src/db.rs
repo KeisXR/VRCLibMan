@@ -2094,6 +2094,16 @@ pub(crate) fn move_product_genre(
     kind: &str,
     genre: &str,
 ) -> Result<ClassificationSnapshot, String> {
+    move_product_genre_with_avatars(connection, booth_id, kind, genre, None)
+}
+
+pub(crate) fn move_product_genre_with_avatars(
+    connection: &mut Connection,
+    booth_id: &str,
+    kind: &str,
+    genre: &str,
+    avatar_ids: Option<Vec<String>>,
+) -> Result<ClassificationSnapshot, String> {
     if product_excluded(connection, booth_id)? {
         return Err("この商品は除外されています".into());
     }
@@ -2110,11 +2120,16 @@ pub(crate) fn move_product_genre(
     if validated != genre {
         return Err("ジャンルが不正です".into());
     }
-    let snapshot = classification_snapshot(&product);
+    let mut snapshot = classification_snapshot(&product);
+    if avatar_ids.is_some() {
+        snapshot.links = Some(snapshot_links(connection, booth_id)?);
+        snapshot.links_locked = Some(product.links_locked);
+        snapshot.is_generic = Some(product.is_generic);
+    }
     let already = product.category == Some(category)
         && product.genre.as_deref() == Some(genre)
         && classification_pinned(&product);
-    if !already {
+    if !already || avatar_ids.is_some() {
         let from = placement_of(&product);
         let to = ClassificationPlacement {
             category: Some(category.as_str().to_string()),
@@ -2126,8 +2141,8 @@ pub(crate) fn move_product_genre(
                 booth_id: booth_id.to_string(),
                 category: Some(category.as_str().to_string()),
                 genre: Some(genre.to_string()),
-                is_generic: None,
-                avatar_ids: None,
+                is_generic: avatar_ids.as_ref().filter(|ids| !ids.is_empty()).map(|_| false),
+                avatar_ids,
             },
         )?;
         record_classification_move(connection, booth_id, "move", &from, Some(&to))?;
@@ -11700,15 +11715,13 @@ pub(crate) fn browser_auto_pending(
     connection: &Connection,
 ) -> Result<Vec<BrowserAutoItem>, String> {
     let saved = settings(connection)?;
-    if !saved.builtin_browser || !saved.browser_auto_register {
-        return Ok(vec![]);
-    }
+    let browser_enabled = saved.builtin_browser && saved.browser_auto_register;
     let mut query = connection.prepare(
         "SELECT booth_id, title FROM products p WHERE EXISTS
-         (SELECT 1 FROM settings s WHERE s.key = 'browser_auto_pending:' || p.booth_id AND s.value = '1') AND user_confirmed = 0 AND NOT (category_locked = 1 AND genre_locked = 1) ORDER BY booth_id"
+         (SELECT 1 FROM settings s WHERE (s.key = 'extension_import_pending:' || p.booth_id OR (?1 AND s.key = 'browser_auto_pending:' || p.booth_id)) AND s.value = '1') AND user_confirmed = 0 AND NOT (category_locked = 1 AND genre_locked = 1) ORDER BY booth_id"
     ).sql()?;
     let rows = query
-        .query_map([], |r| {
+        .query_map([browser_enabled], |r| {
             Ok(BrowserAutoItem {
                 booth_id: r.get(0)?,
                 title: r.get(1)?,
@@ -11732,11 +11745,50 @@ pub(crate) fn browser_auto_finish(connection: &mut Connection, id: &str) -> Resu
     }
     connection
         .execute(
-            "DELETE FROM settings WHERE key = ?1",
-            [format!("browser_auto_pending:{id}")],
+            "DELETE FROM settings WHERE key IN (?1, ?2)",
+            [format!("browser_auto_pending:{id}"), format!("extension_import_pending:{id}")],
         )
         .sql()?;
     Ok(())
+}
+
+/// Explicit extension download import; independent of native browser preferences.
+pub(crate) fn extension_import_product(connection: &mut Connection, text: &str) -> Result<ImportReport, String> {
+    let product: serde_json::Value = serde_json::from_str(text).map_err(|_| "商品情報を読めません".to_string())?;
+    let id = product.get("boothId").and_then(|v| v.as_str()).unwrap_or("");
+    if !crate::library_files::valid_booth_id(id) {
+        return Err("商品IDを特定できません".into());
+    }
+    if product_excluded(connection, id)? {
+        return Err("除外中の商品はインポートできません".into());
+    }
+    let report = import_export_json(connection, &crate::browser::export_json(serde_json::json!([product])))?;
+    let p = require_product(connection, id)?;
+    if !p.user_confirmed && !classification_pinned(&p) {
+        set_setting(connection, &format!("extension_import_pending:{id}"), "1")?;
+    }
+    Ok(report)
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AvatarSuggestions {
+    pub avatar_ids: Vec<String>,
+    pub unresolved_names: Vec<String>,
+}
+
+/// Read only: candidates come from explicit page evidence and the editable dictionary.
+pub(crate) fn product_avatar_suggestions(connection: &Connection, id: &str) -> Result<AvatarSuggestions, String> {
+    let product = require_product(connection, id)?;
+    let avatars = load_avatars(connection)?;
+    let names = crate::compat::names_for_extraction(&product.title, &product.description_snippet, &[], &avatars);
+    let mut result = AvatarSuggestions { avatar_ids: vec![], unresolved_names: vec![] };
+    for name in names {
+        if let Some(avatar) = crate::resolve::resolve_name(&name, &avatars) {
+            if !result.avatar_ids.contains(&avatar.id) { result.avatar_ids.push(avatar.id.clone()); }
+        } else if !result.unresolved_names.contains(&name) { result.unresolved_names.push(name); }
+    }
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -11749,6 +11801,50 @@ mod browser_auto_tests {
     }
     fn product(id: &str) -> serde_json::Value {
         serde_json::json!({"boothId": id, "title": "見本の衣装", "description": "対応する衣装の見本"})
+    }
+    #[test]
+    fn extension_import_prompts_without_builtin_browser_and_keeps_manual_edits() {
+        let mut c = open_memory().unwrap();
+        assert!(!settings(&c).unwrap().builtin_browser);
+        let text = product("123456").to_string();
+        extension_import_product(&mut c, &text).unwrap();
+        extension_import_product(&mut c, &text).unwrap();
+        assert_eq!(browser_auto_pending(&c).unwrap().len(), 1);
+        assert!(browser_auto_finish(&mut c, "123456").is_err());
+        move_product_genre_with_avatars(&mut c, "123456", "asset", "hair", Some(vec!["lime".into()])).unwrap();
+        browser_auto_finish(&mut c, "123456").unwrap();
+        extension_import_product(&mut c, &text).unwrap();
+        assert!(browser_auto_pending(&c).unwrap().is_empty());
+        assert_eq!(require_product(&c, "123456").unwrap().genre.as_deref(), Some("hair"));
+        assert_eq!(link_ids(&c, "123456").unwrap(), vec!["lime".to_string()]);
+    }
+    #[test]
+    fn page_avatar_extraction_is_read_only_and_does_not_expand_shared_bodies() {
+        let mut c = open_memory().unwrap();
+        extension_import_product(&mut c, &serde_json::json!({
+            "boothId":"123456", "title":"【ライム対応】見本の衣装",
+            "description":"対応アバター\nライム\nマヌカ\n架空ちゃん\n利用規約\nテスト用の文章"
+        }).to_string()).unwrap();
+        let before = link_ids(&c, "123456").unwrap();
+        let result = product_avatar_suggestions(&c, "123456").unwrap();
+        assert!(result.avatar_ids.contains(&"lime".to_string()));
+        assert!(result.avatar_ids.contains(&"manuka".to_string()));
+        assert!(!result.avatar_ids.contains(&"plum".to_string()));
+        assert!(result.unresolved_names.contains(&"架空ちゃん".to_string()));
+        assert_eq!(link_ids(&c, "123456").unwrap(), before);
+    }
+    #[test]
+    fn invalid_avatar_does_not_partially_save_classification() {
+        let mut c = open_memory().unwrap();
+        extension_import_product(&mut c, &product("123456").to_string()).unwrap();
+        let before = require_product(&c, "123456").unwrap();
+        assert!(move_product_genre_with_avatars(&mut c, "123456", "asset", "hair", Some(vec!["missing-avatar".into()])).is_err());
+        let after = require_product(&c, "123456").unwrap();
+        assert_eq!(before.category, after.category);
+        assert_eq!(before.genre, after.genre);
+        assert_eq!(browser_auto_pending(&c).unwrap().len(), 1);
+        set_product_excluded(&mut c, "123456", true).unwrap();
+        assert!(extension_import_product(&mut c, &product("123456").to_string()).is_err());
     }
     #[test]
     fn default_enabled_and_off_prevents_registration() {

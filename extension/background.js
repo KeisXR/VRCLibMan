@@ -23,6 +23,35 @@ async function localRequest(path, body, token) {
   if (!response.ok) throw new Error(`アプリへの送信に失敗しました (${response.status})`);
   return response.json();
 }
+async function importDownload(tabId, downloadableId) {
+  const tab = await chrome.tabs.get(tabId);
+  if (!companion.boothUrl(tab.url)) throw new Error('BOOTHのページを開いてください');
+  const stored = await settings();
+  if (!stored.pairingToken) throw new Error('拡張のポップアップでペアリングコードを設定してください');
+  const response = await chrome.tabs.sendMessage(tabId, {type:'extract-page'});
+  const selected = companion.choose(response?.products, downloadableId);
+  if (!selected) throw new Error('商品とファイルを一意に確認できません。ページを更新してください');
+  // The protocol carries no product data or credentials; the authenticated HTTP request does.
+  let wake;
+  try { wake = await chrome.tabs.create({url:'vrclibman://import', active:true}); } catch { /* An already running app can still receive HTTP. */ }
+  let ready = false;
+  for (let attempt=0; attempt<16; attempt++) {
+    try {
+      const health = await fetch(`${LOCAL_BASE}/health`, {credentials:'omit', signal:AbortSignal.timeout(1000), headers:{Authorization:`Bearer ${stored.pairingToken}`, 'X-VRCLibMan-Extension-Version':chrome.runtime.getManifest().version}});
+      if (!health.ok) throw new Error(`接続設定を確認してください (${health.status})`);
+      ready = true; break;
+    } catch (error) {
+      if (error.message.startsWith('接続設定')) throw error;
+      await new Promise(resolve => setTimeout(resolve,500));
+    }
+  }
+  if (!ready) throw new Error('アプリに接続できません。VRCLibManを起動してもう一度お試しください');
+  // Keep the protocol tab until startup succeeds, so the browser's launch prompt can be accepted.
+  if (wake?.id != null) await chrome.tabs.remove(wake.id).catch(() => {});
+  // Never replay an import after an ambiguous response. Retry only read-only health checks.
+  await localRequest('/import-download', selected.product, stored.pairingToken);
+  return {ok:true};
+}
 async function flush() {
   const stored = await settings();
   if (!stored.pairingToken) return;
@@ -173,6 +202,8 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       await chrome.storage.local.set({downloadIntents:[...stored.downloadIntents,intent]});
       return {ok:true};
     }).then(respond, () => respond({error:'ファイルの対応を記録できません'}));
+  } else if (message?.type === 'import-download' && isBooth) {
+    importDownload(sender.tab.id, message.downloadableId).then(respond, error => respond({error:error.message}));
   } else if (message?.type === 'start-download' && isPopup) {
     exclusive(() => startDownload(message)).then(respond, error => respond({error:error.message}));
   } else if (message?.type === 'retry-deliveries' && isPopup) {

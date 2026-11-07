@@ -204,8 +204,9 @@ export const api = {
   updateProduct: (update: ProductUpdate) => call<void>("update_product", { update }),
   browserAutoPending: () => call<{ boothId: string; title: string }[]>("browser_auto_pending"),
   browserAutoFinish: (boothId: string) => call<void>("browser_auto_finish", { boothId }),
-  moveProductGenre: (boothId: string, kind: GenreKind, genre: string) =>
-    call<ClassificationSnapshot>("move_product_genre", { boothId, kind, genre }),
+  productAvatarSuggestions: (boothId: string) => call<{ avatarIds: string[]; unresolvedNames: string[] }>("product_avatar_suggestions", { boothId }),
+  moveProductGenre: (boothId: string, kind: GenreKind, genre: string, avatarIds?: string[]) =>
+    call<ClassificationSnapshot>("move_product_genre", { boothId, kind, genre, avatarIds: avatarIds ?? null }),
   restoreProductClassification: (snapshot: ClassificationSnapshot) =>
     call<void>("restore_product_classification", { snapshot }),
   unpinProductClassification: (boothId: string) =>

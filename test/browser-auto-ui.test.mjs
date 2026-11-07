@@ -14,9 +14,9 @@ const chromePath = process.env.CHROME_PATH ?? ["/usr/bin/google-chrome", "/usr/b
 
 test("acquisition classification defers, retries failed saves, and classifies multiple products in Chromium", { timeout: 90000, skip: chromePath ? false : "Chrome not installed (set CHROME_PATH)" }, async (t) => {
   const { createServer } = await import("vite");
-  const vite = await createServer({ server: { host: "127.0.0.1", port: 0, hmr: false }, appType: "spa", logLevel: "error" });
-  await vite.listen();
-  const baseUrl = `http://127.0.0.1:${vite.httpServer.address().port}`;
+  const vite = process.env.VRCLIBMAN_UI_TEST_URL ? null : await createServer({ server: { host: "127.0.0.1", port: 0, hmr: false }, appType: "spa", logLevel: "error" });
+  await vite?.listen();
+  const baseUrl = process.env.VRCLIBMAN_UI_TEST_URL ?? `http://127.0.0.1:${vite.httpServer.address().port}`;
   const profile = await mkdtemp(path.join(os.tmpdir(), "vrclibman-auto-classification-"));
   const chrome = spawn(chromePath, ["--headless=new", "--no-sandbox", "--disable-gpu", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "--window-size=1600,1000", "about:blank"], { stdio: ["ignore", "ignore", "pipe"] });
   let socket;
@@ -88,6 +88,20 @@ test("acquisition classification defers, retries failed saves, and classifies mu
       await waitFor(`window.autoFixture.fetches > ${before}`, "pending list did not reload");
     }
     assert.equal(await evaluate("document.querySelector('dialog').open"), true);
+    await waitFor("!!document.querySelector('.auto-avatar-chip button')", "extracted avatar did not autofill");
+    assert.equal(await evaluate("document.querySelector('.auto-avatar-chip').textContent"), 'ライム×');
+    const hoverUnavailable = await evaluate("matchMedia('(hover: none)').matches");
+    assert.equal(await evaluate("getComputedStyle(document.querySelector('.auto-avatar-chip button')).opacity"), hoverUnavailable ? '1' : '0');
+    const chip = await evaluate("(() => { const r = document.querySelector('.auto-avatar-chip button').getBoundingClientRect(); return {x:r.x+r.width/2,y:r.y+r.height/2}; })()");
+    await page('Input.dispatchMouseEvent', {type:'mouseMoved',...chip});
+    assert.equal(await evaluate("getComputedStyle(document.querySelector('.auto-avatar-chip button')).opacity"), '1');
+    await page('Input.dispatchMouseEvent', {type:'mousePressed',...chip,button:'left',clickCount:1});
+    await page('Input.dispatchMouseEvent', {type:'mouseReleased',...chip,button:'left',clickCount:1});
+    await waitFor("!document.querySelector('.auto-avatar-chip')", "remove did not clear extracted avatar");
+    await evaluate("(() => { const input=document.querySelector('[aria-label=\"対応アバターを検索\"]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'Manuka'); input.dispatchEvent(new Event('input',{bubbles:true})); })()");
+    await waitFor("!!document.querySelector('.auto-avatar-results button')", "manual avatar search did not show a result");
+    await clickText('マヌカを追加');
+    assert.equal(await evaluate("document.querySelector('.auto-avatar-chip').textContent"), 'マヌカ×');
     await clickText('後で分類する');
     assert.equal(await evaluate("document.querySelector('dialog').open"), false);
     assert.equal(await evaluate("window.autoFixture.pending.length"), 2);
@@ -101,6 +115,7 @@ test("acquisition classification defers, retries failed saves, and classifies mu
     assert.equal(await evaluate("document.querySelector('dialog').open"), true);
     await clickText('分類を確定');
     assert.equal(await evaluate('window.autoFixture.pending.length'), 1);
+    assert.deepEqual(await evaluate('window.autoFixture.savedAvatars[0]'), ['manuka']);
     assert.equal(await evaluate("document.querySelector('dialog p').textContent"), '見本のワールド');
     await evaluate("(() => { const s = document.querySelector('dialog select'); s.value='world'; s.dispatchEvent(new Event('change',{bubbles:true})); })()");
     await pause(150);
@@ -114,7 +129,7 @@ test("acquisition classification defers, retries failed saves, and classifies mu
     const fresh = { boothId: "567890", title: "見本の新しい商品" };
     await reloadPending([hair, texture]);
     await waitFor("document.querySelector('dialog')?.open === true && document.querySelector('dialog p')?.textContent === '見本の髪'", "reloaded queue did not open");
-    assert.equal(await evaluate("[...document.querySelectorAll('dialog button')].some(node => ['×', '閉じる'].includes(node.textContent.trim()))"), false);
+    assert.equal(await evaluate("[...document.querySelectorAll('dialog button:not(.auto-avatar-chip button)')].some(node => ['×', '閉じる'].includes(node.textContent.trim()))"), false);
     const backdrop = await evaluate("(() => { const r = document.querySelector('dialog').getBoundingClientRect(); const x = r.left > 30 ? 8 : Math.min(window.innerWidth - 8, r.right + 16); const y = r.top > 30 ? 8 : Math.min(window.innerHeight - 8, r.bottom + 16); return { x, y, outside: x < r.left || x > r.right || y < r.top || y > r.bottom }; })()");
     assert.equal(backdrop.outside, true, "the click point must be outside the dialog");
     await page("Input.dispatchMouseEvent", { type: "mousePressed", x: Math.round(backdrop.x), y: Math.round(backdrop.y), button: "left", clickCount: 1 });
@@ -164,7 +179,7 @@ test("acquisition classification defers, retries failed saves, and classifies mu
   } finally {
     socket?.close();
     chrome.kill();
-    await vite.close();
+    await vite?.close();
     await pause(200);
     await rm(profile, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   }
