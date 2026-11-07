@@ -1736,6 +1736,25 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 }
 .sidebar-updater-dismiss:hover { background: var(--hover); color: var(--text); }
 .sidebar-updater-progress { width: 100%; height: 4px; margin: 0; accent-color: var(--accent); }
+.sidebar-asset-update {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.sidebar-asset-update:hover { background: var(--hover); }
+.sidebar-asset-update:disabled { opacity: 0.6; cursor: default; }
+.sidebar-asset-update-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .setting-control .settings-details { padding: var(--space-2) 0 0; }
 .sidebar-classify-hint {
   display: flex;

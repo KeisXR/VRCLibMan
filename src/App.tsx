@@ -17,6 +17,7 @@ import { GenreBrowseProvider } from "./genreBrowseContext";
 import { useAppLayout } from "./useAppLayout";
 import { UI_GENRE_WIDTH, UI_RAIL_WIDTH } from "./uiLayout";
 import { AppUpdaterProvider, useStartupUpdateCheck } from "./useAppUpdater";
+import { SidebarAssetUpdateButton } from "./components/SidebarAssetUpdateButton";
 import { SidebarUpdaterBadge } from "./components/SidebarUpdaterBadge";
 import type { LibraryStats } from "./types";
 import {
@@ -443,6 +444,7 @@ export default function App() {
             <SidebarClassificationHint revision={revision} compact={collapsed} />
             <StartupUpdateCheck enabled={checkUpdateOnStartup} />
             <SidebarUpdaterBadge onOpenSettings={openAppUpdateSettings} compact={collapsed} />
+            <SidebarAssetUpdateButton compact={collapsed} />
             {builtinBrowser && (
               <AccountPill
                 view={accountView}

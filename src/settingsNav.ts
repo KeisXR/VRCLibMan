@@ -4,7 +4,7 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{ id: string; label: string }> = 
   { id: "settings-unity", label: "Unity" },
   { id: "settings-startup", label: "起動と常駐" },
   { id: "settings-design", label: "デザイン" },
-  { id: "settings-asset-updates", label: "更新候補" },
+  { id: "settings-asset-updates", label: "更新設定" },
   { id: "settings-booth", label: "BOOTH" },
   { id: "settings-classify", label: "分類モデル" },
   { id: "settings-data", label: "バージョン情報" },

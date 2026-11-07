@@ -317,7 +317,7 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       const nav = document.querySelector(".settings-layout > .settings-nav");
       assert.ok(nav, "nav sits in the settings layout");
       const buttons = [...nav.querySelectorAll("button")];
-      assert.deepEqual(buttons.map((node) => node.textContent), ["ライブラリ", "Unity", "起動と常駐", "デザイン", "更新候補", "BOOTH", "分類モデル", "バージョン情報", "対応表を編集", "デバッグ"]);
+      assert.deepEqual(buttons.map((node) => node.textContent), ["ライブラリ", "Unity", "起動と常駐", "デザイン", "更新設定", "BOOTH", "分類モデル", "バージョン情報", "対応表を編集", "デバッグ"]);
       for (const node of buttons) {
         const target = document.getElementById(node.dataset.target);
         assert.ok(target, `section exists: ${node.dataset.target}`);

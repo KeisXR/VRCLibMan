@@ -53,7 +53,7 @@ export function AssetUpdates() {
   const visible = matching.slice(currentPage * 50, (currentPage + 1) * 50);
   const summary = assetUpdateListSummary(status);
   return <section className="settings-section" id="settings-asset-updates">
-    <header><h2>アセットの更新候補</h2><p>公開情報を比較して変更を確認します。有料ファイルの更新や、同じ名前・番号のファイル差し替えは検出できません。</p></header>
+    <header><h2>アセットの更新設定</h2><p>公開情報を比較して変更を確認します。有料ファイルの更新や、同じ名前・番号のファイル差し替えは検出できません。</p></header>
     <div className="section-body asset-updates">
       <p>「今すぐ確認」では、内蔵ブラウザが有効なら BOOTH ライブラリから最新のファイル情報も読み直して商品カードへ反映し、あわせて商品説明と無料ファイル一覧を比較します。ファイルの自動ダウンロードや適用は行いません。</p>
       <label className="switch-label"><input type="checkbox" checked={status?.allProducts ?? false} disabled={!status || pending} onChange={(e) => void configure({ allProducts: e.target.checked })} />全商品をまとめて確認対象にする（今後追加する商品も含む）</label>
