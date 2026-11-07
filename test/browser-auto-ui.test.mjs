@@ -90,7 +90,8 @@ test("acquisition classification defers, retries failed saves, and classifies mu
     assert.equal(await evaluate("document.querySelector('dialog').open"), true);
     await waitFor("!!document.querySelector('.auto-avatar-chip button')", "extracted avatar did not autofill");
     assert.equal(await evaluate("document.querySelector('.auto-avatar-chip').textContent"), 'ライム×');
-    assert.equal(await evaluate("getComputedStyle(document.querySelector('.auto-avatar-chip button')).opacity"), '0');
+    const hoverUnavailable = await evaluate("matchMedia('(hover: none)').matches");
+    assert.equal(await evaluate("getComputedStyle(document.querySelector('.auto-avatar-chip button')).opacity"), hoverUnavailable ? '1' : '0');
     const chip = await evaluate("(() => { const r = document.querySelector('.auto-avatar-chip button').getBoundingClientRect(); return {x:r.x+r.width/2,y:r.y+r.height/2}; })()");
     await page('Input.dispatchMouseEvent', {type:'mouseMoved',...chip});
     assert.equal(await evaluate("getComputedStyle(document.querySelector('.auto-avatar-chip button')).opacity"), '1');

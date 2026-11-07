@@ -12,6 +12,8 @@
 
 実DB・Cookie・BOOTHへの通信は使っていない。実拡張からのOSプロトコル起動、ブラウザの外部アプリ確認、実BOOTHでのログインを伴う取得、macOS/Linuxの連携は未検証。ビルド・合成試験の成功をそれらの実機検証済みとは扱わない。
 
+PR #180のfrontend CIでは、LinuxのヘッドレスChromeが `hover: none` と判定され、タッチ端末向けの×常時表示を「非表示のはず」と検査して失敗した。テストの初期表示の期待値を `matchMedia('(hover: none)')` に合わせ、ホバー後の表示と実クリックでの削除の検査は維持した。また、Viteを使うテスト同士の同時実行を避けるため、`npm test` 自体に `--test-concurrency=1` を指定した。
+
 ## 設定と右パネルの通信復旧（2026-11-07）
 
 対象は main `c4ea7029e61b6641714a887240faf5a9f018bd9a` を基準にした `codex/fix-ipc-settings-panel-recovery` の作業ツリー（0.6.1）。Windows x64 / Node.js 24.18.0で確認した。実装と操作の詳細は [画面の通信と読み込みの復旧](communication-recovery.md) にある。
