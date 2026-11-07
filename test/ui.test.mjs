@@ -161,7 +161,7 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         );
         assert.equal((await api.integrationStatus()).mode, "browser");
         assert.ok((await api.settings()).builtinBrowser);
-        assert.ok(document.querySelector('.setup-screen a[href="#/browser"]'));
+        assert.ok(document.querySelector('.setup-screen a[href="#/import"]'));
         await click(radio("両方使う"));
         await wait(() =>
           document
@@ -397,7 +397,7 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       assert.match(row().textContent, /画像・動画・キャンバスは元の色のまま/);
       assert.match(row().textContent, /右パネルと別ウィンドウ/);
       assert.match(row().textContent, /再起動なし/);
-      const details = row().parentElement.querySelector("details.settings-details");
+      const details = row().parentElement.querySelector(":scope > details.settings-details");
       assert.match(details.querySelector("summary").textContent, /強制ダークモードについて/);
       details.open = true;
       assert.match(details.textContent, /再起動は要りません/);
@@ -1090,12 +1090,17 @@ test("setup, import and version flows with synthetic local data", async (t) => {
           await delay();
         });
         await route("#/import");
-        await wait(() => document.querySelector('main a[href="#/browser"]'));
+        await wait(() => button("ライブラリ全取得", document.querySelector("main")));
+        assert.ok(!button("このページをインポート", document.querySelector("main")));
         await wait(() => !document.querySelector("main").textContent.includes("ペアリング"));
         assert.ok(!document.querySelector("main").textContent.includes("拡張機能の使い方・受信履歴"));
-        await route("#/browser");
+        assert.ok(!document.querySelector('.rail a[href="#/browser"]'));
+        await route("#/settings");
         await wait(() => document.querySelector("main").textContent.includes("3秒以上あけて確認します"));
         assert.ok(document.querySelector("main").textContent.includes("年齢制限の商品は確認しません"));
+        assert.ok(document.querySelector("main").textContent.includes("BOOTHへのアクセス間隔"));
+        await route("#/browser");
+        await wait(() => button("ライブラリ全取得", document.querySelector("main")));
         await route("#/import");
         await wait(() => document.querySelector(".account-menu .account-pill"));
         await click(document.querySelector(".account-menu .account-pill"));
@@ -1109,7 +1114,7 @@ test("setup, import and version flows with synthetic local data", async (t) => {
           await delay();
         });
         await wait(() => document.querySelector("main").textContent.includes("拡張機能の使い方・受信履歴"));
-        assert.ok(!document.querySelector('main a[href="#/browser"]'));
+        assert.ok(!button("ライブラリ全取得", document.querySelector("main")));
       },
     );
     await t.test("genre move menu pins a product and can be undone from the notice", async () => {

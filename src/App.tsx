@@ -7,7 +7,6 @@ import { ImportPage } from "./pages/ImportPage";
 import { ClassificationLogPage } from "./pages/ClassificationLogPage";
 import { AssetUpdateLogPage } from "./pages/AssetUpdateLogPage";
 import { SettingsPage } from "./pages/SettingsPage";
-import { BrowserPage } from "./pages/BrowserPage";
 import { WorldsPage } from "./pages/WorldsPage";
 import { AssetsPage } from "./pages/AssetsPage";
 import { SearchPage } from "./pages/SearchPage";
@@ -49,7 +48,7 @@ import { noticeAction, useBanners } from "./useBanners";
 
 export type { NoticeAction, NotifyOptions } from "./notice";
 
-type Page = "avatars" | "avatar" | "assets" | "worlds" | "search" | "classification-log" | "asset-update-log" | "import" | "settings" | "browser";
+type Page = "avatars" | "avatar" | "assets" | "worlds" | "search" | "classification-log" | "asset-update-log" | "import" | "settings";
 
 interface Route {
   page: Page;
@@ -109,7 +108,9 @@ function parseRoute(hash: string): Route {
     return { page: "classification-log", id: parts[1] ? decodeURIComponent(parts[1]) : undefined };
   }
   if (parts[0] === "asset-update-log") return { page: "asset-update-log" };
-  if (parts[0] === "search" || parts[0] === "import" || parts[0] === "settings" || parts[0] === "browser") {
+  // The former browser page was merged into import and settings; keep old links working.
+  if (parts[0] === "browser") return { page: "import" };
+  if (parts[0] === "search" || parts[0] === "import" || parts[0] === "settings") {
     return { page: parts[0] };
   }
   return { page: "avatars" };
@@ -321,9 +322,6 @@ export default function App() {
     { href: "#/classification-log", label: "分類記録", icon: "log", active: route.page === "classification-log" || route.page === "asset-update-log" },
     { href: "#/import", label: "インポート", icon: "import", active: route.page === "import" },
     { href: "#/settings", label: "設定", icon: "settings", active: route.page === "settings" },
-    ...(builtinBrowser
-      ? [{ href: "#/browser", label: "ブラウザ", icon: "browser" as const, active: route.page === "browser" }]
-      : []),
   ];
 
   const mainPane = (
@@ -367,7 +365,6 @@ export default function App() {
         {route.page === "asset-update-log" && <AssetUpdateLogPage />}
         {route.page === "import" && <ImportPage />}
         {route.page === "settings" && <SettingsPage />}
-        {route.page === "browser" && <BrowserPage enabled={builtinBrowser} />}
       </main>
     </div>
   );

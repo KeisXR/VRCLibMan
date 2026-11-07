@@ -234,14 +234,14 @@ export function BoothImportSettings({
         <div className="import-guidance">
           <h3>内蔵ブラウザで読み込む</h3>
           <p>
-            ブラウザ画面から BOOTH を開き、ログインして商品情報を取得します。
+            インポート画面の「1. BOOTH から読み込む」で BOOTH を開き、ログインして商品情報を取得します。
           </p>
           <a
             className="button"
-            href="#/browser"
+            href="#/import"
             onClick={() => navigateBrowser?.()}
           >
-            ブラウザ画面へ
+            インポート画面へ
           </a>
         </div>
       )}

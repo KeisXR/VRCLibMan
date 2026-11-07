@@ -7,6 +7,7 @@ import { errorText } from "../ui";
 import { SettingRow } from "../components/SettingRow";
 import { ModelPicker } from "../components/ModelPicker";
 import { BoothImportSettings } from "../components/BoothImportSettings";
+import { BuiltinBrowserAccessSettings } from "../components/BuiltinBrowserControls";
 import { MODEL_CHOICES, modelDownloadPrompt } from "../models";
 import { useSettingsAutosave } from "../useSettingsAutosave";
 import { extensionVersionMessage } from "../versions";
@@ -381,6 +382,7 @@ export function SettingsPage() {
           <section className="settings-section" id="settings-booth">
             <header><h2>BOOTH の読み込み方</h2><p>拡張機能・内蔵ブラウザ・併用を選びます。</p></header>
             <div className="section-body"><BoothImportSettings onFail={fail} onChange={() => refresh()} /></div>
+            {settings.builtinBrowser && <BuiltinBrowserAccessSettings />}
             {settings.builtinBrowser && (
               <SettingRow label="商品ページを開くブラウザ" help="アバター詳細と確認の商品リンクに使います。取得中やエラーのときは既定のブラウザで開きます。">
                 <select value={settings.boothLinkTarget === "builtin" ? "builtin" : "external"} onChange={(e) => changeSettings({ boothLinkTarget: e.target.value === "builtin" ? "builtin" : "external" })}>

@@ -5,7 +5,7 @@
  */
 import type { ReactNode } from "react";
 
-export type NavIconName = "avatars" | "assets" | "worlds" | "search" | "log" | "import" | "settings" | "browser";
+export type NavIconName = "avatars" | "assets" | "worlds" | "search" | "log" | "import" | "settings";
 
 function Icon({ children, className = "nav-icon" }: { children: ReactNode; className?: string }) {
   return (
@@ -66,13 +66,6 @@ const PATHS: Record<NavIconName, ReactNode> = {
       <circle cx="7.8" cy="4.8" r="1.6" />
       <circle cx="11.8" cy="9" r="1.6" />
       <circle cx="6.2" cy="13.2" r="1.6" />
-    </>
-  ),
-  // A browser window.
-  browser: (
-    <>
-      <rect x="2.4" y="3.2" width="13.2" height="11.6" rx="2" />
-      <path d="M2.4 6.6h13.2M4.8 4.9h.01M6.8 4.9h.01" />
     </>
   ),
 };

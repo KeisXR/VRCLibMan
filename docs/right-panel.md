@@ -335,7 +335,7 @@ interface RightPanelTab { id: string; kind: RightPanelKind | "web"; tabId?: stri
 - **右パネルから**
   - ＋メニュー（`AddTabMenu`）の「ブラウザ」か、案内の「ブラウザを開く」から、`openPage` → `newTab { hostId: "panel" }` を送ります。パネルに置けないときは hostId を付けません。
 - **ほかの画面から**
-  - BrowserPage の「ブラウザを開く」などは `open_booth_browser` を呼びます。
+  - インポート画面（`BuiltinBrowserImport`）の「ブラウザを開く」などは `open_booth_browser` を呼びます。
   - ここから `browser::open_browser` → `browser_surface::open` と進みます。
 - **最初のセッションをどこで始めるか**
   - `start_in_panel(supported, prefer_window, main_visible)` で決めます。
