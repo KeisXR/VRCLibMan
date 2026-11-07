@@ -1,6 +1,6 @@
 [package]
 name = "tauri-app"
-version = "1.0.0"
+version = "0.6.1"
 description = "Local organizer for VRChat and Booth assets you already own"
 authors = ["VRCLibMan"]
 edition = "2024"
