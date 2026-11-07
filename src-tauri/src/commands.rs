@@ -2328,6 +2328,13 @@ pub fn asset_update_status(view: tauri::Webview, state: State<'_, AppState>) -> 
 }
 
 #[tauri::command]
+pub fn asset_update_history(view: tauri::Webview, state: State<'_, AppState>) -> Result<Vec<crate::asset_updates::UpdateRecord>, String> {
+    trusted_updater(&view)?;
+    let connection = db(&state)?;
+    crate::asset_updates::history(&connection)
+}
+
+#[tauri::command]
 pub fn configure_asset_updates(view: tauri::Webview, state: State<'_, AppState>, input: crate::asset_updates::Configure) -> Result<crate::asset_updates::Status, String> {
     if view.label() != "main" {
         return Err("この画面からアセットの更新を確認する権限がありません".into());

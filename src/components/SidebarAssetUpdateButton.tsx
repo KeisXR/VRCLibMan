@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { assetUpdates, isTauri } from "../api";
 import { useShell } from "../App";
 import { assetUpdateListSummary } from "../assetUpdatesUi";
@@ -16,10 +16,19 @@ export function SidebarAssetUpdateButton({ compact = false }: { compact?: boolea
   const { notify, fail } = useShell();
   const [status, setStatus] = useState<AssetUpdateStatus | null>(null);
   const [checking, setChecking] = useState(false);
+  const readSequence = useRef(0);
+  const actionSequence = useRef(0);
+  const observedRunning = useRef(false);
   useEffect(() => {
     let alive = true;
     const refresh = () => {
-      void assetUpdates.status().then((s) => { if (alive) setStatus(s); }, () => {});
+      const request = ++readSequence.current;
+      void assetUpdates.status().then((s) => {
+        if (!alive || request !== readSequence.current) return;
+        setStatus(s);
+        if (s.running) observedRunning.current = true;
+        else if (observedRunning.current) setChecking(false);
+      }, () => {});
     };
     refresh();
     // Configuration changes in the settings screen do not emit an event, so the
@@ -47,9 +56,13 @@ export function SidebarAssetUpdateButton({ compact = false }: { compact?: boolea
   const changed = status.rows.filter((r) => r.changes.length > 0).length;
   async function run() {
     if (running) return;
+    const request = ++actionSequence.current;
+    observedRunning.current = false;
     setChecking(true);
     try {
       const next = await assetUpdates.check();
+      if (request !== actionSequence.current) return;
+      readSequence.current++;
       setStatus(next);
       // A result containing failures must stay on screen (the notification
       // rules in AGENTS.md); the check resolves even when some rows failed.
@@ -60,12 +73,12 @@ export function SidebarAssetUpdateButton({ compact = false }: { compact?: boolea
       if (failed > 0) notify(assetUpdateListSummary(next), undefined, { persist: true });
       else if (!changedAny) notify(assetUpdateListSummary(next));
     } catch (err) {
-      fail(errorText(err));
+      if (request === actionSequence.current) fail(errorText(err));
     } finally {
-      setChecking(false);
+      if (request === actionSequence.current) setChecking(false);
     }
   }
-  const label = running ? "アセットの更新を確認中…" : "アセットの更新を確認";
+  const label = running ? `アセットの更新を確認中…${status.progress ? ` ${status.progress.done} / ${status.progress.total} 件` : ""}` : "アセットの更新を確認";
   if (compact) {
     return (
       <button

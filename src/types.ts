@@ -729,6 +729,7 @@ export type UnityLaunchMode = "unity" | "system";
 
 export interface AssetUpdateRow {
   revision: number;
+  candidateKey?: string | null;
   boothId: string;
   title: string;
   enabled: boolean;
@@ -741,7 +742,17 @@ export interface AssetUpdateStatus {
   allProducts: boolean;
   totalProducts: number;
   running: boolean;
+  progress?: { done: number; total: number } | null;
   rows: AssetUpdateRow[];
+}
+export interface AssetUpdateFile { downloadableId: string | null; variation: string; filename: string }
+export interface AssetUpdateRecord {
+  boothId: string;
+  detectedAt: string;
+  source: "library" | "public";
+  descriptionChanged: boolean;
+  removed: AssetUpdateFile[];
+  added: AssetUpdateFile[];
 }
 export interface AssetUpdateConfigure {
   allProducts?: boolean;

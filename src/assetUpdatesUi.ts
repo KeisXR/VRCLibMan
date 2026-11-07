@@ -8,7 +8,7 @@ export function assetUpdateListStartsOpen(_rowCount: number): boolean {
 /** 折り畳み時にも件数と状態が分かる一行。 */
 export function assetUpdateListSummary(status: AssetUpdateStatus | null): string {
   if (!status) return "読み込み中…";
-  if (status.running) return "確認中…";
+  if (status.running) return status.progress ? `確認中… ${status.progress.done} / ${status.progress.total} 件` : "確認中…";
   const total = status.rows.length;
   if (total === 0) return "確認を許可した商品はありません";
   const enabled = status.rows.filter((r) => r.enabled).length;

@@ -8,14 +8,16 @@ export function useAssetUpdateNotice(notify: (message: string, action?: NoticeAc
     if (!isTauri()) return;
     let alive = true;
     let stop = () => {};
+    let request = 0;
     async function update() {
+      const id = ++request;
       try {
         const status = await assetUpdates.status();
-        if (!alive) return;
-        const rows = status.rows.filter((r) => r.changes.length && !seen.current.has(`${r.boothId}:${r.revision}:${r.changes.join(",")}`));
-        for (const row of rows) seen.current.add(`${row.boothId}:${row.revision}:${row.changes.join(",")}`);
-        if (rows.length) notify(`${rows.length} 件のアセットに更新候補があります`, { label: "更新設定を開く", run: () => { window.location.hash = "#/settings"; window.setTimeout(() => document.getElementById("settings-asset-updates")?.scrollIntoView(), 300); } });
-        for (const key of seen.current) if (!status.rows.some((r) => r.changes.length && key === `${r.boothId}:${r.revision}:${r.changes.join(",")}`)) seen.current.delete(key);
+        if (!alive || id !== request || status.running) return;
+        const keys = new Set(status.rows.filter(r => r.enabled && r.changes.length).map(r => `${r.boothId}:${r.candidateKey ?? r.changes.join(",")}`));
+        const count = [...keys].filter(key => !seen.current.has(key)).length;
+        seen.current = keys;
+        if (count) notify(`${count} 件のアセットに更新候補があります`, { label: "アセット更新記録を開く", run: () => { window.location.hash = "#/asset-update-log"; } });
       } catch { /* The settings screen reports read failures; do not repeat background banners. */ }
     }
     void import("@tauri-apps/api/event").then(({ listen }) => listen("asset-updates-changed", () => void update())).then((unlisten) => { if (alive) stop = unlisten; else unlisten(); });

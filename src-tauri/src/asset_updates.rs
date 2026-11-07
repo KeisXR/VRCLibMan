@@ -4,11 +4,14 @@ use crate::model::{IncomingDownload, IncomingProduct};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
 const KEY: &str = "asset_update_watch_v1";
 static RUNNING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static CHECK_DONE: AtomicUsize = AtomicUsize::new(0);
+static CHECK_TOTAL: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -20,6 +23,8 @@ struct Watch {
     retry_after: Option<i64>,
     generation: u64,
     rows: Vec<Row>,
+    #[serde(default)]
+    history: Vec<UpdateRecord>,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,6 +41,51 @@ struct Row {
     new_files: Vec<String>,
     #[serde(default)]
     current_files: Option<Vec<String>>,
+    #[serde(default)]
+    history_library_files: Option<Vec<UpdateFile>>,
+}
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateFile {
+    downloadable_id: Option<String>,
+    variation: String,
+    filename: String,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UpdateRecord {
+    booth_id: String,
+    detected_at: String,
+    source: String,
+    description_changed: bool,
+    removed: Vec<UpdateFile>,
+    added: Vec<UpdateFile>,
+}
+
+fn update_file(id: &str, variation: &str, filename: &str) -> UpdateFile {
+    UpdateFile {
+        downloadable_id: ((1..=12).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_digit())).then(|| id.to_owned()),
+        variation: variation.to_owned(),
+        filename: filename.to_owned(),
+    }
+}
+
+fn record_delta(w: &mut Watch, booth_id: &str, source: &str, before: &[UpdateFile], after: &[UpdateFile], description_changed: bool) -> bool {
+    let mut removed: Vec<_> = before.iter().filter(|f| !after.contains(f)).cloned().collect();
+    let mut added: Vec<_> = after.iter().filter(|f| !before.contains(f)).cloned().collect();
+    if removed.is_empty() && added.is_empty() && !description_changed { return false; }
+    removed.sort(); removed.dedup();
+    added.sort(); added.dedup();
+    w.history.push(UpdateRecord { booth_id: booth_id.to_owned(), detected_at: crate::model::now_iso(), source: source.to_owned(), description_changed, removed, added });
+    if w.history.len() > 200 { w.history.drain(..w.history.len() - 200); }
+    true
+}
+
+pub(crate) fn history(c: &Connection) -> Result<Vec<UpdateRecord>, String> {
+    let w = load(c)?;
+    let titles = products(c)?;
+    Ok(w.history.into_iter().rev().filter(|r| titles.contains_key(&r.booth_id)).collect())
 }
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 struct Snapshot {
@@ -64,8 +114,11 @@ pub struct Status {
     all_products: bool,
     total_products: usize,
     running: bool,
+    progress: Option<CheckProgress>,
     rows: Vec<RowStatus>,
 }
+#[derive(Serialize)]
+struct CheckProgress { done: usize, total: usize }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RowStatus {
@@ -76,6 +129,7 @@ struct RowStatus {
     error: Option<String>,
     changes: Vec<String>,
     revision: u64,
+    candidate_key: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -113,6 +167,7 @@ fn new_row(id: String) -> Row {
         latest: None,
         new_files: Vec::new(),
         current_files: None,
+        history_library_files: None,
     }
 }
 fn include_products(w: &mut Watch, ids: impl Iterator<Item = String>) {
@@ -166,6 +221,19 @@ fn changes(row: &Row) -> Vec<String> {
         }
     }
     changes
+}
+
+fn candidate_key(row: &Row) -> Option<String> {
+    use std::hash::{Hash, Hasher};
+    if changes(row).is_empty() { return None; }
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    let mut files = row.new_files.clone();
+    files.sort(); files.dedup(); files.hash(&mut hash);
+    if let (Some(before), Some(after)) = (&row.baseline, &row.latest) {
+        if before.description != after.description { (&before.description, &after.description).hash(&mut hash); }
+        if before.files != after.files { (&before.files, &after.files).hash(&mut hash); }
+    }
+    Some(format!("{:016x}", hash.finish()))
 }
 
 pub(crate) fn file_watches(c: &Connection) -> Result<HashMap<String, ProductFileWatch>, String> {
@@ -232,6 +300,7 @@ pub(crate) fn record_imported_files(
     before_files: &HashMap<String, HashSet<String>>,
     products: &[IncomingProduct],
     authoritative: bool,
+    public_files: bool,
 ) -> Result<(), String> {
     let mut w = load(c)?;
     let mut dirty = false;
@@ -275,9 +344,11 @@ pub(crate) fn record_imported_files(
             w.rows.last_mut().unwrap()
         };
         let mut row_changed = false;
-        for key in added {
-            if !row.new_files.contains(&key) {
-                row.new_files.push(key);
+        let mut newly_marked = Vec::new();
+        for key in &added {
+            if !row.new_files.contains(key) {
+                row.new_files.push(key.clone());
+                newly_marked.push(key.clone());
                 row_changed = true;
             }
         }
@@ -294,6 +365,24 @@ pub(crate) fn record_imported_files(
             row.generation += 1;
             row.checked_at = Some(crate::model::now_iso());
             dirty = true;
+        }
+        if !public_files {
+            let refs = |only_new: bool| -> Vec<UpdateFile> {
+                product.downloads.iter().filter(|f| !only_new || clean_file_key(f).is_some_and(|key| newly_marked.contains(&key)))
+                    .map(|f| update_file(f.downloadable_id.trim(), &f.variation, &f.filename)).collect()
+            };
+            let previous = row.history_library_files.clone();
+            let current = if authoritative { Some(refs(false)) } else { None };
+            if let Some(current) = &current {
+                if previous.as_ref() != Some(current) {
+                    row.history_library_files = Some(current.clone());
+                    dirty = true;
+                }
+            }
+            dirty |= match (previous, current) {
+                (Some(before), Some(after)) => record_delta(&mut w, &product.booth_id, "library", &before, &after, false),
+                _ => record_delta(&mut w, &product.booth_id, "library", &[], &refs(true), false),
+            };
         }
     }
     if dirty {
@@ -341,6 +430,7 @@ pub fn status(c: &Connection) -> Result<Status, String> {
         };
         rows.push(RowStatus {
             changes: changes(&row),
+            candidate_key: candidate_key(&row),
             revision: row.generation,
             booth_id: row.booth_id,
             title,
@@ -349,11 +439,14 @@ pub fn status(c: &Connection) -> Result<Status, String> {
             error: row.error,
         });
     }
+    let running = RUNNING.try_lock().is_err();
+    let total = CHECK_TOTAL.load(Ordering::Relaxed);
     Ok(Status {
         automatic: w.automatic,
         all_products: w.all_products,
         total_products: titles.len(),
-        running: RUNNING.try_lock().is_err(),
+        running,
+        progress: (running && total > 0).then(|| CheckProgress { done: CHECK_DONE.load(Ordering::Relaxed).min(total), total }),
         rows,
     })
 }
@@ -504,9 +597,32 @@ fn record(row: &mut Row, result: Result<Snapshot, String>) {
     }
 }
 pub async fn check(app: &AppHandle, manual: bool) -> Result<Status, String> {
+    let state = app.state::<AppState>();
+    if !manual {
+        let c = state.db.lock().map_err(|_| "設定を読めません")?;
+        let w = load(&c)?;
+        let now = chrono::Utc::now().timestamp();
+        if !w.automatic || w.retry_after.is_some_and(|until| now < until)
+            || !w.rows.iter().any(|r| r.enabled && due(r, now) && active(&c, &r.booth_id).unwrap_or(false)) {
+            return status(&c);
+        }
+    }
     let guard = RUNNING
         .try_lock()
         .map_err(|_| "更新確認はすでに実行中です")?;
+    CHECK_DONE.store(0, Ordering::Relaxed);
+    CHECK_TOTAL.store(0, Ordering::Relaxed);
+    let _ = app.emit_to("main", "asset-updates-changed", ());
+    let result = check_inner(app, manual).await;
+    drop(guard);
+    // Notify after releasing the lock on every exit, including library-read errors.
+    let _ = app.emit_to("main", "asset-updates-changed", ());
+    result?;
+    let c = state.db.lock().map_err(|_| "設定を読めません")?;
+    status(&c)
+}
+
+async fn check_inner(app: &AppHandle, manual: bool) -> Result<(), String> {
     let state = app.state::<AppState>();
     if manual {
         let use_browser = {
@@ -519,12 +635,10 @@ pub async fn check(app: &AppHandle, manual: bool) -> Result<Status, String> {
             let _ = app.emit("library-changed", ());
             let _ = app.emit_to("main", "asset-updates-changed", ());
             if walk.cancelled || !walk.notice.is_empty() {
-                drop(guard);
                 if !walk.notice.is_empty() {
                     return Err(walk.notice);
                 }
-                let c = state.db.lock().map_err(|_| "設定を読めません")?;
-                return status(&c);
+                return Ok(());
             }
         }
     }
@@ -546,6 +660,8 @@ pub async fn check(app: &AppHandle, manual: bool) -> Result<Status, String> {
             w.generation,
         )
     };
+    CHECK_TOTAL.store(ids.len(), Ordering::Relaxed);
+    let _ = app.emit_to("main", "asset-updates-changed", ());
     for (index, id) in ids.iter().enumerate() {
         if index > 0 {
             tokio::time::sleep(Duration::from_secs(3)).await;
@@ -599,7 +715,15 @@ pub async fn check(app: &AppHandle, manual: bool) -> Result<Status, String> {
                         }
                     }
                     let row = w.rows.iter_mut().find(|r| &r.booth_id == id).unwrap();
+                    let previous = row.latest.clone();
                     record(row, result.map(|obs| obs.snapshot));
+                    if row.error.is_none() {
+                        if let (Some(before), Some(after)) = (previous, row.latest.as_ref()) {
+                            let refs = |s: &Snapshot| s.files.iter().map(|(id, v, name)| update_file(id, v, name)).collect::<Vec<_>>();
+                            let (old, new, desc) = (refs(&before), refs(after), before.description != after.description);
+                            record_delta(&mut w, id, "public", &old, &new, desc);
+                        }
+                    }
                     if stop {
                         w.retry_after = Some(chrono::Utc::now().timestamp() + 3600);
                     }
@@ -610,17 +734,14 @@ pub async fn check(app: &AppHandle, manual: bool) -> Result<Status, String> {
         if files_updated {
             let _ = app.emit("library-changed", ());
         }
+        CHECK_DONE.store(index + 1, Ordering::Relaxed);
         let _ = app.emit_to("main", "asset-updates-changed", ());
         // A gate or rate limit ends the batch; do not continue requesting other products.
         if stop {
             break;
         }
     }
-    drop(guard);
-    let c = state.db.lock().map_err(|_| "設定を読めません")?;
-    let result = status(&c);
-    let _ = app.emit_to("main", "asset-updates-changed", ());
-    result
+    Ok(())
 }
 pub fn start(app: &AppHandle) {
     let app = app.clone();
@@ -647,6 +768,7 @@ mod tests {
             latest: None,
             new_files: Vec::new(),
             current_files: None,
+            history_library_files: None,
         }
     }
     fn snapshot(text: &str) -> Snapshot {
@@ -882,13 +1004,13 @@ mod tests {
 
     #[test]
     fn imported_files_record_new_files_and_authoritative_current_set() {
-        let c = library();
+        let mut c = library();
         let mut before = HashMap::new();
         before.insert(
             "424242".to_string(),
             HashSet::from(["9871769".to_string(), "MochiFitter73r.zip".to_string()]),
         );
-        let incoming = vec![IncomingProduct {
+        let mut incoming = vec![IncomingProduct {
             booth_id: "424242".into(),
             title: "既存商品".into(),
             shop: String::new(),
@@ -908,7 +1030,7 @@ mod tests {
             booth_category: None,
             booth_tags: None,
         }];
-        record_imported_files(&c, &before, &incoming, false).unwrap();
+        record_imported_files(&c, &before, &incoming, false, false).unwrap();
         let partial = file_watches(&c).unwrap();
         let watch = partial.get("424242").unwrap();
         assert!(watch.new_files.contains("10000100"));
@@ -918,15 +1040,36 @@ mod tests {
             vec!["新しいファイルの追加"]
         );
 
-        record_imported_files(&c, &before, &incoming, true).unwrap();
+        record_imported_files(&c, &before, &incoming, true, false).unwrap();
         let full = file_watches(&c).unwrap();
         let watch = full.get("424242").unwrap();
         assert_eq!(
             watch.current_files.as_ref().unwrap(),
             &HashSet::from(["10000100".to_string()])
         );
+        assert_eq!(history(&c).unwrap().len(), 1, "the partial and full import do not repeat the same discovery");
+        let before_row = load(&c).unwrap().rows.remove(0);
+        let key = candidate_key(&before_row);
+        let mut revised = before_row;
+        revised.generation += 1;
+        assert_eq!(key, candidate_key(&revised), "revisions alone do not change the notification");
 
         clear_new_file_on_download(&c, "424242", Some("10000100"), "MochiFitter75r.zip").unwrap();
         assert!(status(&c).unwrap().rows[0].changes.is_empty());
+
+        incoming[0].downloads[0].downloadable_id = "10000101".into();
+        incoming[0].downloads[0].filename = "MochiFitter76r.zip".into();
+        record_imported_files(&c, &before, &incoming, true, false).unwrap();
+        record_imported_files(&c, &before, &incoming, true, false).unwrap();
+        let records = history(&c).unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].removed[0].downloadable_id.as_deref(), Some("10000100"));
+        assert_eq!(records[0].added[0].downloadable_id.as_deref(), Some("10000101"));
+        assert!(chrono::DateTime::parse_from_rfc3339(&records[0].detected_at).is_ok());
+        let mut ack = config(None, Some("424242"), None);
+        ack.acknowledge = Some(true);
+        configure(&mut c, ack).unwrap();
+        assert!(status(&c).unwrap().rows[0].changes.is_empty());
+        assert_eq!(history(&c).unwrap().len(), 2, "acknowledging the candidate keeps the evidence");
     }
 }

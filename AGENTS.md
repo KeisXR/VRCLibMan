@@ -103,6 +103,8 @@ PC 間の移行は [データ移行](docs/remote-sync.md) に従う。現在は�
 
 ### アプリ内更新
 
+BOOTH商品の更新確認と履歴はアプリ本体の更新とは別機能。[アセット更新記録](docs/asset-update-log.md) に従い、通知は実際に候補が変わったときだけ出す。履歴には期限付きURL・Cookie・ローカルパスを残さない。
+
 - `updater.rs` が Tauri updater を Rust から呼ぶ。Windows x64 / Apple Silicon Mac / Linux x86_64・aarch64 AppImage の署名設定を持つ配布版だけ有効。Linux は配布形式のマーカーと AppImage の起動パスを両方確認し、開発用・展開したバイナリ・deb/rpm では有効にしない。設定での「更新を確認」「更新をダウンロード」「再起動して更新」が必要。`check_update_on_startup`（既定オフ）をオンにした起動時だけ GitHub へ1回確認する。定期的な外部通信や自動適用はしない。状態変化は `updater-changed` を送る。
 - 更新先は本体公開後の GitHub Releases の `latest/download/latest.json`。HTTPS、署名と署名された版の検証、既定の新しい版だけの比較を維持する。アプリへ GitHub token・秘密鍵を含めない。リモート WebView とブラウザ操作バーには更新コマンドを許可しない。プラグインの JS 用 updater / process 権限も追加しない。
 - 検証済みのバイト列と更新状態はプロセス内に保持し、ウィンドウ再作成後も参照できる。適用前に未保存の設定を保存し、分類・ライブラリ全取得・BOOTH ダウンロード中の適用は Rust でも拒否する。ライブラリ・設定を削除しない。
