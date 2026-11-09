@@ -1,0 +1,426 @@
+//! BOOTH category id and tags decide a classification only when they are specific.
+//! Confirmed ids come from public, non-R18 category pages and their item JSON.
+//! Unknown ids fall back to the category name. Ambiguous cases are left to the title and
+//! description rules.
+
+use crate::genre::{self, genre_from_tags};
+use crate::model::Category;
+use crate::normalize::nfkc;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Settlement {
+    pub category: Category,
+    pub genre: Option<String>,
+}
+
+/// Whether the id or the category name is one of the rules in this module.
+/// `Known` may still need the title and description when tags are not enough.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CategoryRule {
+    Known,
+    Unknown,
+}
+
+/// `true` when category id or name, plus tags when the category is ambiguous,
+/// is enough to skip the title and description rules.
+pub fn settle(category_id: Option<i64>, category_name: &str, tags: &[String]) -> Option<Settlement> {
+    if let Some(id) = category_id.filter(|id| *id > 0) {
+        match id_decision(id, tags) {
+            IdDecision::Settled(settled) => return Some(settled),
+            IdDecision::Open => return None,
+            IdDecision::Unknown => {}
+        }
+    }
+    settle_name(category_name, tags)
+}
+
+/// Software and 3Dツール are a coarse bucket. Title text may move a row out of them.
+/// Outfit, hair, and the other specific categories are not coarse.
+pub fn is_coarse_tool(category_id: Option<i64>, category_name: &str) -> bool {
+    if matches!(category_id, Some(201 | 215)) {
+        return true;
+    }
+    matches!(name_kind(category_name), Some(NameKind::Tool))
+}
+
+/// `Unknown` means neither the id nor the name is in the rule table.
+/// Callers log that once. Do not invent an id for it.
+pub fn category_rule(category_id: Option<i64>, category_name: &str) -> CategoryRule {
+    if let Some(id) = category_id.filter(|id| *id > 0) {
+        match id_decision(id, &[]) {
+            IdDecision::Unknown => {}
+            IdDecision::Settled(_) | IdDecision::Open => return CategoryRule::Known,
+        }
+    }
+    if name_kind(category_name).is_some() {
+        CategoryRule::Known
+    } else {
+        CategoryRule::Unknown
+    }
+}
+
+enum IdDecision {
+    Settled(Settlement),
+    Open,
+    Unknown,
+}
+
+fn id_decision(id: i64, tags: &[String]) -> IdDecision {
+    let settled = match id {
+        // Public 3Dモデル children. Parent name is 3Dモデル.
+        208 | 212 => Some(fixed(Category::Avatar, None, tags, false)),
+        209 => Some(fixed(Category::Outfit, Some("outfit"), tags, true)),
+        231 => Some(fixed(Category::Outfit, Some("shoes_socks"), tags, true)),
+        230 => Some(fixed(Category::Hair, Some("hair"), tags, true)),
+        217 => Some(fixed(Category::Accessory, Some("accessory"), tags, true)),
+        215 => Some(fixed(Category::Other, Some("tool_editor"), tags, true)),
+        // ソフトウェア
+        201 => Some(fixed(Category::Other, Some("tool_editor"), tags, true)),
+        216 => Some(fixed(
+            Category::Gimmick,
+            Some("expression_animation"),
+            tags,
+            true,
+        )),
+        // Known, but the side or the genre is not fixed by the id alone.
+        214 => texture_from_tags(tags),
+        211 => world_from_tags(tags),
+        210 | 127 => from_tags_only(tags),
+        // 157, 142, and 6 show up in saved libraries, but their public names are not confirmed.
+        // Leave them unknown instead of assigning an id by guess.
+        _ => return IdDecision::Unknown,
+    };
+    match settled {
+        Some(settled) => IdDecision::Settled(settled),
+        None => IdDecision::Open,
+    }
+}
+
+fn settle_name(category_name: &str, tags: &[String]) -> Option<Settlement> {
+    let kind = name_kind(category_name)?;
+    match kind {
+        NameKind::Avatar => Some(fixed(Category::Avatar, None, tags, false)),
+        NameKind::Outfit => Some(fixed(Category::Outfit, Some("outfit"), tags, true)),
+        NameKind::Shoes => Some(fixed(Category::Outfit, Some("shoes_socks"), tags, true)),
+        NameKind::Hair => Some(fixed(Category::Hair, Some("hair"), tags, true)),
+        NameKind::Accessory => Some(fixed(Category::Accessory, Some("accessory"), tags, true)),
+        NameKind::Tool => Some(fixed(Category::Other, Some("tool_editor"), tags, true)),
+        NameKind::Motion => Some(fixed(
+            Category::Gimmick,
+            Some("expression_animation"),
+            tags,
+            true,
+        )),
+        NameKind::Texture => texture_from_tags(tags),
+        NameKind::World => world_from_tags(tags),
+        NameKind::Loose => from_tags_only(tags),
+    }
+}
+
+fn name_kind(category_name: &str) -> Option<NameKind> {
+    let folded = nfkc(category_name).to_lowercase();
+    if folded.is_empty() {
+        return None;
+    }
+    // Longer phrases first so「3Dモデル（その他）」does not match a shorter label.
+    NAMES
+        .iter()
+        .find(|(phrase, _)| folded.contains(*phrase))
+        .map(|(_, kind)| *kind)
+}
+
+// Longer phrases first. Short words such as「モーション」or「ボイス」are omitted:
+// 「モーション」is inside「エモーション」, and a voice category name is not confirmed.
+const NAMES: &[(&str, NameKind)] = &[
+    ("3dモーション・アニメーション", NameKind::Motion),
+    ("アバター用テクスチャ", NameKind::Texture),
+    ("3dツール・システム", NameKind::Tool),
+    ("ソフトウェア", NameKind::Tool),
+    ("3d環境・ワールド", NameKind::World),
+    ("3dモデル（その他）", NameKind::Loose),
+    ("3dキャラクター", NameKind::Avatar),
+    ("3dアクセサリ", NameKind::Accessory),
+    ("3d装飾品", NameKind::Accessory),
+    ("3dテクスチャ", NameKind::Texture),
+    ("3d小道具", NameKind::Loose),
+    ("3d衣装", NameKind::Outfit),
+    ("3d髪型", NameKind::Hair),
+    ("3dモーション", NameKind::Motion),
+    ("3d靴", NameKind::Shoes),
+    ("vroid", NameKind::Avatar),
+];
+
+#[derive(Clone, Copy)]
+enum NameKind {
+    Avatar,
+    Outfit,
+    Shoes,
+    Hair,
+    Accessory,
+    Tool,
+    Motion,
+    Texture,
+    World,
+    Loose,
+}
+
+fn fixed(
+    category: Category,
+    default_genre: Option<&str>,
+    tags: &[String],
+    allow_tag_genre: bool,
+) -> Settlement {
+    let from_tags = if allow_tag_genre {
+        genre_from_tags(category, tags).filter(|genre| genre::fits(category, genre))
+    } else {
+        None
+    };
+    Settlement {
+        category,
+        genre: from_tags.or_else(|| default_genre.map(str::to_string)),
+    }
+}
+
+fn texture_from_tags(tags: &[String]) -> Option<Settlement> {
+    genre_from_tags(Category::Texture, tags)
+        .filter(|genre| genre::fits(Category::Texture, genre))
+        .map(|genre| Settlement {
+            category: Category::Texture,
+            genre: Some(genre),
+        })
+}
+
+fn world_from_tags(tags: &[String]) -> Option<Settlement> {
+    genre_from_tags(Category::World, tags)
+        .filter(|genre| genre::fits(Category::World, genre))
+        .map(|genre| Settlement {
+            category: Category::World,
+            genre: Some(genre),
+        })
+}
+
+/// 3D小道具 and 3Dモデル（その他）: tags pick the side, or the title and description do.
+fn from_tags_only(tags: &[String]) -> Option<Settlement> {
+    let kept: Vec<&str> = tags
+        .iter()
+        .map(String::as_str)
+        .filter(|tag| !tag.trim().is_empty() && !genre::generic_tag(tag))
+        .collect();
+    if kept.is_empty() {
+        return None;
+    }
+    let text = kept.join("\n");
+    if world_side_tag(&text) {
+        let genre = genre_from_tags(Category::World, tags).unwrap_or_else(|| "world".into());
+        let genre = if genre::validate(Category::World, Some(&genre)) == genre {
+            genre
+        } else {
+            "world".into()
+        };
+        return Some(Settlement {
+            category: Category::World,
+            genre: Some(genre),
+        });
+    }
+    let genre = genre_from_tags(Category::Other, tags)?;
+    let category = genre::category_for_genre(&genre)?;
+    if genre::validate(category, Some(&genre)) != genre {
+        return None;
+    }
+    Some(Settlement {
+        category,
+        genre: Some(genre),
+    })
+}
+
+/// World-side words. A bare「ギミック」stays an avatar gimmick.
+fn world_side_tag(text: &str) -> bool {
+    let lower = nfkc(text).to_lowercase();
+    const WORDS: &[&str] = &[
+        "ワールド",
+        "udon",
+        "skybox",
+        "スカイボックス",
+        "家具",
+        "ベッド",
+        "椅子",
+        "いす",
+        "ソファ",
+        "建物",
+        "地形",
+    ];
+    if WORDS.iter().any(|word| lower.contains(word)) {
+        return true;
+    }
+    lower
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .any(|part| part == "world" || part == "worlds")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tags(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    #[test]
+    fn confirmed_ids_settle_without_tags() {
+        let tool = settle(Some(215), "別の名前", &[]).unwrap();
+        assert_eq!(tool.category, Category::Other);
+        assert_eq!(tool.genre.as_deref(), Some("tool_editor"));
+        assert_eq!(settle(Some(208), "", &[]).unwrap().category, Category::Avatar);
+        assert_eq!(settle(Some(212), "", &[]).unwrap().category, Category::Avatar);
+        assert_eq!(
+            settle(Some(209), "", &[]).unwrap().genre.as_deref(),
+            Some("outfit")
+        );
+        assert_eq!(
+            settle(Some(231), "", &[]).unwrap().genre.as_deref(),
+            Some("shoes_socks")
+        );
+        assert_eq!(settle(Some(230), "", &[]).unwrap().category, Category::Hair);
+        assert_eq!(
+            settle(Some(217), "", &[]).unwrap().genre.as_deref(),
+            Some("accessory")
+        );
+        assert_eq!(
+            settle(Some(216), "", &[]).unwrap().genre.as_deref(),
+            Some("expression_animation")
+        );
+    }
+
+    #[test]
+    fn id_wins_over_a_conflicting_name() {
+        let settled = settle(Some(215), "3D衣装", &tags(&["衣装"])).unwrap();
+        assert_eq!(settled.category, Category::Other);
+        assert_eq!(settled.genre.as_deref(), Some("tool_editor"));
+    }
+
+    #[test]
+    fn unknown_id_uses_the_confirmed_name() {
+        let outfit = settle(Some(999), "配布用3D衣装", &[]).unwrap();
+        assert_eq!(outfit.category, Category::Outfit);
+        assert_eq!(outfit.genre.as_deref(), Some("outfit"));
+        assert_eq!(settle(Some(999), "VRoid", &[]).unwrap().category, Category::Avatar);
+        assert!(settle(Some(999), "未確認の分類", &tags(&["家具"])).is_none());
+        assert!(settle(None, "3Dモデル", &[]).is_none());
+    }
+
+    #[test]
+    fn props_need_a_specific_tag_or_the_model() {
+        assert!(settle(Some(210), "3D小道具", &[]).is_none());
+        assert!(settle(Some(210), "3D小道具", &tags(&["VRChat", "Unity", "3Dモデル"])).is_none());
+        let furniture = settle(Some(210), "3D小道具", &tags(&["VRChat", "家具"])).unwrap();
+        assert_eq!(furniture.category, Category::World);
+        assert_eq!(furniture.genre.as_deref(), Some("furniture_props"));
+        let sky = settle(Some(210), "3D小道具", &tags(&["Skybox"])).unwrap();
+        assert_eq!(sky.genre.as_deref(), Some("skybox"));
+        let gimmick = settle(Some(210), "3D小道具", &tags(&["ギミック"])).unwrap();
+        assert_eq!(gimmick.category, Category::Gimmick);
+        assert_eq!(gimmick.genre.as_deref(), Some("gimmick"));
+        assert!(settle(Some(127), "3Dモデル（その他）", &tags(&["VRChat"])).is_none());
+        let prop_outfit = settle(Some(127), "3Dモデル（その他）", &tags(&["衣装"])).unwrap();
+        assert_eq!(prop_outfit.category, Category::Outfit);
+    }
+
+    #[test]
+    fn texture_and_world_without_useful_tags_stay_for_the_model() {
+        assert!(settle(Some(214), "3Dテクスチャ", &[]).is_none());
+        assert!(settle(Some(214), "3Dテクスチャ", &tags(&["VRChat"])).is_none());
+        let eye = settle(Some(214), "3Dテクスチャ", &tags(&["瞳"])).unwrap();
+        assert_eq!(eye.category, Category::Texture);
+        assert_eq!(eye.genre.as_deref(), Some("eye_texture"));
+        assert!(settle(Some(211), "3D環境・ワールド", &[]).is_none());
+        let world = settle(Some(211), "3D環境・ワールド", &tags(&["Udon"])).unwrap();
+        assert_eq!(world.category, Category::World);
+        assert_eq!(world.genre.as_deref(), Some("world_gimmick"));
+    }
+
+    #[test]
+    fn a_specific_category_still_settles_when_tags_are_generic() {
+        let outfit = settle(Some(209), "3D衣装", &tags(&["VRChat", "Unity"])).unwrap();
+        assert_eq!(outfit.category, Category::Outfit);
+        assert_eq!(outfit.genre.as_deref(), Some("outfit"));
+        let shoes = settle(None, "3D衣装", &tags(&["靴"])).unwrap();
+        assert_eq!(shoes.genre.as_deref(), Some("shoes_socks"));
+    }
+
+    #[test]
+    fn software_settles_as_a_tool_and_unknown_ids_stay_for_the_model() {
+        let software = settle(Some(201), "別の名前", &[]).unwrap();
+        assert_eq!(software.category, Category::Other);
+        assert_eq!(software.genre.as_deref(), Some("tool_editor"));
+        let named = settle(None, "配布ソフトウェア", &tags(&["衣装"])).unwrap();
+        assert_eq!(named.category, Category::Other);
+        assert_eq!(named.genre.as_deref(), Some("tool_editor"));
+        let conflict = settle(Some(201), "3D衣装", &tags(&["衣装", "瞳", "ギミック"])).unwrap();
+        assert_eq!(conflict.category, Category::Other);
+        assert_eq!(conflict.genre.as_deref(), Some("tool_editor"));
+        // These ids are not assigned: their public category names are still unknown.
+        // A confirmed name can still settle them. An unrecognized name stays open.
+        for id in [157, 142, 6] {
+            assert!(settle(Some(id), "未確認の分類", &[]).is_none(), "{id}");
+            assert!(settle(Some(id), "", &tags(&["VRChat"])).is_none(), "{id}");
+            assert_eq!(
+                category_rule(Some(id), "未確認の分類"),
+                CategoryRule::Unknown,
+                "{id}"
+            );
+            assert_eq!(category_rule(Some(id), ""), CategoryRule::Unknown, "{id}");
+            let named = settle(Some(id), "3D衣装", &[]).unwrap();
+            assert_eq!(named.category, Category::Outfit, "{id}");
+            assert_eq!(category_rule(Some(id), "3D衣装"), CategoryRule::Known, "{id}");
+        }
+    }
+
+    #[test]
+    fn safe_category_name_variants_settle_without_guessing_ids() {
+        let accessory = settle(None, "3Dアクセサリー", &[]).unwrap();
+        assert_eq!(accessory.category, Category::Accessory);
+        assert_eq!(accessory.genre.as_deref(), Some("accessory"));
+        let ears = settle(Some(999), "3Dアクセサリ", &tags(&["耳"])).unwrap();
+        assert_eq!(ears.category, Category::Accessory);
+        assert_eq!(ears.genre.as_deref(), Some("head_ears_tail"));
+        let motion = settle(None, "3Dモーション", &[]).unwrap();
+        assert_eq!(motion.category, Category::Gimmick);
+        assert_eq!(motion.genre.as_deref(), Some("expression_animation"));
+        let full = settle(None, "3Dモーション・アニメーション", &[]).unwrap();
+        assert_eq!(full.genre.as_deref(), Some("expression_animation"));
+        assert!(settle(None, "アバター用テクスチャ", &[]).is_none());
+        assert_eq!(
+            category_rule(None, "アバター用テクスチャ"),
+            CategoryRule::Known
+        );
+        let eye = settle(None, "アバター用テクスチャ", &tags(&["瞳"])).unwrap();
+        assert_eq!(eye.category, Category::Texture);
+        assert_eq!(eye.genre.as_deref(), Some("eye_texture"));
+        assert!(settle(Some(214), "アバター用テクスチャ", &tags(&["衣装"])).is_none());
+        // Short or unconfirmed labels stay out of the table. 「モーション」is inside「エモーション」.
+        for name in ["モーション", "エモーション", "ボイス", "音声"] {
+            assert!(settle(None, name, &[]).is_none(), "{name}");
+            assert_eq!(category_rule(None, name), CategoryRule::Unknown, "{name}");
+        }
+        assert_eq!(
+            category_rule(Some(214), "3Dテクスチャ"),
+            CategoryRule::Known
+        );
+        assert!(settle(Some(214), "3Dテクスチャ", &[]).is_none());
+    }
+
+    #[test]
+    fn tag_genres_stay_inside_the_settled_category() {
+        let outfit = settle(Some(209), "3D衣装", &tags(&["髪", "瞳", "アクセサリ"])).unwrap();
+        assert_eq!(outfit.category, Category::Outfit);
+        assert_eq!(outfit.genre.as_deref(), Some("outfit"));
+        let shoes = settle(Some(209), "3D衣装", &tags(&["靴"])).unwrap();
+        assert_eq!(shoes.genre.as_deref(), Some("shoes_socks"));
+        let tool = settle(Some(215), "3Dツール・システム", &tags(&["衣装", "瞳", "ギミック", "表情"])).unwrap();
+        assert_eq!(tool.category, Category::Other);
+        assert_eq!(tool.genre.as_deref(), Some("tool_editor"));
+        assert!(settle(Some(214), "3Dテクスチャ", &tags(&["衣装"])).is_none());
+        let eye = settle(Some(214), "3Dテクスチャ", &tags(&["瞳"])).unwrap();
+        assert_eq!(eye.genre.as_deref(), Some("eye_texture"));
+    }
+}

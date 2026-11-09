@@ -1,0 +1,55 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+import { createServer } from "vite";
+
+test("active settings section follows the scroll position", async () => {
+  const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  try {
+    const { activeSettingsSection, SETTINGS_NAV_ITEMS } = await server.ssrLoadModule("/src/settingsNav.ts");
+    const tops = [{ id: "a", top: -300 }, { id: "b", top: 20 }, { id: "c", top: 400 }];
+    assert.equal(activeSettingsSection(tops, 60, false), "b");
+    assert.equal(activeSettingsSection(tops, 10, false), "a");
+    assert.equal(activeSettingsSection([{ id: "a", top: 100 }, { id: "b", top: 500 }], 60, false), "a", "before the first heading reaches the line, the first section is current");
+    assert.equal(activeSettingsSection(tops, 60, true), "c", "at the end, the last section is current");
+    assert.equal(activeSettingsSection([], 60, false), null);
+    const ids = SETTINGS_NAV_ITEMS.map((item) => item.id);
+    for (const id of ["settings-unity", "settings-design", "settings-asset-updates", "settings-knowledge", "settings-debug"]) assert.ok(ids.includes(id), id);
+    assert.equal(new Set(ids).size, ids.length);
+    const { settingsNavWheelDelta } = await server.ssrLoadModule("/src/settingsNav.ts");
+    const wheel = (deltaX, deltaY, deltaMode = 0, ctrlKey = false) => ({ deltaX, deltaY, deltaMode, ctrlKey });
+    const overflowing = { clientWidth: 300, scrollWidth: 800 };
+    assert.equal(settingsNavWheelDelta(wheel(0, 100), overflowing), 100, "vertical wheel moves the bar sideways");
+    assert.equal(settingsNavWheelDelta(wheel(-40, 5), overflowing), -40, "horizontal swipe keeps its direction");
+    assert.equal(settingsNavWheelDelta(wheel(0, 3, 1), overflowing), 48, "line mode is converted to px");
+    assert.equal(settingsNavWheelDelta(wheel(0, 1, 2), overflowing), 300, "page mode uses the bar width");
+    assert.equal(settingsNavWheelDelta(wheel(0, 100), { clientWidth: 800, scrollWidth: 800 }), null, "a bar that fits leaves the page scroll alone");
+    assert.equal(settingsNavWheelDelta(wheel(0, 100, 0, true), overflowing), null, "ctrl+wheel stays zoom");
+  } finally {
+    await server.close();
+  }
+});
+
+test("narrow settings nav stays as a sticky one-line bar with an accent underline", () => {
+  const css = readFileSync("src/styles.css", "utf8");
+  const narrow = css.slice(css.lastIndexOf("@container (max-width: 800px)"));
+  const block = narrow.slice(0, narrow.indexOf("\n}\n"));
+  assert.doesNotMatch(css, /\.settings-nav\s*\{[^}]*position:\s*static/, "the nav never loses sticky");
+  assert.match(css, /\.settings-nav\s*\{[^}]*position:\s*sticky;\s*top:\s*0/);
+  assert.match(block, /\.settings-nav\s*\{[^}]*flex-direction:\s*row;[^}]*flex-wrap:\s*nowrap;[^}]*overflow-x:\s*auto;[^}]*background:\s*var\(--bg\)/);
+  assert.match(block, /\.settings-nav button\[aria-current\]\s*\{\s*box-shadow:\s*none/, "the bar drops the card shadow");
+  assert.doesNotMatch(css, /inset 0 -2px 0 var\(--line-accent\)/, "no one-sided shadow underline");
+  assert.match(block, /scroll-margin-top:\s*calc\(var\(--settings-nav-h/);
+  // 朱は「線のアクセント」ブロックの共通部品: 広い幅は縦棒（::before）、帯は直線の下線（::after）。
+  const accent = css.slice(css.indexOf("==== 線のアクセント（朱）"), css.indexOf("==== 線のアクセントここまで"));
+  assert.match(accent, /\.settings-nav button\[aria-current\]::before\s*\{[^}]*background:\s*var\(--line-accent\)/, "wide list marks the current section with the accent bar");
+  assert.match(accent, /\.settings-nav button\[aria-current\]::after\s*\{[^}]*left:\s*var\(--accent-inset\);[^}]*border-radius:\s*var\(--accent-cap\);[^}]*background:\s*var\(--line-accent\)/, "bar uses the shared straight underline");
+  assert.match(accent, /@container \(max-width: 800px\)\s*\{\s*\.settings-nav button\[aria-current\]::before\s*\{\s*content:\s*none;\s*\}\s*\.settings-nav button\[aria-current\]::after\s*\{\s*content:\s*"";/);
+  const page = readFileSync("src/pages/SettingsPage.tsx", "utf8");
+  assert.match(page, /<SettingsNav \/>/);
+  assert.match(page, /id="settings-knowledge"/);
+  assert.match(page, /id="settings-debug"/);
+  const nav = readFileSync("src/components/SettingsNav.tsx", "utf8");
+  assert.match(nav, /prefers-reduced-motion: reduce/);
+  assert.match(nav, /aria-current=\{active === id \? "location" : undefined\}/);
+});

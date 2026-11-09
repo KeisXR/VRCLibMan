@@ -1,0 +1,123 @@
+import { useState } from "react";
+import { FILE_PRESENCE_LABEL, mediaSrc } from "./media";
+import type { FilePresence } from "./media";
+import { progressPercent } from "./progress";
+import type { JobProgressState } from "./types";
+
+export function Thumb({
+  path,
+  url,
+  name,
+  small = false,
+}: {
+  path: string | null;
+  url: string | null;
+  name: string;
+  small?: boolean;
+}) {
+  const [failed, setFailed] = useState(false);
+  const src = failed ? null : mediaSrc(path, url);
+  const letter = name.trim().slice(0, 1) || "?";
+  if (!src) {
+    return <div className={small ? "thumb placeholder small" : "thumb placeholder"}>{letter}</div>;
+  }
+  return (
+    <img
+      className={small ? "thumb small" : "thumb"}
+      src={src}
+      alt=""
+      draggable={false}
+      referrerPolicy="no-referrer"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
+export function FileMark({
+  presence,
+  href,
+  onClick,
+}: {
+  presence: FilePresence;
+  href?: string;
+  onClick?: () => void;
+}) {
+  const className = `presence presence-${presence}`;
+  const label = FILE_PRESENCE_LABEL[presence];
+  if (href) {
+    return (
+      <a className={className} href={href}>
+        {label}
+      </a>
+    );
+  }
+  if (onClick) {
+    return (
+      <button className={className} type="button" onClick={onClick}>
+        {label}
+      </button>
+    );
+  }
+  return <span className={className}>{label}</span>;
+}
+
+/** 件数の多い一覧のページ送り。1 ページに収まるときは出さない。 */
+export function Pager({
+  offset,
+  pageSize,
+  total,
+  onChange,
+}: {
+  offset: number;
+  pageSize: number;
+  total: number;
+  onChange: (offset: number) => void;
+}) {
+  if (total <= pageSize) return null;
+  return (
+    <div className="row-actions pager">
+      <button className="button" type="button" disabled={offset === 0} onClick={() => onChange(Math.max(0, offset - pageSize))}>
+        前へ
+      </button>
+      <span className="meta">
+        {offset + 1}〜{Math.min(offset + pageSize, total)} / {total} 件
+      </span>
+      <button className="button" type="button" disabled={offset + pageSize >= total} onClick={() => onChange(offset + pageSize)}>
+        次へ
+      </button>
+    </div>
+  );
+}
+
+export function errorText(err: unknown): string {
+  if (typeof err === "string" && err.trim()) return err;
+  if (err instanceof Error && err.message) return err.message;
+  return "操作に失敗しました";
+}
+
+/** 進捗バー。total = 0 で走っている間は不定（往復する帯）。決まりは docs/design/README.md#進捗。 */
+export function ProgressTrack({
+  current,
+  total,
+  label,
+  state = "running",
+}: {
+  current: number;
+  total: number;
+  label: string;
+  state?: JobProgressState;
+}) {
+  const percent = progressPercent(current, total, state);
+  return (
+    <div
+      className={percent === null ? "track indeterminate" : "track"}
+      role="progressbar"
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={percent === null ? undefined : Math.round(percent)}
+    >
+      <span style={{ width: percent === null ? undefined : `${percent}%` }} />
+    </div>
+  );
+}

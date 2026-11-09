@@ -1,0 +1,125 @@
+import { appUpdater, openExternal } from "../api";
+import { formatBytes } from "../media";
+import { useAppUpdater } from "../useAppUpdater";
+import { errorText } from "../ui";
+
+export function AppUpdater({
+  beforeInstall,
+  workInProgress,
+}: {
+  beforeInstall: () => Promise<unknown>;
+  workInProgress: boolean;
+}) {
+  const { status, pending, error, setError, run, check } = useAppUpdater();
+
+  async function install() {
+    if (
+      !window.confirm(
+        `v${status?.version} に更新して再起動します。作業を終えてから実行してください。ライブラリと設定は引き継がれます。`,
+      )
+    )
+      return;
+    await run(async () => {
+      await beforeInstall();
+      return appUpdater.install();
+    });
+  }
+
+  const phase = status?.phase;
+  const busy =
+    pending ||
+    !status ||
+    phase === "checking" ||
+    phase === "downloading" ||
+    phase === "installing";
+  const total = status?.total;
+  const percent =
+    total && status
+      ? Math.min(100, Math.floor((status.downloaded / total) * 100))
+      : null;
+  const message =
+    phase === "unavailable"
+      ? status?.message
+      : phase === "checking"
+        ? "更新を確認中…"
+        : phase === "current"
+          ? "最新バージョンです"
+          : phase === "available"
+            ? `v${status?.version} に更新できます`
+            : phase === "downloading"
+              ? `ダウンロード中 ${status ? formatBytes(status.downloaded) : ""}${total ? ` / ${formatBytes(total)}` : ""}`
+              : phase === "ready"
+                ? `v${status?.version} の準備ができました`
+                : phase === "installing"
+                  ? "更新を適用中…"
+                  : "更新未確認";
+
+  return (
+    <div className="app-updater" id="settings-app-update">
+      <p role="status" aria-live="polite">
+        {message}
+      </p>
+      {phase === "downloading" && (
+        <progress aria-label="更新のダウンロード" max={100} value={percent ?? undefined} />
+      )}
+      <div className="inline-control">
+        {phase !== "ready" && (
+          <button
+            type="button"
+            className="button"
+            disabled={busy || phase === "unavailable" || workInProgress}
+            onClick={() => void check(true)}
+          >
+            更新を確認
+          </button>
+        )}
+        {phase === "available" && (
+          <button
+            type="button"
+            className="button primary"
+            disabled={busy || workInProgress}
+            onClick={() => void run(() => appUpdater.download())}
+          >
+            更新をダウンロード
+          </button>
+        )}
+        {phase === "ready" && (
+          <button
+            type="button"
+            className="button primary"
+            disabled={busy || workInProgress}
+            onClick={() => void install()}
+          >
+            再起動して更新
+          </button>
+        )}
+        <button
+          type="button"
+          className="button"
+          onClick={() =>
+            void openExternal("https://github.com/KeisXR/VRCLibMan/releases").catch((err) =>
+              setError(errorText(err)),
+            )
+          }
+        >
+          リリース一覧
+        </button>
+      </div>
+      {phase === "ready" && workInProgress && (
+        <p className="meta">実行中の作業が終わると更新できます。</p>
+      )}
+      {(error || status?.error) && (
+        <p className="warn-text" role="alert">
+          {error || status?.error}
+        </p>
+      )}
+      {status?.notes && (
+        <details className="settings-details">
+          <summary>更新内容</summary>
+          <div className="update-notes">{status.notes}</div>
+        </details>
+      )}
+      <p className="meta">拡張機能は別途更新してください。</p>
+    </div>
+  );
+}

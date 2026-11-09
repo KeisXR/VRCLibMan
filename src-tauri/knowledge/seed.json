@@ -1,0 +1,1969 @@
+{
+  "revision": 2,
+  "baseBodies": [
+    {
+      "id": "komado",
+      "displayName": "あまとうさぎ共通素体",
+      "note": "作者こまど氏（あまとうさぎ）の商品説明で共通素体と明記されている5体。ライム「プラム / ショコラ / シフォン と共通素体です。」https://booth.pm/ja/items/4876459 、プラム「ショコラ / シフォン / ライムと共通素体の子です。」https://booth.pm/ja/items/7770415 。ソルト「プラム / ショコラ / シフォン / ライムと共通素体をベースに制作しています。」「これまでの対応衣装との互換性はそのままに、膝まわりの変形を調整しました。」https://booth.pm/ja/items/8962830 。同じショップのカリン・ラスク・ミルク Re・ミントは共通素体の記載が無いため含めない。"
+    },
+    {
+      "id": "mamefriends",
+      "displayName": "まめふれんず共通素体",
+      "note": "各アバターの商品説明に「このアバターはまめふれんず共通素体を使用しています。」とある（例: まめひなた https://booth.pm/ja/items/4340548 、イルネル https://booth.pm/ja/items/6289095 は「まめひなた向け・まめふれんず向けの衣装を着用させたり、同規格のアバターとの衣装交換を手軽に行うことが可能」）。顔・けも耳・しっぽなど素体以外は互換の保証外。",
+      "revision": 2
+    },
+    {
+      "id": "marubody",
+      "displayName": "まるぼでぃ",
+      "note": "共通素体企画「まるぼでぃアバターズ」。ルキフェル https://booth.pm/ja/items/4358123 、イェーナ、リセの商品説明に「まるぼでぃアバターズでは共通素体を使用しており、衣装の着せ替えが簡単に行えます」。ネミアはルキフェルの説明で仲間として紹介。むんき https://booth.pm/ja/items/5787485 は「まるぼでぃVer2.0」で全衣装には対応しないと明記。恋恋・ペティニィも2.0。メロトロン https://booth.pm/ja/items/5860593 「まるぼでぃアバターは共通素体を使用しており」。",
+      "revision": 2
+    },
+    {
+      "id": "flastore-bodyset2",
+      "displayName": "FLASTORE Bodyset2",
+      "note": "FLASTORE の共通素体。Shery v2 https://booth.pm/ja/items/2140210 「FLASTORE共通素体である「Bodyset2」を採用」「「Rono」や「Nio」などに対応している衣装が無改変でご利用いただけます」、Maon https://booth.pm/ja/items/7800632 「過去作\"Nemo\"や\"Wolfram\"等の対応衣装がそのまま使えます」、鳴耶「Rono、Nio、Feilong互換の新素体を採用」。水鏡祈（再生産紙＆だらけぐま） https://booth.pm/ja/items/4930486 「本アバターはFLASTORE様の共通素体「Bodyset2」を使用しております。」",
+      "revision": 2
+    },
+    {
+      "id": "ym-body-women-s",
+      "displayName": "YM Body Women S",
+      "note": "yoyogi mori の商品説明「統一された素体規格「YM Body」を基に作られています。サイズ別に規格化されており、同サイズ間での着せ替えをはじめとするカスタマイズが可能です。」と「素体：Women S」による（例: imiut https://booth.pm/ja/items/2040691 ）。サイズの違う YM Body とはまとめない。",
+      "revision": 2
+    },
+    {
+      "id": "ym-body-women-m",
+      "displayName": "YM Body Women M",
+      "note": "yoyogi mori の商品説明「統一された素体規格「YM Body」を基に作られています。サイズ別に規格化されており、同サイズ間での着せ替えをはじめとするカスタマイズが可能です。」と「素体：Women M」による（例: kei https://booth.pm/ja/items/2040716 ）。サイズの違う YM Body とはまとめない。",
+      "revision": 2
+    },
+    {
+      "id": "ym-body-women-l",
+      "displayName": "YM Body Women L",
+      "note": "yoyogi mori の商品説明「統一された素体規格「YM Body」を基に作られています。サイズ別に規格化されており、同サイズ間での着せ替えをはじめとするカスタマイズが可能です。」と「素体：Women L」による（例: A-Z:[S] https://booth.pm/ja/items/6036556 ）。サイズの違う YM Body とはまとめない。",
+      "revision": 2
+    },
+    {
+      "id": "emolab",
+      "displayName": "えも研素体",
+      "note": "えも研の商品説明「えも研アバターはすべて共通の素体『えも研素体』です。スケール値も共通化されており、衣装などは全て互換性があります。」（アズキ https://booth.pm/ja/items/6654988 、コロネ、クララ）。",
+      "revision": 2
+    },
+    {
+      "id": "mocbody-m",
+      "displayName": "MOCBody_M",
+      "note": "もくもくねどこの商品説明「MOCBody_Mはもくもくねどこショップ内での共通素体の一種です。」（例: ミヴョル https://booth.pm/ja/items/4964838 ）。同ショップの MARUBODY 製品（ペティニィ）は含めない。",
+      "revision": 2
+    },
+    {
+      "id": "lethalcats-kyui",
+      "displayName": "キュイ・カゥ・クォン共通素体",
+      "note": "Lethal Cats の商品説明。キュイ https://booth.pm/ja/items/4464764 「別売のカゥ、クォンと共通素体です」、カゥ・クォンも同様。同ショップのリコリネはまめふれんず素体なので含めない。",
+      "revision": 2
+    },
+    {
+      "id": "663mochi-sati",
+      "displayName": "プレネラ・宇佐美さち共通素体",
+      "note": "663-chan Shop の商品説明。プレネラ https://booth.pm/ja/items/5168052 「宇佐美さち( https://booth.pm/ja/items/5481389 )と共通素体です。」",
+      "revision": 2
+    },
+    {
+      "id": "663mochi-yuuki",
+      "displayName": "佐々斗勇輝・フーリ共通素体",
+      "note": "663-chan Shop の商品説明。化け狐のフーリ https://booth.pm/ja/items/5215436 「佐々斗勇輝( https://booth.pm/ja/items/4351466 )と共通素体です。」",
+      "revision": 2
+    },
+    {
+      "id": "komainu-nemesis",
+      "displayName": "ネメシス・エルシオン共通素体",
+      "note": "こまいぬ通りの商品説明。ネメシス https://booth.pm/ja/items/5986971 「エルシオン - Elusion - と共通素体です。」、エルシオン https://booth.pm/ja/items/6663666 「ネメシス - Nemesis - と共通素体です。」",
+      "revision": 2
+    },
+    {
+      "id": "hyuuganatu-leafa",
+      "displayName": "リーファ・ルーナリット共通素体",
+      "note": "ひゅうがなつみかんの商品説明。リーファ https://booth.pm/ja/items/3659436 「リーファはルーナリットと同一素体です」、ルーナリット https://booth.pm/ja/items/4063740 「ルーナリットはリーファと共通素体です」。",
+      "revision": 2
+    },
+    {
+      "id": "studioyono-hanka",
+      "displayName": "怜・斑霞共通素体",
+      "note": "StudioYONO の商品説明。斑霞 https://booth.pm/ja/items/6970249 「オリジナル3Dモデル『怜-Rei-』Ver1.3を本アバターの素体と共通素体化しました。（本アバターは怜の旧素体とは互換性がありません）」。怜 https://booth.pm/ja/items/5788427 は斑霞と共通素体の Prefab を同梱。",
+      "revision": 2
+    },
+    {
+      "id": "mafuyu-cian",
+      "displayName": "真冬・シアン共通素体（身体のみ）",
+      "note": "真冬 https://booth.pm/ja/items/5007531 （ぷらすわん）の商品説明「sep-neko-ya様にて販売中のシアンと共通素体 (身体のみ)」、シアン https://booth.pm/ja/items/5482062 にも真冬と共通素体 (身体のみ) とある。頭部は別。",
+      "revision": 2
+    },
+    {
+      "id": "milfy-eku",
+      "displayName": "ミルフィ・エク共通素体（身体のみ）",
+      "note": "エク https://booth.pm/ja/items/7328764 （sep-neko-ya）の商品説明「ぷらすわんにて販売中のミルフィと共通素体 (身体のみ)」。ミルフィ https://booth.pm/ja/items/6571299 。頭部は別。",
+      "revision": 2
+    },
+    {
+      "id": "chiwado-palfy",
+      "displayName": "パルフィ・ルクリリ共通素体",
+      "note": "CHIWA堂の商品説明。ルクリリ https://booth.pm/ja/items/7163384 「別売りのパルフィちゃんと素体を共有しており、衣装を着せ替えることができます。」、パルフィ https://booth.pm/ja/items/6434869 「素体をルクリリちゃんと共有できるように変更しました。」",
+      "revision": 2
+    },
+    {
+      "id": "cloudz-clztype1",
+      "displayName": "Sotai_CLZType1",
+      "note": "Cloudz の商品説明。ターコイズ氏 https://booth.pm/ja/items/5304188 「2025/07 Version2 にてショップ共通素体【Sotai_CLZTyoe1】に更新」、ラブラドール https://booth.pm/ja/items/6927694 と共通素体。頭部（髪型）の互換性は無い。ターコイズ氏の旧版は対象外。",
+      "revision": 2
+    },
+    {
+      "id": "mtbody4",
+      "displayName": "MTBody4",
+      "note": "三毛屋の商品説明。スミトくん https://booth.pm/ja/items/7616517 「健康少年共通素体MTBody4を使用しています。」、シャオレイくん https://booth.pm/ja/items/5480655 「『+Head』『MTBody4』共通素体モデルを使用」。",
+      "revision": 2
+    },
+    {
+      "id": "ducbody",
+      "displayName": "DuCBody",
+      "note": "GMF WORKS の男性素体 DuCBody https://booth.pm/ja/items/6368109 を使ったアバター。ブレイガー https://booth.pm/ja/items/7286806 「本モデルはDuCBodyを使用しモデルを制作しております。」、TORU https://booth.pm/ja/items/7264957 はクレジットに DuCBody を記載。",
+      "revision": 2
+    },
+    {
+      "id": "mdoll-m",
+      "displayName": "MDoll Model Series [M]",
+      "note": "Minuet_Doll の汎用ドール素体『MDoll Model Series』[M]サイズ https://booth.pm/ja/items/4508095 （「#MDoll_Model_Series の対応衣装を着用することができます」）を採用したアバター。おすましショコラナ https://booth.pm/ja/items/4606129 、ゆめみるキャンディーナ https://booth.pm/ja/items/5432241 。[S]サイズとはまとめない。",
+      "revision": 2
+    },
+    {
+      "id": "nibosiya",
+      "displayName": "nibosiや共通素体",
+      "note": "nibosiや の商品説明の「共通素体」欄で、白狼 https://booth.pm/ja/items/4839535 、ルルネット https://booth.pm/ja/items/7706005 、イオリ、ヴァジルを互いに挙げている。",
+      "revision": 2
+    },
+    {
+      "id": "namekuji1337",
+      "displayName": "namekuji1337共通素体",
+      "note": "namekuji1337 の商品説明の「共通素体アバター」欄で、夢川有栖 https://booth.pm/ja/items/7437158 、イフ https://booth.pm/ja/items/5953756 、リナ https://booth.pm/ja/items/4165545 を互いに挙げている。身長の倍率（イフは全体0.83倍など）が違う。",
+      "revision": 2
+    },
+    {
+      "id": "xelevia-lunato",
+      "displayName": "ルナト・ネージュ・ネビア共通素体",
+      "note": "Xelevia_Industry の商品説明。ルナト https://booth.pm/ja/items/4284866 「素体はオリジナル3Dモデル『ネージュ』、オリジナル3Dモデル『ネビア』と共通素体になっています。」。ネージュ https://booth.pm/ja/items/1914840 とネビア https://booth.pm/ja/items/3002686 は Ver2.00 からこの素体。旧版は対象外。",
+      "revision": 2
+    },
+    {
+      "id": "unyapon-tsuyu",
+      "displayName": "梅雨・ラ・ユヌ＝テア共通素体",
+      "note": "うにゃうにゃぽんぽんの商品説明。梅雨 https://booth.pm/ja/items/4247101 「【ラ・ユヌ＝テアと同一素体】」、ラ・ユヌ＝テア https://booth.pm/ja/items/4404869 「梅雨（TSUYU）同一素体」。",
+      "revision": 2
+    },
+    {
+      "id": "beepon-mephina",
+      "displayName": "メフィナ・ヴェルミア共通素体",
+      "note": "Beep-ON の商品説明。メフィナ https://booth.pm/ja/items/4575136 「別売りの「ヴェルミア」と共通素体！」、ヴェルミア https://booth.pm/ja/items/5872891 「別売りの「メフィナ」と共通素体！」。",
+      "revision": 2
+    },
+    {
+      "id": "mxu-kirari",
+      "displayName": "きらり・つきよ共通素体",
+      "note": "MxU工房の商品説明。つきよ https://booth.pm/ja/items/5732260 「きらりと共通素体に更新しました。」、きらり https://booth.pm/ja/items/5703011 「今後「つきよ」のほうも共通素体として更新します。」。つきよの旧版は対象外。",
+      "revision": 2
+    },
+    {
+      "id": "aonoid-calepi",
+      "displayName": "ラーシャ・ケレピ共通素体",
+      "note": "aonoid の商品説明。ラーシャ https://booth.pm/ja/items/6847569 「「ケレピ -Calepi- 」と共通素体です。」、ケレピ https://booth.pm/ja/items/7689531 「「ラーシャ -Rasha-」 と共通素体です」。",
+      "revision": 2
+    },
+    {
+      "id": "pochi-leotariota",
+      "displayName": "レオタリオタ共通素体",
+      "note": "Pochi by KT の商品説明「■レオタリオタ共通素体」。レオタリオタ https://booth.pm/ja/items/6626966 「ポポちゃん - フワリポポネッタ fuwaripopondetta」と同素体です。」、ポポちゃん https://booth.pm/ja/items/7720981 も同様。",
+      "revision": 2
+    },
+    {
+      "id": "663-qcore",
+      "displayName": "マジかる共通素体 Q_core",
+      "note": "663-chan Shop の Quest 対応アバター（ウル https://booth.pm/ja/items/7832612 、星のアスティア、おやすみレミエル、オリバー、ハーフリングのニワトコくん）の商品説明「マジかる共通素体Q_coreを使用しています」「もちろん共通素体間で衣装を共有できます」。",
+      "revision": 2
+    },
+    {
+      "id": "avakin-vanilla",
+      "displayName": "AVAKIN Vanilla 共通素体",
+      "note": "AVAKIN' の商品説明「Vanilla共通素体。」（スピルバ https://booth.pm/ja/items/6119302 、愛狼、イトネ、うろぼ）と、バニラ https://booth.pm/ja/items/5839326 「現在AVAKINで販売しているアバターは、全て共通素体です。」。GAME NEKO https://booth.pm/ja/items/7186439 （Vision-GirLs）「AVAKIN共通素体のため、バニラ、スピルバ、愛狼、イトネ、うろぼの全5体のアバターと衣装の互換性があります。」",
+      "revision": 2
+    },
+    {
+      "id": "avakin-niban",
+      "displayName": "AVAKIN NIBAN 共通素体",
+      "note": "AVAKIN' の商品説明。プレッツェル https://booth.pm/ja/items/7558678 と狸晴 https://booth.pm/ja/items/7880924 に「NIBANと共通素体です」とあり、弐番 -NIBAN- https://booth.pm/ja/items/6858738 を指す。Vanilla 共通素体とはまとめない。",
+      "revision": 2
+    },
+    {
+      "id": "wakou-haruka",
+      "displayName": "わこーのあとりえ共通素体2（はるか・サラ・もも）",
+      "note": "わこーのあとりえの商品説明。サラ https://booth.pm/ja/items/6311566 「素体ははるかちゃんと共通素体なのではるかちゃん対応している服はすべて着ることができると思います！」、もも https://booth.pm/ja/items/7108322 「素体ははるかちゃん、サラちゃんと共通素体になります！」。はるか https://booth.pm/ja/items/5859318 。リル・ミル・ティナなどは「ほぼ共通素体系列」なので含めない。",
+      "revision": 2
+    },
+    {
+      "id": "maruka-reine",
+      "displayName": "霊音・白霞・冥音共通素体",
+      "note": "さーくるどろーいんぐの商品説明「■共通素体について」。霊音 https://booth.pm/ja/items/5099950 「霊音V2は以下のアバターと共通素体となります。」として白霞 https://booth.pm/ja/items/5973958 と冥音 https://booth.pm/ja/items/6193465 を挙げ、白霞・冥音も互いに挙げている。霊音の V1 は対象外。",
+      "revision": 2
+    },
+    {
+      "id": "lemegeton-misery",
+      "displayName": "リモジール・ミゼリエ共通素体",
+      "note": "レメゲトンの商品説明「本モデルは、下記に記載されているアバターと素体が共通しています。」。溟々のリモジール https://booth.pm/ja/items/3799311 は弔鐘のミゼリエを、ミゼリエ https://booth.pm/ja/items/5788822 はリモジールを挙げる。",
+      "revision": 2
+    },
+    {
+      "id": "lemegeton-l",
+      "displayName": "レメゲトン素体L",
+      "note": "レメゲトンの商品説明「下記に記載されているアバターと素体が共通しています。」。夜天のエリヌス https://booth.pm/ja/items/5382794 は月虹のエヴレースと残燼のノクシエルを、エヴレース https://booth.pm/ja/items/6645335 はエリヌスを挙げる。ノクシエル https://booth.pm/ja/items/7777704 「本モデルは「レメゲトン素体L」です。」「1.1倍のスケーリングが掛かっております」。",
+      "revision": 2
+    },
+    {
+      "id": "chinpantei",
+      "displayName": "珍飯亭共通素体",
+      "note": "珍飯亭の商品説明「当ショップは共通素体でのアバター展開をしており、それに対応した衣装も作成しております。」（グエン https://booth.pm/ja/items/6106392 、サルヴァダルシャ、ゼヴ、伊依、深澄）。社畜の連成さん https://booth.pm/ja/items/5498540 「『Techie/テッキー』『Romad/ロマド』と同様に珍飯亭の共通男性素体（V3版）です。」。伊依は「珍飯亭共通素体（V3版）」。",
+      "revision": 2
+    },
+    {
+      "id": "dambo-mochiakuma",
+      "displayName": "もちあくま",
+      "note": "段ボールでできた店の商品説明「伊鷹アバター共通素体、「もちあくま」を使用しています。」（アリューゼル https://booth.pm/ja/items/6335970 、イルカのバンドーさん https://booth.pm/ja/items/6868474 、イーシャン https://booth.pm/ja/items/7648079 ）。",
+      "revision": 2
+    },
+    {
+      "id": "brochimanac-m",
+      "displayName": "brochiManac共通素体Mサイズ",
+      "note": "brochiManac の商品説明「・brochiManac共通素体Mサイズ」（イェギ https://booth.pm/ja/items/5202348 、オルロレンチ https://booth.pm/ja/items/5955786 ）。S・L・SS サイズとはまとめない。",
+      "revision": 2
+    },
+    {
+      "id": "plusone-nayu",
+      "displayName": "ナユ・プラチナ・ホノカ共通素体（身体のみ）",
+      "note": "ナユ https://booth.pm/ja/items/4023598 （ぷらすわん）「プラチナ（ https://booth.pm/ja/items/3950859 ）と素体共通(体部分のみ)。対応衣装を着れます。」、プラチナも同様。ホノカ https://booth.pm/ja/items/4578343 （sep-neko-ya）「ぷらすわんにて販売中のナユ, プラチナと共通素体 (身体のみ)」。頭部は別。",
+      "revision": 2
+    },
+    {
+      "id": "plusone-sephira",
+      "displayName": "セフィラ・アッシュ共通素体（首から下）",
+      "note": "ぷらすわんの商品説明。アッシュ https://booth.pm/ja/items/3234473 「セフィラ（ https://booth.pm/ja/items/2953001 ）と共通素体。セフィラ用衣装が着れます。」「※共通素体は首から下です。頭は共通ではありません。」。セフィラの商品名にも「アッシュ共通素体」。",
+      "revision": 2
+    },
+    {
+      "id": "senna-amalo",
+      "displayName": "アマロ・エイラ共通素体（体部分）",
+      "note": "Senna Studio の商品説明。アマロ https://booth.pm/ja/items/4806925 「エイラ/ポワンと共通素体です。（体部分）」、エイラ https://booth.pm/ja/items/5426070 「アマロ/ポワンと共通素体です。（体部分）」。ポワン https://booth.pm/ja/items/6213757 自身は「ほぼ共通素体」なので含めない。",
+      "revision": 2
+    },
+    {
+      "id": "sasacafe-tsubaki",
+      "displayName": "椿姫共通素体",
+      "note": "うさほ小屋の商品説明。繭 https://booth.pm/ja/items/5220227 とメリー https://booth.pm/ja/items/5881081 「SASA-cafe様のオリジナル3Dモデル「椿姫 -Tsubaki-」と共通の素体となっておりますので、衣装は共通のものを着せることが可能です。」。椿姫 https://booth.pm/ja/items/4929177 。",
+      "revision": 2
+    },
+    {
+      "id": "skymy-limilia",
+      "displayName": "リミリア・エルキュナ2共通素体",
+      "note": "SKYMY Workshop の商品説明。エルキュナ2 https://booth.pm/ja/items/4926689 「素体はリミリアと共通素体なので、相互に同じ衣装を着せられます。」。リミリア https://booth.pm/ja/items/4365043 。",
+      "revision": 2
+    },
+    {
+      "id": "vividplum-yuzuki",
+      "displayName": "柚希・リセリエ共通素体",
+      "note": "VIVID PLUM の商品説明。リセリエ https://booth.pm/ja/items/4906263 の更新履歴「柚希と共通素体に変更」。柚希 https://booth.pm/ja/items/7447697 。リセリエの旧版は対象外。",
+      "revision": 2
+    },
+    {
+      "id": "yayyay-code",
+      "displayName": "Code001・Code002共通素体",
+      "note": "yay yay の商品説明。Code002 Elua https://booth.pm/ja/items/5127524 「yay_yayから販売中のCode001と同一素体を使用しています。」。Code001 https://booth.pm/ja/items/3635678 。",
+      "revision": 2
+    },
+    {
+      "id": "golden-inaba",
+      "displayName": "INABA・リリス共通素体",
+      "note": "リリス https://booth.pm/ja/items/5100113 の商品説明「「INABA」「椎名」「狐雨」と共通素体です。」。INABA・椎名・狐雨はゴールデン商会の1商品 https://booth.pm/ja/items/4213786 。",
+      "revision": 2
+    },
+    {
+      "id": "biki-seraphina",
+      "displayName": "セラフィナ・ミロワール共通素体",
+      "note": "bikiTadpole の商品説明。ミロワール Remake https://booth.pm/ja/items/6507420 「当モデルの素体は「Seraphina -セラフィナ-」と共通素体です。( https://booth.pm/ja/items/5597214 )」。",
+      "revision": 2
+    },
+    {
+      "id": "biki-izul",
+      "displayName": "イズールRe・エルミーナ同素体",
+      "note": "bikiTadpole の商品説明。エルミーナ https://booth.pm/ja/items/5110674 はイズールRe（ https://booth.pm/ja/items/4718359 ）「と同素体を使用しています。なのでお互いの対応衣装を着せ合うことが可能です。」「エルミーナにイズールReの衣装を着せる場合：1.05倍」。大きさが違う。",
+      "revision": 2
+    },
+    {
+      "id": "ikusia-ririka",
+      "displayName": "りりか・真央共通素体",
+      "note": "IKUSIA の商品説明。真央 https://booth.pm/ja/items/6846646 「今回の真央はりりかとの共通素体です！」。りりか https://booth.pm/ja/items/6373683 。",
+      "revision": 2
+    },
+    {
+      "id": "amesaki-marshmero",
+      "displayName": "ましゅめろ・セイラン共通素体",
+      "note": "雨咲cafe の商品説明。セイラン https://booth.pm/ja/items/6359289 「「ましゅめろ」と共通素体を使用（※頭のサイズは異なります）」、ましゅめろ https://booth.pm/ja/items/4910503 の更新履歴「ましゅめろの素体をセイランと同じものにアップデート」。ましゅめろの旧版は対象外。",
+      "revision": 2
+    },
+    {
+      "id": "wishywashy-dateno",
+      "displayName": "ダテノ ver2・ベルナ共通素体",
+      "note": "wishy-washy3D の商品説明。ベルナ https://booth.pm/ja/items/6336304 「「ダテノ ver2.00」と共通の素体を使用しています。」。ダテノ https://booth.pm/ja/items/5379423 。ダテノの ver2.00 より前は対象外。",
+      "revision": 2
+    },
+    {
+      "id": "roziura-anias",
+      "displayName": "アニアス・ヴィオステラ共通素体（サイズ違い）",
+      "note": "ROZIURA雑貨店の商品説明。ヴィオステラ https://booth.pm/ja/items/7312356 「「アニアス」( https://booth.pm/ja/items/5389703 )と共通素体・サイズ違い」。大きさが違う。",
+      "revision": 2
+    },
+    {
+      "id": "yudono-remake",
+      "displayName": "ゆどのん工房 Remake 素体",
+      "note": "ゆどのん工房の商品説明。NiKo-Remake https://booth.pm/ja/items/4520668 「下記3Dモデルと同じ素体を使用しています。（NiKo_RE_v1.25～）」として CiTRo-Remake を、CiTRo-Remake https://booth.pm/ja/items/7344751 「下記3Dモデルと同じ素体です。」として NiKo-Remake ver1.25 以降を挙げる。",
+      "revision": 2
+    },
+    {
+      "id": "makimaki-liebe",
+      "displayName": "リーベマリーネ・リーベアーテル共通素体",
+      "note": "まきまき堂の商品説明。リーベアーテル https://booth.pm/ja/items/5862488 「素体FBX(前作リーベマリーネと同じ素体です。)」、リーベマリーネ https://booth.pm/ja/items/5035949 「素体FBX(次に出るモデルも同じ素体です。)」。",
+      "revision": 2
+    },
+    {
+      "id": "chimategu",
+      "displayName": "ちまてぐ素体",
+      "note": "てぐらるしょっぷの商品説明。にゃもあ https://booth.pm/ja/items/7176666 「素体はハティットと共通素体(ちまてぐ素体)」、さなしろ https://booth.pm/ja/items/7647719 「素体はハティット・にゃもあと共通素体(ちまてぐ素体)」。ハティットは同梱カタログに無いため含めない。",
+      "revision": 2
+    },
+    {
+      "id": "lo1136",
+      "displayName": "LO1136 素体",
+      "note": "ふーふむの商品説明。ずんだもん https://booth.pm/ja/items/6720361 「このずんだもんは上記の無料配布しているオリジナル3DモデルのLO1136と素体が同じであり、高い互換性があります。」、あんこもん https://booth.pm/ja/items/7893657 も同様。LO1136 本体と雨猫は説明に共通の記載が無いため含めない。",
+      "revision": 2
+    }
+  ],
+  "avatars": [
+    {
+      "id": "lime",
+      "displayName": "ライム",
+      "baseBody": "komado",
+      "aliases": [
+        "Lime"
+      ],
+      "boothId": "4876459"
+    },
+    {
+      "id": "plum",
+      "displayName": "プラム",
+      "baseBody": "komado",
+      "aliases": [
+        "Plum"
+      ],
+      "boothId": "7770415"
+    },
+    {
+      "id": "chiffon",
+      "displayName": "シフォン",
+      "baseBody": "komado",
+      "aliases": [
+        "Chiffon"
+      ],
+      "boothId": "5354471"
+    },
+    {
+      "id": "chocolat",
+      "displayName": "ショコラ",
+      "baseBody": "komado",
+      "aliases": [
+        "Chocolat"
+      ],
+      "boothId": "6405390"
+    },
+    {
+      "id": "mf-8962830",
+      "displayName": "ソルト",
+      "baseBody": "komado",
+      "aliases": [
+        "Salt"
+      ],
+      "boothId": "8962830",
+      "revision": 2
+    },
+    {
+      "id": "manuka",
+      "displayName": "マヌカ",
+      "baseBody": null,
+      "aliases": [
+        "Manuka",
+        "MANUKA",
+        "마누카"
+      ]
+    },
+    {
+      "id": "shinano",
+      "displayName": "しなの",
+      "baseBody": null,
+      "aliases": [
+        "Shinano"
+      ]
+    },
+    {
+      "id": "celestia",
+      "displayName": "セレスティア",
+      "baseBody": null,
+      "aliases": [
+        "Celestia",
+        "Selestia"
+      ]
+    },
+    {
+      "id": "milltina",
+      "displayName": "ミルティナ",
+      "baseBody": null,
+      "aliases": [
+        "Milltina"
+      ]
+    },
+    {
+      "id": "kikyo",
+      "displayName": "桔梗",
+      "baseBody": null,
+      "aliases": []
+    },
+    {
+      "id": "rurune",
+      "displayName": "ルルネ",
+      "baseBody": null,
+      "aliases": [
+        "rurune",
+        "Rurune"
+      ]
+    },
+    {
+      "id": "mf-4340548",
+      "displayName": "まめひなた",
+      "baseBody": "mamefriends",
+      "aliases": [
+        "Mamehinata"
+      ],
+      "boothId": "4340548"
+    },
+    {
+      "id": "mf-5813187",
+      "displayName": "キプフェル",
+      "baseBody": "mamefriends",
+      "aliases": [
+        "Kipfel"
+      ],
+      "boothId": "5813187"
+    },
+    {
+      "id": "mf-5748454",
+      "displayName": "みつまめ",
+      "baseBody": "mamefriends",
+      "aliases": [
+        "Mitsumame"
+      ],
+      "boothId": "5748454"
+    },
+    {
+      "id": "mf-5673586",
+      "displayName": "ウズルハ",
+      "baseBody": "mamefriends",
+      "aliases": [
+        "Uzuruha"
+      ],
+      "boothId": "5673586"
+    },
+    {
+      "id": "mf-4256853",
+      "displayName": "クロンカ",
+      "baseBody": "mamefriends",
+      "aliases": [
+        "clonka"
+      ],
+      "boothId": "4256853"
+    },
+    {
+      "id": "mf-5955835",
+      "displayName": "ウルタラ",
+      "baseBody": "mamefriends",
+      "aliases": [
+        "UltharA"
+      ],
+      "boothId": "5955835"
+    },
+    {
+      "id": "mf-6289095",
+      "displayName": "イルネル",
+      "baseBody": "mamefriends",
+      "aliases": [
+        "Yilnel"
+      ],
+      "boothId": "6289095"
+    },
+    {
+      "id": "mf-6358495",
+      "displayName": "ノラフィリカ",
+      "baseBody": "mamefriends",
+      "aliases": [
+        "NoraFirika"
+      ],
+      "boothId": "6358495"
+    },
+    {
+      "id": "mf-6044846",
+      "displayName": "イサナイ・ヌク",
+      "baseBody": "mamefriends",
+      "aliases": [
+        "Isanai Nuku"
+      ],
+      "boothId": "6044846"
+    },
+    {
+      "id": "mf-6641745",
+      "displayName": "イオ・ドラゴニュート",
+      "baseBody": "mamefriends",
+      "aliases": [
+        "IO Dragonewt"
+      ],
+      "boothId": "6641745"
+    },
+    {
+      "id": "mf-5702588",
+      "displayName": "オルトア",
+      "baseBody": "mamefriends",
+      "aliases": [
+        "ortwa"
+      ],
+      "boothId": "5702588"
+    },
+    {
+      "id": "mf-7374627",
+      "displayName": "リルレオ",
+      "baseBody": "mamefriends",
+      "aliases": [
+        "LilLeo"
+      ],
+      "boothId": "7374627"
+    },
+    {
+      "id": "mf-7525578",
+      "displayName": "リコリネ",
+      "baseBody": "mamefriends",
+      "aliases": [
+        "Ricorine"
+      ],
+      "boothId": "7525578"
+    },
+    {
+      "id": "mf-7543853",
+      "displayName": "ししゅか",
+      "baseBody": "mamefriends",
+      "aliases": [
+        "siska"
+      ],
+      "boothId": "7543853"
+    },
+    {
+      "id": "mf-7657739",
+      "displayName": "ノラミアリィ",
+      "baseBody": "mamefriends",
+      "aliases": [
+        "NoraMiaree"
+      ],
+      "boothId": "7657739"
+    },
+    {
+      "id": "mf-4358123",
+      "displayName": "ルキフェル",
+      "baseBody": "marubody",
+      "aliases": [
+        "Lucifer"
+      ],
+      "boothId": "4358123"
+    },
+    {
+      "id": "mf-4398963",
+      "displayName": "イェーナ",
+      "baseBody": "marubody",
+      "aliases": [
+        "Yena"
+      ],
+      "boothId": "4398963"
+    },
+    {
+      "id": "mf-4390073",
+      "displayName": "リセ",
+      "baseBody": "marubody",
+      "aliases": [
+        "Lise"
+      ],
+      "boothId": "4390073"
+    },
+    {
+      "id": "mf-4376366",
+      "displayName": "ネミア",
+      "baseBody": "marubody",
+      "aliases": [
+        "Nenmir"
+      ],
+      "boothId": "4376366"
+    },
+    {
+      "id": "mf-5787485",
+      "displayName": "むんき",
+      "baseBody": "marubody",
+      "aliases": [
+        "Munkki"
+      ],
+      "boothId": "5787485"
+    },
+    {
+      "id": "mf-7678824",
+      "displayName": "恋恋",
+      "baseBody": "marubody",
+      "aliases": [
+        "Liàn Liàn"
+      ],
+      "boothId": "7678824"
+    },
+    {
+      "id": "mf-6961216",
+      "displayName": "ペティニィ",
+      "baseBody": "marubody",
+      "aliases": [
+        "peteinii"
+      ],
+      "boothId": "6961216"
+    },
+    {
+      "id": "mf-5860593",
+      "displayName": "かんぺきメイドメロトロン",
+      "baseBody": "marubody",
+      "aliases": [
+        "メロトロン"
+      ],
+      "boothId": "5860593"
+    },
+    {
+      "id": "mf-1731868",
+      "displayName": "NO.3",
+      "baseBody": "flastore-bodyset2",
+      "aliases": [],
+      "boothId": "1731868"
+    },
+    {
+      "id": "mf-2140210",
+      "displayName": "Shery",
+      "baseBody": "flastore-bodyset2",
+      "aliases": [],
+      "boothId": "2140210"
+    },
+    {
+      "id": "mf-3011302",
+      "displayName": "Rono",
+      "baseBody": "flastore-bodyset2",
+      "aliases": [],
+      "boothId": "3011302"
+    },
+    {
+      "id": "mf-2610533",
+      "displayName": "Nio",
+      "baseBody": "flastore-bodyset2",
+      "aliases": [],
+      "boothId": "2610533"
+    },
+    {
+      "id": "mf-1903612",
+      "displayName": "フェイロン",
+      "baseBody": "flastore-bodyset2",
+      "aliases": [
+        "Feilong"
+      ],
+      "boothId": "1903612"
+    },
+    {
+      "id": "mf-2328361",
+      "displayName": "鳴耶",
+      "baseBody": "flastore-bodyset2",
+      "aliases": [],
+      "boothId": "2328361"
+    },
+    {
+      "id": "mf-5769373",
+      "displayName": "Wolfram",
+      "baseBody": "flastore-bodyset2",
+      "aliases": [],
+      "boothId": "5769373"
+    },
+    {
+      "id": "mf-4315963",
+      "displayName": "セレニウム",
+      "baseBody": "flastore-bodyset2",
+      "aliases": [],
+      "boothId": "4315963"
+    },
+    {
+      "id": "mf-5517146",
+      "displayName": "Warabi",
+      "baseBody": "flastore-bodyset2",
+      "aliases": [],
+      "boothId": "5517146"
+    },
+    {
+      "id": "mf-6855392",
+      "displayName": "Nemo",
+      "baseBody": "flastore-bodyset2",
+      "aliases": [],
+      "boothId": "6855392"
+    },
+    {
+      "id": "mf-4613679",
+      "displayName": "ミュオン",
+      "baseBody": "flastore-bodyset2",
+      "aliases": [
+        "Muon"
+      ],
+      "boothId": "4613679"
+    },
+    {
+      "id": "mf-3604487",
+      "displayName": "スヴァルトリリヤ",
+      "baseBody": "flastore-bodyset2",
+      "aliases": [],
+      "boothId": "3604487"
+    },
+    {
+      "id": "mf-7800632",
+      "displayName": "Maon",
+      "baseBody": "flastore-bodyset2",
+      "aliases": [],
+      "boothId": "7800632"
+    },
+    {
+      "id": "mf-4930486",
+      "displayName": "水鏡祈",
+      "baseBody": "flastore-bodyset2",
+      "aliases": [],
+      "boothId": "4930486"
+    },
+    {
+      "id": "mf-2040691",
+      "displayName": "imiut",
+      "baseBody": "ym-body-women-s",
+      "aliases": [],
+      "boothId": "2040691"
+    },
+    {
+      "id": "mf-3067603",
+      "displayName": "Undone Kittens",
+      "baseBody": "ym-body-women-s",
+      "aliases": [],
+      "boothId": "3067603"
+    },
+    {
+      "id": "mf-7587259",
+      "displayName": "DARK CAT WITCH",
+      "baseBody": "ym-body-women-s",
+      "aliases": [],
+      "boothId": "7587259"
+    },
+    {
+      "id": "mf-7587265",
+      "displayName": "DARK CAT UNWELL",
+      "baseBody": "ym-body-women-s",
+      "aliases": [],
+      "boothId": "7587265"
+    },
+    {
+      "id": "mf-4589718",
+      "displayName": "茉弥",
+      "baseBody": "ym-body-women-s",
+      "aliases": [],
+      "boothId": "4589718"
+    },
+    {
+      "id": "mf-2032707",
+      "displayName": "KRONOS",
+      "baseBody": "ym-body-women-m",
+      "aliases": [],
+      "boothId": "2032707"
+    },
+    {
+      "id": "mf-2040746",
+      "displayName": "Notia",
+      "baseBody": "ym-body-women-m",
+      "aliases": [],
+      "boothId": "2040746"
+    },
+    {
+      "id": "mf-2040716",
+      "displayName": "kei",
+      "baseBody": "ym-body-women-m",
+      "aliases": [],
+      "boothId": "2040716"
+    },
+    {
+      "id": "mf-3433144",
+      "displayName": "霞花",
+      "baseBody": "ym-body-women-m",
+      "aliases": [],
+      "boothId": "3433144"
+    },
+    {
+      "id": "mf-5157084",
+      "displayName": "CONTAINER",
+      "baseBody": "ym-body-women-m",
+      "aliases": [],
+      "boothId": "5157084"
+    },
+    {
+      "id": "mf-4380164",
+      "displayName": "ECHOKEEPER",
+      "baseBody": "ym-body-women-m",
+      "aliases": [],
+      "boothId": "4380164"
+    },
+    {
+      "id": "mf-6380413",
+      "displayName": "Noaris",
+      "baseBody": "ym-body-women-m",
+      "aliases": [],
+      "boothId": "6380413"
+    },
+    {
+      "id": "mf-5643875",
+      "displayName": "fille ange",
+      "baseBody": "ym-body-women-m",
+      "aliases": [],
+      "boothId": "5643875"
+    },
+    {
+      "id": "mf-6036556",
+      "displayName": "A-Z:[S]",
+      "baseBody": "ym-body-women-l",
+      "aliases": [],
+      "boothId": "6036556"
+    },
+    {
+      "id": "mf-5314574",
+      "displayName": "NH-01",
+      "baseBody": "ym-body-women-l",
+      "aliases": [],
+      "boothId": "5314574"
+    },
+    {
+      "id": "mf-5837494",
+      "displayName": "柘榴",
+      "baseBody": "ym-body-women-l",
+      "aliases": [
+        "Zakuro"
+      ],
+      "boothId": "5837494"
+    },
+    {
+      "id": "mf-7087159",
+      "displayName": "NH-02",
+      "baseBody": "ym-body-women-l",
+      "aliases": [],
+      "boothId": "7087159"
+    },
+    {
+      "id": "mf-4302538",
+      "displayName": "TUNER",
+      "baseBody": "ym-body-women-l",
+      "aliases": [],
+      "boothId": "4302538"
+    },
+    {
+      "id": "mf-7797764",
+      "displayName": "KAGURA",
+      "baseBody": "ym-body-women-l",
+      "aliases": [],
+      "boothId": "7797764"
+    },
+    {
+      "id": "mf-6654988",
+      "displayName": "アズキ",
+      "baseBody": "emolab",
+      "aliases": [],
+      "boothId": "6654988"
+    },
+    {
+      "id": "mf-5776079",
+      "displayName": "コロネ",
+      "baseBody": "emolab",
+      "aliases": [],
+      "boothId": "5776079"
+    },
+    {
+      "id": "mf-5484178",
+      "displayName": "クララ",
+      "baseBody": "emolab",
+      "aliases": [],
+      "boothId": "5484178"
+    },
+    {
+      "id": "mf-4964838",
+      "displayName": "ミヴョル",
+      "baseBody": "mocbody-m",
+      "aliases": [
+        "Mivuol"
+      ],
+      "boothId": "4964838"
+    },
+    {
+      "id": "mf-6354942",
+      "displayName": "シャ・ソア=レ",
+      "baseBody": "mocbody-m",
+      "aliases": [],
+      "boothId": "6354942"
+    },
+    {
+      "id": "mf-4425191",
+      "displayName": "lavaju",
+      "baseBody": "mocbody-m",
+      "aliases": [],
+      "boothId": "4425191"
+    },
+    {
+      "id": "mf-5788478",
+      "displayName": "ラ・フルーロ",
+      "baseBody": "mocbody-m",
+      "aliases": [],
+      "boothId": "5788478"
+    },
+    {
+      "id": "mf-4464764",
+      "displayName": "キュイ",
+      "baseBody": "lethalcats-kyui",
+      "aliases": [
+        "Kyui"
+      ],
+      "boothId": "4464764"
+    },
+    {
+      "id": "mf-4916775",
+      "displayName": "カゥ",
+      "baseBody": "lethalcats-kyui",
+      "aliases": [
+        "Kau"
+      ],
+      "boothId": "4916775"
+    },
+    {
+      "id": "mf-5682975",
+      "displayName": "クォン",
+      "baseBody": "lethalcats-kyui",
+      "aliases": [
+        "Kuon"
+      ],
+      "boothId": "5682975"
+    },
+    {
+      "id": "mf-5168052",
+      "displayName": "プレネラ",
+      "baseBody": "663mochi-sati",
+      "aliases": [],
+      "boothId": "5168052"
+    },
+    {
+      "id": "mf-5481389",
+      "displayName": "宇佐美さち",
+      "baseBody": "663mochi-sati",
+      "aliases": [],
+      "boothId": "5481389"
+    },
+    {
+      "id": "mf-4351466",
+      "displayName": "佐々斗勇輝",
+      "baseBody": "663mochi-yuuki",
+      "aliases": [],
+      "boothId": "4351466"
+    },
+    {
+      "id": "mf-5215436",
+      "displayName": "化け狐のフーリ",
+      "baseBody": "663mochi-yuuki",
+      "aliases": [],
+      "boothId": "5215436"
+    },
+    {
+      "id": "mf-5986971",
+      "displayName": "ネメシス",
+      "baseBody": "komainu-nemesis",
+      "aliases": [
+        "Nemesis"
+      ],
+      "boothId": "5986971"
+    },
+    {
+      "id": "mf-6663666",
+      "displayName": "エルシオン",
+      "baseBody": "komainu-nemesis",
+      "aliases": [
+        "ELusion"
+      ],
+      "boothId": "6663666"
+    },
+    {
+      "id": "mf-3659436",
+      "displayName": "リーファ",
+      "baseBody": "hyuuganatu-leafa",
+      "aliases": [],
+      "boothId": "3659436"
+    },
+    {
+      "id": "mf-4063740",
+      "displayName": "ルーナリット",
+      "baseBody": "hyuuganatu-leafa",
+      "aliases": [],
+      "boothId": "4063740"
+    },
+    {
+      "id": "mf-5788427",
+      "displayName": "怜",
+      "baseBody": "studioyono-hanka",
+      "aliases": [
+        "Rei"
+      ],
+      "boothId": "5788427"
+    },
+    {
+      "id": "mf-6970249",
+      "displayName": "斑霞",
+      "baseBody": "studioyono-hanka",
+      "aliases": [
+        "Hanka"
+      ],
+      "boothId": "6970249"
+    },
+    {
+      "id": "mf-5007531",
+      "displayName": "真冬",
+      "baseBody": "mafuyu-cian",
+      "aliases": [
+        "Mafuyu"
+      ],
+      "boothId": "5007531"
+    },
+    {
+      "id": "mf-5482062",
+      "displayName": "シアン",
+      "baseBody": "mafuyu-cian",
+      "aliases": [
+        "Cian"
+      ],
+      "boothId": "5482062"
+    },
+    {
+      "id": "mf-6571299",
+      "displayName": "ミルフィ",
+      "baseBody": "milfy-eku",
+      "aliases": [
+        "Milfy"
+      ],
+      "boothId": "6571299"
+    },
+    {
+      "id": "mf-7328764",
+      "displayName": "エク",
+      "baseBody": "milfy-eku",
+      "aliases": [
+        "Eku"
+      ],
+      "boothId": "7328764"
+    },
+    {
+      "id": "mf-6434869",
+      "displayName": "パルフィ",
+      "baseBody": "chiwado-palfy",
+      "aliases": [
+        "PALFY"
+      ],
+      "boothId": "6434869"
+    },
+    {
+      "id": "mf-7163384",
+      "displayName": "ルクリリ",
+      "baseBody": "chiwado-palfy",
+      "aliases": [
+        "RUKURIRI"
+      ],
+      "boothId": "7163384"
+    },
+    {
+      "id": "mf-5304188",
+      "displayName": "ターコイズ氏",
+      "baseBody": "cloudz-clztype1",
+      "aliases": [
+        "TurQuoise"
+      ],
+      "boothId": "5304188"
+    },
+    {
+      "id": "mf-6927694",
+      "displayName": "ラブラドール",
+      "baseBody": "cloudz-clztype1",
+      "aliases": [
+        "LabradoLL"
+      ],
+      "boothId": "6927694"
+    },
+    {
+      "id": "mf-5480655",
+      "displayName": "シャオレイくん",
+      "baseBody": "mtbody4",
+      "aliases": [
+        "Xiaolei"
+      ],
+      "boothId": "5480655"
+    },
+    {
+      "id": "mf-7616517",
+      "displayName": "スミトくん",
+      "baseBody": "mtbody4",
+      "aliases": [
+        "SUMITO"
+      ],
+      "boothId": "7616517"
+    },
+    {
+      "id": "mf-7286806",
+      "displayName": "ブレイガー",
+      "baseBody": "ducbody",
+      "aliases": [],
+      "boothId": "7286806"
+    },
+    {
+      "id": "mf-7264957",
+      "displayName": "TORU",
+      "baseBody": "ducbody",
+      "aliases": [],
+      "boothId": "7264957"
+    },
+    {
+      "id": "mf-4606129",
+      "displayName": "おすましショコラナ",
+      "baseBody": "mdoll-m",
+      "aliases": [],
+      "boothId": "4606129"
+    },
+    {
+      "id": "mf-5432241",
+      "displayName": "ゆめみるキャンディーナ",
+      "baseBody": "mdoll-m",
+      "aliases": [],
+      "boothId": "5432241"
+    },
+    {
+      "id": "mf-4839535",
+      "displayName": "白狼",
+      "baseBody": "nibosiya",
+      "aliases": [
+        "HAKURO"
+      ],
+      "boothId": "4839535"
+    },
+    {
+      "id": "mf-7706005",
+      "displayName": "ルルネット",
+      "baseBody": "nibosiya",
+      "aliases": [
+        "Lurunet"
+      ],
+      "boothId": "7706005"
+    },
+    {
+      "id": "mf-7327787",
+      "displayName": "イオリ",
+      "baseBody": "nibosiya",
+      "aliases": [
+        "IOLI"
+      ],
+      "boothId": "7327787"
+    },
+    {
+      "id": "mf-6334110",
+      "displayName": "ヴァジル",
+      "baseBody": "nibosiya",
+      "aliases": [
+        "VAZILE"
+      ],
+      "boothId": "6334110"
+    },
+    {
+      "id": "mf-4165545",
+      "displayName": "リナ",
+      "baseBody": "namekuji1337",
+      "aliases": [
+        "Liina"
+      ],
+      "boothId": "4165545"
+    },
+    {
+      "id": "mf-5953756",
+      "displayName": "イフ",
+      "baseBody": "namekuji1337",
+      "aliases": [
+        "Ifu"
+      ],
+      "boothId": "5953756"
+    },
+    {
+      "id": "mf-7437158",
+      "displayName": "夢川有栖",
+      "baseBody": "namekuji1337",
+      "aliases": [
+        "Yumekawa Arisu"
+      ],
+      "boothId": "7437158"
+    },
+    {
+      "id": "mf-4284866",
+      "displayName": "ルナト",
+      "baseBody": "xelevia-lunato",
+      "aliases": [
+        "Lunato"
+      ],
+      "boothId": "4284866"
+    },
+    {
+      "id": "mf-1914840",
+      "displayName": "ネージュ",
+      "baseBody": "xelevia-lunato",
+      "aliases": [
+        "Neige"
+      ],
+      "boothId": "1914840"
+    },
+    {
+      "id": "mf-3002686",
+      "displayName": "ネビア",
+      "baseBody": "xelevia-lunato",
+      "aliases": [
+        "Nebia"
+      ],
+      "boothId": "3002686"
+    },
+    {
+      "id": "mf-4247101",
+      "displayName": "梅雨",
+      "baseBody": "unyapon-tsuyu",
+      "aliases": [
+        "TSUYU"
+      ],
+      "boothId": "4247101"
+    },
+    {
+      "id": "mf-4404869",
+      "displayName": "ラ・ユヌ=テア",
+      "baseBody": "unyapon-tsuyu",
+      "aliases": [
+        "LaUne=Thea"
+      ],
+      "boothId": "4404869"
+    },
+    {
+      "id": "mf-4575136",
+      "displayName": "メフィナ",
+      "baseBody": "beepon-mephina",
+      "aliases": [
+        "MEPHINA"
+      ],
+      "boothId": "4575136"
+    },
+    {
+      "id": "mf-5872891",
+      "displayName": "ヴェルミア",
+      "baseBody": "beepon-mephina",
+      "aliases": [
+        "VERMIA"
+      ],
+      "boothId": "5872891"
+    },
+    {
+      "id": "mf-5703011",
+      "displayName": "きらり",
+      "baseBody": "mxu-kirari",
+      "aliases": [
+        "Kirari"
+      ],
+      "boothId": "5703011"
+    },
+    {
+      "id": "mf-5732260",
+      "displayName": "つきよ",
+      "baseBody": "mxu-kirari",
+      "aliases": [
+        "Tukiyo"
+      ],
+      "boothId": "5732260"
+    },
+    {
+      "id": "mf-6847569",
+      "displayName": "ラーシャ",
+      "baseBody": "aonoid-calepi",
+      "aliases": [
+        "Rasha"
+      ],
+      "boothId": "6847569"
+    },
+    {
+      "id": "mf-7689531",
+      "displayName": "ケレピ",
+      "baseBody": "aonoid-calepi",
+      "aliases": [
+        "Calepi"
+      ],
+      "boothId": "7689531"
+    },
+    {
+      "id": "mf-6626966",
+      "displayName": "レオタリオタ",
+      "baseBody": "pochi-leotariota",
+      "aliases": [
+        "LeotaRiota"
+      ],
+      "boothId": "6626966"
+    },
+    {
+      "id": "mf-7720981",
+      "displayName": "ポポちゃん",
+      "baseBody": "pochi-leotariota",
+      "aliases": [
+        "フワリポポネッタ",
+        "fuwaripopondetta"
+      ],
+      "boothId": "7720981"
+    },
+    {
+      "id": "mf-7832612",
+      "displayName": "ウル",
+      "baseBody": "663-qcore",
+      "aliases": [],
+      "boothId": "7832612"
+    },
+    {
+      "id": "mf-7832690",
+      "displayName": "星のアスティア",
+      "baseBody": "663-qcore",
+      "aliases": [],
+      "boothId": "7832690"
+    },
+    {
+      "id": "mf-7832694",
+      "displayName": "おやすみレミエル",
+      "baseBody": "663-qcore",
+      "aliases": [],
+      "boothId": "7832694"
+    },
+    {
+      "id": "mf-7832696",
+      "displayName": "オリバー",
+      "baseBody": "663-qcore",
+      "aliases": [],
+      "boothId": "7832696"
+    },
+    {
+      "id": "mf-7832699",
+      "displayName": "ハーフリングのニワトコくん",
+      "baseBody": "663-qcore",
+      "aliases": [],
+      "boothId": "7832699"
+    },
+    {
+      "id": "mf-5839326",
+      "displayName": "バニラ",
+      "baseBody": "avakin-vanilla",
+      "aliases": [
+        "Vanilla"
+      ],
+      "boothId": "5839326"
+    },
+    {
+      "id": "mf-6119302",
+      "displayName": "スピルバ",
+      "baseBody": "avakin-vanilla",
+      "aliases": [
+        "Spielber"
+      ],
+      "boothId": "6119302"
+    },
+    {
+      "id": "mf-6218001",
+      "displayName": "愛狼",
+      "baseBody": "avakin-vanilla",
+      "aliases": [
+        "Melow"
+      ],
+      "boothId": "6218001"
+    },
+    {
+      "id": "mf-6333504",
+      "displayName": "イトネ",
+      "baseBody": "avakin-vanilla",
+      "aliases": [
+        "itone"
+      ],
+      "boothId": "6333504"
+    },
+    {
+      "id": "mf-6406377",
+      "displayName": "うろぼ",
+      "baseBody": "avakin-vanilla",
+      "aliases": [
+        "urobo"
+      ],
+      "boothId": "6406377"
+    },
+    {
+      "id": "mf-7186439",
+      "displayName": "GAME NEKO",
+      "baseBody": "avakin-vanilla",
+      "aliases": [],
+      "boothId": "7186439"
+    },
+    {
+      "id": "mf-6858738",
+      "displayName": "弐番",
+      "baseBody": "avakin-niban",
+      "aliases": [
+        "NIBAN"
+      ],
+      "boothId": "6858738"
+    },
+    {
+      "id": "mf-7558678",
+      "displayName": "プレッツェル",
+      "baseBody": "avakin-niban",
+      "aliases": [],
+      "boothId": "7558678"
+    },
+    {
+      "id": "mf-7880924",
+      "displayName": "狸晴",
+      "baseBody": "avakin-niban",
+      "aliases": [
+        "Riharu"
+      ],
+      "boothId": "7880924"
+    },
+    {
+      "id": "mf-5859318",
+      "displayName": "はるか",
+      "baseBody": "wakou-haruka",
+      "aliases": [],
+      "boothId": "5859318"
+    },
+    {
+      "id": "mf-6311566",
+      "displayName": "サラ",
+      "baseBody": "wakou-haruka",
+      "aliases": [],
+      "boothId": "6311566"
+    },
+    {
+      "id": "mf-7108322",
+      "displayName": "もも",
+      "baseBody": "wakou-haruka",
+      "aliases": [],
+      "boothId": "7108322"
+    },
+    {
+      "id": "mf-5099950",
+      "displayName": "霊音",
+      "baseBody": "maruka-reine",
+      "aliases": [
+        "れいね"
+      ],
+      "boothId": "5099950"
+    },
+    {
+      "id": "mf-5973958",
+      "displayName": "白霞",
+      "baseBody": "maruka-reine",
+      "aliases": [
+        "しろか"
+      ],
+      "boothId": "5973958"
+    },
+    {
+      "id": "mf-6193465",
+      "displayName": "冥音",
+      "baseBody": "maruka-reine",
+      "aliases": [
+        "めいおん"
+      ],
+      "boothId": "6193465"
+    },
+    {
+      "id": "mf-3799311",
+      "displayName": "溟々のリモジール",
+      "baseBody": "lemegeton-misery",
+      "aliases": [
+        "リモジール"
+      ],
+      "boothId": "3799311"
+    },
+    {
+      "id": "mf-5788822",
+      "displayName": "弔鐘のミゼリエ",
+      "baseBody": "lemegeton-misery",
+      "aliases": [
+        "ミゼリエ"
+      ],
+      "boothId": "5788822"
+    },
+    {
+      "id": "mf-5382794",
+      "displayName": "夜天のエリヌス",
+      "baseBody": "lemegeton-l",
+      "aliases": [
+        "エリヌス"
+      ],
+      "boothId": "5382794"
+    },
+    {
+      "id": "mf-6645335",
+      "displayName": "月虹のエヴレース",
+      "baseBody": "lemegeton-l",
+      "aliases": [
+        "エヴレース"
+      ],
+      "boothId": "6645335"
+    },
+    {
+      "id": "mf-7777704",
+      "displayName": "残燼のノクシエル",
+      "baseBody": "lemegeton-l",
+      "aliases": [
+        "ノクシエル"
+      ],
+      "boothId": "7777704"
+    },
+    {
+      "id": "mf-6106392",
+      "displayName": "グエン",
+      "baseBody": "chinpantei",
+      "aliases": [
+        "Nguyen"
+      ],
+      "boothId": "6106392"
+    },
+    {
+      "id": "mf-6282388",
+      "displayName": "サルヴァダルシャ",
+      "baseBody": "chinpantei",
+      "aliases": [
+        "SarvaDarsa"
+      ],
+      "boothId": "6282388"
+    },
+    {
+      "id": "mf-6717995",
+      "displayName": "ゼヴ",
+      "baseBody": "chinpantei",
+      "aliases": [
+        "Zev"
+      ],
+      "boothId": "6717995"
+    },
+    {
+      "id": "mf-6958479",
+      "displayName": "伊依",
+      "baseBody": "chinpantei",
+      "aliases": [
+        "Iyori"
+      ],
+      "boothId": "6958479"
+    },
+    {
+      "id": "mf-7763002",
+      "displayName": "深澄",
+      "baseBody": "chinpantei",
+      "aliases": [
+        "Misumi"
+      ],
+      "boothId": "7763002"
+    },
+    {
+      "id": "mf-5498540",
+      "displayName": "社畜の連成さん",
+      "baseBody": "chinpantei",
+      "aliases": [],
+      "boothId": "5498540"
+    },
+    {
+      "id": "mf-6335970",
+      "displayName": "アリューゼル",
+      "baseBody": "dambo-mochiakuma",
+      "aliases": [],
+      "boothId": "6335970"
+    },
+    {
+      "id": "mf-6868474",
+      "displayName": "イルカのバンドーさん",
+      "baseBody": "dambo-mochiakuma",
+      "aliases": [],
+      "boothId": "6868474"
+    },
+    {
+      "id": "mf-7648079",
+      "displayName": "イーシャン",
+      "baseBody": "dambo-mochiakuma",
+      "aliases": [],
+      "boothId": "7648079"
+    },
+    {
+      "id": "mf-5202348",
+      "displayName": "イェギ",
+      "baseBody": "brochimanac-m",
+      "aliases": [
+        "Yegi"
+      ],
+      "boothId": "5202348"
+    },
+    {
+      "id": "mf-5955786",
+      "displayName": "オルロレンチ",
+      "baseBody": "brochimanac-m",
+      "aliases": [
+        "Orurorenchi"
+      ],
+      "boothId": "5955786"
+    },
+    {
+      "id": "mf-4023598",
+      "displayName": "ナユ",
+      "baseBody": "plusone-nayu",
+      "aliases": [
+        "Nayu"
+      ],
+      "boothId": "4023598"
+    },
+    {
+      "id": "mf-3950859",
+      "displayName": "プラチナ",
+      "baseBody": "plusone-nayu",
+      "aliases": [
+        "Platinum"
+      ],
+      "boothId": "3950859"
+    },
+    {
+      "id": "mf-4578343",
+      "displayName": "ホノカ",
+      "baseBody": "plusone-nayu",
+      "aliases": [
+        "Honoka"
+      ],
+      "boothId": "4578343"
+    },
+    {
+      "id": "mf-2953001",
+      "displayName": "セフィラ",
+      "baseBody": "plusone-sephira",
+      "aliases": [
+        "Sephira"
+      ],
+      "boothId": "2953001"
+    },
+    {
+      "id": "mf-3234473",
+      "displayName": "アッシュ",
+      "baseBody": "plusone-sephira",
+      "aliases": [
+        "ASH"
+      ],
+      "boothId": "3234473"
+    },
+    {
+      "id": "mf-4806925",
+      "displayName": "アマロ",
+      "baseBody": "senna-amalo",
+      "aliases": [
+        "Amalo"
+      ],
+      "boothId": "4806925"
+    },
+    {
+      "id": "mf-5426070",
+      "displayName": "エイラ",
+      "baseBody": "senna-amalo",
+      "aliases": [
+        "Eira"
+      ],
+      "boothId": "5426070"
+    },
+    {
+      "id": "mf-4929177",
+      "displayName": "椿姫",
+      "baseBody": "sasacafe-tsubaki",
+      "aliases": [
+        "Tsubaki"
+      ],
+      "boothId": "4929177"
+    },
+    {
+      "id": "mf-5220227",
+      "displayName": "繭",
+      "baseBody": "sasacafe-tsubaki",
+      "aliases": [
+        "Mayu"
+      ],
+      "boothId": "5220227"
+    },
+    {
+      "id": "mf-5881081",
+      "displayName": "メリー",
+      "baseBody": "sasacafe-tsubaki",
+      "aliases": [
+        "Merry"
+      ],
+      "boothId": "5881081"
+    },
+    {
+      "id": "mf-4365043",
+      "displayName": "リミリア",
+      "baseBody": "skymy-limilia",
+      "aliases": [
+        "LIMILIA"
+      ],
+      "boothId": "4365043"
+    },
+    {
+      "id": "mf-4926689",
+      "displayName": "エルキュナ2",
+      "baseBody": "skymy-limilia",
+      "aliases": [
+        "ERUQYUNA2"
+      ],
+      "boothId": "4926689"
+    },
+    {
+      "id": "mf-7447697",
+      "displayName": "柚希",
+      "baseBody": "vividplum-yuzuki",
+      "aliases": [
+        "Yuzuki"
+      ],
+      "boothId": "7447697"
+    },
+    {
+      "id": "mf-4906263",
+      "displayName": "リセリエ",
+      "baseBody": "vividplum-yuzuki",
+      "aliases": [
+        "Liserie"
+      ],
+      "boothId": "4906263"
+    },
+    {
+      "id": "mf-3635678",
+      "displayName": "Code001",
+      "baseBody": "yayyay-code",
+      "aliases": [],
+      "boothId": "3635678"
+    },
+    {
+      "id": "mf-5127524",
+      "displayName": "Code002",
+      "baseBody": "yayyay-code",
+      "aliases": [
+        "エルア",
+        "Elua"
+      ],
+      "boothId": "5127524"
+    },
+    {
+      "id": "mf-4213786",
+      "displayName": "INABA",
+      "baseBody": "golden-inaba",
+      "aliases": [
+        "椎名",
+        "狐雨"
+      ],
+      "boothId": "4213786"
+    },
+    {
+      "id": "mf-5100113",
+      "displayName": "リリス",
+      "baseBody": "golden-inaba",
+      "aliases": [
+        "Lilith"
+      ],
+      "boothId": "5100113"
+    },
+    {
+      "id": "mf-5597214",
+      "displayName": "セラフィナ",
+      "baseBody": "biki-seraphina",
+      "aliases": [
+        "Seraphina"
+      ],
+      "boothId": "5597214"
+    },
+    {
+      "id": "mf-6507420",
+      "displayName": "ミロワール",
+      "baseBody": "biki-seraphina",
+      "aliases": [
+        "Miroir"
+      ],
+      "boothId": "6507420"
+    },
+    {
+      "id": "mf-4718359",
+      "displayName": "イズール",
+      "baseBody": "biki-izul",
+      "aliases": [
+        "Izul"
+      ],
+      "boothId": "4718359"
+    },
+    {
+      "id": "mf-5110674",
+      "displayName": "エルミーナ",
+      "baseBody": "biki-izul",
+      "aliases": [
+        "Elmina"
+      ],
+      "boothId": "5110674"
+    },
+    {
+      "id": "mf-6373683",
+      "displayName": "りりか",
+      "baseBody": "ikusia-ririka",
+      "aliases": [
+        "ririka"
+      ],
+      "boothId": "6373683"
+    },
+    {
+      "id": "mf-6846646",
+      "displayName": "真央",
+      "baseBody": "ikusia-ririka",
+      "aliases": [
+        "mao"
+      ],
+      "boothId": "6846646"
+    },
+    {
+      "id": "mf-4910503",
+      "displayName": "ましゅめろ",
+      "baseBody": "amesaki-marshmero",
+      "aliases": [],
+      "boothId": "4910503"
+    },
+    {
+      "id": "mf-6359289",
+      "displayName": "セイラン",
+      "baseBody": "amesaki-marshmero",
+      "aliases": [],
+      "boothId": "6359289"
+    },
+    {
+      "id": "mf-5379423",
+      "displayName": "ダテノ",
+      "baseBody": "wishywashy-dateno",
+      "aliases": [],
+      "boothId": "5379423"
+    },
+    {
+      "id": "mf-6336304",
+      "displayName": "ベルナ",
+      "baseBody": "wishywashy-dateno",
+      "aliases": [],
+      "boothId": "6336304"
+    },
+    {
+      "id": "mf-5389703",
+      "displayName": "アニアス",
+      "baseBody": "roziura-anias",
+      "aliases": [],
+      "boothId": "5389703"
+    },
+    {
+      "id": "mf-7312356",
+      "displayName": "ヴィオステラ",
+      "baseBody": "roziura-anias",
+      "aliases": [],
+      "boothId": "7312356"
+    },
+    {
+      "id": "mf-4520668",
+      "displayName": "ニコ",
+      "baseBody": "yudono-remake",
+      "aliases": [
+        "NiKo-Remake",
+        "NiKo"
+      ],
+      "boothId": "4520668"
+    },
+    {
+      "id": "mf-7344751",
+      "displayName": "シトロ",
+      "baseBody": "yudono-remake",
+      "aliases": [
+        "CiTRo-Remake",
+        "CiTRo"
+      ],
+      "boothId": "7344751"
+    },
+    {
+      "id": "mf-5035949",
+      "displayName": "リーベマリーネ",
+      "baseBody": "makimaki-liebe",
+      "aliases": [],
+      "boothId": "5035949"
+    },
+    {
+      "id": "mf-5862488",
+      "displayName": "リーベアーテル",
+      "baseBody": "makimaki-liebe",
+      "aliases": [],
+      "boothId": "5862488"
+    },
+    {
+      "id": "mf-7176666",
+      "displayName": "にゃもあ",
+      "baseBody": "chimategu",
+      "aliases": [
+        "Nyamoa"
+      ],
+      "boothId": "7176666"
+    },
+    {
+      "id": "mf-7647719",
+      "displayName": "さなしろ",
+      "baseBody": "chimategu",
+      "aliases": [
+        "Sanashiro"
+      ],
+      "boothId": "7647719"
+    },
+    {
+      "id": "mf-6720361",
+      "displayName": "ずんだもん",
+      "baseBody": "lo1136",
+      "aliases": [],
+      "boothId": "6720361"
+    },
+    {
+      "id": "mf-7893657",
+      "displayName": "あんこもん",
+      "baseBody": "lo1136",
+      "aliases": [],
+      "boothId": "7893657"
+    }
+  ]
+}

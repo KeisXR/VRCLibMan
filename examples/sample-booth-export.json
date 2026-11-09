@@ -1,0 +1,55 @@
+{
+  "format": "vrclibman.booth-export",
+  "version": 1,
+  "products": [
+    {
+      "boothId": "4876459",
+      "title": "ライム -Lime- / オリジナル3Dモデル",
+      "shop": "こまど",
+      "url": "https://booth.pm/ja/items/4876459",
+      "descriptionSnippet": "ライムのオリジナル3Dモデルです。プラム、シフォン、ショコラとは共通素体で、衣装を着せ替えできます。"
+    },
+    {
+      "boothId": "7770415",
+      "title": "プラム -Plum- / オリジナル3Dモデル",
+      "shop": "こまど",
+      "url": "https://booth.pm/ja/items/7770415",
+      "descriptionSnippet": "プラムのオリジナル3Dモデルです。ライムと同じ共通素体です。"
+    },
+    {
+      "boothId": "5058077",
+      "title": "オリジナル3Dモデル「マヌカ」ver1.02",
+      "shop": "STUDIO JINGO",
+      "url": "https://booth.pm/ja/items/5058077",
+      "descriptionSnippet": "マヌカのオリジナル3Dモデルです。"
+    },
+    {
+      "boothId": "8800101",
+      "title": "しなの・ライム・マヌカ対応 ワンピース",
+      "shop": "サンプル工房",
+      "url": "https://booth.pm/ja/items/8800101",
+      "descriptionSnippet": "しなの、ライム、マヌカに対応した衣装です。これは動作確認用の架空の商品です。"
+    },
+    {
+      "boothId": "8800102",
+      "title": "マヌカ用ヘア",
+      "shop": "サンプル工房",
+      "url": "https://booth.pm/ja/items/8800102",
+      "descriptionSnippet": "マヌカ専用の髪です。これは動作確認用の架空の商品です。"
+    },
+    {
+      "boothId": "8800103",
+      "title": "汎用ペンライト",
+      "shop": "サンプル工房",
+      "url": "https://booth.pm/ja/items/8800103",
+      "descriptionSnippet": "どのアバターでも使える汎用ギミックです。これは動作確認用の架空の商品です。"
+    },
+    {
+      "boothId": "8800104",
+      "title": "架空ちゃん対応パーカー",
+      "shop": "サンプル工房",
+      "url": "https://booth.pm/ja/items/8800104",
+      "descriptionSnippet": "架空ちゃん専用の衣装です。対応表に無い名前なので確認キューに残ります。"
+    }
+  ]
+}

@@ -1,0 +1,338 @@
+name: release
+
+# Pushing a v* tag builds the Windows NSIS installer, Apple Silicon dmg and
+# Linux x86_64 / aarch64 AppImages, signs updater bundles, zips the Chrome
+# extension, and creates a DRAFT GitHub Release.
+# Nothing is published until someone presses "Publish release".
+#
+# workflow_dispatch is a dry run: it runs the same checks and builds on the chosen
+# branch and keeps the files as workflow artifacts. It creates no tag and no release.
+#
+# Intel and universal macOS builds are not produced (see AGENTS.md).
+# Updater signatures use a Tauri key (see docs/updater.md). OS code signing is
+# unchanged: Windows is unsigned, macOS is ad-hoc signed only.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  IS_RELEASE: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+
+jobs:
+  verify:
+    name: verify versions and tests
+    runs-on: ubuntu-latest
+    outputs:
+      app_version: ${{ steps.version.outputs.app_version }}
+      extension_version: ${{ steps.version.outputs.extension_version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: tag must match the app version
+        id: version
+        shell: bash
+        run: |
+          if [ "${IS_RELEASE}" = "true" ]; then
+            node scripts/check-release-version.mjs --tag "${GITHUB_REF_NAME}"
+          else
+            echo "workflow_dispatch: dry run, the tag is not checked"
+            node scripts/check-release-version.mjs
+          fi
+
+      - name: tagged commit must be on main
+        if: env.IS_RELEASE == 'true'
+        shell: bash
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "::error::タグ ${GITHUB_REF_NAME} のコミット ${GITHUB_SHA} は main に含まれていません。main にマージしてからタグを打ってください"
+            exit 1
+          fi
+
+      - name: install dependencies
+        run: npm ci
+
+      - name: verify updater signing configuration
+        env:
+          TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: node scripts/configure-updater.mjs "${{ runner.temp }}/updater.conf.json"
+
+      - name: type check
+        run: npx tsc --noEmit
+
+      - name: test
+        run: npm test
+
+  extension:
+    name: extension zip
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+
+      - name: package the Chrome extension
+        shell: bash
+        env:
+          EXTENSION_VERSION: ${{ needs.verify.outputs.extension_version }}
+        run: |
+          set -euo pipefail
+          stage="${RUNNER_TEMP}/vrclibman-booth-export"
+          node scripts/stage-extension.mjs --dest "${stage}"
+          mkdir -p dist-artifacts
+          zip_path="${PWD}/dist-artifacts/vrclibman-booth-export-${EXTENSION_VERSION}.zip"
+          rm -f "${zip_path}"
+          (cd "${stage}" && zip -r -X -q "${zip_path}" .)
+          unzip -l "${zip_path}"
+          unzip -p "${zip_path}" manifest.json > /dev/null
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: extension
+          path: dist-artifacts/*.zip
+          if-no-files-found: error
+
+  create-release:
+    name: create draft release
+    needs: [verify, extension]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      release_id: ${{ steps.release.outputs.release_id }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+
+      - id: release
+        name: create or reuse the draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APP_VERSION: ${{ needs.verify.outputs.app_version }}
+          EXTENSION_VERSION: ${{ needs.verify.outputs.extension_version }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          # Drafts are not visible through /releases/tags/{tag}, so search the list.
+          found=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" \
+            --jq ".[] | select(.tag_name == \"${tag}\") | \"\(.id) \(.draft)\"")
+          if echo "${found}" | grep -q ' false$'; then
+            echo "::error::${tag} の Release はすでに公開されています。上書きしないので、版を上げて新しいタグを打ってください"
+            exit 1
+          fi
+          id=$(echo "${found}" | awk '$2 == "true" { print $1; exit }')
+          if [ -n "${id}" ]; then
+            echo "reusing draft release ${id} for ${tag}"
+          else
+            node scripts/create-release-notes.mjs "${APP_VERSION}" "${EXTENSION_VERSION}" "${RUNNER_TEMP}/notes.md"
+            id=$(jq -n \
+              --arg tag "${tag}" \
+              --arg name "VRCLibMan ${tag}" \
+              --rawfile body "${RUNNER_TEMP}/notes.md" \
+              '{tag_name: $tag, name: $name, body: $body, draft: true, prerelease: false}' \
+              | gh api --method POST "repos/${GITHUB_REPOSITORY}/releases" --input - --jq .id)
+            echo "created draft release ${id} for ${tag}"
+          fi
+          echo "release_id=${id}" >> "${GITHUB_OUTPUT}"
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: extension
+          path: dist-artifacts
+
+      - name: upload the extension zip
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          zip=$(ls dist-artifacts/*.zip)
+          name=$(basename "${zip}")
+          for asset_id in $(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets" \
+              --jq ".[] | select(.name == \"${name}\") | .id"); do
+            gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}"
+          done
+          http=$(curl -sS -o "${RUNNER_TEMP}/asset.json" -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/zip" \
+            --data-binary @"${zip}" \
+            "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?name=${name}")
+          if [ "${http}" -lt 200 ] || [ "${http}" -ge 300 ]; then
+            echo "::error::拡張 zip のアップロードに失敗しました (HTTP ${http})"
+            cat "${RUNNER_TEMP}/asset.json"
+            exit 1
+          fi
+          echo "uploaded ${name}"
+
+  build:
+    name: build (${{ matrix.name }})
+    needs: [verify, create-release]
+    # create-release is skipped on workflow_dispatch; build anyway, without a release.
+    if: >-
+      ${{ !cancelled() && needs.verify.result == 'success' &&
+      (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            platform: windows-latest
+            target: ""
+            args: ""
+          - name: macos-aarch64
+            platform: macos-latest
+            target: aarch64-apple-darwin
+            args: --target aarch64-apple-darwin
+          # Build both AppImages natively on the oldest supported Ubuntu base.
+          # linuxdeploy does not support cross-compiling ARM AppImages.
+          - name: linux-x64
+            platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            args: --target x86_64-unknown-linux-gnu
+          - name: linux-aarch64
+            platform: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            args: --target aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential curl wget file libwebkit2gtk-4.1-dev libxdo-dev \
+            libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf libfuse2
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # Only Windows uses LLD and a faster release profile. Keep the existing
+      # Cargo.toml profile for macOS and for local builds, and preserve signing.
+      - name: speed up Windows release compilation
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $lld = Join-Path (rustc --print sysroot).Trim() 'lib\rustlib\x86_64-pc-windows-msvc\bin\rust-lld.exe'
+          if (-not (Test-Path -LiteralPath $lld)) { throw "Rust LLD linker not found: $lld" }
+          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$lld" >> $env:GITHUB_ENV
+          "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16" >> $env:GITHUB_ENV
+          "CARGO_PROFILE_RELEASE_LTO=thin" >> $env:GITHUB_ENV
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+          key: release-${{ matrix.name }}
+
+      - name: install frontend dependencies
+        run: npm ci
+
+      - name: configure updater public key
+        env:
+          TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: node scripts/configure-updater.mjs "${{ runner.temp }}/updater.conf.json"
+
+      - id: tauri
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPIMAGE_EXTRACT_AND_RUN: ${{ runner.os == 'Linux' && '1' || '' }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          # Empty on workflow_dispatch: build only, no release.
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+          uploadUpdaterJson: false
+          uploadUpdaterSignatures: true
+          uploadWorkflowArtifacts: ${{ env.IS_RELEASE != 'true' }}
+          workflowArtifactNamePattern: "${{ matrix.name }}-[bundle]"
+          args: ${{ matrix.args }} --config "${{ runner.temp }}/updater.conf.json"
+
+      # tauri-action's workflow artifacts omit .sig and .app.tar.gz files.
+      - name: stage signed updater files for dry-run verification
+        if: env.IS_RELEASE != 'true'
+        env:
+          ARTIFACT_PATHS: ${{ steps.tauri.outputs.artifactPaths }}
+        run: node scripts/stage-updater-artifacts.mjs "${{ matrix.name }}" dist-artifacts/updater "${{ runner.temp }}/updater.conf.json"
+
+      - uses: actions/upload-artifact@v6
+        if: env.IS_RELEASE != 'true'
+        with:
+          name: updater-${{ matrix.name }}
+          path: dist-artifacts/updater/*
+          if-no-files-found: error
+
+      - name: list the built files
+        shell: bash
+        env:
+          ARTIFACT_PATHS: ${{ steps.tauri.outputs.artifactPaths }}
+        run: echo "${ARTIFACT_PATHS}"
+
+  updater-manifest:
+    name: publish complete updater manifest
+    needs: [verify, create-release, build]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+      - name: verify all four targets and upload latest.json to the draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+          APP_VERSION: ${{ needs.verify.outputs.app_version }}
+        run: |
+          set -euo pipefail
+          stage="${RUNNER_TEMP}/updater"
+          mkdir -p "${stage}/signatures"
+          # Only modify a draft. Publishing remains a separate, explicit action.
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" > "${stage}/release.json"
+          jq -e '.draft == true' "${stage}/release.json" > /dev/null
+          jq -r '.body' "${stage}/release.json" > "${stage}/notes.md"
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets" > "${stage}/assets.json"
+          gh release download "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --pattern '*.sig' --dir "${stage}/signatures"
+          node scripts/create-updater-manifest.mjs "${APP_VERSION}" "${GITHUB_REPOSITORY}" \
+            "${stage}/assets.json" "${stage}/signatures" "${stage}/notes.md" "${stage}/latest.json"
+          gh release upload "${GITHUB_REF_NAME}" "${stage}/latest.json" --repo "${GITHUB_REPOSITORY}" --clobber

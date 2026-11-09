@@ -1,0 +1,320 @@
+mod asset_updates;
+mod booth_category;
+mod booth_detail;
+mod browser;
+mod browser_dark;
+mod browser_auto;
+mod browser_url;
+#[cfg(target_os = "linux")]
+mod browser_linux;
+mod browser_tabs;
+mod browser_surface;
+mod catalog;
+mod classifier;
+mod commands;
+mod compat;
+mod genre;
+mod hero_image;
+mod db;
+mod file_browser;
+mod free_files;
+mod import_data;
+mod integration;
+mod library_files;
+mod remote_sync;
+mod library_walk;
+mod local_import;
+mod extension_status;
+mod extension_delivery;
+mod existing_import;
+mod matching;
+mod model;
+mod normalize;
+mod presence;
+#[cfg(target_os = "linux")]
+mod presence_linux;
+mod preview_image;
+mod progress;
+mod quiet;
+mod resolve;
+mod retired_classifier;
+mod scan;
+mod sync_export;
+mod sync_meta;
+mod thumb;
+mod view;
+mod unity;
+mod unity_import;
+mod updater;
+
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex};
+use tauri::Manager;
+
+// Reuse the manifest that tauri-build generates for the app. Without it the
+// Windows test loader cannot resolve Common Controls v6's TaskDialogIndirect.
+#[cfg(all(test, windows, target_env = "msvc"))]
+#[link(name = "resource")]
+unsafe extern "C" {}
+
+pub struct AppState {
+    pub db: Mutex<rusqlite::Connection>,
+    pub cancel_extract: AtomicBool,
+    pub extract_running: Arc<AtomicBool>,
+    pub thumbs_dir: std::path::PathBuf,
+    pub previews_dir: std::path::PathBuf,
+    pub hero_images_dir: std::path::PathBuf,
+    pub receiver_error: Mutex<Option<String>>,
+    pub import_guard: Mutex<local_import::ImportGuard>,
+    pub background_mode: AtomicBool,
+    pub staged_left: Mutex<Vec<model::StagedLeftover>>,
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    let mut builder = tauri::Builder::default();
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            presence::show_main_later(app);
+        }));
+    }
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.on_web_content_process_terminate(|webview| {
+            browser::recover_web_content_process(webview.label(), || {
+                if let Err(error) = webview.reload() {
+                    eprintln!("WebView を再読み込みできません: {error}");
+                }
+            });
+        });
+    }
+    builder
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .args([presence::AUTOSTART_ARG])
+                .build(),
+        )
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .on_window_event(|window, event| {
+            presence::handle_main_close(window, event);
+            browser_surface::handle_window_event(window, event);
+        })
+        .setup(|app| {
+            use tauri_plugin_deep_link::DeepLinkExt;
+            updater::initialize(app.handle());
+            let directory = app.path().app_data_dir()?;
+            std::fs::create_dir_all(&directory)?;
+            let thumbs = directory.join("thumbs");
+            let previews = directory.join("previews");
+            let hero_images = directory.join("hero_images");
+            std::fs::create_dir_all(&thumbs)?;
+            std::fs::create_dir_all(&previews)?;
+            std::fs::create_dir_all(&hero_images)?;
+            let connection = db::open(&directory.join("library.sqlite"))
+                .map_err(|err| std::io::Error::other(err))?;
+            // The model classifiers are gone. Their settings go now; a saved cloud API key is
+            // removed off the main thread because macOS may ask for Keychain access.
+            if retired_classifier::retire_settings(&connection).unwrap_or(false) {
+                let service = app.config().identifier.clone();
+                std::thread::spawn(move || retired_classifier::remove_api_key(&service));
+            }
+            // `reresolve_all` can drop an unlinked `owned-*` row at any time. Collected here.
+            let _ = hero_image::prune(&connection, &hero_images);
+            app.manage(AppState {
+                db: Mutex::new(connection),
+                cancel_extract: AtomicBool::new(false),
+                extract_running: Arc::new(AtomicBool::new(false)),
+                thumbs_dir: thumbs,
+                previews_dir: previews,
+                hero_images_dir: hero_images,
+                receiver_error: Mutex::new(None),
+                import_guard: Mutex::new(local_import::ImportGuard::default()),
+                background_mode: AtomicBool::new(false),
+                staged_left: Mutex::new(Vec::new()),
+            });
+            if let Some(state) = app.try_state::<AppState>() {
+                if let Ok(connection) = state.db.lock() {
+                    let _ = db::extension_token(&connection);
+                }
+            }
+            if let Err(err) = local_import::start_receiver(app.handle().clone()) {
+                if let Some(state) = app.try_state::<AppState>() {
+                    if let Ok(mut slot) = state.receiver_error.lock() {
+                        *slot = Some(err);
+                    }
+                }
+            }
+            #[cfg(target_os = "linux")]
+            if app.deep_link().register("vrclibman").is_err() {
+                // URL registration uses external desktop tools. Receiving imports in an
+                // already running app and importing JSON must remain available without them.
+                eprintln!("URL の関連付けを登録できませんでした。アプリを起動してから拡張機能で送信するか、JSON を読み込んでください。");
+            }
+            #[cfg(all(debug_assertions, windows))]
+            {
+                app.deep_link()
+                    .register_all()
+                    .map_err(|err| std::io::Error::other(err.to_string()))?;
+            }
+            let handle = app.handle().clone();
+            app.deep_link().on_open_url(move |event| {
+                let ours = event
+                    .urls()
+                    .iter()
+                    .any(|url| url.as_str().to_ascii_lowercase().starts_with("vrclibman:"));
+                if ours {
+                    presence::show_main_later(&handle);
+                }
+            });
+            let (background_mode, launch_at_login, left) = {
+                let state = app.state::<AppState>();
+                let mut connection = state
+                    .db
+                    .lock()
+                    .map_err(|err| std::io::Error::other(err.to_string()))?;
+                let settings =
+                    db::settings(&connection).map_err(|err| std::io::Error::other(err))?;
+                browser_dark::set_enabled(settings.browser_force_dark);
+                let report = db::sweep_staged_downloads(&mut connection);
+                (
+                    settings.background_mode,
+                    settings.launch_at_login,
+                    report.left,
+                )
+            };
+            presence::remember_background(app.handle(), background_mode);
+            if let Some(state) = app.try_state::<AppState>() {
+                if let Ok(mut slot) = state.staged_left.lock() {
+                    *slot = left;
+                }
+            }
+            crate::remote_sync::start(app.handle());
+            crate::asset_updates::start(app.handle());
+            if let Ok(cache) = app.path().app_cache_dir() {
+                // 「Unityで開く」で取り出した古いパッケージを消す。名前はログに出さない。
+                std::thread::spawn(move || {
+                    let _ = unity_import::clean_cache(
+                        &cache.join(unity_import::CACHE_DIR),
+                        unity_import::CACHE_MAX_AGE,
+                        std::time::SystemTime::now(),
+                    );
+                });
+            }
+            presence::start(app.handle(), background_mode, launch_at_login)
+                .map_err(std::io::Error::other)?;
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            commands::updater_status,
+            commands::check_app_update,
+            commands::download_app_update,
+            commands::install_app_update,
+            commands::import_export,
+            commands::extension_link,
+            commands::integration_status,
+            commands::set_booth_import_mode,
+            commands::regenerate_extension_token,
+            commands::library_stats,
+            commands::list_managed_products,
+            commands::set_product_excluded,
+            commands::list_avatars,
+            commands::list_products_by_category,
+            commands::list_products_by_genre,
+            commands::get_avatar,
+            commands::probe_remote_files,
+            commands::probe_remote_products,
+            commands::product_for_edit,
+            commands::list_unlinked_files,
+            commands::classification_log_runs,
+            commands::classification_log_entries,
+            commands::classification_log_search,
+            commands::classification_unresolved_names,
+            commands::undo_classification_entry,
+            commands::list_product_options,
+            commands::list_knowledge,
+            commands::get_settings,
+            commands::save_settings,
+            commands::update_settings,
+            commands::get_booth_page_interval,
+            commands::set_booth_page_interval,
+            commands::unity_editors,
+            commands::set_unity_editor,
+            commands::update_product,
+            commands::move_product_genre,
+            commands::browser_auto_pending,
+            commands::product_avatar_suggestions,
+            commands::browser_auto_finish,
+            commands::restore_product_classification,
+            commands::unpin_product_classification,
+            commands::register_owned_body,
+            commands::classification_feedback,
+            commands::save_classification_feedback,
+            commands::sync_export_json,
+            commands::save_sync_export,
+            commands::attach_product_to_avatar,
+            commands::link_file,
+            commands::save_avatar,
+            commands::delete_avatar,
+            commands::set_avatar_hero_image,
+            commands::clear_avatar_hero_image,
+            commands::save_base_body,
+            commands::delete_base_body,
+            commands::merge_avatars,
+            commands::restore_seed,
+            commands::reresolve,
+            commands::scan_library,
+            commands::preview_existing_import,
+            commands::register_existing_import,
+            commands::classification_status,
+            commands::extract_products,
+            commands::cancel_extract,
+            commands::catalog_info,
+            commands::refresh_avatar_catalog,
+            commands::setup_status,
+            commands::complete_setup,
+            commands::reopen_setup,
+            commands::mark_owned_avatar,
+            commands::add_free_product,
+            commands::pull_remote_file,
+            commands::push_remote_file,
+            commands::remote_sync_status,
+            commands::cache_thumbnails,
+            commands::cache_product_preview,
+            commands::open_booth_browser,
+            commands::browser_state,
+            commands::browser_panel_snapshot,
+            commands::browser_action,
+            commands::save_browser_bookmark,
+            commands::delete_browser_bookmark,
+            commands::show_booth_library,
+            commands::browse_booth_history,
+            commands::import_booth_page,
+            commands::import_booth_library,
+            commands::cancel_booth_library,
+            commands::clear_booth_session,
+            commands::close_booth_browser,
+            commands::booth_browser_log,
+            commands::download_booth_file,
+            commands::fetch_free_files,
+            commands::asset_update_status,
+            commands::asset_update_history,
+            commands::configure_asset_updates,
+            commands::check_asset_updates,
+            commands::open_local_path,
+            commands::booth_account,
+            commands::list_directory,
+            commands::list_zip_entries,
+            commands::unity_packages,
+            commands::prepare_unity_packages,
+            commands::launch_unity_packages,
+            commands::list_staged_downloads,
+            commands::route_staged_download,
+        ])
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|app, event| presence::handle_run_event(app, event));
+}

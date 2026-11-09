@@ -1,0 +1,456 @@
+use crate::model::Category;
+
+pub const ASSET_GENRES: &[(&str, &str)] = &[
+    ("outfit", "衣装"),
+    ("shoes_socks", "靴・靴下"),
+    ("hair", "髪型"),
+    ("accessory", "アクセサリ"),
+    ("head_ears_tail", "頭・耳・しっぽ"),
+    ("makeup_skin", "メイク・肌テクスチャ"),
+    ("eye_texture", "アイテクスチャ"),
+    ("expression_animation", "表情・アニメーション"),
+    ("pose", "ポーズ"),
+    ("gimmick", "ギミック"),
+    ("particle_effect", "パーティクル・エフェクト"),
+    ("shader", "シェーダー"),
+    ("tool_editor", "ツール・エディタ拡張"),
+    ("other", "その他"),
+];
+pub const WORLD_GENRES: &[(&str, &str)] = &[
+    ("world", "ワールド本体"),
+    ("furniture_props", "家具・小物（ベッドなど）"),
+    ("world_gimmick", "ワールドギミック（Udon）"),
+    ("texture_material", "テクスチャ置換・マテリアル"),
+    ("skybox", "Skybox"),
+    ("lighting_postprocess", "ライティング・ポストプロセス"),
+    ("world_shader", "ワールド用シェーダー"),
+    ("building_terrain", "建物・地形パーツ"),
+    ("audio_bgm", "音・BGM"),
+    ("tool_other", "ツール・その他"),
+];
+
+/// Route / query key for products whose genre is missing or not one of their kind's genres.
+pub const UNSET: &str = "unset";
+
+/// Browse key for free products that are not on disk. Not a stored genre.
+pub const FREE: &str = "free";
+
+/// Genres of a browse kind (`asset` / `world`).
+pub fn kind_genres(kind: &str) -> Option<&'static [(&'static str, &'static str)]> {
+    match kind {
+        "world" => Some(WORLD_GENRES),
+        "asset" => Some(ASSET_GENRES),
+        _ => None,
+    }
+}
+
+pub fn genres(category: Category) -> &'static [(&'static str, &'static str)] {
+    if category == Category::World {
+        WORLD_GENRES
+    } else {
+        ASSET_GENRES
+    }
+}
+
+/// Category stored when a person moves a product onto this genre.
+/// Asset genres stay on the asset side; every world genre is `world`.
+pub fn category_for_genre(genre: &str) -> Option<Category> {
+    if WORLD_GENRES.iter().any(|(key, _)| *key == genre) {
+        return Some(Category::World);
+    }
+    let category = match genre {
+        "outfit" | "shoes_socks" => Category::Outfit,
+        "hair" => Category::Hair,
+        "accessory" | "head_ears_tail" => Category::Accessory,
+        "makeup_skin" | "eye_texture" => Category::Texture,
+        "expression_animation" | "pose" | "gimmick" | "particle_effect" => Category::Gimmick,
+        "shader" | "tool_editor" | "other" => Category::Other,
+        _ => return None,
+    };
+    if validate(category, Some(genre)) != genre {
+        return None;
+    }
+    Some(category)
+}
+
+/// A genre may be stored on this category only when it is one of that category's genres.
+pub fn fits(category: Category, genre: &str) -> bool {
+    validate(category, Some(genre)) == genre && category_for_genre(genre) == Some(category)
+}
+
+pub fn validate(category: Category, genre: Option<&str>) -> String {
+    let fallback = if category == Category::World {
+        "tool_other"
+    } else {
+        "other"
+    };
+    genre
+        .filter(|value| genres(category).iter().any(|(key, _)| key == value))
+        .unwrap_or(fallback)
+        .to_string()
+}
+
+/// Product-type phrases that beat an incidental word in the description or tags.
+/// `None` leaves tag and keyword order unchanged.
+pub fn prefer_listing(category: Category, title: &str, description: &str) -> Option<String> {
+    let title_l = crate::normalize::nfkc(title).to_lowercase();
+    let body_l = crate::normalize::nfkc(description).to_lowercase();
+    let text = format!("{title_l}\n{body_l}");
+    if category == Category::Other
+        && (crate::compat::conversion_profile_title(&title_l)
+            || crate::compat::mochifitter_title(&title_l))
+    {
+        return Some(validate(category, Some("tool_editor")));
+    }
+    if crate::compat::sticker_title(&title_l) {
+        return Some(validate(category, Some("other")));
+    }
+    if category == Category::World && crate::compat::gpu_particle(&text) {
+        return Some("tool_other".into());
+    }
+    if category == Category::Other
+        && (crate::compat::editor_tool_title(&title_l) || crate::compat::editor_tool_lead(&body_l))
+    {
+        return Some("tool_editor".into());
+    }
+    if category == Category::Gimmick && crate::compat::avatar_gimmick_title(&title_l) {
+        if title_expression(&title_l) {
+            return Some("expression_animation".into());
+        }
+        return Some("gimmick".into());
+    }
+    if category == Category::Gimmick && crate::compat::nameplate_accessory(&title_l, &body_l) {
+        return Some("accessory".into());
+    }
+    if category == Category::Outfit
+        && !crate::compat::shoe_title(&title_l)
+        && (crate::compat::clothing_title(&title_l) || crate::compat::outfit_description(&body_l))
+    {
+        return Some("outfit".into());
+    }
+    if category == Category::World
+        && (text.contains("udon")
+            || text.contains("ギミック")
+            || text.contains("gimmick")
+            || text.contains("asmr")
+            || text.contains("ワールドギミック"))
+    {
+        return Some("world_gimmick".into());
+    }
+    None
+}
+
+fn title_expression(title: &str) -> bool {
+    const WORDS: &[&str] = &[
+        "表情",
+        "アニメーション",
+        "animation",
+        "シェイプキー",
+        "shapekey",
+        "shape key",
+        "face tracking",
+        "facetracking",
+        "フェイストラッキング",
+    ];
+    WORDS.iter().any(|word| title.contains(word))
+}
+
+fn has_hair_word(text: &str) -> bool {
+    let stripped = text.replace("髪色", "").replace("髪の色", "");
+    stripped.contains("髪型")
+        || stripped.contains("髪")
+        || stripped.contains("ヘア")
+        || stripped.contains("hair")
+}
+
+fn has_shoe_word(text: &str) -> bool {
+    crate::compat::mentions_shoe(text)
+}
+
+/// Title phrases for products whose BOOTH category and tags did not choose a genre.
+/// Tag settlement keeps using `classify_text`, so these words do not change that path.
+pub fn classify_title_gap(category: Category, title: &str, description: &str) -> Option<String> {
+    let title_l = crate::normalize::nfkc(title).to_lowercase();
+    let text = format!(
+        "{title_l}\n{}",
+        crate::normalize::nfkc(description).to_lowercase()
+    );
+    let has = |words: &[&str]| words.iter().any(|word| text.contains(word));
+    let title_has = |words: &[&str]| words.iter().any(|word| title_l.contains(word));
+    let title_word = |token: &str| crate::normalize::contains_ascii_word(&title_l, token);
+    let key = if category == Category::World {
+        if has(&["skybox", "スカイボックス"]) {
+            "skybox"
+        } else if has(&["ベッド", "椅子", "いす", "家具", "ソファ"])
+            || title_has(&["こたつ", "毛布", "布団", "huton"])
+        {
+            "furniture_props"
+        } else if title_has(&["qvpen", "差し替えモデル", "pencil"]) {
+            "texture_material"
+        } else if has(&["udon", "ワールドギミック", "ギミック"]) || title_has(&["asmr"])
+        {
+            "world_gimmick"
+        } else if has(&["ライティング", "post process", "ポストプロセス"]) {
+            "lighting_postprocess"
+        } else if has(&["シェーダー", "shader"]) {
+            "world_shader"
+        } else if has(&["bgm", "効果音", "音源"]) {
+            "audio_bgm"
+        } else if has(&["建物", "地形", "building", "terrain"]) {
+            "building_terrain"
+        } else if has(&["テクスチャ", "マテリアル", "material"]) || title_has(&["スイッチ"])
+        {
+            "texture_material"
+        } else if crate::compat::world_placement(&text) {
+            // Placement fills a missing type, after furniture, shaders, and other assets.
+            "world_gimmick"
+        } else if has(&["ワールド", "world"]) {
+            "world"
+        } else {
+            return None;
+        }
+    } else if has(&["アイテクスチャ", "瞳", "eye texture", "eyetexture"]) {
+        "eye_texture"
+    } else if has_shoe_word(&text) {
+        "shoes_socks"
+    } else if has_hair_word(&text) {
+        "hair"
+    } else if has(&["メイク", "肌テクスチャ", "skin texture"]) || title_has(&["ニップル", "nipple"])
+    {
+        "makeup_skin"
+    } else if has(&["表情", "アニメーション", "animation"])
+        || title_has(&[
+            "face tracking",
+            "facetracking",
+            "フェイストラッキング",
+            "シェイプキー",
+            "shapekey",
+            "shape key",
+        ])
+    {
+        "expression_animation"
+    } else if has(&["ポーズ", "pose"]) {
+        "pose"
+    } else if has(&["パーティクル", "particle", "エフェクト", "effect"]) {
+        "particle_effect"
+    } else if has(&["シェーダー", "shader"]) {
+        "shader"
+    } else if has(&["ツール", "エディタ拡張", "editor extension"])
+        || (category == Category::Other && title_has(&["もちふぃった", "mochifitter"]))
+    {
+        "tool_editor"
+    } else if has(&["耳", "しっぽ", "尻尾"]) {
+        "head_ears_tail"
+    } else if has(&[
+        "アクセサリ",
+        "accessory",
+        "ピアス",
+        "メガネ",
+        "イヤリング",
+        "earring",
+        "リング",
+        "glasses",
+    ]) || title_has(&["ディスク", "カード"])
+        || title_word("ring")
+        || title_word("bag")
+    {
+        "accessory"
+    } else if has(&["ギミック", "gimmick"])
+        || title_has(&["なでなで", "kisssystem", "キス", "スマートフォン"])
+        || title_word("sps")
+        || title_word("phone")
+    {
+        "gimmick"
+    } else if has(&[
+        "衣装",
+        "服",
+        "outfit",
+        "dress",
+        "techwear",
+        "tech wear",
+        "部屋着",
+        "ルームウェア",
+        "ずぼん",
+        "ズボン",
+        "fullpack",
+        "full pack",
+    ]) {
+        "outfit"
+    } else if title_has(&["キット"]) {
+        "gimmick"
+    } else {
+        return None;
+    };
+    Some(key.to_string())
+}
+
+/// Deterministic keywords shared with tag names. Title-only phrases live in `classify_title_gap`.
+pub fn classify_text(category: Category, title: &str, description: &str) -> Option<String> {
+    let text = format!("{title}\n{description}").to_lowercase();
+    let has = |words: &[&str]| words.iter().any(|word| text.contains(word));
+    let key = if category == Category::World {
+        if has(&["skybox", "スカイボックス"]) {
+            "skybox"
+        } else if has(&["ベッド", "椅子", "いす", "家具", "ソファ"]) {
+            "furniture_props"
+        } else if has(&["udon", "ワールドギミック", "ギミック"]) {
+            "world_gimmick"
+        } else if has(&["ライティング", "post process", "ポストプロセス"]) {
+            "lighting_postprocess"
+        } else if has(&["シェーダー", "shader"]) {
+            "world_shader"
+        } else if has(&["bgm", "効果音", "音源"]) {
+            "audio_bgm"
+        } else if has(&["建物", "地形", "building", "terrain"]) {
+            "building_terrain"
+        } else if has(&["テクスチャ", "マテリアル", "material"]) {
+            "texture_material"
+        } else if has(&["ワールド", "world"]) {
+            "world"
+        } else {
+            return None;
+        }
+    } else if has(&["アイテクスチャ", "瞳", "eye texture", "eyetexture"]) {
+        "eye_texture"
+    } else if has_shoe_word(&text) {
+        "shoes_socks"
+    } else if has_hair_word(&text) {
+        "hair"
+    } else if has(&["メイク", "肌テクスチャ", "skin texture"]) {
+        "makeup_skin"
+    } else if has(&["表情", "アニメーション", "animation"]) {
+        "expression_animation"
+    } else if has(&["ポーズ", "pose"]) {
+        "pose"
+    } else if has(&["パーティクル", "particle", "エフェクト", "effect"]) {
+        "particle_effect"
+    } else if has(&["シェーダー", "shader"]) {
+        "shader"
+    } else if has(&["ツール", "エディタ拡張", "editor extension"]) {
+        "tool_editor"
+    } else if has(&["耳", "しっぽ", "尻尾"]) {
+        "head_ears_tail"
+    } else if has(&["アクセサリ", "accessory", "ピアス", "メガネ"]) {
+        "accessory"
+    } else if has(&["ギミック", "gimmick"]) {
+        "gimmick"
+    } else if has(&["衣装", "服", "outfit", "dress"]) {
+        "outfit"
+    } else {
+        return None;
+    };
+    Some(key.to_string())
+}
+
+/// Tags that do not say what kind of item this is.
+pub fn generic_tag(tag: &str) -> bool {
+    const STOP: &[&str] = &[
+        "vrchat",
+        "vrc",
+        "unity",
+        "3dモデル",
+        "3d model",
+        "3dmodel",
+        "booth",
+        "vr",
+    ];
+    let key = crate::normalize::nfkc(tag).trim().to_lowercase();
+    STOP.contains(&key.as_str())
+}
+
+/// Keyword rules applied to tag names before the title and description.
+pub fn genre_from_tags(category: Category, tags: &[String]) -> Option<String> {
+    let kept: Vec<&str> = tags
+        .iter()
+        .map(String::as_str)
+        .filter(|tag| !tag.trim().is_empty() && !generic_tag(tag))
+        .collect();
+    if kept.is_empty() {
+        return None;
+    }
+    let text = kept.join("\n");
+    classify_text(category, &text, "")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tags_use_the_same_keywords_and_skip_generic_names() {
+        assert!(generic_tag("VRChat"));
+        assert!(generic_tag("３Ｄモデル"));
+        assert!(!generic_tag("家具"));
+        assert_eq!(
+            genre_from_tags(Category::World, &["VRChat".into(), "Skybox".into()]),
+            Some("skybox".into())
+        );
+        assert_eq!(
+            genre_from_tags(Category::Texture, &["Unity".into(), "3Dモデル".into()]),
+            None
+        );
+        assert_eq!(
+            genre_from_tags(Category::World, &["こたつ".into()]),
+            None,
+            "title phrases are not tag rules"
+        );
+        assert_eq!(
+            classify_title_gap(Category::World, "サンプルこたつ", ""),
+            Some("furniture_props".into())
+        );
+    }
+
+    #[test]
+    fn keyword_rules() {
+        assert_eq!(
+            classify_text(Category::Texture, "きらきら瞳", "ダミー"),
+            Some("eye_texture".into())
+        );
+        assert_eq!(
+            classify_text(Category::World, "夜の Skybox", "ダミー"),
+            Some("skybox".into())
+        );
+        assert_eq!(
+            classify_text(Category::World, "家具セット", "ベッドと椅子"),
+            Some("furniture_props".into())
+        );
+    }
+    #[test]
+    fn mismatched_genre_falls_back() {
+        assert_eq!(validate(Category::World, Some("hair")), "tool_other");
+        assert_eq!(validate(Category::Hair, Some("skybox")), "other");
+        assert_eq!(validate(Category::Accessory, Some(FREE)), "other");
+        assert_eq!(validate(Category::World, Some(FREE)), "tool_other");
+    }
+
+    #[test]
+    fn a_genre_fits_only_its_own_category() {
+        assert!(fits(Category::Outfit, "outfit"));
+        assert!(fits(Category::Outfit, "shoes_socks"));
+        assert!(!fits(Category::Outfit, "hair"));
+        assert!(!fits(Category::Outfit, "eye_texture"));
+        assert!(!fits(Category::Outfit, "accessory"));
+        assert!(fits(Category::Other, "tool_editor"));
+        assert!(!fits(Category::Other, "outfit"));
+        assert!(!fits(Category::Other, "eye_texture"));
+        assert!(!fits(Category::Other, "gimmick"));
+        assert!(!fits(Category::Other, "expression_animation"));
+        assert!(fits(Category::Texture, "eye_texture"));
+        assert!(fits(Category::World, "furniture_props"));
+    }
+
+    #[test]
+    fn move_category_stays_inside_the_genre_kind() {
+        for (key, _) in ASSET_GENRES {
+            let category = category_for_genre(key).unwrap();
+            assert_ne!(category, Category::World, "{key}");
+            assert_eq!(validate(category, Some(key)), *key);
+        }
+        for (key, _) in WORLD_GENRES {
+            assert_eq!(category_for_genre(key), Some(Category::World));
+            assert_eq!(validate(Category::World, Some(key)), *key);
+        }
+        assert_eq!(category_for_genre("unset"), None);
+        assert_eq!(category_for_genre("avatar"), None);
+    }
+}

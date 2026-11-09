@@ -1,0 +1,778 @@
+use serde::{Deserialize, Serialize};
+
+/// Booth page and item JSON were both missing. Not a failed extraction.
+pub const UNAVAILABLE_DESCRIPTION: &str = "公開終了（取得できず）";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Category {
+    Avatar,
+    Outfit,
+    Hair,
+    Accessory,
+    Texture,
+    Gimmick,
+    World,
+    Other,
+}
+
+impl Category {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "avatar" => Some(Self::Avatar),
+            "outfit" => Some(Self::Outfit),
+            "hair" => Some(Self::Hair),
+            "accessory" => Some(Self::Accessory),
+            "texture" => Some(Self::Texture),
+            "gimmick" => Some(Self::Gimmick),
+            "world" => Some(Self::World),
+            "other" => Some(Self::Other),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Avatar => "avatar",
+            Self::Outfit => "outfit",
+            Self::Hair => "hair",
+            Self::Accessory => "accessory",
+            Self::Texture => "texture",
+            Self::Gimmick => "gimmick",
+            Self::World => "world",
+            Self::Other => "other",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Product {
+    pub booth_id: String,
+    pub title: String,
+    pub shop: String,
+    pub description_snippet: String,
+    pub url: String,
+    pub thumbnail_url: Option<String>,
+    pub thumbnail_path: Option<String>,
+    pub category: Option<Category>,
+    pub category_locked: bool,
+    pub genre: Option<String>,
+    pub genre_locked: bool,
+    pub compatible_avatars: Vec<String>,
+    pub unresolved_names: Vec<String>,
+    pub is_generic: bool,
+    pub confidence: Option<f64>,
+    pub links_locked: bool,
+    pub user_confirmed: bool,
+    pub needs_review: bool,
+    pub imported_at: String,
+    pub updated_at: String,
+    pub extracted_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedProduct {
+    pub booth_id: String,
+    pub title: String,
+    pub shop: String,
+    pub category: Option<Category>,
+    pub excluded: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalFile {
+    pub path: String,
+    pub filename: String,
+    pub is_dir: bool,
+    pub size: u64,
+    pub linked_product_id: Option<String>,
+    pub candidate_product_id: Option<String>,
+    pub match_score: f64,
+    pub link_source: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Avatar {
+    pub id: String,
+    pub display_name: String,
+    pub base_body: Option<String>,
+    pub aliases: Vec<String>,
+    pub is_builtin: bool,
+    pub owned: bool,
+    pub notes: String,
+    /// Local path. Reaches the screen only through `AvatarDetail`, never with the dictionary.
+    #[serde(skip_serializing)]
+    pub hero_image_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BaseBody {
+    pub id: String,
+    pub display_name: String,
+    pub note: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Link {
+    pub product_id: String,
+    pub avatar_id: String,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IncomingVariation {
+    pub name: String,
+    pub owned: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IncomingDownload {
+    pub filename: String,
+    pub size_bytes: Option<u64>,
+    pub variation: String,
+    pub downloadable_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IncomingProduct {
+    pub booth_id: String,
+    pub title: String,
+    pub shop: String,
+    pub description_snippet: String,
+    pub url: String,
+    pub thumbnail_url: Option<String>,
+    pub variations: Vec<IncomingVariation>,
+    pub downloads: Vec<IncomingDownload>,
+    /// Missing means this payload does not know. It must not clear a stored flag.
+    pub is_free: Option<bool>,
+    pub is_adult: Option<bool>,
+    /// Library card badge「非公開」. Missing must not clear a stored flag.
+    /// This is not「公開終了」 and must not force category other.
+    pub unpublished: Option<bool>,
+    /// Missing means this payload does not know. It must not clear a stored category.
+    pub booth_category: Option<BoothCategoryInput>,
+    /// Missing means this payload does not know. An empty list is a known empty tag list.
+    pub booth_tags: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BoothCategoryInput {
+    pub id: Option<i64>,
+    pub name: String,
+    pub parent: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VariationFact {
+    pub booth_id: String,
+    pub name: String,
+    pub owned: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadFact {
+    pub booth_id: String,
+    pub variation: String,
+    pub filename: String,
+    pub size_bytes: Option<u64>,
+    pub downloaded: bool,
+    pub local_path: Option<String>,
+    pub downloadable_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductFlag {
+    pub booth_id: String,
+    pub is_free: Option<bool>,
+    pub is_adult: Option<bool>,
+    pub unpublished: Option<bool>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FilePlace {
+    Local,
+    Remote,
+    Missing,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlacedDownload {
+    pub booth_id: String,
+    pub variation: String,
+    pub filename: String,
+    pub size_bytes: Option<u64>,
+    pub state: FilePlace,
+    pub local_path: Option<String>,
+    pub remote_path: Option<String>,
+    pub downloadable_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadFinished {
+    pub booth_id: String,
+    pub path: String,
+    #[serde(default)]
+    pub filename: String,
+    #[serde(default)]
+    pub size: Option<u64>,
+    #[serde(default)]
+    pub is_free: Option<bool>,
+    #[serde(default)]
+    pub is_adult: Option<bool>,
+    #[serde(default)]
+    pub variation: String,
+    #[serde(default)]
+    pub title: String,
+}
+
+/// One classification result before it is applied: from the BOOTH category and tags, the
+/// title and description rules, or the catalog. `compatible_avatars` holds names found
+/// outside the text; the description's own list still wins over them.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Extraction {
+    pub category: Category,
+    pub genre: Option<String>,
+    pub compatible_avatars: Vec<String>,
+    pub is_generic: bool,
+    pub confidence: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportReport {
+    pub inserted: u32,
+    pub updated: u32,
+    pub unchanged: u32,
+    pub skipped: u32,
+    pub variations: u32,
+    pub downloads: u32,
+    pub unnamed_downloads: u32,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanReport {
+    pub indexed: u32,
+    pub linked: u32,
+    pub truncated: bool,
+    pub root: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtractReport {
+    pub processed: u32,
+    pub cancelled: bool,
+    /// Decided from the BOOTH category id or name, and tags when those were enough.
+    pub booth_settled: u32,
+    /// Left open by the category and tags, so the title and description rules decided it.
+    pub rule_filled: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassificationStatus {
+    pub classifier_version: i32,
+    pub stale_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionLink {
+    pub token: String,
+    pub port: u16,
+    pub listening: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Settings {
+    pub confidence_threshold: f64,
+    pub library_folder: String,
+    pub builtin_browser: bool,
+    /// Invert light pages in the in-app browser. Images, video, and canvas stay original.
+    pub browser_force_dark: bool,
+    #[serde(default = "default_browser_auto_register")]
+    pub browser_auto_register: bool,
+    /// `external` (system browser) or `builtin` (in-app browser tab).
+    pub booth_link_target: String,
+    pub remote_library_folder: String,
+    pub remote_auto_sync: bool,
+    pub route_downloads: bool,
+    /// Whether this platform provides the tray controls needed for background operation.
+    pub background_supported: bool,
+    pub background_mode: bool,
+    pub launch_at_login: bool,
+    pub classification_dismissed_version: i32,
+    pub ui_rail_width: u32,
+    /// Left sidebar shows icons only.
+    pub ui_rail_collapsed: bool,
+    pub ui_genre_width: u32,
+    pub preview_pane: bool,
+    pub preview_pane_width: u32,
+    /// Avatar detail hero: large | small | off.
+    pub avatar_hero: String,
+    /// Right panel tab kinds and the active index, as normalized JSON. Never holds a URL.
+    pub right_panel_tabs: String,
+    pub check_update_on_startup: bool,
+    pub ui_update_dismissed_version: String,
+    /// Read-only. Created once on first start, and never in a settings patch.
+    pub device_id: String,
+    /// Shown to other devices. Defaults to the OS host name.
+    pub device_name: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsInput {
+    pub confidence_threshold: f64,
+    pub library_folder: String,
+    #[serde(default)]
+    pub builtin_browser: bool,
+    #[serde(default)]
+    pub browser_force_dark: bool,
+    #[serde(default = "default_browser_auto_register")]
+    pub browser_auto_register: bool,
+    #[serde(default = "default_booth_link_target")]
+    pub booth_link_target: String,
+    #[serde(default)]
+    pub remote_library_folder: String,
+    #[serde(default)]
+    pub remote_auto_sync: bool,
+    #[serde(default)]
+    pub route_downloads: bool,
+    #[serde(default)]
+    pub background_mode: bool,
+    #[serde(default)]
+    pub launch_at_login: bool,
+    #[serde(default)]
+    pub classification_dismissed_version: i32,
+    #[serde(default = "default_ui_rail_width")]
+    pub ui_rail_width: u32,
+    #[serde(default)]
+    pub ui_rail_collapsed: bool,
+    #[serde(default = "default_ui_genre_width")]
+    pub ui_genre_width: u32,
+    #[serde(default = "default_preview_pane")]
+    pub preview_pane: bool,
+    #[serde(default = "default_preview_pane_width")]
+    pub preview_pane_width: u32,
+    #[serde(default = "default_avatar_hero")]
+    pub avatar_hero: String,
+    #[serde(default = "default_right_panel_tabs")]
+    pub right_panel_tabs: String,
+    #[serde(default)]
+    pub check_update_on_startup: bool,
+    #[serde(default)]
+    pub ui_update_dismissed_version: String,
+}
+
+fn default_browser_auto_register() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SettingsPatch {
+    pub confidence_threshold: Option<f64>,
+    pub library_folder: Option<String>,
+    pub builtin_browser: Option<bool>,
+    pub browser_force_dark: Option<bool>,
+    pub browser_auto_register: Option<bool>,
+    pub booth_link_target: Option<String>,
+    pub remote_library_folder: Option<String>,
+    pub remote_auto_sync: Option<bool>,
+    pub route_downloads: Option<bool>,
+    pub background_mode: Option<bool>,
+    pub launch_at_login: Option<bool>,
+    pub classification_dismissed_version: Option<i32>,
+    pub ui_rail_width: Option<u32>,
+    pub ui_rail_collapsed: Option<bool>,
+    pub ui_genre_width: Option<u32>,
+    #[serde(default)]
+    pub preview_pane: Option<bool>,
+    pub preview_pane_width: Option<u32>,
+    pub avatar_hero: Option<String>,
+    pub right_panel_tabs: Option<String>,
+    pub check_update_on_startup: Option<bool>,
+    pub ui_update_dismissed_version: Option<String>,
+    pub device_name: Option<String>,
+}
+
+impl SettingsPatch {
+    pub fn apply(&self, current: Settings) -> SettingsInput {
+        SettingsInput {
+            confidence_threshold: self
+                .confidence_threshold
+                .unwrap_or(current.confidence_threshold),
+            library_folder: self
+                .library_folder
+                .clone()
+                .unwrap_or(current.library_folder),
+            builtin_browser: self.builtin_browser.unwrap_or(current.builtin_browser),
+            browser_force_dark: self.browser_force_dark.unwrap_or(current.browser_force_dark),
+            browser_auto_register: self.browser_auto_register.unwrap_or(current.browser_auto_register),
+            booth_link_target: self
+                .booth_link_target
+                .clone()
+                .unwrap_or(current.booth_link_target),
+            remote_library_folder: self
+                .remote_library_folder
+                .clone()
+                .unwrap_or(current.remote_library_folder),
+            remote_auto_sync: self.remote_auto_sync.unwrap_or(current.remote_auto_sync),
+            route_downloads: self.route_downloads.unwrap_or(current.route_downloads),
+            background_mode: self.background_mode.unwrap_or(current.background_mode),
+            launch_at_login: self.launch_at_login.unwrap_or(current.launch_at_login),
+            classification_dismissed_version: self
+                .classification_dismissed_version
+                .unwrap_or(current.classification_dismissed_version),
+            ui_rail_width: self.ui_rail_width.unwrap_or(current.ui_rail_width),
+            ui_rail_collapsed: self.ui_rail_collapsed.unwrap_or(current.ui_rail_collapsed),
+            ui_genre_width: self.ui_genre_width.unwrap_or(current.ui_genre_width),
+            preview_pane: self.preview_pane.unwrap_or(current.preview_pane),
+            preview_pane_width: clamp_preview_pane_width(
+                self.preview_pane_width.unwrap_or(current.preview_pane_width),
+            ),
+            avatar_hero: normalize_avatar_hero(
+                self.avatar_hero
+                    .as_deref()
+                    .unwrap_or(&current.avatar_hero),
+            ),
+            right_panel_tabs: normalize_right_panel_tabs(
+                self.right_panel_tabs
+                    .as_deref()
+                    .unwrap_or(&current.right_panel_tabs),
+            ),
+            check_update_on_startup: self
+                .check_update_on_startup
+                .unwrap_or(current.check_update_on_startup),
+            ui_update_dismissed_version: self
+                .ui_update_dismissed_version
+                .clone()
+                .unwrap_or(current.ui_update_dismissed_version),
+        }
+    }
+}
+
+fn default_booth_link_target() -> String {
+    "external".into()
+}
+
+fn default_ui_rail_width() -> u32 {
+    232
+}
+
+fn default_ui_genre_width() -> u32 {
+    200
+}
+
+fn default_preview_pane() -> bool {
+    false
+}
+
+fn default_preview_pane_width() -> u32 {
+    300
+}
+
+pub(crate) fn clamp_ui_rail_width(value: u32) -> u32 {
+    value.clamp(180, 360)
+}
+
+pub(crate) fn clamp_ui_genre_width(value: u32) -> u32 {
+    value.clamp(160, 320)
+}
+
+
+pub const DEFAULT_AVATAR_HERO: &str = "small";
+
+/// `large` | `small` | `off`. Unknown values become `small`.
+pub(crate) fn normalize_avatar_hero(value: &str) -> String {
+    match value.trim().to_lowercase().as_str() {
+        "large" => "large".into(),
+        "off" => "off".into(),
+        _ => "small".into(),
+    }
+}
+
+fn default_avatar_hero() -> String {
+    DEFAULT_AVATAR_HERO.into()
+}
+
+pub(crate) fn clamp_preview_pane_width(value: u32) -> u32 {
+    value.clamp(240, 1600)
+}
+
+/// Fixed tab kinds stored in settings. Web pages are session tabs and are not listed here.
+/// `browser` remains readable so older settings still load; it is dropped on save.
+const RIGHT_PANEL_KINDS: &[&str] = &["preview", "files"];
+/// Kinds that may appear only once. Page tabs are not fixed kinds, so this does not apply to them.
+const RIGHT_PANEL_SINGLETONS: &[&str] = &["preview", "files"];
+const RIGHT_PANEL_MAX_TABS: usize = 12;
+pub(crate) const DEFAULT_RIGHT_PANEL_TABS: &str = r#"{"tabs":["preview"],"active":0}"#;
+
+fn default_right_panel_tabs() -> String {
+    DEFAULT_RIGHT_PANEL_TABS.into()
+}
+
+#[derive(Deserialize, Serialize)]
+struct RightPanelTabs {
+    tabs: Vec<String>,
+    active: usize,
+}
+
+/// Keep only known kinds, so a page address or other free text is never stored here.
+pub(crate) fn normalize_right_panel_tabs(raw: &str) -> String {
+    let Ok(parsed) = serde_json::from_str::<RightPanelTabs>(raw) else {
+        return default_right_panel_tabs();
+    };
+    let mut tabs: Vec<String> = Vec::new();
+    let mut active = 0;
+    for (index, kind) in parsed.tabs.iter().enumerate() {
+        if tabs.len() >= RIGHT_PANEL_MAX_TABS {
+            break;
+        }
+        if !RIGHT_PANEL_KINDS.contains(&kind.as_str()) {
+            continue;
+        }
+        if RIGHT_PANEL_SINGLETONS.contains(&kind.as_str()) {
+            if let Some(existing) = tabs.iter().position(|tab| tab == kind) {
+                // An active duplicate keeps focus on the tab it collapsed into.
+                if index == parsed.active {
+                    active = existing;
+                }
+                continue;
+            }
+        }
+        if index <= parsed.active {
+            active = tabs.len();
+        }
+        tabs.push(kind.clone());
+    }
+    let active = if tabs.is_empty() { 0 } else { active.min(tabs.len() - 1) };
+    serde_json::to_string(&RightPanelTabs { tabs, active })
+        .unwrap_or_else(|_| default_right_panel_tabs())
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StagedLeftover {
+    pub path: String,
+    pub booth_id: String,
+    pub filename: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogInfo {
+    pub count: u32,
+    pub fetched_on: String,
+    pub upstream_updated: String,
+    pub source_url: String,
+    pub terms_url: String,
+    pub author: String,
+    pub credit: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogRefresh {
+    pub added: u32,
+    pub total: u32,
+    pub upstream_updated: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetupStatus {
+    pub complete: bool,
+}
+
+/// One avatar link captured so a manual placement can be undone.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotLink {
+    pub avatar_id: String,
+    pub source: String,
+}
+
+/// Owned-flag change that belongs with a classification snapshot.
+/// `owned` is the value to restore. A placeholder created for this placement
+/// is removed when `remove_if_unused` is set and nothing else still links to it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct OwnedAvatarRestore {
+    pub id: String,
+    pub display_name: String,
+    pub aliases: Vec<String>,
+    pub owned: bool,
+    pub remove_if_unused: bool,
+}
+
+/// Classification fields captured before a manual genre move, so the move can be undone.
+/// A product is pinned when both `category_locked` and `genre_locked` are set.
+/// Link and ownership fields are set only when the placement changed them.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassificationSnapshot {
+    pub booth_id: String,
+    pub category: Option<String>,
+    pub genre: Option<String>,
+    pub category_locked: bool,
+    pub genre_locked: bool,
+    pub user_confirmed: bool,
+    pub needs_review: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links_locked: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<Vec<SnapshotLink>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub owned_avatars: Vec<OwnedAvatarRestore>,
+    /// Extraction names from before this placement. Absent on a genre move,
+    /// so restoring that move leaves the name lists alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compatible_avatars: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unresolved_names: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_generic: Option<bool>,
+}
+
+/// Result of registering a misclassified product as an owned avatar body.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum RegisterOwnedBodyResult {
+    Registered {
+        snapshot: ClassificationSnapshot,
+        avatar_id: String,
+        display_name: String,
+    },
+    NeedsName {
+        suggested_name: String,
+        candidates: Vec<String>,
+    },
+}
+
+#[cfg(test)]
+mod owned_body_json_tests {
+    use super::*;
+
+    #[test]
+    fn needs_name_uses_ipc_camel_case_fields() {
+        let value = serde_json::to_value(RegisterOwnedBodyResult::NeedsName {
+            suggested_name: "見本".into(), candidates: vec![],
+        }).unwrap();
+        assert_eq!(value["kind"], "needsName");
+        assert_eq!(value["suggestedName"], "見本");
+        assert!(value.get("suggested_name").is_none());
+    }
+
+    #[test]
+    fn registered_uses_ipc_camel_case_fields() {
+        let snapshot: ClassificationSnapshot = serde_json::from_value(serde_json::json!({
+            "boothId": "123456", "category": null, "genre": null,
+            "categoryLocked": false, "genreLocked": false,
+            "userConfirmed": false, "needsReview": false
+        })).unwrap();
+        let value = serde_json::to_value(RegisterOwnedBodyResult::Registered {
+            snapshot, avatar_id: "sample".into(), display_name: "見本".into(),
+        }).unwrap();
+        assert_eq!(value["avatarId"], "sample");
+        assert_eq!(value["displayName"], "見本");
+        assert!(value.get("avatar_id").is_none());
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductUpdate {
+    pub booth_id: String,
+    pub category: Option<String>,
+    pub genre: Option<String>,
+    pub is_generic: Option<bool>,
+    pub avatar_ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AvatarInput {
+    pub id: Option<String>,
+    pub display_name: String,
+    pub base_body: Option<String>,
+    pub aliases: Vec<String>,
+    pub notes: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BaseBodyInput {
+    pub id: Option<String>,
+    pub display_name: String,
+    pub note: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Knowledge {
+    pub avatars: Vec<Avatar>,
+    pub base_bodies: Vec<BaseBody>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryStats {
+    pub products: u32,
+    pub owned_avatars: u32,
+    pub unextracted: u32,
+    pub unlinked_files: u32,
+}
+
+/// 進捗の状態。省略時は running（古い送り方との互換）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProgressState {
+    #[default]
+    Running,
+    Done,
+    Error,
+    Cancelled,
+}
+
+/// `job-progress` の中身。送り方は `progress.rs` にまとめる。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobProgress {
+    pub job: String,
+    pub current: u32,
+    pub total: u32,
+    pub message: String,
+    #[serde(default)]
+    pub state: ProgressState,
+    /// 上部の帯に出さず、その設定の欄だけで見せる仕事。
+    #[serde(default)]
+    pub background: bool,
+}
+
+pub fn now_iso() -> String {
+    chrono::Utc::now().to_rfc3339()
+}

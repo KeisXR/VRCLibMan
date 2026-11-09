@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ja">
+  <head><meta charset="UTF-8" /><title>Browser panel layout regression</title></head>
+  <body>
+    <div id="root"></div>
+    <script type="module">
+      import React from "react";
+      import ReactDOM from "react-dom/client";
+      import App from "/src/App.tsx";
+      import { BrowserChrome } from "/src/components/BrowserChrome.tsx";
+      import { api } from "/src/api.ts";
+      import { previewBrowserPanelArea } from "/src/preview/browser.ts";
+      import "/src/styles.css";
+
+      const fixture = window.layoutFixture = { ready: false, error: null, area: previewBrowserPanelArea };
+      try {
+        await api.completeSetup();
+        await api.setBoothImportMode("browser");
+        if (new URLSearchParams(location.search).has("standalone")) {
+          const state = await api.browserAction({ kind: "newTab", url: "https://example.test/" });
+          ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(BrowserChrome, { hostId: state.hosts[0].id }));
+        } else {
+        await api.updateSettings({ previewPane: true, previewPaneWidth: 720, rightPanelTabs: '{"tabs":["preview"],"active":0}' });
+        location.hash = "#/worlds";
+        ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(React.StrictMode, null, React.createElement(App)));
+        for (let attempt = 0; !document.querySelector("#right-panel"); attempt++) {
+          if (attempt > 100) throw new Error("Right panel did not mount");
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        // Let the app shell finish subscribing before requesting a page tab.
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        fixture.pageId = (await api.browserAction({ kind: "newTab", url: "https://example.test/" })).activeId;
+        }
+        fixture.ready = true;
+      } catch (error) {
+        fixture.error = String(error);
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,146 @@
+import { useEffect, useMemo, useState } from "react";
+import { api } from "../api";
+import { useShell } from "../App";
+import { CATEGORY_LABEL } from "../types";
+import type { AvatarCard } from "../types";
+import { Thumb, errorText } from "../ui";
+
+export function AvatarsPage() {
+  const { revision, fail } = useShell();
+  const [cards, setCards] = useState<AvatarCard[] | null>(null);
+  const [query, setQuery] = useState("");
+  const [grouped, setGrouped] = useState(true);
+  const [onlyOwned, setOnlyOwned] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.avatars().then(
+      (value) => {
+        if (!cancelled) setCards(value);
+      },
+      (err: unknown) => {
+        if (!cancelled) fail(errorText(err));
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [revision, fail]);
+
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return (cards ?? []).filter((card) => {
+      if (onlyOwned && !card.owned) return false;
+      if (!needle) return true;
+      const haystack = [card.displayName, card.baseBodyName ?? "", ...card.aliases]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(needle);
+    });
+  }, [cards, query, onlyOwned]);
+
+  return (
+    <section>
+      <div className="page-head">
+        <div>
+          <h1>アバター</h1>
+        </div>
+        <div className="toolbar">
+          <input
+            className="search"
+            value={query}
+            placeholder="名前で絞り込む"
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <label className="switch-label">
+            <input type="checkbox" checked={onlyOwned} onChange={(event) => setOnlyOwned(event.target.checked)} />
+            持っているアバターだけ表示
+          </label>
+          <button className="button" type="button" onClick={() => setGrouped((value) => !value)}>
+            {grouped ? "素体別" : "一覧"}
+          </button>
+        </div>
+      </div>
+      {cards && cards.length === 0 && (
+        <div className="empty">
+          アバターはまだ登録されていません。<a href="#/import">インポート</a>から BOOTH の商品を読み込んでください。
+        </div>
+      )}
+      {cards && cards.length > 0 && filtered.length === 0 && <div className="empty">一致するアバターがありません。</div>}
+      <AvatarGroups title={onlyOwned ? "" : "持っているアバター"} cards={filtered.filter((card) => card.owned)} grouped={grouped} />
+      {!onlyOwned && (
+        <AvatarGroups title="衣装の対応先" cards={filtered.filter((card) => !card.owned)} grouped={grouped} note="所持が登録されていないアバターです。" />
+      )}
+    </section>
+  );
+}
+
+/** One avatar card linking to its detail page. Shared with the library search results. */
+export function AvatarCardLink({ card }: { card: AvatarCard }) {
+  return (
+    <a className="card avatar-card" href={`#/avatar/${encodeURIComponent(card.id)}`}>
+      <Thumb path={card.thumbnailPath} url={card.thumbnailUrl} name={card.displayName} />
+      <div>
+        <h2 className="card-title">{card.displayName}</h2>
+        <div className="pills">
+          <span className="pill">{CATEGORY_LABEL.outfit} {card.outfitCount}</span>
+          <span className="pill">{CATEGORY_LABEL.hair} {card.hairCount}</span>
+          <span className="pill">{CATEGORY_LABEL.gimmick} {card.gimmickCount}</span>
+          {card.genericCount > 0 && <span className="pill">汎用 {card.genericCount}</span>}
+        </div>
+      </div>
+    </a>
+  );
+}
+
+function AvatarGroups({
+  title,
+  note,
+  cards,
+  grouped,
+}: {
+  title: string;
+  note?: string;
+  cards: AvatarCard[];
+  grouped: boolean;
+}) {
+  const groups = useMemo(() => {
+    if (cards.length === 0) return [];
+    if (!grouped) return [{ title: "", cards }];
+    const order: string[] = [];
+    const map = new Map<string, { title: string; cards: AvatarCard[] }>();
+    for (const card of cards) {
+      const key = card.baseBody || "solo";
+      const existing = map.get(key);
+      if (existing) {
+        existing.cards.push(card);
+      } else {
+        order.push(key);
+        map.set(key, {
+          title: card.baseBodyName ?? "個別のアバター",
+          cards: [card],
+        });
+      }
+    }
+    return order.map((key) => map.get(key)!);
+  }, [cards, grouped]);
+
+  if (cards.length === 0) return null;
+
+  return (
+    <div className="ownership">
+      {title && <h2 className="ownership-title">{title}</h2>}
+      {note && <p className="meta">{note}</p>}
+      {groups.map((group) => (
+        <div className="group" key={`${title}-${group.title || "flat"}`}>
+          {group.title && <h2>{group.title}</h2>}
+          <div className="cards">
+            {group.cards.map((card) => (
+              <AvatarCardLink key={card.id} card={card} />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}

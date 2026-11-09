@@ -1,0 +1,2 @@
+# This signature fixture must retain its exact bytes on every platform.
+src-tauri/test-fixtures/updater/payload.txt -text
