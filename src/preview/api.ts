@@ -1814,15 +1814,16 @@ async function simulatePreviewReceive(boothId: string, variation: string, filena
   while (previewReceiving >= 3) await wait(150);
   previewReceiving += 1;
   try {
-    for (let step = 0; step <= 12; step += 1) {
-      send("receiving", "ダウンロード中", { received: Math.round((size * step) / 12), total: size });
-      await wait(250);
+    // 1件およそ1秒。続けて押すと順番待ちが見え、画面のテストの待ち時間（約3秒）にも収まる。
+    for (let step = 0; step <= 8; step += 1) {
+      send("receiving", "ダウンロード中", { received: Math.round((size * step) / 8), total: size });
+      await wait(100);
     }
   } finally {
     previewReceiving -= 1;
   }
   send("moving", "ライブラリに移しています");
-  await wait(200);
+  await wait(100);
 }
 
 /** 見本の進捗。アプリと同じく、始めた仕事は必ず done / error / cancelled で終える（docs/design/README.md#進捗）。 */
