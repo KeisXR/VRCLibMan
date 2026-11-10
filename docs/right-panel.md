@@ -737,18 +737,21 @@ ChatGPT アプリのサイドパネルにならい、タブ列はアプリの地
 
 - 実装は `src-tauri/src/browser_dark.rs` です（#114）。
 - 対象は表示用のページ WebView だけです（`is_page_webview`：`booth-tab-` に数字が続くもの）。確認用、操作バー、メイン画面には入れません。
-- CSS は次のとおりです。`html` に掛けたものを画像系で打ち消します。BOOTH の商品カード・タグのバナー・ユーザーアイコンは `<img>` ではなく、インラインの `style="background-image:url(...)"` で画像を描くので、インラインの style で背景画像を指定した要素（`html` と `body` を除く）も打ち消しの対象にします。打ち消した要素の中はすでに元の色なので、その中の画像系にはフィルタを掛けません（3回目の反転を防ぐ）。
+- CSS は次のとおりです。`html` に掛けたものを画像系で打ち消します。BOOTH の商品カード・タグのバナー・ユーザーアイコンは `<img>` ではなく、インラインの `style="background-image:url(...)"` で画像を描くので、インラインの style で背景画像を指定した要素（`html` と `body` を除く）も打ち消しの対象にします。打ち消した要素の中はすでに元の色なので、その中の画像系にはフィルタを掛けません（3回目の反転を防ぐ）。 YouTube の埋め込み（`iframe` の `src` が `youtube.com/embed/` か `youtube-nocookie.com/embed/` を含むもの）も、iframe ごと打ち消して元の色で再生します。
 
 ```css
 html{background-color:#fff!important;filter:invert(1)!important;}
 img,video,canvas,embed,object,input[type='image'],svg image,
 :not(html):not(body)[style*='background-image' i][style*='url(' i],
-:not(html):not(body)[style*='background:' i][style*='url(' i]{filter:invert(1)!important;}
+:not(html):not(body)[style*='background:' i][style*='url(' i],
+iframe[src*='youtube.com/embed/' i],iframe[src*='youtube-nocookie.com/embed/' i]{filter:invert(1)!important;}
 :is(上と同じ一覧) :is(上と同じ一覧){filter:none!important;}
 ```
 
 - スタイルシートのクラスで指定した背景画像は検出しません。拾うにはページの要素を走査して属性を書き込む必要があり、ページの DOM を変えないという方針と合わないためです。疑似要素（`::before` など）の背景画像も反転したままです。
 - `hue-rotate(180deg)` は使いません。0 か 255 で切れた色が元に戻らないからです。
+- スクリプトは最上位のフレームだけで動きます。`initialization_script_for_all_frames` で子フレームにも入りますが、そこでは何もしません。ページの `html` の反転は子フレームの表示にも掛かるので、子フレームの中でもう一度反転すると、中の動画や画像が反転に戻るからです。YouTube 以外の iframe は、ページと一緒に暗くなります。
+- `youtube.com`・`youtube-nocookie.com` とそのサブドメインのページ（Shorts を含む）には掛けません（`OWN_THEME_HOSTS`）。YouTube は独自のダークテーマを持ち、反転すると明るい画面になるためです。設定をオンにしたまま YouTube へ移ると外し、別のサイトへ移ると付け直します。
 - 付け方は `adoptedStyleSheets` で、使えなければ `style#vrclibman-force-dark` にします。付ける時機は次の2つです。
   - 文書開始の `initialization_script_for_all_frames`
   - 読み込み完了時の `eval`

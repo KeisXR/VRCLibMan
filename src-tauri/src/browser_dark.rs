@@ -34,23 +34,38 @@ pub const PAGE_FILTER: &str = "invert(1)";
 /// Applied again to image-like elements. `invert(1)` twice is the original color.
 pub const MEDIA_FILTER: &str = "invert(1)";
 
+/// Elements whose pixels get [`MEDIA_FILTER`] to come back to their original colors.
+/// A YouTube embed iframe is restored as a whole: the script does not run inside
+/// child frames, so the player only sees the page's invert and this second one.
+macro_rules! restored_media {
+    () => {
+        concat!(
+            "img,video,canvas,embed,object,input[type='image'],svg image,",
+            ":not(html):not(body)[style*='background-image' i][style*='url(' i],",
+            ":not(html):not(body)[style*='background:' i][style*='url(' i],",
+            "iframe[src*='youtube.com/embed/' i],",
+            "iframe[src*='youtube-nocookie.com/embed/' i]"
+        )
+    };
+}
+
 /// User CSS. Image-like elements repeat [`PAGE_FILTER`], which restores their pixels.
 /// The second rule clears the filter on an image-like element inside another one,
 /// whose pixels the outer second invert has already restored.
 pub const FORCE_DARK_CSS: &str = concat!(
     "html{background-color:#fff!important;filter:invert(1)!important;}",
-    "img,video,canvas,embed,object,input[type='image'],svg image,",
-    ":not(html):not(body)[style*='background-image' i][style*='url(' i],",
-    ":not(html):not(body)[style*='background:' i][style*='url(' i]",
+    restored_media!(),
     "{filter:invert(1)!important;}",
-    ":is(img,video,canvas,embed,object,input[type='image'],svg image,",
-    ":not(html):not(body)[style*='background-image' i][style*='url(' i],",
-    ":not(html):not(body)[style*='background:' i][style*='url(' i]) ",
-    ":is(img,video,canvas,embed,object,input[type='image'],svg image,",
-    ":not(html):not(body)[style*='background-image' i][style*='url(' i],",
-    ":not(html):not(body)[style*='background:' i][style*='url(' i])",
-    "{filter:none!important;}"
+    ":is(",
+    restored_media!(),
+    ") :is(",
+    restored_media!(),
+    "){filter:none!important;}"
 );
+
+/// Sites with their own dark theme. Inverting them turns that theme light, so the
+/// top page on these hosts and their subdomains is left as the site draws it.
+pub const OWN_THEME_HOSTS: &[&str] = &["youtube.com", "youtube-nocookie.com"];
 
 pub fn set_enabled(enabled: bool) {
     ENABLED.store(enabled, Ordering::SeqCst);
@@ -70,11 +85,14 @@ pub fn is_page_webview(label: &str) -> bool {
 
 /// Document-start script. `enabled` is the setting at the moment the string is built.
 /// A later load evaluates a freshly built string so a toggle does not need a restart.
+/// It only acts in the top frame: the page's `html` invert already covers child
+/// frames, and a second one inside them would turn their media back to negative.
 pub fn force_dark_script(enabled: bool) -> String {
     let css = serde_json::to_string(FORCE_DARK_CSS).unwrap_or_else(|_| "\"\"".to_string());
+    let hosts = serde_json::to_string(OWN_THEME_HOSTS).unwrap_or_else(|_| "[]".to_string());
     let flag = if enabled { "true" } else { "false" };
     format!(
-        r#"(function(){{var enabled={flag};var STYLE_ID="vrclibman-force-dark";var MARK="__vrclibmanForceDarkSheet";var CSS={css};function apply(on){{try{{var doc=document;var root=doc.documentElement;if(!root)return false;var current=root[MARK]||null;var fallback=doc.getElementById(STYLE_ID);if(!on){{if(current&&doc.adoptedStyleSheets){{var kept=[];var list=doc.adoptedStyleSheets;for(var i=0;i<list.length;i++)if(list[i]!==current)kept.push(list[i]);doc.adoptedStyleSheets=kept;}}try{{delete root[MARK];}}catch(ignore){{root[MARK]=null;}}if(fallback&&fallback.getAttribute("data-vrclibman")==="force-dark"&&fallback.parentNode)fallback.parentNode.removeChild(fallback);return true;}}if(current||(fallback&&fallback.getAttribute("data-vrclibman")==="force-dark"))return true;try{{if(typeof CSSStyleSheet==="function"&&doc.adoptedStyleSheets&&CSSStyleSheet.prototype.replaceSync){{var sheet=new CSSStyleSheet();sheet.replaceSync(CSS);var next=[];var existing=doc.adoptedStyleSheets;for(var j=0;j<existing.length;j++)next.push(existing[j]);next.push(sheet);doc.adoptedStyleSheets=next;root[MARK]=sheet;return true;}}}}catch(ignore2){{}}var style=doc.createElement("style");style.id=STYLE_ID;style.setAttribute("data-vrclibman","force-dark");style.textContent=CSS;(doc.head||root).appendChild(style);return true;}}catch(ignore3){{return false;}}}}apply(enabled);}})();"#
+        r#"(function(){{try{{if(window.top!==window.self)return;}}catch(ignore0){{return;}}var enabled={flag};var OWN_THEME={hosts};var host=String(location.hostname||"").toLowerCase();for(var k=0;k<OWN_THEME.length;k++){{var own=OWN_THEME[k];if(host===own||host.slice(-own.length-1)==="."+own)enabled=false;}}var STYLE_ID="vrclibman-force-dark";var MARK="__vrclibmanForceDarkSheet";var CSS={css};function apply(on){{try{{var doc=document;var root=doc.documentElement;if(!root)return false;var current=root[MARK]||null;var fallback=doc.getElementById(STYLE_ID);if(!on){{if(current&&doc.adoptedStyleSheets){{var kept=[];var list=doc.adoptedStyleSheets;for(var i=0;i<list.length;i++)if(list[i]!==current)kept.push(list[i]);doc.adoptedStyleSheets=kept;}}try{{delete root[MARK];}}catch(ignore){{root[MARK]=null;}}if(fallback&&fallback.getAttribute("data-vrclibman")==="force-dark"&&fallback.parentNode)fallback.parentNode.removeChild(fallback);return true;}}if(current||(fallback&&fallback.getAttribute("data-vrclibman")==="force-dark"))return true;try{{if(typeof CSSStyleSheet==="function"&&doc.adoptedStyleSheets&&CSSStyleSheet.prototype.replaceSync){{var sheet=new CSSStyleSheet();sheet.replaceSync(CSS);var next=[];var existing=doc.adoptedStyleSheets;for(var j=0;j<existing.length;j++)next.push(existing[j]);next.push(sheet);doc.adoptedStyleSheets=next;root[MARK]=sheet;return true;}}}}catch(ignore2){{}}var style=doc.createElement("style");style.id=STYLE_ID;style.setAttribute("data-vrclibman","force-dark");style.textContent=CSS;(doc.head||root).appendChild(style);return true;}}catch(ignore3){{return false;}}}}apply(enabled);}})();"#
     )
 }
 
@@ -105,7 +123,12 @@ mod tests {
                 .contains(":not(html):not(body)[style*='background:' i][style*='url(' i]")
         );
         assert!(FORCE_DARK_CSS.ends_with("{filter:none!important;}"));
-        assert!(!FORCE_DARK_CSS.contains("iframe"));
+        // Only YouTube embeds among iframes. Other frames stay dark with the page.
+        assert!(FORCE_DARK_CSS.contains("iframe[src*='youtube.com/embed/' i]"));
+        assert!(FORCE_DARK_CSS.contains("iframe[src*='youtube-nocookie.com/embed/' i]"));
+        for (at, _) in FORCE_DARK_CSS.match_indices("iframe") {
+            assert!(FORCE_DARK_CSS[at..].starts_with("iframe[src*='youtube"));
+        }
         assert!(!FORCE_DARK_CSS.contains("picture"));
         assert!(!FORCE_DARK_CSS.contains("*{"));
     }
@@ -124,8 +147,14 @@ mod tests {
             assert!(script.contains("replaceSync"));
             assert!(script.contains("createElement(\"style\")"));
             assert!(script.contains("vrclibman-force-dark"));
+            // Child frames are left alone and YouTube keeps its own theme.
+            assert!(script.starts_with("(function(){try{if(window.top!==window.self)return;}"));
+            assert!(script.contains(r#"var OWN_THEME=["youtube.com","youtube-nocookie.com"];"#));
+            assert!(script.contains("enabled=false"));
             let lower = script.to_ascii_lowercase();
-            assert!(!lower.contains("cookie"));
+            // The host name youtube-nocookie.com is data; the cookie APIs are not used.
+            assert!(!lower.contains("document.cookie"));
+            assert!(!lower.contains("cookiestore"));
             assert!(!lower.contains("localstorage"));
             assert!(!lower.contains("sessionstorage"));
             assert!(!lower.contains("indexeddb"));
