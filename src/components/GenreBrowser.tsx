@@ -14,7 +14,7 @@ const NOUN: Record<string, string> = { asset: "アセット", world: "ワール�
 export { filterItems, genreHref, selectedGenre } from "../genreBrowseUtils";
 
 export function GenreBrowser({ title, lede }: { title: string; lede?: string }) {
-  const { kind, routeGenre, selected, data, error, genreBar, reload, setDraggingId } = useGenreBrowse();
+  const { kind, routeGenre, selected, focusId, data, error, genreBar, reload, setDraggingId } = useGenreBrowse();
   const [filter, setFilter] = useState("");
   const panel = useRightPanel();
   const { publishPreview } = panel;
@@ -47,6 +47,22 @@ export function GenreBrowser({ title, lede }: { title: string; lede?: string }) 
   useEffect(() => {
     if (selectedId && !shownIds.includes(selectedId)) setSelectedId(null);
   }, [shownIds, selectedId]);
+
+  // 購入履歴などから開いた商品へ、一覧を読み終えたら一度だけ送る。プレビューが開いていれば選ぶ。
+  const focusedOnce = useRef<string | null>(null);
+  useEffect(() => {
+    if (!focusId) {
+      focusedOnce.current = null;
+      return;
+    }
+    if (focusedOnce.current === focusId || !shownIds.includes(focusId)) return;
+    focusedOnce.current = focusId;
+    if (previewOpen) setSelectedId(focusId);
+    window.requestAnimationFrame(() => {
+      document.getElementById(`product-${focusId}`)?.scrollIntoView({ block: "center" });
+    });
+  }, [focusId, shownIds, previewOpen]);
+  const focusMissing = Boolean(focusId && current && !current.items.some((item) => item.boothId === focusId));
 
   useEffect(() => {
     if (!keyboardMove.current || !selectedId) return;
@@ -94,6 +110,7 @@ export function GenreBrowser({ title, lede }: { title: string; lede?: string }) 
             onRetryRemoteProbe={() => retryProbe([item.boothId])}
             selectable={previewOpen}
             selected={isSelected}
+            focused={item.boothId === focusId}
             tabStop={previewOpen && item.boothId === tabStopId}
             onSelect={previewOpen ? () => setSelectedId(item.boothId) : undefined}
           />
@@ -131,6 +148,7 @@ export function GenreBrowser({ title, lede }: { title: string; lede?: string }) 
         onChange={(event) => setFilter(event.target.value)}
       />
       {unknownGenre && <p className="note genre-notice">指定されたジャンルが見つからないため、すべてを表示しています。</p>}
+      {focusMissing && <p className="note genre-notice">開こうとした商品は、この一覧にありません。分類が変わったか、除外した商品です。</p>}
       {selected === GENRE_UNSET && (
         <p className="note genre-notice">
           ジャンルが決まっていない{noun}の商品です。確認画面や再分類でジャンルが付くと、各ジャンルに移ります。

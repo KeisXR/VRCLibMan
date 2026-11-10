@@ -423,6 +423,8 @@ struct LibraryProduct {
     thumbnail_path: Option<String>,
     thumbnail_url: Option<String>,
     is_generic: bool,
+    category: Option<String>,
+    excluded: bool,
 }
 
 /// 分類の今の値。購入履歴は分類を写さず、表示のたびにここから引く。
@@ -436,7 +438,9 @@ fn load_library(connection: &Connection) -> Result<Library, String> {
     let mut products = HashMap::new();
     {
         let mut statement = sql(connection.prepare(
-            "SELECT booth_id, title, thumbnail_path, thumbnail_url, is_generic FROM products
+            "SELECT booth_id, title, thumbnail_path, thumbnail_url, is_generic, category,
+                    booth_id IN (SELECT booth_id FROM product_exclusions)
+             FROM products
              WHERE booth_id IN (SELECT booth_id FROM purchase_items)",
         ))?;
         let rows = sql(statement.query_map([], |row| {
@@ -447,6 +451,8 @@ fn load_library(connection: &Connection) -> Result<Library, String> {
                     thumbnail_path: row.get(2)?,
                     thumbnail_url: row.get(3)?,
                     is_generic: row.get(4)?,
+                    category: row.get(5)?,
+                    excluded: row.get(6)?,
                 },
             ))
         }))?;
@@ -585,6 +591,34 @@ fn amount(item: &StoredItem) -> Option<i64> {
     item.price_yen.map(|price| price + item.boost_yen.unwrap_or(0))
 }
 
+/// アプリの中でその商品を開く先。アセットとワールドは一覧、アバター本体はアバターの画面。
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryLink {
+    /// `asset`、`world`、`avatar`。
+    pub kind: &'static str,
+    pub avatar_id: Option<String>,
+}
+
+/// ライブラリにあり、除外しておらず、分類が決まっている商品だけ。贈っただけの商品はライブラリに無いので出ない。
+fn library_link(library: &Library, booth_id: &str) -> Option<LibraryLink> {
+    let product = library.products.get(booth_id).filter(|product| !product.excluded)?;
+    match product.category.as_deref()? {
+        "avatar" => library.bodies.get(booth_id).map(|avatar| LibraryLink {
+            kind: "avatar",
+            avatar_id: Some(avatar.id.clone()),
+        }),
+        "world" => Some(LibraryLink {
+            kind: "world",
+            avatar_id: None,
+        }),
+        _ => Some(LibraryLink {
+            kind: "asset",
+            avatar_id: None,
+        }),
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PurchaseItemView {
@@ -598,6 +632,7 @@ pub struct PurchaseItemView {
     pub amount_yen: Option<i64>,
     pub quantity: i64,
     pub in_library: bool,
+    pub library_link: Option<LibraryLink>,
     pub thumbnail_path: Option<String>,
     pub thumbnail_url: Option<String>,
     pub groups: Vec<PurchaseGroup>,
@@ -742,6 +777,7 @@ fn item_view(library: &Library, item: &StoredItem) -> PurchaseItemView {
         amount_yen: amount(item),
         quantity: item.quantity,
         in_library: product.is_some(),
+        library_link: library_link(library, &item.booth_id),
         thumbnail_path: product.and_then(|product| product.thumbnail_path.clone()),
         thumbnail_url: product.and_then(|product| product.thumbnail_url.clone()),
         groups,
@@ -1373,6 +1409,45 @@ mod tests {
         set_gift_override(&connection, "1003", None).unwrap();
         assert_eq!(summary(&connection, None).unwrap().gift_items, 1);
         assert!(set_gift_override(&connection, "9999", Some(true)).is_err());
+    }
+
+    #[test]
+    fn items_in_the_library_open_their_asset_world_or_avatar() {
+        let mut connection = db();
+        for (id, category) in [("5001", Some("outfit")), ("5002", Some("world")), ("5003", Some("avatar")), ("5004", Some("hair")), ("5005", None)] {
+            product(&connection, id, "見本", false);
+            connection
+                .execute("UPDATE products SET category = ?2 WHERE booth_id = ?1", params![id, category])
+                .unwrap();
+        }
+        connection
+            .execute_batch(
+                "INSERT INTO avatar_sources (booth_id, avatar_id) VALUES ('5003', 'plum');
+                 INSERT INTO product_exclusions (booth_id, excluded_at) VALUES ('5004', 't');",
+            )
+            .unwrap();
+        let items = ["5001", "5002", "5003", "5004", "5005", "5006"]
+            .iter()
+            .map(|id| item(id, &format!("見本 {id}"), Some(100), None))
+            .collect();
+        apply_detail(&mut connection, &detail("1001", "2026-01-01T10:00:00+09:00", false, items)).unwrap();
+        let view = page(&connection, &PurchaseQuery::default(), false).unwrap();
+        let links: Vec<Option<(&str, Option<&str>)>> = view.orders[0]
+            .items
+            .iter()
+            .map(|item| item.library_link.as_ref().map(|link| (link.kind, link.avatar_id.as_deref())))
+            .collect();
+        assert_eq!(
+            links,
+            vec![
+                Some(("asset", None)),
+                Some(("world", None)),
+                Some(("avatar", Some("plum"))),
+                None,
+                None,
+                None,
+            ]
+        );
     }
 
     #[test]

@@ -456,6 +456,12 @@ export interface PurchaseGroup {
   body: boolean;
 }
 
+/** アプリの中で購入した商品を開く先。ライブラリにあり、除外しておらず、分類が決まっている商品だけ。 */
+export interface PurchaseLibraryLink {
+  kind: "asset" | "world" | "avatar";
+  avatarId: string | null;
+}
+
 export interface PurchaseItemView {
   id: number;
   boothId: string;
@@ -467,6 +473,7 @@ export interface PurchaseItemView {
   amountYen: number | null;
   quantity: number;
   inLibrary: boolean;
+  libraryLink: PurchaseLibraryLink | null;
   thumbnailPath: string | null;
   thumbnailUrl: string | null;
   groups: PurchaseGroup[];

@@ -140,6 +140,11 @@
     return value >= 1 ? value : null;
   }
 
+  // 商品名の外に金額の行がある段か。商品名そのものに「¥」や「円」が入ることがあるので、名前の側は見ない。
+  function priceBesideName(node, link) {
+    return [...node.children].some((child) => !child.contains(link) && /[¥￥]|円/.test(child.textContent || ""));
+  }
+
   // 商品名のリンクから数段だけ上がり、金額の書かれた入れ物を探す。別の商品のリンクを含む段では止める。
   function itemBox(link, boothId, href) {
     let node = link.parentElement;
@@ -150,7 +155,7 @@
         return id && id !== boothId;
       });
       if (others) return null;
-      if (/[¥￥]|円/.test(node.textContent || "")) return node;
+      if (priceBesideName(node, link)) return node;
       node = node.parentElement;
     }
     return null;

@@ -10,6 +10,8 @@ import {
   formatYen,
   giftChoice,
   giftValue,
+  libraryHref,
+  libraryLinkLabel,
   purchasesHref,
   walkSummary,
 } from "../purchases";
@@ -166,6 +168,7 @@ function PurchaseItemRow({
   const { fail } = useShell();
   const names = new Map(labels.map((label) => [label.id, label.name]));
   const open = () => void openBoothLink(`https://booth.pm/ja/items/${item.boothId}`).catch((err) => fail(errorText(err)));
+  const libraryTarget = item.libraryLink ? libraryHref(item.libraryLink, item.boothId) : null;
   return (
     <li className="purchase-item">
       <Thumb path={item.thumbnailPath} url={item.thumbnailUrl} name={item.name} small />
@@ -207,7 +210,14 @@ function PurchaseItemRow({
             {item.boostYen ? <span className="meta">BOOST {formatYen(item.boostYen)}</span> : null}
           </div>
         )}
-        <LabelPicker item={item} labels={labels} onChanged={onChanged} />
+        <div className="purchase-item-actions">
+          {libraryTarget && item.libraryLink && (
+            <a className="purchase-open" href={libraryTarget} title="ライブラリの商品を開く">
+              {libraryLinkLabel(item.libraryLink)}
+            </a>
+          )}
+          <LabelPicker item={item} labels={labels} onChanged={onChanged} />
+        </div>
       </div>
     </li>
   );

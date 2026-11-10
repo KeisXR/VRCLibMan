@@ -104,6 +104,18 @@ test("items from two shops keep their own shop, price and quantity", () => {
   );
 });
 
+test("a yen sign or 円 inside the product name does not hide the price beside it", () => {
+  const document = detailPage("87614556", {
+    total: "800",
+    shops: [["見本ショップ", itemSheet("2000004", "【500円】見本の小物 ¥セール", "500", "300")]],
+  });
+  const detail = orderDetail(document, "https://accounts.booth.pm/orders/87614556");
+  assert.deepEqual(
+    detail.items.map((item) => [item.name, item.priceYen, item.boostYen]),
+    [["【500円】見本の小物 ¥セール", 500, 300]],
+  );
+});
+
 test("a cancelled or unpaid order is not a confirmed purchase", () => {
   const cancelled = orderDetail(detailPage("80000001", { state: "cancelled", label: "キャンセル" }), "https://accounts.booth.pm/orders/80000001");
   assert.equal(cancelled.state, "cancelled");

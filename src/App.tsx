@@ -58,6 +58,8 @@ interface Route {
   id?: string;
   fileBoothId?: string;
   genre?: string;
+  /** アセット・ワールドの一覧で、ほかの画面から開いた商品（`#/assets/item/<商品ID>`）。 */
+  focus?: string;
   /** 購入履歴のタブ（履歴 / アバター別）と、アバター別から開いたときの絞り込み。 */
   purchaseView?: "history" | "summary";
   purchaseGroup?: string;
@@ -108,6 +110,7 @@ function parseRoute(hash: string): Route {
     };
   }
   if (parts[0] === "assets" || parts[0] === "worlds") {
+    if (parts[1] === "item" && parts[2]) return { page: parts[0], focus: decodePart(parts[2]) };
     return { page: parts[0], genre: parts[1] ? decodePart(parts[1]) : undefined };
   }
   if (parts[0] === "classification-log") {
@@ -528,6 +531,7 @@ export default function App() {
           <GenreBrowseProvider
             kind={browseKind}
             genre={route.genre ?? null}
+            focus={route.focus ?? null}
             basePath={browseBase}
             genreBar={layout.genreBar}
           >

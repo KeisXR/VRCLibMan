@@ -1,4 +1,4 @@
-import type { PurchaseOrderView, PurchaseWalkReport } from "./types";
+import type { PurchaseLibraryLink, PurchaseOrderView, PurchaseWalkReport } from "./types";
 
 /** 購入履歴の 1 ページの注文数。Rust の `purchases::PAGE_SIZE` と同じ。 */
 export const PURCHASE_PAGE_SIZE = 50;
@@ -48,4 +48,18 @@ export function walkSummary(report: PurchaseWalkReport): string {
   const parts = [`新しい注文 ${report.added} 件`, `詳細 ${report.details} 件`];
   if (report.removed > 0) parts.push(`キャンセルなどで外した注文 ${report.removed} 件`);
   return parts.join("、");
+}
+
+/** 購入した商品を、アプリの中の一覧かアバターの画面で開くリンク。 */
+export function libraryHref(link: PurchaseLibraryLink, boothId: string): string | null {
+  const id = encodeURIComponent(boothId);
+  if (link.kind === "asset") return `#/assets/item/${id}`;
+  if (link.kind === "world") return `#/worlds/item/${id}`;
+  return link.avatarId ? `#/avatar/${encodeURIComponent(link.avatarId)}` : null;
+}
+
+export function libraryLinkLabel(link: PurchaseLibraryLink): string {
+  if (link.kind === "world") return "ワールドを見る";
+  if (link.kind === "avatar") return "アバターを見る";
+  return "アセットを見る";
 }
