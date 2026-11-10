@@ -128,7 +128,7 @@ export function listenBoothUsed(onUsed: () => void): Promise<() => void> {
 
 export function listenBoothFile(onStatus: (status: BoothFileStatus) => void): Promise<() => void> {
   if (!isTauri()) {
-    return Promise.resolve(() => undefined);
+    return import("./preview/api").then((preview) => preview.listenPreviewBoothFile(onStatus));
   }
   return import("@tauri-apps/api/event").then(({ listen }) =>
     listen<BoothFileStatus>("booth-file-download", (event) => onStatus(event.payload)),

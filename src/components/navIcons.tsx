@@ -122,3 +122,12 @@ export function UpdateIcon() {
     </Icon>
   );
 }
+
+/** An arrow down onto a line: files coming in from BOOTH. */
+export function DownloadIcon() {
+  return (
+    <Icon>
+      <path d="M9 3.4v9.2M5.4 9 9 12.6 12.6 9M3.4 15h11.2" />
+    </Icon>
+  );
+}

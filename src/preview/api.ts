@@ -6,6 +6,7 @@ import { GENRE_FREE, GENRE_UNSET, genresForKind } from "../types";
 import type { ClassificationSnapshot, OwnedAvatarRestore, RegisterOwnedBodyResult, SnapshotLink, UnityEditor, UnityStatus } from "../types";
 import type {
   AvatarCard,
+  BoothFileStatus,
   BrowserAction,
   IntegrationStatus,
   BoothImportMode,
@@ -1791,6 +1792,40 @@ function desktopOnly(): never {
 const previewProgress = new EventTarget();
 let previewLibraryCancel = false;
 
+/** 見本の受け取り。アプリと同じく 3 件まで並行し、超えた分は順番待ちにする。 */
+const previewFiles = new EventTarget();
+let previewReceiving = 0;
+
+function emitPreviewFile(status: BoothFileStatus): void {
+  previewFiles.dispatchEvent(new CustomEvent("file", { detail: status }));
+}
+
+export function listenPreviewBoothFile(onStatus: (status: BoothFileStatus) => void): () => void {
+  const listener = (event: Event) => onStatus((event as CustomEvent<BoothFileStatus>).detail);
+  previewFiles.addEventListener("file", listener);
+  return () => previewFiles.removeEventListener("file", listener);
+}
+
+async function simulatePreviewReceive(boothId: string, variation: string, filename: string, size: number): Promise<void> {
+  const send = (phase: BoothFileStatus["phase"], message: string, extra: Partial<BoothFileStatus> = {}) =>
+    emitPreviewFile({ boothId, variation, filename, phase, message, ...extra });
+  const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  if (previewReceiving >= 3) send("queued", "順番待ち");
+  while (previewReceiving >= 3) await wait(150);
+  previewReceiving += 1;
+  try {
+    // 1件およそ1秒。続けて押すと順番待ちが見え、画面のテストの待ち時間（約3秒）にも収まる。
+    for (let step = 0; step <= 8; step += 1) {
+      send("receiving", "ダウンロード中", { received: Math.round((size * step) / 8), total: size });
+      await wait(100);
+    }
+  } finally {
+    previewReceiving -= 1;
+  }
+  send("moving", "ライブラリに移しています");
+  await wait(100);
+}
+
 /** 見本の進捗。アプリと同じく、始めた仕事は必ず done / error / cancelled で終える（docs/design/README.md#進捗）。 */
 export function emitPreviewProgress(progress: JobProgress): void {
   previewProgress.dispatchEvent(new CustomEvent("progress", { detail: progress }));
@@ -2440,11 +2475,13 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       if (!number && !/\.(unitypackage|zip|rar|7z|vrm)$/i.test(filename)) {
         throw new Error("この行にはダウンロード番号がありません。拡張を更新して再インポートしてください");
       }
+      await simulatePreviewReceive(boothId, variation, filename, row.sizeBytes || 24 * 1024 * 1024);
       row.state = "local";
       row.localPath = `${store.settings.libraryFolder}\\${boothId}\\${filename}`;
       row.isNew = false;
       // Rust の再読み込みはリモートを確認しないので、画面は確認をやり直す。
       store.remoteChecked = false;
+      emitPreviewFile({ boothId, variation, filename, phase: "done", message: "ライブラリに移しました", path: row.localPath });
       return row.localPath as T;
     }
     case "open_local_path": {

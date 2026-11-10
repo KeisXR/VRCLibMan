@@ -488,11 +488,13 @@ pub struct StagedFetch {
 }
 
 /// 署名付きの飛び先へ進み、ステージングへ書く。クエリは残さない。
-pub async fn fetch_staged_file(
+/// 書いたバイト数と、分かれば全体の大きさを `on_progress` に渡す。
+pub async fn fetch_staged_file<F: FnMut(u64, Option<u64>)>(
     cookie_header: &str,
     download_url: &Url,
     dir: &Path,
     row_filename: &str,
+    mut on_progress: F,
 ) -> Result<StagedFetch, QuietError> {
     if classify_download_url(download_url) != Hop::Follow {
         return Err(match classify_download_url(download_url) {
@@ -565,9 +567,10 @@ pub async fn fetch_staged_file(
         .map(str::to_string);
     let suggested = suggested_filename(disposition.as_deref(), &final_url);
     let preferred = choose_download_name(row_filename, &suggested);
-    let name = unique_name(dir, &preferred);
-    let path = without_verbatim_prefix(&dir.join(name));
-    let mut file = std::fs::File::create(&path).map_err(|_| QuietError::Failed)?;
+    let (path, mut file) = create_unique(dir, &preferred)?;
+    let total = response.content_length().filter(|size| *size > 0);
+    let mut received: u64 = 0;
+    on_progress(0, total);
     let mut checked = false;
     loop {
         let chunk = match response.chunk().await {
@@ -592,6 +595,8 @@ pub async fn fetch_staged_file(
             let _ = std::fs::remove_file(&path);
             return Err(QuietError::Failed);
         }
+        received = received.saturating_add(chunk.len() as u64);
+        on_progress(received, total);
     }
     drop(file);
     if file_looks_like_login_page(&path) {
@@ -713,6 +718,24 @@ fn unique_name(dir: &Path, preferred: &str) -> String {
         Some(extension) => format!("{stem}-copy.{extension}"),
         None => format!("{stem}-copy"),
     }
+}
+
+/// 同じ商品のファイルを並行して受け取るので、名前を決めてから作るまでの間に
+/// 別の受け取りが同じ名前を作っても上書きしない（create_new で作り、取られていたら次の名前）。
+fn create_unique(dir: &Path, preferred: &str) -> Result<(PathBuf, std::fs::File), QuietError> {
+    for _ in 0..8 {
+        let path = without_verbatim_prefix(&dir.join(unique_name(dir, preferred)));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(file) => return Ok((path, file)),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return Err(QuietError::Failed),
+        }
+    }
+    Err(QuietError::Failed)
 }
 
 #[cfg(test)]

@@ -557,182 +557,92 @@ struct BoothFileStatus {
     message: String,
     /// 完了時だけ、ライブラリへ移した先の絶対パス。それ以外は null。
     path: Option<String>,
+    /// 受け取り中だけ、書いたバイト数。
+    received: Option<u64>,
+    /// 受け取り中で、サーバーが大きさを知らせたときだけ、全体のバイト数。
+    total: Option<u64>,
 }
 
-#[allow(dead_code)]
-enum DownloadSignal {
-    Started {
-        host: String,
-        destination: PathBuf,
-    },
-    Finished {
-        success: bool,
-        path: Option<PathBuf>,
-    },
-    Rejected {
-        age_gate: bool,
-    },
+/// 同時に受け取るファイルの数。超えた分は押した順に「順番待ち」で待つ。
+pub(crate) const PARALLEL_DOWNLOADS: usize = 3;
+
+/// 受け取り中または順番待ちのファイル（商品・バリエーション・ファイル名）。
+static ACTIVE_DOWNLOADS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+static DOWNLOAD_SLOTS: tokio::sync::Semaphore =
+    tokio::sync::Semaphore::const_new(PARALLEL_DOWNLOADS);
+
+fn active_downloads() -> std::sync::MutexGuard<'static, Vec<String>> {
+    ACTIVE_DOWNLOADS.lock().unwrap_or_else(|err| err.into_inner())
 }
 
-struct ArmedDownload {
-    events: std::sync::mpsc::SyncSender<DownloadSignal>,
-    started: bool,
-    dir: PathBuf,
-    row_filename: String,
-}
-
-struct DownloadJob(Mutex<Option<ArmedDownload>>);
-
-static DOWNLOAD_JOB: DownloadJob = DownloadJob(Mutex::new(None));
-
-fn job_lock() -> std::sync::MutexGuard<'static, Option<ArmedDownload>> {
-    DOWNLOAD_JOB.0.lock().unwrap_or_else(|err| err.into_inner())
-}
-
+/// 1件でも受け取り中か順番待ちなら真。全取得、タブの変更、アプリ更新の適用を止める。
 pub(crate) fn download_job_armed() -> bool {
-    job_lock().is_some()
+    !active_downloads().is_empty()
 }
 
-struct JobGuard;
+fn download_key(booth_id: &str, variation: &str, filename: &str) -> String {
+    format!("{}\u{1f}{}\u{1f}{}", booth_id.trim(), variation, filename)
+}
 
-impl Drop for JobGuard {
+/// 受け取り中の印。Drop で外す。
+struct DownloadClaim(String);
+
+impl Drop for DownloadClaim {
     fn drop(&mut self) {
-        *job_lock() = None;
+        active_downloads().retain(|key| *key != self.0);
     }
 }
 
-fn arm_download(job: ArmedDownload) -> Result<JobGuard, String> {
-    let mut slot = job_lock();
-    if slot.is_some() {
-        return Err(db::BROWSER_BUSY_MESSAGE.into());
+/// 同じファイルの二重の受け取りだけを断る。別のファイルは並行してよい。
+fn claim_download(key: String) -> Result<DownloadClaim, String> {
+    let mut active = active_downloads();
+    if active.iter().any(|existing| *existing == key) {
+        return Err(db::BROWSER_SAME_FILE_MESSAGE.into());
     }
-    *slot = Some(job);
-    Ok(JobGuard)
+    active.push(key.clone());
+    Ok(DownloadClaim(key))
 }
 
-pub struct DownloadChoice {
-    pub started: bool,
-    pub dir: PathBuf,
-    pub row_filename: String,
-}
-
-#[derive(Debug)]
-pub enum DownloadChoiceResult {
-    AllowDefault,
-    Cancel,
-    Reject { age_gate: bool },
-    Save(PathBuf),
-}
-
-/// One armed click owns the next download. Anything else keeps the webview's own folder.
-pub fn decide_download(
-    job: Option<&DownloadChoice>,
-    url: &Url,
-    suggested: &Path,
-) -> DownloadChoiceResult {
-    let Some(job) = job else {
-        return DownloadChoiceResult::AllowDefault;
-    };
-    if job.started {
-        return DownloadChoiceResult::Cancel;
-    }
-    if !job.dir.is_absolute() {
-        return DownloadChoiceResult::Reject { age_gate: false };
-    }
-    if url.scheme() != "https" {
-        return DownloadChoiceResult::Reject { age_gate: false };
-    }
-    let path = url.path().to_ascii_lowercase();
-    let query = url.query().unwrap_or("").to_ascii_lowercase();
-    if is_age_gate(&path, &query) {
-        return DownloadChoiceResult::Reject { age_gate: true };
-    }
-    let suggested = suggested
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("");
-    let preferred = crate::library_files::choose_download_name(&job.row_filename, suggested);
-    let name = unique_staging_name(&job.dir, &preferred);
-    DownloadChoiceResult::Save(job.dir.join(name))
-}
-
-fn unique_staging_name(dir: &Path, preferred: &str) -> String {
-    let preferred = crate::library_files::safe_filename(preferred)
-        .unwrap_or_else(|| "received.bin".to_string());
-    if std::fs::symlink_metadata(dir.join(&preferred)).is_err() {
-        return preferred;
-    }
-    let path = Path::new(&preferred);
-    let stem = path
-        .file_stem()
-        .and_then(|name| name.to_str())
-        .unwrap_or("file");
-    let extension = path.extension().and_then(|name| name.to_str());
-    for index in 2..50 {
-        let name = match extension {
-            Some(extension) => format!("{stem} ({index}).{extension}"),
-            None => format!("{stem} ({index})"),
-        };
-        if std::fs::symlink_metadata(dir.join(&name)).is_err() {
-            return name;
-        }
-    }
-    match extension {
-        Some(extension) => format!("{stem}-copy.{extension}"),
-        None => format!("{stem}-copy"),
-    }
-}
-
+/// 受け取りは Rust の HTTP で行う。その間と全取得の間は、ページが始めたダウンロードを保存しない。
 pub(crate) fn handle_booth_download(event: DownloadEvent<'_>) -> bool {
     match event {
-        DownloadEvent::Requested { url, destination } => {
-            // 全取得の途中では、ページが始めたダウンロードを保存しない。
-            if library_walk_running() && !download_job_armed() {
-                return false;
-            }
-            let mut guard = job_lock();
-            let choice = guard.as_ref().map(|job| DownloadChoice {
-                started: job.started,
-                dir: job.dir.clone(),
-                row_filename: job.row_filename.clone(),
-            });
-            match decide_download(choice.as_ref(), &url, destination) {
-                DownloadChoiceResult::AllowDefault => true,
-                DownloadChoiceResult::Cancel => false,
-                DownloadChoiceResult::Reject { age_gate } => {
-                    if let Some(job) = guard.as_ref() {
-                        let _ = job.events.try_send(DownloadSignal::Rejected { age_gate });
-                    }
-                    false
-                }
-                DownloadChoiceResult::Save(path) => {
-                    let Some(job) = guard.as_mut() else {
-                        return true;
-                    };
-                    if job.started {
-                        return false;
-                    }
-                    job.started = true;
-                    *destination = path.clone();
-                    let host = url.host_str().unwrap_or("").to_string();
-                    let _ = job.events.try_send(DownloadSignal::Started {
-                        host,
-                        destination: path,
-                    });
-                    true
-                }
-            }
-        }
-        DownloadEvent::Finished { path, success, .. } => {
-            if let Some(job) = job_lock().as_ref() {
-                let _ = job
-                    .events
-                    .try_send(DownloadSignal::Finished { success, path });
-            }
-            true
-        }
+        DownloadEvent::Requested { .. } => !(download_job_armed() || library_walk_running()),
         _ => true,
     }
+}
+
+/// 押した順に枠の列へ並び、並んだまま準備（DB とステージングフォルダ）を進める。
+/// 列に並ぶのは最初の poll、つまり押した直後なので、準備の終わる順で後の押下に追い越されない。
+/// 枠が空いていなければ `on_wait` を一度だけ呼ぶ。準備が失敗したら列から外れて、その失敗を返す。
+async fn prepare_in_line<'a, T>(
+    slots: &'a tokio::sync::Semaphore,
+    prepare: impl Future<Output = Result<T, String>>,
+    on_wait: impl FnOnce(),
+) -> Result<(T, tokio::sync::SemaphorePermit<'a>), String> {
+    let mut slot = std::pin::pin!(slots.acquire());
+    let mut prepare = std::pin::pin!(prepare);
+    let mut permit = None;
+    let mut on_wait = Some(on_wait);
+    let prepared = std::future::poll_fn(|cx| {
+        if permit.is_none() {
+            match slot.as_mut().poll(cx) {
+                std::task::Poll::Ready(acquired) => permit = Some(acquired),
+                std::task::Poll::Pending => {
+                    if let Some(wait) = on_wait.take() {
+                        wait();
+                    }
+                }
+            }
+        }
+        prepare.as_mut().poll(cx)
+    })
+    .await?;
+    let acquired = match permit {
+        Some(acquired) => acquired,
+        None => slot.await,
+    };
+    let permit = acquired.map_err(|_| db::BROWSER_DOWNLOAD_FAILED.to_string())?;
+    Ok((prepared, permit))
 }
 
 pub fn downloadable_url(downloadable_id: &str) -> Result<Url, String> {
@@ -767,35 +677,66 @@ pub fn host_log(host: &str) -> String {
     }
 }
 
-fn emit_file_status(
-    progress: &ProgressGuard,
-    booth_id: &str,
-    variation: &str,
-    filename: &str,
-    phase: &str,
-    message: &str,
-) {
-    emit_file_status_with_path(progress, booth_id, variation, filename, phase, message, None);
+const FILE_EVENT: &str = "booth-file-download";
+
+/// 受け取り中の進捗を送る間隔。最後のバイトは間隔によらず送る。
+const FILE_PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
+
+/// 1件の受け取りの状態を `booth-file-download` で送る。
+/// 画面はこのイベントでサイドバーのダウンロード一覧とファイルの行を更新する。
+/// done / error を送らずに Drop されたら（途中の `?` や panic）、error を送る。
+struct FileReport {
+    app: AppHandle,
+    booth_id: String,
+    variation: String,
+    filename: String,
+    finished: AtomicBool,
 }
 
-/// `booth-file-download` と、同じ仕事の `job-progress` を送る。done / error で進捗も終える。
-fn emit_file_status_with_path(
-    progress: &ProgressGuard,
-    booth_id: &str,
-    variation: &str,
-    filename: &str,
-    phase: &str,
-    message: &str,
-    path: Option<&std::path::Path>,
-) {
-    let _ = progress.sink().emit(
-        "booth-file-download",
-        file_status(booth_id, variation, filename, phase, message, path),
-    );
-    match phase {
-        "done" => progress.done_with(1, message),
-        "error" => progress.fail(message),
-        _ => progress.update(0, 0, message),
+impl FileReport {
+    fn new(app: AppHandle, booth_id: &str, variation: &str, filename: &str) -> Self {
+        Self {
+            app,
+            booth_id: booth_id.to_string(),
+            variation: variation.to_string(),
+            filename: filename.to_string(),
+            finished: AtomicBool::new(false),
+        }
+    }
+
+    fn running(&self, phase: &str, message: &str, bytes: Option<(u64, Option<u64>)>) {
+        if self.finished.load(Ordering::SeqCst) {
+            return;
+        }
+        let mut status = file_status(
+            &self.booth_id,
+            &self.variation,
+            &self.filename,
+            phase,
+            message,
+            None,
+        );
+        if let Some((received, total)) = bytes {
+            status.received = Some(received);
+            status.total = total;
+        }
+        let _ = self.app.emit(FILE_EVENT, status);
+    }
+
+    fn finish(&self, phase: &str, message: &str, path: Option<&std::path::Path>) {
+        if self.finished.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let _ = self.app.emit(
+            FILE_EVENT,
+            file_status(&self.booth_id, &self.variation, &self.filename, phase, message, path),
+        );
+    }
+}
+
+impl Drop for FileReport {
+    fn drop(&mut self) {
+        self.finish("error", crate::progress::INTERRUPTED_MESSAGE, None);
     }
 }
 
@@ -814,6 +755,8 @@ fn file_status(
         phase: phase.to_string(),
         message: message.to_string(),
         path: path.map(|path| path.display().to_string()),
+        received: None,
+        total: None,
     }
 }
 
@@ -1109,18 +1052,25 @@ async fn booth_cookie_header(
         .map_err(|_| crate::quiet::QuietError::Failed)
 }
 
-async fn receive_without_window(
+async fn receive_without_window<F: FnMut(u64, Option<u64>) + Send>(
     app: &AppHandle,
     download_url: Url,
     dir: PathBuf,
     row_filename: String,
+    on_progress: F,
 ) -> Result<PathBuf, crate::quiet::QuietError> {
     let header = booth_cookie_header(app, download_url.clone()).await?;
     if header.is_empty() {
         return Err(crate::quiet::QuietError::Login);
     }
-    let fetched =
-        crate::quiet::fetch_staged_file(&header, &download_url, &dir, &row_filename).await?;
+    let fetched = crate::quiet::fetch_staged_file(
+        &header,
+        &download_url,
+        &dir,
+        &row_filename,
+        on_progress,
+    )
+    .await?;
     drop(header);
     browser_log(app, &host_log(&fetched.host));
     Ok(fetched.path)
@@ -1147,118 +1097,111 @@ pub async fn download_one_file(
     if library_walk_running() {
         return Err("ライブラリのインポート中です。終わってからダウンロードしてください".into());
     }
-    let progress = ProgressGuard::new(app.clone(), "download");
-    let app_for_plan = app.clone();
-    let booth_for_plan = booth_id.clone();
-    let variation_for_plan = variation.clone();
-    let filename_for_plan = filename.clone();
-    let plan = tauri::async_runtime::spawn_blocking(move || {
-        let request = {
-            let state = app_for_plan.state::<crate::AppState>();
-            let connection = state
+    // 別のファイルとは並行して受け取る。同じファイルの二重の押下だけを断る。
+    let _claim = claim_download(download_key(&booth_id, &variation, &filename))?;
+    let report = FileReport::new(app.clone(), &booth_id, &variation, &filename);
+    let outcome: Result<PathBuf, String> = async {
+        let app_for_plan = app.clone();
+        let booth_for_plan = booth_id.clone();
+        let variation_for_plan = variation.clone();
+        let filename_for_plan = filename.clone();
+        let prepare = async move {
+            let (request, dir) = tauri::async_runtime::spawn_blocking(move || {
+                let request = {
+                    let state = app_for_plan.state::<crate::AppState>();
+                    let connection = state
+                        .db
+                        .lock()
+                        .map_err(|_| "データベースをロックできません".to_string())?;
+                    db::plan_browser_download(
+                        &connection,
+                        &booth_for_plan,
+                        &variation_for_plan,
+                        &filename_for_plan,
+                    )?
+                };
+                let downloads = crate::library_files::downloads_folder()?;
+                let dir =
+                    crate::library_files::prepare_staging_dir(&downloads, &request.booth_id)?;
+                Ok::<_, String>((request, dir))
+            })
+            .await
+            .map_err(|err| format!("ダウンロードを準備できません: {err}"))??;
+            let url = downloadable_url(&request.downloadable_id)?;
+            Ok::<_, String>((request, dir, url))
+        };
+        let ((request, dir, url), slot) = prepare_in_line(&DOWNLOAD_SLOTS, prepare, || {
+            report.running("queued", "順番待ち", None)
+        })
+        .await?;
+        report.running("receiving", "ダウンロード中", Some((0, None)));
+        if let Some(line) = receipt_log(&request.booth_id, &request.downloadable_id) {
+            browser_log(&app, &line);
+        }
+        let mut last_sent: Option<std::time::Instant> = None;
+        let received = receive_without_window(
+            &app,
+            url,
+            dir,
+            request.filename.clone(),
+            |received, total| {
+                let due = last_sent.map_or(true, |at| at.elapsed() >= FILE_PROGRESS_INTERVAL);
+                if due || total == Some(received) {
+                    last_sent = Some(std::time::Instant::now());
+                    report.running("receiving", "ダウンロード中", Some((received, total)));
+                }
+            },
+        )
+        .await;
+        // 受け取りが終わったら、ライブラリへ移す前に次のファイルへ枠を渡す。
+        drop(slot);
+        let source = match received {
+            Ok(path) => path,
+            Err(err) => {
+                let message = login_message(err);
+                if err == crate::quiet::QuietError::Login {
+                    let _ = dispatch_ui(app.clone(), |handle| open_browser(handle)).await;
+                    browser_log(&app, "ログインが必要です");
+                } else if err == crate::quiet::QuietError::AgeGate {
+                    browser_log(&app, "年齢確認は自動では通過しません");
+                } else {
+                    browser_log(&app, "ダウンロードに失敗しました");
+                }
+                return Err(message);
+            }
+        };
+        report.running("moving", "ライブラリに移しています", None);
+        let app_for_commit = app.clone();
+        let committed = tauri::async_runtime::spawn_blocking(move || {
+            let state = app_for_commit.state::<crate::AppState>();
+            let mut connection = state
                 .db
                 .lock()
                 .map_err(|_| "データベースをロックできません".to_string())?;
-            db::plan_browser_download(
-                &connection,
-                &booth_for_plan,
-                &variation_for_plan,
-                &filename_for_plan,
-            )?
-        };
-        let downloads = crate::library_files::downloads_folder()?;
-        let dir = crate::library_files::prepare_staging_dir(&downloads, &request.booth_id)?;
-        Ok::<_, String>((request, dir))
-    })
-    .await
-    .map_err(|err| format!("ダウンロードを準備できません: {err}"))??;
-    let (request, dir) = plan;
-    let url = downloadable_url(&request.downloadable_id)?;
-    emit_file_status(
-        &progress,
-        &request.booth_id,
-        &request.variation,
-        &request.filename,
-        "receiving",
-        "ダウンロード中",
-    );
-    if let Some(line) = receipt_log(&request.booth_id, &request.downloadable_id) {
-        browser_log(&app, &line);
-    }
-    let (sender, _receiver) = std::sync::mpsc::sync_channel(8);
-    let guard = arm_download(ArmedDownload {
-        events: sender,
-        started: true,
-        dir: dir.clone(),
-        row_filename: request.filename.clone(),
-    })?;
-    let received = receive_without_window(&app, url, dir, request.filename.clone()).await;
-    drop(guard);
-    let source = match received {
-        Ok(path) => path,
-        Err(err) => {
-            let message = login_message(err);
-            if err == crate::quiet::QuietError::Login {
-                let _ = dispatch_ui(app.clone(), |handle| open_browser(handle)).await;
-                browser_log(&app, "ログインが必要です");
-            } else if err == crate::quiet::QuietError::AgeGate {
-                browser_log(&app, "年齢確認は自動では通過しません");
-            } else {
-                browser_log(&app, "ダウンロードに失敗しました");
-            }
-            emit_file_status(
-                &progress,
-                &request.booth_id,
-                &request.variation,
-                &request.filename,
-                "error",
-                &message,
-            );
-            return Err(message);
-        }
-    };
-    emit_file_status(
-        &progress,
-        &request.booth_id,
-        &request.variation,
-        &request.filename,
-        "receiving",
-        "ライブラリに移しています",
-    );
-    let app_for_commit = app.clone();
-    let committed = tauri::async_runtime::spawn_blocking(move || {
-        let state = app_for_commit.state::<crate::AppState>();
-        let mut connection = state
-            .db
-            .lock()
-            .map_err(|_| "データベースをロックできません".to_string())?;
-        db::commit_browser_download(&mut connection, &request, &source)
-    })
-    .await
-    .map_err(|err| format!("ファイルを移動できません: {err}"))?;
-    match committed {
-        Ok(placed) => {
-            emit_file_status_with_path(
-                &progress,
-                &booth_id,
-                &variation,
-                &filename,
-                "done",
-                "ライブラリに移しました",
-                Some(&placed),
-            );
-            browser_log(&app, "ファイルをライブラリへ移しました");
-            let _ = app.emit("library-changed", ());
-            Ok(placed.display().to_string())
-        }
-        Err(err) => {
+            db::commit_browser_download(&mut connection, &request, &source)
+        })
+        .await
+        .map_err(|err| format!("ファイルを移動できません: {err}"))?;
+        if let Err(err) = &committed {
             if err == db::BROWSER_LOGIN_MESSAGE {
                 let _ = dispatch_ui(app.clone(), |handle| open_browser(handle)).await;
                 browser_log(&app, "ログインが必要です");
             } else {
                 browser_log(&app, "ダウンロードに失敗しました");
             }
-            emit_file_status(&progress, &booth_id, &variation, &filename, "error", &err);
+        }
+        committed
+    }
+    .await;
+    match outcome {
+        Ok(placed) => {
+            report.finish("done", "ライブラリに移しました", Some(&placed));
+            browser_log(&app, "ファイルをライブラリへ移しました");
+            let _ = app.emit("library-changed", ());
+            Ok(placed.display().to_string())
+        }
+        Err(err) => {
+            report.finish("error", &err, None);
             Err(err)
         }
     }
@@ -2163,64 +2106,97 @@ mod tests {
     }
 
     #[test]
-    fn an_armed_download_accepts_one_https_file_and_skips_age_gates() {
-        let dir = std::env::temp_dir().join(format!("vrclibman-choice-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let job = DownloadChoice {
-            started: false,
-            dir: dir.clone(),
-            row_filename: "2336025".into(),
-        };
-        let signed = Url::parse("https://cdn.example.test/files/a?token=secret").unwrap();
-        let saved = decide_download(
-            Some(&job),
-            &signed,
-            Path::new("C:/Users/someone/Downloads/body.unitypackage"),
+    fn parallel_downloads_refuse_only_the_same_file() {
+        let first = claim_download(download_key("424242", "", "body.unitypackage")).unwrap();
+        let other = claim_download(download_key("424242", "", "hair.unitypackage")).unwrap();
+        assert!(download_job_armed());
+        assert_eq!(
+            claim_download(download_key(" 424242 ", "", "body.unitypackage")).err().as_deref(),
+            Some(db::BROWSER_SAME_FILE_MESSAGE)
         );
-        match saved {
-            DownloadChoiceResult::Save(path) => {
-                assert_eq!(path, dir.join("body.unitypackage"));
-                assert!(!path.display().to_string().contains("token"));
-            }
-            other => panic!("expected a save path, got {other:?}"),
-        }
-        assert_eq!(public_url(&signed), "https://cdn.example.test/files/a");
-        let gate = Url::parse("https://cdn.example.test/age_verification?r18=1").unwrap();
-        assert!(matches!(
-            decide_download(Some(&job), &gate, Path::new("page.html")),
-            DownloadChoiceResult::Reject { age_gate: true }
-        ));
-        let plain = Url::parse("http://cdn.example.test/body.unitypackage").unwrap();
-        assert!(matches!(
-            decide_download(Some(&job), &plain, Path::new("body.unitypackage")),
-            DownloadChoiceResult::Reject { age_gate: false }
-        ));
-        let busy = DownloadChoice {
-            started: true,
-            dir: dir.clone(),
-            row_filename: "2336025".into(),
-        };
-        let file_url = Url::parse("https://booth.pm/downloadables/2336025").unwrap();
-        assert!(matches!(
-            decide_download(Some(&busy), &file_url, Path::new("body.unitypackage")),
-            DownloadChoiceResult::Cancel
-        ));
-        assert!(matches!(
-            decide_download(None, &file_url, Path::new("body.unitypackage")),
-            DownloadChoiceResult::AllowDefault
-        ));
-        std::fs::write(dir.join("body.unitypackage"), b"already").unwrap();
-        match decide_download(Some(&job), &file_url, Path::new("body.unitypackage")) {
-            DownloadChoiceResult::Save(path) => {
-                assert_eq!(
-                    path.file_name().and_then(|name| name.to_str()),
-                    Some("body (2).unitypackage")
-                );
-            }
-            other => panic!("expected a unique name, got {other:?}"),
-        }
-        let _ = std::fs::remove_dir_all(&dir);
+        let quest = claim_download(download_key("424242", "Quest", "body.unitypackage")).unwrap();
+        drop(first);
+        let again = claim_download(download_key("424242", "", "body.unitypackage")).unwrap();
+        drop(again);
+        drop(quest);
+        drop(other);
+        assert_eq!(DOWNLOAD_SLOTS.available_permits(), PARALLEL_DOWNLOADS);
+    }
+
+    #[test]
+    fn queued_downloads_keep_the_order_they_were_pressed() {
+        tauri::async_runtime::block_on(async {
+            let slots = tokio::sync::Semaphore::new(1);
+            let busy = slots.try_acquire().unwrap();
+            let (finish_first, first_ready) = tokio::sync::oneshot::channel::<()>();
+            let order = Mutex::new(Vec::new());
+            let waited = Mutex::new(Vec::new());
+            // 先に押した方の準備が遅く、後の方はすぐ終わる。それでも先に押した方が枠を得る。
+            let first = std::pin::pin!(async {
+                let (_, permit) = prepare_in_line(
+                    &slots,
+                    async {
+                        let _ = first_ready.await;
+                        Ok::<_, String>(())
+                    },
+                    || waited.lock().unwrap().push("first"),
+                )
+                .await
+                .unwrap();
+                order.lock().unwrap().push("first");
+                drop(permit);
+            });
+            let second = std::pin::pin!(async {
+                let (_, permit) =
+                    prepare_in_line(&slots, async { Ok::<_, String>(()) }, || {
+                        waited.lock().unwrap().push("second")
+                    })
+                    .await
+                    .unwrap();
+                order.lock().unwrap().push("second");
+                drop(permit);
+            });
+            let failed = std::pin::pin!(async {
+                let result = prepare_in_line(
+                    &slots,
+                    async { Err::<(), _>("準備できません".to_string()) },
+                    || {},
+                )
+                .await;
+                assert_eq!(result.err().as_deref(), Some("準備できません"));
+            });
+            type Task<'t> = Option<std::pin::Pin<&'t mut dyn Future<Output = ()>>>;
+            let mut first: Task = Some(first);
+            let mut second: Task = Some(second);
+            let mut failed: Task = Some(failed);
+            let mut busy = Some(busy);
+            let mut finish_first = Some(finish_first);
+            std::future::poll_fn(|cx| {
+                for task in [&mut first, &mut second, &mut failed] {
+                    if let Some(future) = task {
+                        if future.as_mut().poll(cx).is_ready() {
+                            *task = None;
+                        }
+                    }
+                }
+                // 3件とも列に並んだあとで枠を空け、遅い準備を終わらせる。
+                if busy.take().is_some() {
+                    cx.waker().wake_by_ref();
+                } else if let Some(send) = finish_first.take() {
+                    let _ = send.send(());
+                    cx.waker().wake_by_ref();
+                }
+                if first.is_none() && second.is_none() && failed.is_none() {
+                    std::task::Poll::Ready(())
+                } else {
+                    std::task::Poll::Pending
+                }
+            })
+            .await;
+            assert_eq!(*order.lock().unwrap(), vec!["first", "second"]);
+            assert_eq!(*waited.lock().unwrap(), vec!["first", "second"]);
+            assert_eq!(slots.available_permits(), 1);
+        });
     }
 
     #[test]

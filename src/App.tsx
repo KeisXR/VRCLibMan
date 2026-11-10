@@ -19,6 +19,8 @@ import { UI_GENRE_WIDTH, UI_RAIL_WIDTH } from "./uiLayout";
 import { AppUpdaterProvider, useStartupUpdateCheck } from "./useAppUpdater";
 import { SidebarAssetUpdateButton, useSidebarAssetUpdate } from "./components/SidebarAssetUpdateButton";
 import { SidebarUpdaterBadge } from "./components/SidebarUpdaterBadge";
+import { SidebarDownloads } from "./components/SidebarDownloads";
+import { DownloadsProvider, useDownloadBoard } from "./useDownloads";
 import type { LibraryStats } from "./types";
 import {
   EMPTY_PROGRESS,
@@ -300,7 +302,9 @@ export default function App() {
     };
   }, [builtinBrowser]);
 
-  const working = anyWorkInProgress(progressBoard);
+  const downloads = useDownloadBoard({ notify, fail, refresh });
+  // BOOTH からの受け取りは上部の帯に出さず、サイドバーの「ダウンロード」に出す。アプリ更新の再起動は待つ。
+  const working = anyWorkInProgress(progressBoard) || downloads.active > 0;
   const shell = useMemo<ShellValue>(
     () => ({ revision, refresh, notify, fail, builtinBrowser, refreshAccount, workInProgress: working, searchQuery, setSearchQuery }),
     [revision, refresh, notify, fail, builtinBrowser, refreshAccount, working, searchQuery],
@@ -384,6 +388,7 @@ export default function App() {
   return (
     <AppUpdaterProvider>
     <ShellContext.Provider value={shell}>
+    <DownloadsProvider value={downloads}>
     <RightPanelProvider value={rightPanel}>
       <BrowserAutoClassification />
       {setupComplete === false && <SetupWizard onRefresh={refresh} onDone={() => { setSetupComplete(true); refresh(); }} />}
@@ -457,6 +462,7 @@ export default function App() {
           </nav>
           <div className="rail-foot">
             <SidebarClassificationHint revision={revision} compact={collapsed} />
+            <SidebarDownloads compact={collapsed} />
             <StartupUpdateCheck enabled={checkUpdateOnStartup} />
             <SidebarUpdaterBadge onOpenSettings={openAppUpdateSettings} compact={collapsed} />
             <SidebarAssetUpdateButton compact={collapsed} status={assetUpdate.status} running={assetUpdate.running} run={assetUpdate.run} />
@@ -543,6 +549,7 @@ export default function App() {
         />
       </div>
     </RightPanelProvider>
+    </DownloadsProvider>
     </ShellContext.Provider>
     </AppUpdaterProvider>
   );
