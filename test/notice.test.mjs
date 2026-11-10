@@ -3,49 +3,54 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { createServer } from "vite";
 
-test("notice duration grows with length and action, within a cap", async () => {
+test("notices last 3 seconds regardless of length or action", async () => {
   const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
   try {
     const n = await server.ssrLoadModule("/src/notice.ts");
-    assert.equal(n.noticeDuration("素体を保存しました", false), 6000);
-    assert.equal(n.noticeDuration("ファイルをライブラリに移しました", true), 12000);
-    const long = "あ".repeat(n.NOTICE_FREE_CHARS + 25);
-    assert.equal(n.noticeDuration(long, false), 6000 + 25 * n.NOTICE_PER_CHAR_MS);
-    assert.equal(n.noticeDuration("あ".repeat(1000), false), 6000 + n.NOTICE_EXTRA_MAX_MS);
-    assert.equal(n.noticeDuration("あ".repeat(1000), true), 12000 + n.NOTICE_EXTRA_MAX_MS);
-    assert.ok(n.noticeDuration(long, true) > n.noticeDuration(long, false));
+    assert.equal(n.NOTICE_DURATION_MS, 3000);
+    assert.equal(n.noticeDuration(), 3000);
   } finally {
     await server.close();
   }
 });
 
-test("notice clock pauses on hover/focus/inactive and resumes with a floor", async () => {
+test("notice clock pauses on hover/focus/inactive, resumes with a floor, and can be pinned", async () => {
   const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
   try {
     const n = await server.ssrLoadModule("/src/notice.ts");
-    let clock = n.startNoticeClock(6000, 0);
-    assert.equal(n.noticeRemaining(clock, 1000), 5000);
+    let clock = n.startNoticeClock(3000, 0);
+    assert.equal(n.noticeRemaining(clock, 1000), 2000);
     clock = n.holdNoticeClock(clock, "hover", 1000);
-    assert.equal(n.noticeRemaining(clock, 60_000), 5000, "hover freezes the countdown");
+    assert.equal(n.noticeRemaining(clock, 60_000), 2000, "hover freezes the countdown");
     assert.equal(n.noticeExpired(clock, 999_999), false);
     clock = n.holdNoticeClock(clock, "focus", 2000);
     clock = n.releaseNoticeClock(clock, "hover", 3000);
     assert.equal(n.noticeExpired(clock, 999_999), false, "focus still holds after the mouse leaves");
     clock = n.releaseNoticeClock(clock, "focus", 4000);
-    assert.equal(n.noticeRemaining(clock, 4000), 5000);
-    assert.equal(n.noticeExpired(clock, 8999), false);
-    assert.equal(n.noticeExpired(clock, 9000), true);
+    assert.equal(n.noticeRemaining(clock, 4000), 2000);
+    assert.equal(n.noticeExpired(clock, 5999), false);
+    assert.equal(n.noticeExpired(clock, 6000), true);
 
-    let late = n.startNoticeClock(6000, 0);
-    late = n.holdNoticeClock(late, "hover", 5900);
-    late = n.releaseNoticeClock(late, "hover", 7000);
-    assert.equal(n.noticeRemaining(late, 7000), n.NOTICE_RESUME_MIN_MS, "leaving leaves time to read");
+    let late = n.startNoticeClock(3000, 0);
+    late = n.holdNoticeClock(late, "hover", 2900);
+    late = n.releaseNoticeClock(late, "hover", 3500);
+    assert.equal(n.noticeRemaining(late, 3500), n.NOTICE_RESUME_MIN_MS, "leaving leaves time to read");
 
-    const hidden = n.startNoticeClock(6000, 0, ["inactive"]);
+    const hidden = n.startNoticeClock(3000, 0, ["inactive"]);
     assert.equal(n.noticeExpired(hidden, 100_000), false, "an inactive window does not count down");
     const back = n.releaseNoticeClock(hidden, "inactive", 100_000);
-    assert.equal(n.noticeExpired(back, 105_999), false);
-    assert.equal(n.noticeExpired(back, 106_000), true);
+    assert.equal(n.noticeExpired(back, 102_999), false);
+    assert.equal(n.noticeExpired(back, 103_000), true);
+
+    let pinned = n.startNoticeClock(3000, 0);
+    pinned = n.holdNoticeClock(pinned, "hover", 500);
+    pinned = n.pinNoticeClock(pinned, 1500);
+    pinned = n.releaseNoticeClock(pinned, "hover", 2000);
+    assert.equal(pinned.pinned, true);
+    assert.equal(n.noticeExpired(pinned, 999_999), false, "a pinned notice never expires");
+    pinned = n.holdNoticeClock(pinned, "focus", 3000);
+    pinned = n.releaseNoticeClock(pinned, "focus", 4000);
+    assert.equal(n.noticeExpired(pinned, 999_999), false, "releasing other holds keeps it pinned");
 
     assert.deepEqual(n.dismissIfCurrent({ id: 2 }, 1), { id: 2 }, "an old timer keeps a newer notice");
     assert.equal(n.dismissIfCurrent({ id: 2 }, 2), null);
@@ -117,43 +122,67 @@ test("banners: notices auto-dismiss, errors stay until closed", async () => {
     root = createRoot(document.getElementById("root"));
     await act(async () => { root.render(createElement(Harness)); });
 
-    // 操作ボタンなしは約6秒で消える。role=status と ×（閉じる）がある。
+    // 3秒で消える。role=status と ×（閉じる）がある。
     await act(async () => { shell.notify("素体を保存しました"); });
     assert.equal(noticeEl()?.getAttribute("role"), "status");
     assert.equal(noticeEl().querySelector(".banner-close").getAttribute("aria-label"), "閉じる");
-    await advance(5999);
-    assert.ok(noticeEl(), "still shown before 6s");
+    await advance(2999);
+    assert.ok(noticeEl(), "still shown before 3s");
     await advance(1);
-    assert.equal(noticeEl(), null, "gone after 6s");
+    assert.equal(noticeEl(), null, "gone after 3s");
 
-    // 操作ボタン付きは約12秒。
+    // 操作ボタン付きや長い文も3秒。
     let opened = 0;
     await act(async () => { shell.notify("ファイルをライブラリに移しました", { label: "保存先を開く", run: () => opened++ }); });
-    await advance(11_000);
+    await advance(2999);
     assert.ok(noticeEl());
-    await advance(1000);
+    await advance(1);
+    assert.equal(noticeEl(), null);
+    await act(async () => { shell.notify("あ".repeat(200)); });
+    await advance(3000);
     assert.equal(noticeEl(), null);
 
     // 新しい通知でタイマーが数え直し、古いタイマーが新しい通知を消さない。
     await act(async () => { shell.notify("一つ目"); });
-    await advance(5000);
+    await advance(2500);
     await act(async () => { shell.notify("二つ目"); });
-    await advance(2000);
+    await advance(1000);
     assert.equal(noticeEl()?.textContent.includes("二つ目"), true, "the new notice survives the old deadline");
-    await advance(4000);
+    await advance(2000);
     assert.equal(noticeEl(), null);
 
-    // ホバー中は消えない。離れたら残りを数える（最低3秒）。
+    // 1秒未満のホバーは止めるだけ。離れたら残りを数える（最低1.5秒）。
     await act(async () => { shell.notify("ホバーの確認"); });
-    await advance(5500);
+    await advance(2500);
     await fire(noticeEl(), "mouseover", { relatedTarget: document.body });
-    await advance(60_000);
+    await advance(999);
     assert.ok(noticeEl(), "hover keeps the notice");
+    assert.equal(noticeEl().getAttribute("data-notice-pinned"), null, "a short hover does not pin");
     await fire(noticeEl(), "mouseout", { relatedTarget: document.body });
-    await advance(2999);
-    assert.ok(noticeEl(), "leaving gives at least 3s");
+    await advance(1499);
+    assert.ok(noticeEl(), "leaving gives at least 1.5s");
     await advance(1);
     assert.equal(noticeEl(), null);
+
+    // 1秒乗り続けたら消去を取り消し、離れても×で閉じるまで残す。
+    await act(async () => { shell.notify("取り消しの確認"); });
+    await advance(2000);
+    await fire(noticeEl(), "mouseover", { relatedTarget: document.body });
+    await advance(1000);
+    assert.equal(noticeEl()?.getAttribute("data-notice-pinned"), "true", "a 1s hover pins the notice");
+    await fire(noticeEl(), "mouseout", { relatedTarget: document.body });
+    await advance(10 * 60_000);
+    assert.ok(noticeEl(), "a pinned notice stays after the mouse leaves");
+    await fire(noticeEl().querySelector(".banner-close"), "click");
+    assert.equal(noticeEl(), null);
+
+    // 乗り続けている途中で新しい通知に替わったら、新しい通知は取り消し扱いにしない。
+    await act(async () => { shell.notify("替わる前"); });
+    await fire(noticeEl(), "mouseover", { relatedTarget: document.body });
+    await advance(500);
+    await act(async () => { shell.notify("替わった後"); });
+    await advance(3000);
+    assert.equal(noticeEl(), null, "the replaced notice's hover timer does not pin the new one");
 
     // 通知内のボタンにフォーカスがある間は消えない。
     await act(async () => { shell.notify("フォーカスの確認", { label: "保存先を開く", run: () => opened++ }); });
@@ -162,17 +191,17 @@ test("banners: notices auto-dismiss, errors stay until closed", async () => {
     await advance(60_000);
     assert.ok(noticeEl(), "focus keeps the notice");
     await fire(actionButton, "focusout", { relatedTarget: document.body });
-    await advance(12_000);
+    await advance(3000);
     assert.equal(noticeEl(), null);
 
     // ウィンドウのフォーカスが外れただけ（内蔵ブラウザの操作中など）では止めない。
     await act(async () => { shell.notify("フォーカス外れの確認"); });
     focused = false;
     await act(async () => { window.dispatchEvent(new window.Event("blur")); });
-    await advance(6000);
+    await advance(3000);
     assert.equal(noticeEl(), null, "a blurred window still dismisses the notice");
     await act(async () => { shell.notify("フォーカス外れのまま出た通知"); });
-    await advance(6000);
+    await advance(3000);
     assert.equal(noticeEl(), null, "a notice shown while blurred also dismisses");
     focused = true;
     await act(async () => { window.dispatchEvent(new window.Event("focus")); });
@@ -185,7 +214,7 @@ test("banners: notices auto-dismiss, errors stay until closed", async () => {
     assert.ok(noticeEl(), "a hidden window keeps the notice");
     visibility = "visible";
     await act(async () => { document.dispatchEvent(new window.Event("visibilitychange")); });
-    await advance(4999);
+    await advance(1999);
     assert.ok(noticeEl(), "resumes with the remaining time");
     await advance(1);
     assert.equal(noticeEl(), null);
@@ -195,7 +224,7 @@ test("banners: notices auto-dismiss, errors stay until closed", async () => {
     assert.ok(noticeEl(), "a notice shown while hidden waits");
     visibility = "visible";
     await act(async () => { document.dispatchEvent(new window.Event("visibilitychange")); });
-    await advance(6000);
+    await advance(3000);
     assert.equal(noticeEl(), null);
 
     // 操作ボタンはすぐ消して実行する。×でも閉じる。
