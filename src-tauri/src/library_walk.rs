@@ -226,7 +226,7 @@ fn is_library_section_path(path: &str) -> bool {
     section_from_library_path(path).is_some()
 }
 
-fn is_age_gate(path: &str, query: &str) -> bool {
+pub(crate) fn is_age_gate(path: &str, query: &str) -> bool {
     let haystack = format!("{path}?{query}");
     [
         "age_verification",

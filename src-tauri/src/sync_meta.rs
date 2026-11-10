@@ -545,7 +545,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 11);
+        assert_eq!(version, 12);
         for (entity, key) in [
             (ENTITY_CLASSIFICATION, "9001"),
             (ENTITY_LINKS, "9001"),

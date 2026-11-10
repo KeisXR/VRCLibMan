@@ -359,6 +359,14 @@ fn migrate(connection: &Connection) -> Result<(), String> {
         tx.execute_batch("PRAGMA user_version = 11;").sql()?;
         tx.commit().sql()?;
     }
+    // v12 is only the purchase history (orders, their items, and labels). Older libraries start
+    // empty; nothing is filled in until the user reads the BOOTH order history.
+    if version < 12 {
+        let tx = connection.unchecked_transaction().sql()?;
+        tx.execute_batch(crate::purchases::TABLES).sql()?;
+        tx.execute_batch("PRAGMA user_version = 12;").sql()?;
+        tx.commit().sql()?;
+    }
     Ok(())
 }
 
@@ -441,6 +449,7 @@ fn ensure_ready(connection: &Connection) -> Result<u32, String> {
         ("right_panel_tabs", crate::model::DEFAULT_RIGHT_PANEL_TABS),
         ("check_update_on_startup", "0"),
         ("ui_update_dismissed_version", ""),
+        (crate::purchases::SHOW_PRICES_KEY, "0"),
     ] {
         connection
             .execute(
@@ -6326,7 +6335,7 @@ mod tests {
             connection
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
-            11
+            12
         );
         let detail_at: Option<String> = connection
             .query_row(
@@ -7040,7 +7049,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 11);
+        assert_eq!(version, 12);
         let json = r#"{
             "products": [
                 {
@@ -7641,7 +7650,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 11);
+        assert_eq!(version, 12);
         let report = import_products(&mut connection, &parsed).unwrap();
         assert_eq!(report.inserted, 7);
         assert_eq!(report.skipped, 0);
@@ -7916,7 +7925,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 11);
+        assert_eq!(version, 12);
         assert!(!settings(&connection).unwrap().ui_rail_collapsed);
         let saved = update_settings(
             &connection,
@@ -7985,7 +7994,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 11);
+        assert_eq!(version, 12);
         assert!(!settings(&connection).unwrap().preview_pane);
         assert_eq!(settings(&connection).unwrap().preview_pane_width, 300);
         let saved = update_settings(
@@ -8033,7 +8042,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 11);
+        assert_eq!(version, 12);
     }
 
     #[test]
@@ -8042,7 +8051,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 11);
+        assert_eq!(version, 12);
         assert!(!settings(&connection).unwrap().browser_force_dark);
         connection
             .execute("DELETE FROM settings WHERE key = 'browser_force_dark'", [])
@@ -8089,7 +8098,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 11);
+        assert_eq!(version, 12);
     }
 
     #[test]
@@ -8169,7 +8178,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 11);
+        assert_eq!(version, 12);
     }
 
     #[test]

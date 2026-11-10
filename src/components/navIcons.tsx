@@ -5,7 +5,7 @@
  */
 import type { ReactNode } from "react";
 
-export type NavIconName = "avatars" | "assets" | "worlds" | "search" | "log" | "import" | "settings";
+export type NavIconName = "avatars" | "assets" | "worlds" | "search" | "purchases" | "log" | "import" | "settings";
 
 function Icon({ children, className = "nav-icon" }: { children: ReactNode; className?: string }) {
   return (
@@ -43,6 +43,13 @@ const PATHS: Record<NavIconName, ReactNode> = {
     <>
       <circle cx="8" cy="8" r="4.6" />
       <path d="m11.5 11.5 3.8 3.8" />
+    </>
+  ),
+  // A receipt with a torn bottom edge: what was bought, and when.
+  purchases: (
+    <>
+      <path d="M4.2 2.5h9.6v13l-1.6-1.1-1.6 1.1-1.6-1.1-1.6 1.1-1.6-1.1-1.6 1.1z" />
+      <path d="M6.6 6.2h4.8M6.6 9h4.8" />
     </>
   ),
   // A page of lines: a record to read.

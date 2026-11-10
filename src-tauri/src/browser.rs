@@ -5,6 +5,10 @@ use crate::library_walk::{
 };
 use crate::model::ImportReport;
 use crate::progress::ProgressGuard;
+use crate::purchase_walk::{
+    self, DetailApplied, DetailSnapshot, ListApplied, ListSnapshot, PlannedRead, PurchaseWalk,
+    PurchaseWalkReport, purchase_block_reason, purchase_settled_stop, same_orders_page,
+};
 use serde::Serialize;
 use std::collections::HashSet;
 use std::io::Write;
@@ -30,6 +34,9 @@ const SESSION_DIR_NAME: &str = "booth-browser";
 pub const BOOTH_DATA_STORE_ID: [u8; 16] = *b"vrclibman-booth!";
 
 const EXTRACT_JS: &str = include_str!("../../extension/extract.js");
+const PURCHASE_JS: &str = include_str!("purchase_extract.cjs");
+/// 購入完了のあと、その注文の詳細だけを読む隠した WebView。タブ一覧には入れない。
+const ORDER_READER_LABEL: &str = "booth-order-reader";
 
 #[cfg(any(not(target_os = "macos"), test))]
 pub fn session_dir(local_data: &Path) -> PathBuf {
@@ -352,7 +359,7 @@ fn import_current_page_inner(
     tab_id: Option<String>,
 ) -> Result<ImportReport, String> {
     browser_enabled(app)?;
-    if library_walk_running() { return Err("ライブラリのインポート中です".into()); }
+    if library_walk_running() { return Err(walk_busy_message().into()); }
     browser_log(app, "インポートを開始");
     let tab_id = crate::browser_surface::tab_for_caller(caller, tab_id, None)?;
     let window = app
@@ -418,6 +425,10 @@ fn destroy_session_windows(app: &AppHandle) -> bool {
     let mut closed = crate::browser_surface::host_window(app).is_some();
     request_library_walk_cancel();
     let _ = crate::browser_surface::close(app);
+    if let Some(reader) = app.get_webview(ORDER_READER_LABEL) {
+        let _ = reader.close();
+        closed = true;
+    }
     for label in [WINDOW_LABEL, PROBE_LABEL] {
         if let Some(window) = app.get_window(label) {
             let _ = window.destroy();
@@ -1212,13 +1223,36 @@ pub const WALK_LOGIN_NOTICE: &str = "ログインの期限が切れているか�
 
 static WALK_CANCEL: AtomicBool = AtomicBool::new(false);
 static WALK_RUNNING: AtomicBool = AtomicBool::new(false);
+/// `WALK_RUNNING` を購入履歴の読み込みが持っている間だけ立てる。
+static WALK_PURCHASES: AtomicBool = AtomicBool::new(false);
+static ORDER_READER_BUSY: AtomicBool = AtomicBool::new(false);
 
 pub fn library_walk_running() -> bool {
     WALK_RUNNING.load(Ordering::SeqCst)
 }
 
+pub fn purchase_walk_running() -> bool {
+    WALK_RUNNING.load(Ordering::SeqCst) && WALK_PURCHASES.load(Ordering::SeqCst)
+}
+
+/// ライブラリ全取得と購入履歴の読み込みは同じタブを動かすので、同時には走らせない。
+pub(crate) fn walk_busy_message() -> &'static str {
+    if WALK_PURCHASES.load(Ordering::SeqCst) {
+        "購入履歴の読み込み中です"
+    } else {
+        "ライブラリのインポート中です"
+    }
+}
+
 pub fn request_library_walk_cancel() {
     WALK_CANCEL.store(true, Ordering::SeqCst);
+}
+
+/// 購入履歴の読み込みだけを止める。ライブラリ全取得の最中には何もしない。
+pub fn request_purchase_walk_cancel() {
+    if purchase_walk_running() {
+        WALK_CANCEL.store(true, Ordering::SeqCst);
+    }
 }
 
 fn walk_cancel_requested() -> bool {
@@ -1656,6 +1690,16 @@ async fn navigate_booth(
 }
 
 async fn wait_until_settled(app: &AppHandle, target: &url::Url) -> Result<String, String> {
+    wait_until_page(app, target, same_library_page, settled_stop).await
+}
+
+/// 移動先に着いて読み込みが終わるか、止めるべきページ（ログイン、年齢確認）に着くまで待つ。
+async fn wait_until_page(
+    app: &AppHandle,
+    target: &url::Url,
+    same: fn(&str, &url::Url) -> bool,
+    stop: fn(&str) -> Option<WalkStop>,
+) -> Result<String, String> {
     let started = std::time::Instant::now();
     loop {
         if walk_cancel_requested() {
@@ -1666,9 +1710,7 @@ async fn wait_until_settled(app: &AppHandle, target: &url::Url) -> Result<String
         }
         let raw = eval_booth(app, PROBE_JS.to_string()).await?;
         let (href, ready) = parse_probe(&raw)?;
-        if ready == "complete"
-            && (same_library_page(&href, target) || settled_stop(&href).is_some())
-        {
+        if ready == "complete" && (same(&href, target) || stop(&href).is_some()) {
             return Ok(href);
         }
         pause_for(Duration::from_millis(200)).await;
@@ -1712,7 +1754,7 @@ pub async fn import_library(app: AppHandle) -> Result<LibraryWalkReport, String>
         return Err(db::BROWSER_BUSY_MESSAGE.into());
     }
     if WALK_RUNNING.swap(true, Ordering::SeqCst) {
-        return Err("ライブラリのインポート中です".into());
+        return Err(walk_busy_message().into());
     }
     let _guard = WalkRunningGuard;
     let progress = ProgressGuard::new(app.clone(), "browser-library");
@@ -1834,6 +1876,428 @@ pub async fn import_library(app: AppHandle) -> Result<LibraryWalkReport, String>
         progress.done_with(1, summary);
     }
     Ok(report)
+}
+
+struct PurchaseWalkGuard;
+
+impl Drop for PurchaseWalkGuard {
+    fn drop(&mut self) {
+        WALK_PURCHASES.store(false, Ordering::SeqCst);
+    }
+}
+
+/// DB の仕事を UI スレッドと非同期の実行器の外で行う。ロックは `.await` をまたがない。
+async fn with_db<T, F>(app: &AppHandle, work: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&mut rusqlite::Connection) -> Result<T, String> + Send + 'static,
+{
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<crate::AppState>();
+        let mut connection = state
+            .db
+            .lock()
+            .map_err(|_| "データベースをロックできません".to_string())?;
+        work(&mut connection)
+    })
+    .await
+    .map_err(|err| format!("データベースを読めません: {err}"))?
+}
+
+fn purchase_script(call: &str) -> String {
+    let mut script = String::from("(function () {\n  try {\n    var module = { exports: {} };\n");
+    script.push_str(PURCHASE_JS);
+    script.push_str("\n    var api = module.exports;\n    var href = String(location.href || \"\");\n");
+    script.push_str(call);
+    script.push_str(
+        "\n  } catch (error) {\n    return { ok: false, error: String(error && error.message ? error.message : error) };\n  }\n})()",
+    );
+    script
+}
+
+/// 購入履歴の一覧 1 ページを読むスクリプト。クッキーとストレージには触れない。
+pub(crate) fn purchase_list_script() -> String {
+    purchase_script(
+        "    var result = api.orderList(document, href);\n    return { ok: true, href: href, orders: result.orders, lastPage: result.lastPage };",
+    )
+}
+
+/// 注文 1 件の詳細を読むスクリプト。支払方法、住所、ギフト用 URL は返さない。
+pub(crate) fn purchase_detail_script() -> String {
+    purchase_script("    return { ok: true, href: href, detail: api.orderDetail(document, href) };")
+}
+
+fn purchase_eval(raw: &str) -> Result<serde_json::Value, String> {
+    let value = unwrap_eval_json(raw)?;
+    if !value.get("ok").and_then(|item| item.as_bool()).unwrap_or(false) {
+        return Err(value
+            .get("error")
+            .and_then(|item| item.as_str())
+            .unwrap_or("このページを読めませんでした")
+            .to_string());
+    }
+    Ok(value)
+}
+
+fn purchase_href(value: &serde_json::Value) -> String {
+    value
+        .get("href")
+        .and_then(|item| item.as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
+pub(crate) fn parse_purchase_list(raw: &str) -> Result<ListSnapshot, String> {
+    let value = purchase_eval(raw)?;
+    Ok(ListSnapshot {
+        href: purchase_href(&value),
+        orders: purchase_walk::parse_list_orders(value.get("orders").unwrap_or(&serde_json::Value::Null)),
+        last_page: value
+            .get("lastPage")
+            .and_then(|item| item.as_u64())
+            .unwrap_or(1)
+            .min(u64::from(u32::MAX)) as u32,
+    })
+}
+
+pub(crate) fn parse_purchase_detail(raw: &str) -> Result<DetailSnapshot, String> {
+    let value = purchase_eval(raw)?;
+    Ok(DetailSnapshot {
+        href: purchase_href(&value),
+        detail: purchase_walk::parse_detail(value.get("detail").unwrap_or(&serde_json::Value::Null)),
+    })
+}
+
+async fn navigate_walk_tab(app: &AppHandle, url: Url, label: String) -> Result<(), String> {
+    dispatch_ui(app.clone(), move |handle| {
+        if crate::browser_surface::host_window(handle).is_none() {
+            open_browser(handle)?;
+        }
+        browser_enabled(handle)?;
+        let id = pinned_walk_tab(handle)?;
+        let window = handle
+            .get_webview(&id)
+            .ok_or_else(|| "ブラウザが開いていません".to_string())?;
+        browser_log(handle, &format!("{label}を開きます {}", public_url(&url)));
+        window
+            .navigate(url)
+            .map_err(|err| format!("ページを開けません: {err}"))
+    })
+    .await
+}
+
+/// 購入履歴か注文詳細へ移動して読む。止めるべきページに着いたら、読まずにその URL だけ返す。
+async fn read_purchase_page(
+    app: &AppHandle,
+    url: &Url,
+    label: String,
+    script: String,
+) -> Result<(String, Option<String>), String> {
+    if walk_cancel_requested() {
+        return Err(WALK_CANCELLED.into());
+    }
+    navigate_walk_tab(app, url.clone(), label).await?;
+    let href = wait_until_page(app, url, same_orders_page, purchase_settled_stop).await?;
+    if walk_cancel_requested() {
+        return Err(WALK_CANCELLED.into());
+    }
+    if purchase_block_reason(&href).is_some() {
+        return Ok((href, None));
+    }
+    let raw = eval_booth(app, script).await?;
+    Ok((href, Some(raw)))
+}
+
+/// 購入履歴を 1 ページずつ読み、そのあと詳細が未取得の注文を 1 件ずつ読む。
+/// ギフトの印は詳細にしか出ないことがあるので、詳細は全注文で一度ずつ読む。移動と eval は IPC の外で行う。
+pub async fn import_purchases(app: AppHandle) -> Result<PurchaseWalkReport, String> {
+    browser_enabled(&app)?;
+    if download_job_armed() {
+        return Err(db::BROWSER_BUSY_MESSAGE.into());
+    }
+    if WALK_RUNNING.swap(true, Ordering::SeqCst) {
+        return Err(walk_busy_message().into());
+    }
+    WALK_PURCHASES.store(true, Ordering::SeqCst);
+    let _purchases = PurchaseWalkGuard;
+    let _guard = WalkRunningGuard;
+    let progress = ProgressGuard::new(app.clone(), "browser-purchases");
+    let (page_delay, known_complete) = with_db(&app, |connection| {
+        Ok((
+            Duration::from_millis(db::booth_page_interval_ms(connection)?),
+            crate::purchases::history_complete(connection)?,
+        ))
+    })
+    .await?;
+    WALK_CANCEL.store(false, Ordering::SeqCst);
+    browser_log(&app, "購入履歴の読み込みを開始");
+    let mut walk = PurchaseWalk::new(known_complete);
+    loop {
+        if walk_cancel_requested() {
+            walk.cancel();
+            break;
+        }
+        if walk.needs_detail_queue() {
+            let queue = with_db(&app, |connection| crate::purchases::pending_detail_ids(connection)).await?;
+            walk.start_details(queue);
+            continue;
+        }
+        let Some(planned) = walk.plan() else {
+            break;
+        };
+        let line = walk.progress_line(&planned);
+        match &planned.read {
+            PlannedRead::Detail { index, total, .. } => progress.update(*index, *total, line),
+            PlannedRead::List { .. } => progress.update(0, 0, line),
+        }
+        if planned.pause {
+            pause_for(page_delay).await;
+            if walk_cancel_requested() {
+                walk.cancel();
+                break;
+            }
+        }
+        match planned.read.clone() {
+            PlannedRead::List { url, page, .. } => {
+                let label = format!("購入履歴の {page} ページ目");
+                match read_purchase_page(&app, &url, label, purchase_list_script()).await {
+                    Ok((href, None)) => walk.accept_list(
+                        &ListSnapshot {
+                            href,
+                            orders: Vec::new(),
+                            last_page: 1,
+                        },
+                        ListApplied::default(),
+                    ),
+                    Ok((href, Some(raw))) => match parse_purchase_list(&raw) {
+                        Ok(mut snapshot) => {
+                            if snapshot.href.is_empty() {
+                                snapshot.href = href;
+                            }
+                            let applied = if purchase_block_reason(&snapshot.href).is_some() {
+                                ListApplied::default()
+                            } else {
+                                let orders = snapshot.orders.clone();
+                                with_db(&app, move |connection| {
+                                    crate::purchases::apply_list_page(connection, &orders)
+                                })
+                                .await?
+                            };
+                            walk.accept_list(&snapshot, applied);
+                            let _ = app.emit("purchases-changed", ());
+                        }
+                        Err(err) => walk.fail(err),
+                    },
+                    Err(err) if err == WALK_CANCELLED || walk_cancel_requested() => walk.cancel(),
+                    Err(err) => walk.fail(err),
+                }
+            }
+            PlannedRead::Detail { url, order_id, .. } => {
+                let label = "注文の詳細".to_string();
+                match read_purchase_page(&app, &url, label, purchase_detail_script()).await {
+                    Ok((href, None)) => walk.accept_detail(
+                        &DetailSnapshot { href, detail: None },
+                        DetailApplied::default(),
+                    ),
+                    Ok((href, Some(raw))) => match parse_purchase_detail(&raw) {
+                        Ok(mut snapshot) => {
+                            if snapshot.href.is_empty() {
+                                snapshot.href = href;
+                            }
+                            match snapshot.detail.clone() {
+                                Some(detail) if detail.order_id == order_id => {
+                                    let applied = with_db(&app, move |connection| {
+                                        crate::purchases::apply_detail(connection, &detail)
+                                    })
+                                    .await?;
+                                    walk.accept_detail(&snapshot, applied);
+                                    let _ = app.emit("purchases-changed", ());
+                                }
+                                _ if purchase_block_reason(&snapshot.href).is_some() => {
+                                    walk.accept_detail(&snapshot, DetailApplied::default())
+                                }
+                                _ => walk.fail(purchase_walk::DETAIL_UNREADABLE),
+                            }
+                        }
+                        Err(err) => walk.fail(err),
+                    },
+                    Err(err) if err == WALK_CANCELLED || walk_cancel_requested() => walk.cancel(),
+                    Err(err) => walk.fail(err),
+                }
+            }
+        }
+        if walk.stopped() {
+            break;
+        }
+    }
+    let report = walk.report(db::BROWSER_AGE_MESSAGE);
+    let list_complete = walk.list_complete();
+    if list_complete || report.pages > 0 || report.details > 0 {
+        with_db(&app, move |connection| crate::purchases::finish_walk(connection, list_complete)).await?;
+    }
+    let summary = purchase_walk::summary_line(&report);
+    browser_log(&app, &summary);
+    if report.cancelled {
+        browser_log(&app, "購入履歴の読み込みを中止しました");
+        progress.cancel(summary);
+    } else if !report.notice.is_empty() {
+        browser_log(&app, "購入履歴の読み込みを止めました");
+        progress.fail(summary);
+    } else {
+        progress.done_with(1, summary);
+    }
+    let _ = app.emit("purchases-changed", ());
+    Ok(report)
+}
+
+struct OrderReaderTurn;
+
+impl Drop for OrderReaderTurn {
+    fn drop(&mut self) {
+        ORDER_READER_BUSY.store(false, Ordering::SeqCst);
+    }
+}
+
+/// 購入完了ページを見たあと、その注文の詳細を 1 回だけ読む。購入やダウンロードはしない。
+/// 読めなかった注文は詳細が未取得のまま残り、次の購入履歴の読み込みで埋まる。
+pub(crate) fn read_order_later(app: &AppHandle, source_label: &str, order_id: &str) {
+    let app = app.clone();
+    let source = source_label.to_string();
+    let order_id = order_id.to_string();
+    tauri::async_runtime::spawn(async move {
+        match read_order_in_background(&app, &source, &order_id).await {
+            Ok(()) => browser_log(&app, "購入した注文の詳細を読みました"),
+            Err(_) => browser_log(
+                &app,
+                "購入した注文の詳細は、次に購入履歴を読み込むときに取得します",
+            ),
+        }
+    });
+}
+
+async fn read_order_in_background(app: &AppHandle, source_label: &str, order_id: &str) -> Result<(), String> {
+    if !order_reader_supported() {
+        return Err("この OS では裏で読みません".into());
+    }
+    if library_walk_running() || SESSION_CLEARING.load(Ordering::SeqCst) {
+        return Err(walk_busy_message().into());
+    }
+    if ORDER_READER_BUSY.swap(true, Ordering::SeqCst) {
+        return Err("別の注文を読んでいます".into());
+    }
+    let _turn = OrderReaderTurn;
+    let url = purchase_walk::order_detail_url(order_id)?;
+    let (loaded, arrived) = std::sync::mpsc::channel::<()>();
+    let source = source_label.to_string();
+    let target = url.clone();
+    dispatch_ui(app.clone(), move |handle| open_order_reader(handle, &source, target, loaded)).await?;
+    let result = read_order_reader(app, &url, order_id, arrived).await;
+    let _ = dispatch_ui(app.clone(), |handle| {
+        if let Some(view) = handle.get_webview(ORDER_READER_LABEL) {
+            let _ = view.close();
+        }
+        Ok(())
+    })
+    .await;
+    result
+}
+
+/// Linux の右パネルは GtkOverlay に重ねるので、見えない子 WebView を足さない。
+const fn order_reader_supported() -> bool {
+    !cfg!(target_os = "linux")
+}
+
+/// 購入完了ページと同じ窓に、1px の隠した子 WebView を作る。表示用のタブと同じログインを使う。
+/// ダウンロード、新しい窓、http への移動は許さない。
+fn open_order_reader(
+    app: &AppHandle,
+    source_label: &str,
+    url: Url,
+    loaded: std::sync::mpsc::Sender<()>,
+) -> Result<(), String> {
+    let source = app
+        .get_webview(source_label)
+        .ok_or_else(|| "ブラウザが開いていません".to_string())?;
+    let window = source.window();
+    if let Some(old) = app.get_webview(ORDER_READER_LABEL) {
+        let _ = old.close();
+    }
+    let loaded = Mutex::new(loaded);
+    #[allow(unused_mut)]
+    let mut builder = tauri::webview::WebviewBuilder::new(ORDER_READER_LABEL, WebviewUrl::External(url))
+        .on_navigation(|url| url.scheme() == "https" || url.as_str() == "about:blank")
+        .on_page_load(move |_view, payload| {
+            if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+                if let Ok(sender) = loaded.lock() {
+                    let _ = sender.send(());
+                }
+            }
+        })
+        .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+        .on_download(|_, _| false);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let root = local_data_dir(app)?;
+        let dir = session_dir(&root);
+        if !session_dir_is_safe(&root, &dir) {
+            return Err("セッションの場所が不正です".into());
+        }
+        builder = builder.data_directory(dir);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.data_store_identifier(BOOTH_DATA_STORE_ID);
+    }
+    let view = window
+        .add_child(
+            builder,
+            tauri::LogicalPosition::new(0.0, 0.0),
+            tauri::LogicalSize::new(1.0, 1.0),
+        )
+        .map_err(|_| "注文を読む準備ができません".to_string())?;
+    let _ = view.hide();
+    Ok(())
+}
+
+async fn read_order_reader(
+    app: &AppHandle,
+    url: &Url,
+    order_id: &str,
+    arrived: std::sync::mpsc::Receiver<()>,
+) -> Result<(), String> {
+    let first = tauri::async_runtime::spawn_blocking(move || arrived.recv_timeout(Duration::from_secs(20)))
+        .await
+        .map_err(|_| "ページを読めません".to_string())?;
+    if first.is_err() {
+        return Err("ページの読み込みがタイムアウトしました".into());
+    }
+    let started = std::time::Instant::now();
+    loop {
+        if started.elapsed() > Duration::from_secs(20) {
+            return Err("ページの読み込みがタイムアウトしました".into());
+        }
+        let raw = eval_label_within(app, ORDER_READER_LABEL, PROBE_JS.to_string(), Duration::from_secs(3)).await?;
+        let (href, ready) = parse_probe(&raw)?;
+        if ready == "complete" {
+            if purchase_block_reason(&href).is_some() {
+                return Err(purchase_walk::LOGIN_NOTICE.into());
+            }
+            if same_orders_page(&href, url) {
+                break;
+            }
+        }
+        let _ = tauri::async_runtime::spawn_blocking(|| std::thread::sleep(Duration::from_millis(200))).await;
+    }
+    let raw = eval_label_within(app, ORDER_READER_LABEL, purchase_detail_script(), Duration::from_secs(10)).await?;
+    let snapshot = parse_purchase_detail(&raw)?;
+    let detail = snapshot
+        .detail
+        .filter(|detail| detail.order_id == order_id)
+        .ok_or_else(|| purchase_walk::DETAIL_UNREADABLE.to_string())?;
+    with_db(app, move |connection| crate::purchases::apply_detail(connection, &detail)).await?;
+    let _ = app.emit("purchases-changed", ());
+    Ok(())
 }
 
 async fn fill_public_details(app: &AppHandle, progress: &ProgressGuard) -> Result<(), String> {
@@ -2610,5 +3074,60 @@ mod tests {
             .or_else(|| tail.find("\nimpl "))
             .unwrap_or(tail.len());
         &rest[..after + end]
+    }
+
+    #[test]
+    fn purchase_scripts_read_the_document_and_parse_the_extractor_result() {
+        for script in [purchase_list_script(), purchase_detail_script()] {
+            assert!(script.contains("VrcLibManPurchases") || script.contains("module.exports"));
+            assert!(!script.contains("document.cookie"));
+            assert!(!script.contains("localStorage"));
+            assert!(!script.contains("fetch("));
+        }
+        // eval_with_callback は JSON を文字列として二重に包んで返すことがある。
+        let list = serde_json::to_string(
+            &serde_json::json!({
+                "ok": true,
+                "href": "https://accounts.booth.pm/orders?page=2",
+                "orders": [{ "orderId": "90221765", "state": "confirmed", "orderedAt": "2026-11-02T09:30:20+09:00", "title": "見本" }],
+                "lastPage": 7
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let snapshot = parse_purchase_list(&list).unwrap();
+        assert_eq!(snapshot.last_page, 7);
+        assert_eq!(snapshot.orders[0].order_id, "90221765");
+        let detail = serde_json::json!({
+            "ok": true,
+            "href": "https://accounts.booth.pm/orders/90221765",
+            "detail": {
+                "orderId": "90221765", "state": "confirmed", "orderedAt": "2026-11-02T09:30:20+09:00",
+                "totalYen": 350, "gift": false,
+                "items": [{ "boothId": "9081346", "name": "見本", "shop": "見本ショップ", "priceYen": 350, "boostYen": 0, "quantity": 1 }]
+            }
+        })
+        .to_string();
+        let snapshot = parse_purchase_detail(&detail).unwrap();
+        let parsed = snapshot.detail.unwrap();
+        assert_eq!(parsed.total_yen, Some(350));
+        assert_eq!(parsed.items[0].booth_id, "9081346");
+        let failed = serde_json::json!({ "ok": false, "error": "読めません" }).to_string();
+        assert_eq!(parse_purchase_detail(&failed).unwrap_err(), "読めません");
+        let missing = serde_json::json!({ "ok": true, "href": "https://accounts.booth.pm/orders/1", "detail": null }).to_string();
+        assert!(parse_purchase_detail(&missing).unwrap().detail.is_none());
+    }
+
+    #[test]
+    fn the_order_reader_never_downloads_or_opens_windows() {
+        let source = include_str!("browser.rs");
+        let production = &source[..source.find("#[cfg(test)]").unwrap()];
+        let reader = function_body(production, "fn open_order_reader");
+        assert!(reader.contains(".on_download(|_, _| false)"));
+        assert!(reader.contains("NewWindowResponse::Deny"));
+        assert!(reader.contains(".hide()"));
+        let walk = function_body(production, "pub async fn import_purchases");
+        assert!(walk.contains("WALK_RUNNING.swap(true"));
+        assert!(walk.contains("download_job_armed()"));
     }
 }

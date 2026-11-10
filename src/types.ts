@@ -323,6 +323,9 @@ export interface SyncCounts {
   /** パッケージに実際に入れた画像の数。 */
   thumbnails: number;
   heroImages: number;
+  /** 購入履歴の注文と商品の数。 */
+  purchaseOrders: number;
+  purchaseItems: number;
 }
 
 export interface SyncExportReport {
@@ -439,6 +442,128 @@ export interface LibraryWalkReport {
   inserted: number;
   updated: number;
   unchanged: number;
+}
+
+export type PurchaseGroupKind = "avatar" | "generic" | "unclassified";
+
+/** アバター別の枠。`key` は `avatar:<id>`、`generic`、`unclassified`。 */
+export interface PurchaseGroup {
+  key: string;
+  kind: PurchaseGroupKind;
+  label: string;
+  avatarId: string | null;
+  /** アバター本体の購入。 */
+  body: boolean;
+}
+
+export interface PurchaseItemView {
+  id: number;
+  boothId: string;
+  name: string;
+  variation: string | null;
+  shop: string;
+  priceYen: number | null;
+  boostYen: number | null;
+  amountYen: number | null;
+  quantity: number;
+  inLibrary: boolean;
+  thumbnailPath: string | null;
+  thumbnailUrl: string | null;
+  groups: PurchaseGroup[];
+  labelIds: number[];
+}
+
+export interface PurchaseOrderView {
+  orderId: string;
+  /** BOOTH の表示どおりの日本時間（`YYYY-MM-DDTHH:MM:SS+09:00`）。詳細を読むまで null のことがある。 */
+  orderedAt: string | null;
+  recordedAt: string;
+  totalYen: number | null;
+  gift: boolean;
+  giftDetected: boolean;
+  giftOverride: boolean | null;
+  detailRead: boolean;
+  source: string;
+  title: string;
+  items: PurchaseItemView[];
+}
+
+export interface PurchaseLabel {
+  id: number;
+  name: string;
+  items: number;
+}
+
+export interface PurchaseGroupOption {
+  key: string;
+  kind: PurchaseGroupKind;
+  label: string;
+  items: number;
+}
+
+export interface PurchaseStatus {
+  orders: number;
+  items: number;
+  pendingDetails: number;
+  complete: boolean;
+  lastReadAt: string | null;
+  showPrices: boolean;
+  running: boolean;
+}
+
+export interface PurchasePage {
+  orders: PurchaseOrderView[];
+  total: number;
+  offset: number;
+  limit: number;
+  labels: PurchaseLabel[];
+  groups: PurchaseGroupOption[];
+  years: number[];
+  status: PurchaseStatus;
+}
+
+export interface PurchaseQuery {
+  query?: string;
+  labelId?: number | null;
+  group?: string | null;
+  gift?: boolean | null;
+  year?: number | null;
+  offset?: number;
+  limit?: number;
+}
+
+export interface PurchaseSummaryGroup {
+  key: string;
+  kind: PurchaseGroupKind;
+  label: string;
+  avatarId: string | null;
+  owned: boolean;
+  items: number;
+  bodyItems: number;
+  amountYen: number;
+  unknownAmountItems: number;
+}
+
+export interface PurchaseSummary {
+  year: number | null;
+  years: number[];
+  orders: number;
+  items: number;
+  totalYen: number;
+  unknownAmountItems: number;
+  giftItems: number;
+  giftYen: number;
+  groups: PurchaseSummaryGroup[];
+  showPrices: boolean;
+}
+
+export interface PurchaseWalkReport {
+  pages: number;
+  added: number;
+  removed: number;
+  details: number;
+  cancelled: boolean;
+  notice: string;
 }
 
 export interface ScanReport {

@@ -35,6 +35,8 @@ mod presence;
 mod presence_linux;
 mod preview_image;
 mod progress;
+mod purchase_walk;
+mod purchases;
 mod quiet;
 mod resolve;
 mod retired_classifier;
@@ -295,6 +297,17 @@ pub fn run() {
             commands::import_booth_page,
             commands::import_booth_library,
             commands::cancel_booth_library,
+            commands::import_booth_purchases,
+            commands::cancel_booth_purchases,
+            commands::purchase_history,
+            commands::purchase_status,
+            commands::purchase_summary,
+            commands::set_purchase_show_prices,
+            commands::create_purchase_label,
+            commands::rename_purchase_label,
+            commands::delete_purchase_label,
+            commands::set_purchase_item_labels,
+            commands::set_purchase_gift,
             commands::clear_booth_session,
             commands::close_booth_browser,
             commands::booth_browser_log,

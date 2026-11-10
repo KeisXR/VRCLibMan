@@ -80,10 +80,19 @@ fn changed(app: &AppHandle, prompt: bool) {
 }
 
 pub(crate) fn page_loaded(view: &Webview, url: &Url) {
+    if crate::purchase_walk::orders_path(url).is_some() {
+        orders_page_loaded(view, url);
+        return;
+    }
     if !checkout_url(url) || browser::library_walk_running() || !enabled(view.app_handle()) {
         return;
     }
     let href = url.as_str().to_string();
+    let order_id = url
+        .path()
+        .strip_prefix("/orders/")
+        .unwrap_or_default()
+        .to_string();
     let app = view.app_handle().clone();
     let tab = view.label().to_string();
     let script = format!(
@@ -106,7 +115,26 @@ pub(crate) fn page_loaded(view: &Webview, url: &Url) {
             return;
         }
         let app = app.clone();
+        let tab = tab.clone();
+        let order_id = order_id.clone();
         tauri::async_runtime::spawn_blocking(move || {
+            let products: Vec<crate::purchases::CheckoutProduct> = value
+                .get("products")
+                .cloned()
+                .and_then(|products| serde_json::from_value(products).ok())
+                .unwrap_or_default();
+            // 購入履歴への記録は、ライブラリへの登録とは別に行う。どちらかの失敗で他方を止めない。
+            let recorded = app
+                .state::<AppState>()
+                .db
+                .lock()
+                .ok()
+                .and_then(|mut c| crate::purchases::record_checkout(&mut c, &order_id, &products).ok())
+                .unwrap_or(false);
+            if recorded {
+                let _ = app.emit("purchases-changed", ());
+                browser::read_order_later(&app, &tab, &order_id);
+            }
             let result = (|| {
                 let state = app.state::<AppState>();
                 let mut c = state
@@ -130,6 +158,60 @@ pub(crate) fn page_loaded(view: &Webview, url: &Url) {
                     &app,
                     "購入商品の自動登録に失敗しました。確認画面から登録してください",
                 ),
+            }
+        });
+    });
+}
+
+/// 本人が内蔵ブラウザで購入履歴か注文詳細を開いたとき、そのページだけを購入履歴に取り込む。
+/// 読み込みの最中と自動登録がオフのときは読まない。ページの移動はしない。
+fn orders_page_loaded(view: &Webview, url: &Url) {
+    if browser::library_walk_running() || !enabled(view.app_handle()) {
+        return;
+    }
+    let detail_id = match crate::purchase_walk::orders_path(url) {
+        Some(crate::purchase_walk::OrdersPath::Detail(id)) => Some(id),
+        Some(crate::purchase_walk::OrdersPath::List) => None,
+        None => return,
+    };
+    let script = if detail_id.is_some() {
+        browser::purchase_detail_script()
+    } else {
+        browser::purchase_list_script()
+    };
+    let href = url.as_str().to_string();
+    let app = view.app_handle().clone();
+    let tab = view.label().to_string();
+    let _ = view.eval_with_callback(script, move |raw| {
+        if app
+            .get_webview(&tab)
+            .and_then(|v| crate::browser_url::current_url(&v).ok())
+            .as_ref()
+            .map(Url::as_str)
+            != Some(&href)
+        {
+            return;
+        }
+        let app = app.clone();
+        let detail_id = detail_id.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let state = app.state::<AppState>();
+            let Ok(mut c) = state.db.lock() else {
+                return;
+            };
+            let stored = match &detail_id {
+                Some(id) => browser::parse_purchase_detail(&raw)
+                    .ok()
+                    .and_then(|snapshot| snapshot.detail)
+                    .filter(|detail| &detail.order_id == id)
+                    .is_some_and(|detail| crate::purchases::apply_detail(&mut c, &detail).is_ok()),
+                None => browser::parse_purchase_list(&raw)
+                    .ok()
+                    .is_some_and(|snapshot| crate::purchases::apply_list_page(&mut c, &snapshot.orders).is_ok()),
+            };
+            drop(c);
+            if stored {
+                let _ = app.emit("purchases-changed", ());
             }
         });
     });
