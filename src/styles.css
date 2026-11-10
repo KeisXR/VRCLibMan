@@ -1793,6 +1793,61 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
   overflow-wrap: anywhere;
 }
 .sidebar-asset-progress .track { height: 4px; }
+/* サイドバーの「ダウンロード」と、その上に開く一覧（docs/design/README.md#ダウンロード） */
+.sidebar-downloads { display: grid; gap: 4px; min-width: 0; }
+.sidebar-downloads .rail-icon-button { position: relative; }
+.sidebar-downloads-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: var(--radius-pill);
+  background: var(--button);
+  color: var(--button-text);
+  font-size: 10.5px;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.account-popover.download-popover {
+  right: auto;
+  width: max(100%, 300px);
+  max-height: min(60vh, 480px);
+  overflow-y: auto;
+  padding: 6px;
+  gap: 4px;
+}
+.account-popover.download-popover.compact { width: 300px; }
+.download-popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 2px 4px 4px 6px;
+  color: var(--text);
+  font-size: 13px;
+}
+.account-popover .download-popover-head button { padding: 4px 8px; font-size: 12px; color: var(--text-secondary); }
+.account-popover .download-popover-head button:hover:not(:disabled) { color: var(--text); }
+.download-popover-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.download-popover-item {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 7px 6px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
+}
+.download-popover-item:first-child { border-top: 0; }
+.download-popover-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 12.5px; }
+.download-popover-item .track { height: 4px; }
+.account-popover button.download-popover-reveal { justify-self: start; padding: 2px 6px; margin-left: -6px; font-size: 12px; color: var(--text-secondary); }
+.account-popover button.download-popover-reveal:hover { color: var(--text); }
 .setting-control .settings-details { padding: var(--space-2) 0 0; }
 .sidebar-classify-hint {
   display: flex;

@@ -502,10 +502,14 @@ export interface BoothFileStatus {
   boothId: string;
   variation: string;
   filename: string;
-  phase: "receiving" | "error" | "done";
+  phase: "queued" | "receiving" | "moving" | "error" | "done";
   message: string;
   /** 完了時だけ、ライブラリへ移した先の絶対パス。 */
   path?: string | null;
+  /** 受け取り中だけ、書いたバイト数。 */
+  received?: number | null;
+  /** 受け取り中で、大きさが分かるときだけ、全体のバイト数。 */
+  total?: number | null;
 }
 
 export interface ManagedProduct {

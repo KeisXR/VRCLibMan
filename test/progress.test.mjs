@@ -137,9 +137,12 @@ test("Rust progress uses the shared helper and guards the never-clearing jobs", 
   for (const name of ["scan", "thumbs", "catalog", "copy"]) {
     assert.match(commands, new RegExp(`ProgressGuard::new\\(app\\.clone\\(\\), "${name}"\\)`), name);
   }
-  for (const name of ["download", "browser-library"]) {
+  for (const name of ["browser-library"]) {
     assert.match(browser, new RegExp(`ProgressGuard::new\\(app\\.clone\\(\\), "${name}"\\)`), name);
   }
+  // BOOTH からの受け取りは上部の帯ではなく、サイドバーの「ダウンロード」に booth-file-download で出す。
+  assert.doesNotMatch(browser, /ProgressGuard::new\(app\.clone\(\), "download"\)/);
+  assert.match(browser, /FileReport::new\(app\.clone\(\)/);
 });
 
 test("progress wording rule: count first, name allowed, one line with ellipsis", () => {

@@ -123,10 +123,6 @@ impl<S: ProgressSink> ProgressGuard<S> {
         self
     }
 
-    pub fn sink(&self) -> &S {
-        &self.sink
-    }
-
     /// 途中の進捗。`total = 0` は終わりが分からない（不定）。終わりの後は何も送らない。
     pub fn update(&self, current: u32, total: u32, message: impl Into<String>) {
         let mut last = self.last.lock().unwrap_or_else(|poisoned| poisoned.into_inner());

@@ -348,10 +348,17 @@ fn ensure_real_dir(parent: &Path, name: &str) -> Result<PathBuf, String> {
             }
         }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            std::fs::create_dir(&joined).map_err(|err| format!("保存先を作れません: {err}"))?;
+            // 並行する受け取りが先に作った場合（AlreadyExists）は、下の検査で同じように確かめる。
+            let created = match std::fs::create_dir(&joined) {
+                Ok(()) => true,
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => false,
+                Err(err) => return Err(format!("保存先を作れません: {err}")),
+            };
             let meta = std::fs::symlink_metadata(&joined).map_err(|_| staged_path_error())?;
             if meta.file_type().is_symlink() || !meta.is_dir() {
-                let _ = std::fs::remove_dir(&joined);
+                if created {
+                    let _ = std::fs::remove_dir(&joined);
+                }
                 return Err("シンボリックリンクは移動しません".into());
             }
         }

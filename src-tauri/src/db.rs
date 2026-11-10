@@ -3794,6 +3794,7 @@ pub(crate) const BROWSER_AGE_MESSAGE: &str =
 pub(crate) const BROWSER_DOWNLOAD_FAILED: &str =
     "ダウンロードできませんでした。内蔵ブラウザでログインしているか確認してください";
 pub(crate) const BROWSER_BUSY_MESSAGE: &str = "別のファイルをダウンロード中です";
+pub(crate) const BROWSER_SAME_FILE_MESSAGE: &str = "このファイルはダウンロード中です";
 pub(crate) const BROWSER_MISSING_ID_MESSAGE: &str =
     "この行にはダウンロード番号がありません。拡張を更新して再インポートしてください";
 

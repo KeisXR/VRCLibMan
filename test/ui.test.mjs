@@ -1352,7 +1352,7 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       await wait(() => row() && button("ダウンロード", row()) && row().textContent.includes("未ダウンロード"));
       assert.equal(button("保存先を開く", row()), undefined);
       await click(button("ダウンロード", row()));
-      await wait(() => text().includes("ファイルをライブラリに移しました"));
+      await wait(() => text().includes("見本の未取得.unitypackage をライブラリに移しました"));
       const banner = document.querySelector(".banner.notice");
       assert.ok(button("保存先を開く", banner), "notice offers the saved place");
       assert.equal(button("元に戻す", banner), undefined);
