@@ -611,6 +611,40 @@ pub(crate) fn handle_booth_download(event: DownloadEvent<'_>) -> bool {
     }
 }
 
+/// 押した順に枠の列へ並び、並んだまま準備（DB とステージングフォルダ）を進める。
+/// 列に並ぶのは最初の poll、つまり押した直後なので、準備の終わる順で後の押下に追い越されない。
+/// 枠が空いていなければ `on_wait` を一度だけ呼ぶ。準備が失敗したら列から外れて、その失敗を返す。
+async fn prepare_in_line<'a, T>(
+    slots: &'a tokio::sync::Semaphore,
+    prepare: impl Future<Output = Result<T, String>>,
+    on_wait: impl FnOnce(),
+) -> Result<(T, tokio::sync::SemaphorePermit<'a>), String> {
+    let mut slot = std::pin::pin!(slots.acquire());
+    let mut prepare = std::pin::pin!(prepare);
+    let mut permit = None;
+    let mut on_wait = Some(on_wait);
+    let prepared = std::future::poll_fn(|cx| {
+        if permit.is_none() {
+            match slot.as_mut().poll(cx) {
+                std::task::Poll::Ready(acquired) => permit = Some(acquired),
+                std::task::Poll::Pending => {
+                    if let Some(wait) = on_wait.take() {
+                        wait();
+                    }
+                }
+            }
+        }
+        prepare.as_mut().poll(cx)
+    })
+    .await?;
+    let acquired = match permit {
+        Some(acquired) => acquired,
+        None => slot.await,
+    };
+    let permit = acquired.map_err(|_| db::BROWSER_DOWNLOAD_FAILED.to_string())?;
+    Ok((prepared, permit))
+}
+
 pub fn downloadable_url(downloadable_id: &str) -> Result<Url, String> {
     if !crate::library_files::valid_booth_id(downloadable_id) {
         return Err(db::BROWSER_MISSING_ID_MESSAGE.into());
@@ -1071,37 +1105,35 @@ pub async fn download_one_file(
         let booth_for_plan = booth_id.clone();
         let variation_for_plan = variation.clone();
         let filename_for_plan = filename.clone();
-        let (request, dir) = tauri::async_runtime::spawn_blocking(move || {
-            let request = {
-                let state = app_for_plan.state::<crate::AppState>();
-                let connection = state
-                    .db
-                    .lock()
-                    .map_err(|_| "データベースをロックできません".to_string())?;
-                db::plan_browser_download(
-                    &connection,
-                    &booth_for_plan,
-                    &variation_for_plan,
-                    &filename_for_plan,
-                )?
-            };
-            let downloads = crate::library_files::downloads_folder()?;
-            let dir = crate::library_files::prepare_staging_dir(&downloads, &request.booth_id)?;
-            Ok::<_, String>((request, dir))
-        })
-        .await
-        .map_err(|err| format!("ダウンロードを準備できません: {err}"))??;
-        let url = downloadable_url(&request.downloadable_id)?;
-        let slot = match DOWNLOAD_SLOTS.try_acquire() {
-            Ok(slot) => slot,
-            Err(_) => {
-                report.running("queued", "順番待ち", None);
-                DOWNLOAD_SLOTS
-                    .acquire()
-                    .await
-                    .map_err(|_| db::BROWSER_DOWNLOAD_FAILED.to_string())?
-            }
+        let prepare = async move {
+            let (request, dir) = tauri::async_runtime::spawn_blocking(move || {
+                let request = {
+                    let state = app_for_plan.state::<crate::AppState>();
+                    let connection = state
+                        .db
+                        .lock()
+                        .map_err(|_| "データベースをロックできません".to_string())?;
+                    db::plan_browser_download(
+                        &connection,
+                        &booth_for_plan,
+                        &variation_for_plan,
+                        &filename_for_plan,
+                    )?
+                };
+                let downloads = crate::library_files::downloads_folder()?;
+                let dir =
+                    crate::library_files::prepare_staging_dir(&downloads, &request.booth_id)?;
+                Ok::<_, String>((request, dir))
+            })
+            .await
+            .map_err(|err| format!("ダウンロードを準備できません: {err}"))??;
+            let url = downloadable_url(&request.downloadable_id)?;
+            Ok::<_, String>((request, dir, url))
         };
+        let ((request, dir, url), slot) = prepare_in_line(&DOWNLOAD_SLOTS, prepare, || {
+            report.running("queued", "順番待ち", None)
+        })
+        .await?;
         report.running("receiving", "ダウンロード中", Some((0, None)));
         if let Some(line) = receipt_log(&request.booth_id, &request.downloadable_id) {
             browser_log(&app, &line);
@@ -2089,6 +2121,82 @@ mod tests {
         drop(quest);
         drop(other);
         assert_eq!(DOWNLOAD_SLOTS.available_permits(), PARALLEL_DOWNLOADS);
+    }
+
+    #[test]
+    fn queued_downloads_keep_the_order_they_were_pressed() {
+        tauri::async_runtime::block_on(async {
+            let slots = tokio::sync::Semaphore::new(1);
+            let busy = slots.try_acquire().unwrap();
+            let (finish_first, first_ready) = tokio::sync::oneshot::channel::<()>();
+            let order = Mutex::new(Vec::new());
+            let waited = Mutex::new(Vec::new());
+            // 先に押した方の準備が遅く、後の方はすぐ終わる。それでも先に押した方が枠を得る。
+            let first = std::pin::pin!(async {
+                let (_, permit) = prepare_in_line(
+                    &slots,
+                    async {
+                        let _ = first_ready.await;
+                        Ok::<_, String>(())
+                    },
+                    || waited.lock().unwrap().push("first"),
+                )
+                .await
+                .unwrap();
+                order.lock().unwrap().push("first");
+                drop(permit);
+            });
+            let second = std::pin::pin!(async {
+                let (_, permit) =
+                    prepare_in_line(&slots, async { Ok::<_, String>(()) }, || {
+                        waited.lock().unwrap().push("second")
+                    })
+                    .await
+                    .unwrap();
+                order.lock().unwrap().push("second");
+                drop(permit);
+            });
+            let failed = std::pin::pin!(async {
+                let result = prepare_in_line(
+                    &slots,
+                    async { Err::<(), _>("準備できません".to_string()) },
+                    || {},
+                )
+                .await;
+                assert_eq!(result.err().as_deref(), Some("準備できません"));
+            });
+            type Task<'t> = Option<std::pin::Pin<&'t mut dyn Future<Output = ()>>>;
+            let mut first: Task = Some(first);
+            let mut second: Task = Some(second);
+            let mut failed: Task = Some(failed);
+            let mut busy = Some(busy);
+            let mut finish_first = Some(finish_first);
+            std::future::poll_fn(|cx| {
+                for task in [&mut first, &mut second, &mut failed] {
+                    if let Some(future) = task {
+                        if future.as_mut().poll(cx).is_ready() {
+                            *task = None;
+                        }
+                    }
+                }
+                // 3件とも列に並んだあとで枠を空け、遅い準備を終わらせる。
+                if busy.take().is_some() {
+                    cx.waker().wake_by_ref();
+                } else if let Some(send) = finish_first.take() {
+                    let _ = send.send(());
+                    cx.waker().wake_by_ref();
+                }
+                if first.is_none() && second.is_none() && failed.is_none() {
+                    std::task::Poll::Ready(())
+                } else {
+                    std::task::Poll::Pending
+                }
+            })
+            .await;
+            assert_eq!(*order.lock().unwrap(), vec!["first", "second"]);
+            assert_eq!(*waited.lock().unwrap(), vec!["first", "second"]);
+            assert_eq!(slots.available_permits(), 1);
+        });
     }
 
     #[test]
