@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useRef, type FocusEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FocusEvent } from "react";
 import {
+  NOTICE_PIN_HOVER_MS,
   holdNoticeClock,
   noticeDuration,
   noticeExpired,
   noticeRemaining,
+  pinNoticeClock,
   releaseNoticeClock,
   startNoticeClock,
   type ErrorEntry,
@@ -26,8 +28,9 @@ function CloseButton({ onClick }: { onClick: () => void }) {
 }
 
 /**
- * 情報通知。`persist` でなければ一定時間で消える。
+ * 情報通知。`persist` でなければ3秒で消える。
  * マウスが上にある間、通知内のボタンにフォーカスがある間、画面が隠れている間は止まる。
+ * マウスが NOTICE_PIN_HOVER_MS 乗り続けたら消去を取り消し、×で閉じるまで残す。
  */
 export function NoticeBanner({
   notice,
@@ -40,8 +43,14 @@ export function NoticeBanner({
 }) {
   const clock = useRef<NoticeClock | null>(null);
   const timer = useRef<number | null>(null);
+  const pinTimer = useRef<number | null>(null);
+  const [pinned, setPinned] = useState(false);
   const { id, message, persist } = notice;
-  const hasAction = notice.action !== undefined;
+
+  const clearPinTimer = useCallback(() => {
+    if (pinTimer.current !== null) window.clearTimeout(pinTimer.current);
+    pinTimer.current = null;
+  }, []);
 
   const schedule = useCallback(() => {
     if (timer.current !== null) window.clearTimeout(timer.current);
@@ -71,7 +80,7 @@ export function NoticeBanner({
       clock.current = null;
       return;
     }
-    clock.current = startNoticeClock(noticeDuration(message, hasAction), Date.now(), windowInactive() ? ["inactive"] : []);
+    clock.current = startNoticeClock(noticeDuration(), Date.now(), windowInactive() ? ["inactive"] : []);
     schedule();
     const onActivity = () => change("inactive", windowInactive());
     document.addEventListener("visibilitychange", onActivity);
@@ -79,10 +88,28 @@ export function NoticeBanner({
       document.removeEventListener("visibilitychange", onActivity);
       if (timer.current !== null) window.clearTimeout(timer.current);
       timer.current = null;
+      clearPinTimer();
       clock.current = null;
     };
     // 新しい通知（id が変わる）ごとに数え直す。
-  }, [id, message, hasAction, persist, schedule, change]);
+  }, [id, persist, schedule, change, clearPinTimer]);
+
+  const onMouseEnter = () => {
+    change("hover", true);
+    if (!clock.current || clock.current.pinned || pinTimer.current !== null) return;
+    pinTimer.current = window.setTimeout(() => {
+      pinTimer.current = null;
+      if (!clock.current) return;
+      clock.current = pinNoticeClock(clock.current, Date.now());
+      schedule();
+      setPinned(true);
+    }, NOTICE_PIN_HOVER_MS);
+  };
+
+  const onMouseLeave = () => {
+    clearPinTimer();
+    change("hover", false);
+  };
 
   const onBlur = (event: FocusEvent<HTMLDivElement>) => {
     if (!event.currentTarget.contains(event.relatedTarget as Node | null)) change("focus", false);
@@ -94,8 +121,9 @@ export function NoticeBanner({
       role="status"
       data-notice-id={id}
       data-notice-persist={persist ? "true" : undefined}
-      onMouseEnter={() => change("hover", true)}
-      onMouseLeave={() => change("hover", false)}
+      data-notice-pinned={pinned ? "true" : undefined}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
       onFocus={() => change("focus", true)}
       onBlur={onBlur}
     >

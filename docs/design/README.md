@@ -311,7 +311,7 @@ VRCLibMan の見た目の決まりを、ほかのプロジェクトへ持ち出�
 ### 通知・エラーの帯
 
 - `.banner`: `--surface`、角丸 `--radius-control`、`--shadow`、`padding: 10px 14px`。出るときに 160ms で 4px 下りながら現れる（`banner-in`）。
-- 情報の帯 `.banner.notice`: 文字 `--good`、`role="status"`。一定時間で消えます（基本 6 秒、操作ボタン付きは 12 秒、20 文字を超えると 1 文字 80ms を最大 10 秒まで足す）。マウスが乗っている間、帯の中にフォーカスがある間、画面が隠れている間は止まります（`src/notice.ts`）。
+- 情報の帯 `.banner.notice`: 文字 `--good`、`role="status"`。3 秒で消えます（文字数や操作ボタンの有無によらない）。マウスが乗っている間、帯の中にフォーカスがある間、画面が隠れている間は止まり、離れると最低 1.5 秒残ります。マウスが 1 秒乗り続けると消去を取り消し、×で閉じるまで残ります（`src/notice.ts`）。
 - エラーの帯 `.banner.error`: 文字 `--danger`。時間では消えず、× で閉じるまで残ります。
 - 閉じる × `.banner-close`: 28×28px、角丸 `--radius-pill`、地なし、文字 `--text-secondary`、`aria-label="閉じる"`。ホバーで `--hover`。
 

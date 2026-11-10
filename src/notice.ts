@@ -1,6 +1,7 @@
 /**
  * 画面上部の情報通知（`.banner.notice`）を時間で消すための純関数。
  * 失敗の帯（`.banner.error`）と `persist` を付けた通知は時間では消さない。
+ * マウスが一定時間乗り続けた通知も、消去を取り消して×で閉じるまで残す。
  */
 
 export interface NoticeAction {
@@ -28,25 +29,16 @@ export interface NotifyOptions {
   persist?: boolean;
 }
 
-/** 操作ボタンなしの通知を出しておく基準の長さ（ミリ秒）。 */
-export const NOTICE_BASE_MS = 6000;
-/** 「保存先を開く」などの操作ボタン付きの通知の基準の長さ。 */
-export const NOTICE_ACTION_MS = 12000;
-/** この文字数までは基準の長さだけで読める扱いにする。 */
-export const NOTICE_FREE_CHARS = 20;
-/** 超えた1文字ごとに足す時間。 */
-export const NOTICE_PER_CHAR_MS = 80;
-/** 文字数による加算の上限。 */
-export const NOTICE_EXTRA_MAX_MS = 10000;
+/** 通知を出しておく時間（ミリ秒）。文字数や操作ボタンの有無によらず同じ。 */
+export const NOTICE_DURATION_MS = 3000;
+/** マウスがこの時間乗り続けたら、時間で消すのをやめる。 */
+export const NOTICE_PIN_HOVER_MS = 1000;
 /** マウスやフォーカスが離れたあと、最低限残す時間。 */
-export const NOTICE_RESUME_MIN_MS = 3000;
+export const NOTICE_RESUME_MIN_MS = 1500;
 
-/** 通知を出しておく時間。文字数が多いほど長く、上限あり。 */
-export function noticeDuration(message: string, hasAction: boolean): number {
-  const base = hasAction ? NOTICE_ACTION_MS : NOTICE_BASE_MS;
-  const length = Array.from(message.trim()).length;
-  const extra = Math.min(NOTICE_EXTRA_MAX_MS, Math.max(0, length - NOTICE_FREE_CHARS) * NOTICE_PER_CHAR_MS);
-  return base + extra;
+/** 通知を出しておく時間。 */
+export function noticeDuration(): number {
+  return NOTICE_DURATION_MS;
 }
 
 /** タイマーを止める理由。どれか1つでもあれば止まる。 */
@@ -58,11 +50,13 @@ export interface NoticeClock {
   /** 進んでいるときは進み始めた時刻、止まっているときは null。 */
   runningSince: number | null;
   holds: NoticeHold[];
+  /** 消去を取り消した（マウスが乗り続けた）通知。時間では消えない。 */
+  pinned: boolean;
 }
 
 export function startNoticeClock(duration: number, now: number, holds: NoticeHold[] = []): NoticeClock {
   const unique = [...new Set(holds)];
-  return { remaining: duration, runningSince: unique.length ? null : now, holds: unique };
+  return { remaining: duration, runningSince: unique.length ? null : now, holds: unique, pinned: false };
 }
 
 /** 今の残り時間。進んでいるときは経過分を引く。 */
@@ -73,8 +67,8 @@ export function noticeRemaining(clock: NoticeClock, now: number): number {
 
 /** 止める理由を足す。最初の理由で残り時間を固定する。 */
 export function holdNoticeClock(clock: NoticeClock, hold: NoticeHold, now: number): NoticeClock {
-  if (clock.holds.includes(hold)) return clock;
-  return { remaining: noticeRemaining(clock, now), runningSince: null, holds: [...clock.holds, hold] };
+  if (clock.pinned || clock.holds.includes(hold)) return clock;
+  return { ...clock, remaining: noticeRemaining(clock, now), runningSince: null, holds: [...clock.holds, hold] };
 }
 
 /**
@@ -82,15 +76,21 @@ export function holdNoticeClock(clock: NoticeClock, hold: NoticeHold, now: numbe
  * マウスやフォーカスが離れた直後に消えないよう、残りは最低 NOTICE_RESUME_MIN_MS にする。
  */
 export function releaseNoticeClock(clock: NoticeClock, hold: NoticeHold, now: number): NoticeClock {
-  if (!clock.holds.includes(hold)) return clock;
+  if (clock.pinned || !clock.holds.includes(hold)) return clock;
   const holds = clock.holds.filter((item) => item !== hold);
   if (holds.length) return { ...clock, holds };
-  return { remaining: Math.max(clock.remaining, NOTICE_RESUME_MIN_MS), runningSince: now, holds };
+  return { ...clock, remaining: Math.max(clock.remaining, NOTICE_RESUME_MIN_MS), runningSince: now, holds };
+}
+
+/** 消去を取り消す。以後は止める理由が外れても再開しない。 */
+export function pinNoticeClock(clock: NoticeClock, now: number): NoticeClock {
+  if (clock.pinned) return clock;
+  return { ...clock, remaining: noticeRemaining(clock, now), runningSince: null, pinned: true };
 }
 
 /** 時間切れか。止まっている間は消さない。 */
 export function noticeExpired(clock: NoticeClock, now: number): boolean {
-  return clock.runningSince !== null && noticeRemaining(clock, now) <= 0;
+  return !clock.pinned && clock.runningSince !== null && noticeRemaining(clock, now) <= 0;
 }
 
 /** 連番付きの通知。古いタイマーが新しい通知を消さないよう、閉じるときは番号で照合する。 */
