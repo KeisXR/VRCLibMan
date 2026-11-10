@@ -154,7 +154,7 @@ test("a custom hero image wins over the thumbnail and busts the cache by version
 });
 
 test("avatar detail passes the custom image and places its menu inside the hero", () => {
-  const detail = readFileSync("src/pages/AvatarDetailPage.tsx", "utf8");
+  const detail = readFileSync("src/pages/AvatarDetailPage.tsx", "utf8").replace(/\r\n/g, "\n");
   assert.match(detail, /avatarHeroSource\(detail\)/);
   assert.match(detail, /path=\{heroImage\.path\}/);
   assert.match(detail, /url=\{heroImage\.url\}/);

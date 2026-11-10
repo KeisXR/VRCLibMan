@@ -26,7 +26,7 @@ test("ファイルを取得: shown only for an item with no file info while the 
 });
 
 test("ファイルを取得: the card calls only the check command and never starts a download by itself", () => {
-  const page = readFileSync(new URL("../src/pages/AvatarDetailPage.tsx", import.meta.url), "utf8");
+  const page = readFileSync(new URL("../src/pages/AvatarDetailPage.tsx", import.meta.url), "utf8").replace(/\r\n/g, "\n");
   const start = page.indexOf("async function checkFreeFiles");
   assert.ok(start > 0);
   const body = page.slice(start, page.indexOf("\n  }\n", start));
