@@ -393,7 +393,7 @@ VRCLibMan の見た目の決まりを、ほかのプロジェクトへ持ち出�
 - OS の設定（`prefers-color-scheme: dark`）だけで切り替えます。アプリ内の切替はありません。
 - 同じ変数名の値を差し替えるだけで、部品側の指定は変えません。主ボタンは白地に黒文字に反転します。
 - 朱のアクセントはダークで明るい `#d97757` に変えます。
-- 内蔵ブラウザで表示する外部ページには、別の仕組みとして「強制ダークモード」（設定 `browser_force_dark`、既定オフ）があります。表示用のページにだけ `html { filter: invert(1) }` を入れ、画像・動画・canvas と、インラインの style で背景画像を持つ要素（BOOTH の商品カードなど）にもう一度 `invert(1)` を掛けて元の色に戻します。`hue-rotate(180deg)` は色がずれるので使いません。アプリ自身の画面には掛けません（`AGENTS.md`、`src-tauri/src/browser_dark.rs`）。
+- 内蔵ブラウザで表示する外部ページには、別の仕組みとして「強制ダークモード」（設定 `browser_force_dark`、既定オフ）があります。表示用のページにだけ `html { filter: invert(1) }` を入れ、画像・動画・canvas と、インラインの style で背景画像を持つ要素（BOOTH の商品カードなど）、YouTube の埋め込みにもう一度 `invert(1)` を掛けて元の色に戻します。`hue-rotate(180deg)` は色がずれるので使いません。YouTube のページは独自のダークテーマがあるので反転せず、アプリ自身の画面にも掛けません（`AGENTS.md`、`src-tauri/src/browser_dark.rs`）。
 
 ## やらないこと
 
