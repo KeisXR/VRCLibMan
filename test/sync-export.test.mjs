@@ -69,13 +69,13 @@ test("the save dialog asks for a zip", () => {
   assert.match(api, /filters: \[\{ name: "ZIP", extensions: \["zip"\] \}\]/);
 });
 
-test("the preview manifest is version 2 and has no images to point at", async () => {
+test("the preview manifest is version 3 and has no images to point at", async () => {
   const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
   try {
     const { dispatch } = await server.ssrLoadModule("/src/preview/api.ts");
     const manifest = JSON.parse(await dispatch("sync_export_json", {}));
     assert.equal(manifest.format, "vrclibman-sync");
-    assert.equal(manifest.version, 2);
+    assert.equal(manifest.version, 3);
     assert.ok(manifest.products.length > 0);
     for (const product of manifest.products) {
       assert.equal(typeof product.shop, "string");
@@ -142,11 +142,11 @@ test("clicking export in the preview saves the manifest as JSON and reports ever
   }
 });
 
-test("the manifest declares format version 2 and names only package paths", () => {
+test("the manifest declares format version 3 and names only package paths", () => {
   const code = readFileSync(new URL("../src-tauri/src/sync_export.rs", import.meta.url), "utf8");
   const production = code.slice(0, code.indexOf("#[cfg(test)]"));
   assert.match(production, /const FORMAT: &str = "vrclibman-sync";/);
-  assert.match(production, /const VERSION: u32 = 2;/);
+  assert.match(production, /const VERSION: u32 = 3;/);
   assert.match(production, /const MANIFEST_ENTRY: &str = "manifest\.json";/);
   assert.match(production, /const THUMBNAIL_ENTRIES: &str = "files\/thumbnails";/);
   assert.match(production, /const HERO_ENTRIES: &str = "files\/heroes";/);

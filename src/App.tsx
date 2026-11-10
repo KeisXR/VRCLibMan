@@ -10,6 +10,7 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { WorldsPage } from "./pages/WorldsPage";
 import { AssetsPage } from "./pages/AssetsPage";
 import { SearchPage } from "./pages/SearchPage";
+import { PurchasesPage } from "./pages/PurchasesPage";
 import { SetupWizard } from "./pages/SetupWizard";
 import { GenreColumn } from "./components/GenreColumn";
 import { ResizeSeparator } from "./components/ResizeSeparator";
@@ -50,13 +51,18 @@ import { noticeAction, useBanners } from "./useBanners";
 
 export type { NoticeAction, NotifyOptions } from "./notice";
 
-type Page = "avatars" | "avatar" | "assets" | "worlds" | "search" | "classification-log" | "asset-update-log" | "import" | "settings";
+type Page = "avatars" | "avatar" | "assets" | "worlds" | "search" | "purchases" | "classification-log" | "asset-update-log" | "import" | "settings";
 
 interface Route {
   page: Page;
   id?: string;
   fileBoothId?: string;
   genre?: string;
+  /** アセット・ワールドの一覧で、ほかの画面から開いた商品（`#/assets/item/<商品ID>`）。 */
+  focus?: string;
+  /** 購入履歴のタブ（履歴 / アバター別）と、アバター別から開いたときの絞り込み。 */
+  purchaseView?: "history" | "summary";
+  purchaseGroup?: string;
 }
 
 function decodePart(value: string): string {
@@ -104,12 +110,20 @@ function parseRoute(hash: string): Route {
     };
   }
   if (parts[0] === "assets" || parts[0] === "worlds") {
+    if (parts[1] === "item" && parts[2]) return { page: parts[0], focus: decodePart(parts[2]) };
     return { page: parts[0], genre: parts[1] ? decodePart(parts[1]) : undefined };
   }
   if (parts[0] === "classification-log") {
     return { page: "classification-log", id: parts[1] ? decodeURIComponent(parts[1]) : undefined };
   }
   if (parts[0] === "asset-update-log") return { page: "asset-update-log" };
+  if (parts[0] === "purchases") {
+    return {
+      page: "purchases",
+      purchaseView: parts[1] === "summary" ? "summary" : "history",
+      purchaseGroup: parts[1] === "group" && parts[2] ? decodePart(parts[2]) : undefined,
+    };
+  }
   // The former browser page was merged into import and settings; keep old links working.
   if (parts[0] === "browser") return { page: "import" };
   if (parts[0] === "search" || parts[0] === "import" || parts[0] === "settings") {
@@ -313,7 +327,7 @@ export default function App() {
   const density =
     route.page === "settings"
       ? "density-roomy"
-      : route.page === "avatars" || route.page === "avatar" || route.page === "assets" || route.page === "worlds" || route.page === "search" || route.page === "classification-log" || route.page === "asset-update-log"
+      : route.page === "avatars" || route.page === "avatar" || route.page === "assets" || route.page === "worlds" || route.page === "search" || route.page === "purchases" || route.page === "classification-log" || route.page === "asset-update-log"
         ? "density-compact"
         : "";
   const browseKind = route.page === "assets" ? "asset" : route.page === "worlds" ? "world" : null;
@@ -326,6 +340,7 @@ export default function App() {
     { href: "#/assets", label: "アセット", icon: "assets", active: route.page === "assets" },
     { href: "#/worlds", label: "ワールド", icon: "worlds", active: route.page === "worlds" },
     { href: "#/search", label: "検索", icon: "search", active: route.page === "search" },
+    { href: "#/purchases", label: "購入履歴", icon: "purchases", active: route.page === "purchases" },
     { href: pendingAssetUpdates > 0 ? "#/asset-update-log" : "#/classification-log", label: "ログ", icon: "log", active: route.page === "classification-log" || route.page === "asset-update-log" },
     { href: "#/import", label: "インポート", icon: "import", active: route.page === "import" },
     { href: "#/settings", label: "設定", icon: "settings", active: route.page === "settings" },
@@ -364,6 +379,7 @@ export default function App() {
         {route.page === "assets" && <AssetsPage />}
         {route.page === "worlds" && <WorldsPage />}
         {route.page === "search" && <SearchPage />}
+        {route.page === "purchases" && <PurchasesPage view={route.purchaseView ?? "history"} group={route.purchaseGroup} />}
         {(route.page === "classification-log" || route.page === "asset-update-log") && <nav className="tabs" aria-label="記録の種類">
           <a className={route.page === "classification-log" ? "tab active" : "tab"} href="#/classification-log" aria-current={route.page === "classification-log" ? "page" : undefined}>分類記録</a>
           <a className={route.page === "asset-update-log" ? "tab active" : "tab"} href="#/asset-update-log" aria-current={route.page === "asset-update-log" ? "page" : undefined} aria-label={pendingUpdateLabel && `アセット更新（${pendingUpdateLabel}）`}>
@@ -515,6 +531,7 @@ export default function App() {
           <GenreBrowseProvider
             kind={browseKind}
             genre={route.genre ?? null}
+            focus={route.focus ?? null}
             basePath={browseBase}
             genreBar={layout.genreBar}
           >

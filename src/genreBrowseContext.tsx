@@ -11,6 +11,8 @@ interface GenreBrowseContextValue {
   basePath: string;
   routeGenre: string | null;
   selected: string | null;
+  /** ほかの画面から開いた商品。一覧で見える位置へ送り、枠で示す。 */
+  focusId: string | null;
   data: GenreProducts | null;
   error: string | null;
   /** The genre column does not fit; the page shows the genre chip bar. */
@@ -26,12 +28,14 @@ const GenreBrowseContext = createContext<GenreBrowseContextValue | null>(null);
 export function GenreBrowseProvider({
   kind,
   genre,
+  focus = null,
   basePath,
   genreBar,
   children,
 }: {
   kind: GenreKind;
   genre: string | null;
+  focus?: string | null;
   basePath: string;
   genreBar: boolean;
   children: React.ReactNode;
@@ -68,6 +72,7 @@ export function GenreBrowseProvider({
       basePath,
       routeGenre: genre,
       selected,
+      focusId: focus,
       data,
       error,
       genreBar,
@@ -76,7 +81,7 @@ export function GenreBrowseProvider({
       setDraggingId,
       moveProduct,
     }),
-    [kind, basePath, genre, selected, data, error, genreBar, draggingId, moveProduct],
+    [kind, basePath, genre, selected, focus, data, error, genreBar, draggingId, moveProduct],
   );
 
   return <GenreBrowseContext.Provider value={value}>{children}</GenreBrowseContext.Provider>;

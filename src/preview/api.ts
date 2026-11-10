@@ -1,6 +1,7 @@
 import { previewBrowserState, previewBrowserPanelSnapshot, previewBrowserAction, previewSaveBookmark, previewDeleteBookmark, previewOpenBrowser, previewCloseBrowser } from "./browser";
 import extensionManifest from "../../extension/manifest.json";
 import { previewListDirectory, previewListZip, previewPrepareUnityPackages, previewUnityPackages } from "./files";
+import { previewPurchaseDispatch, previewPurchaseExport } from "./purchases";
 import { filePresence } from "../media";
 import { GENRE_FREE, GENRE_UNSET, genresForKind } from "../types";
 import type { ClassificationSnapshot, OwnedAvatarRestore, RegisterOwnedBodyResult, SnapshotLink, UnityEditor, UnityStatus } from "../types";
@@ -1237,9 +1238,10 @@ function previewSyncExport(): string {
       },
       links: { items: [], locked: item.linksLocked, names: [], unresolvedNames: [], meta: null },
     }));
+  const purchases = previewPurchaseExport();
   return `${JSON.stringify({
     format: "vrclibman-sync",
-    version: 2,
+    version: 3,
     device,
     appVersion: "preview",
     exportedAt: new Date().toISOString(),
@@ -1247,7 +1249,8 @@ function previewSyncExport(): string {
     products,
     avatars: [],
     fileLinks: [],
-    counts: { products: products.length, links: 0, avatars: 0, fileLinks: 0, config: Object.keys(values).length, thumbnails: 0, heroImages: 0 },
+    purchases: purchases.purchases,
+    counts: { products: products.length, links: 0, avatars: 0, fileLinks: 0, config: Object.keys(values).length, thumbnails: 0, heroImages: 0, purchaseOrders: purchases.orders, purchaseItems: purchases.items },
   }, null, 2)}\n`;
 }
 
@@ -2601,7 +2604,13 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       ) as T;
     case "list_zip_entries":
       return previewListZip(String(args.path ?? ""), store.settings.libraryFolder, store.settings.remoteLibraryFolder) as T;
-    default:
+    default: {
+      const purchase = await previewPurchaseDispatch(command, args, {
+        builtinBrowser: store.settings.builtinBrowser,
+        emitProgress: emitPreviewProgress,
+      });
+      if (purchase.handled) return purchase.value as T;
       throw new Error(`未対応の操作です: ${command}`);
+    }
   }
 }

@@ -863,6 +863,90 @@ pub fn cancel_booth_library() {
 }
 
 #[tauri::command]
+pub async fn import_booth_purchases(
+    app: tauri::AppHandle,
+) -> Result<crate::purchase_walk::PurchaseWalkReport, String> {
+    // 移動と eval は import_purchases の中で dispatch_ui に渡す。
+    crate::browser::import_purchases(app).await
+}
+
+#[tauri::command]
+pub fn cancel_booth_purchases() {
+    crate::browser::request_purchase_walk_cancel();
+}
+
+#[tauri::command]
+pub fn purchase_history(
+    state: State<'_, AppState>,
+    query: crate::purchases::PurchaseQuery,
+) -> Result<crate::purchases::PurchasePage, String> {
+    let connection = db(&state)?;
+    crate::purchases::page(&connection, &query, crate::browser::purchase_walk_running())
+}
+
+#[tauri::command]
+pub fn purchase_status(state: State<'_, AppState>) -> Result<crate::purchases::PurchaseStatus, String> {
+    let connection = db(&state)?;
+    crate::purchases::status(&connection, crate::browser::purchase_walk_running())
+}
+
+#[tauri::command]
+pub fn purchase_summary(
+    state: State<'_, AppState>,
+    year: Option<i32>,
+) -> Result<crate::purchases::PurchaseSummary, String> {
+    let connection = db(&state)?;
+    crate::purchases::summary(&connection, year)
+}
+
+#[tauri::command]
+pub fn set_purchase_show_prices(state: State<'_, AppState>, show: bool) -> Result<(), String> {
+    let connection = db(&state)?;
+    crate::purchases::set_show_prices(&connection, show)
+}
+
+#[tauri::command]
+pub fn create_purchase_label(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<crate::purchases::PurchaseLabel, String> {
+    let connection = db(&state)?;
+    crate::purchases::create_label(&connection, &name)
+}
+
+#[tauri::command]
+pub fn rename_purchase_label(state: State<'_, AppState>, id: i64, name: String) -> Result<(), String> {
+    let connection = db(&state)?;
+    crate::purchases::rename_label(&connection, id, &name)
+}
+
+#[tauri::command]
+pub fn delete_purchase_label(state: State<'_, AppState>, id: i64) -> Result<(), String> {
+    let mut connection = db(&state)?;
+    crate::purchases::delete_label(&mut connection, id)
+}
+
+#[tauri::command]
+pub fn set_purchase_item_labels(
+    state: State<'_, AppState>,
+    item_id: i64,
+    label_ids: Vec<i64>,
+) -> Result<(), String> {
+    let mut connection = db(&state)?;
+    crate::purchases::set_item_labels(&mut connection, item_id, &label_ids)
+}
+
+#[tauri::command]
+pub fn set_purchase_gift(
+    state: State<'_, AppState>,
+    order_id: String,
+    gift: Option<bool>,
+) -> Result<(), String> {
+    let connection = db(&state)?;
+    crate::purchases::set_gift_override(&connection, &order_id, gift)
+}
+
+#[tauri::command]
 pub async fn clear_booth_session(app: tauri::AppHandle) -> Result<(), String> {
     crate::browser::clear_session(&app).await
 }

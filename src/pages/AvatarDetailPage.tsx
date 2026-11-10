@@ -550,6 +550,7 @@ export function ItemCard({
   tabStop = false,
   onSelect,
   hideFiles = false,
+  focused = false,
 }: {
   item: ItemView;
   movable?: boolean;
@@ -562,6 +563,8 @@ export function ItemCard({
   onSelect?: () => void;
   /** ヒーロー直下のアセット一覧へ移したとき、カード内のファイル行を隠す */
   hideFiles?: boolean;
+  /** ほかの画面（購入履歴など）から開いた商品。枠で示す。 */
+  focused?: boolean;
 }) {
   const { builtinBrowser, refresh, notify, fail } = useShell();
   const [busy, setBusy] = useState("");
@@ -609,8 +612,8 @@ export function ItemCard({
 
   return (
     <article
-      id={selectable ? `product-${item.boothId}` : undefined}
-      className={`${item.unpublished ? "item item-unpublished" : "item"}${selected ? " selected" : ""}`}
+      id={selectable || focused ? `product-${item.boothId}` : undefined}
+      className={`${item.unpublished ? "item item-unpublished" : "item"}${selected ? " selected" : ""}${focused ? " focused" : ""}`}
       aria-current={selected ? "true" : undefined}
       tabIndex={selectable ? (tabStop ? 0 : -1) : undefined}
       draggable={movable}

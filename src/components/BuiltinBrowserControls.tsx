@@ -172,7 +172,7 @@ export function BuiltinBrowserAccessSettings() {
         公開の商品情報は1件ずつ、3秒以上あけて確認します。年齢制限の商品は確認しません。
       </p>
       <label className="field" style={{ maxWidth: 300, marginBottom: 8 }}>
-        <span>BOOTHへのアクセス間隔（ライブラリ全取得）</span>
+        <span>BOOTHへのアクセス間隔（ライブラリ全取得・購入履歴）</span>
         <select
           value={intervalMs}
           disabled={!intervalReady}

@@ -27,6 +27,12 @@ import type {
   BoothAccount,
   ImportReport,
   LibraryWalkReport,
+  PurchaseLabel,
+  PurchasePage,
+  PurchaseQuery,
+  PurchaseStatus,
+  PurchaseSummary,
+  PurchaseWalkReport,
   BoothFileStatus,
   FreeFilesReport,
   JobProgress,
@@ -126,6 +132,14 @@ export function listenBoothUsed(onUsed: () => void): Promise<() => void> {
   return import("@tauri-apps/api/event").then(({ listen }) => listen("booth-browser-used", () => onUsed()));
 }
 
+/** 購入履歴が変わった（読み込みの途中、購入完了の記録、注文詳細の取得）。 */
+export function listenPurchasesChanged(onChange: () => void): Promise<() => void> {
+  if (!isTauri()) {
+    return import("./preview/purchases").then((preview) => preview.listenPreviewPurchases(onChange));
+  }
+  return import("@tauri-apps/api/event").then(({ listen }) => listen("purchases-changed", () => onChange()));
+}
+
 export function listenBoothFile(onStatus: (status: BoothFileStatus) => void): Promise<() => void> {
   if (!isTauri()) {
     return import("./preview/api").then((preview) => preview.listenPreviewBoothFile(onStatus));
@@ -195,6 +209,20 @@ export const api = {
   importBoothPage: () => call<ImportReport>("import_booth_page"),
   importBoothLibrary: () => call<LibraryWalkReport>("import_booth_library"),
   cancelBoothLibrary: () => call<void>("cancel_booth_library"),
+  importBoothPurchases: () => call<PurchaseWalkReport>("import_booth_purchases"),
+  cancelBoothPurchases: () => call<void>("cancel_booth_purchases"),
+  purchaseHistory: (query: PurchaseQuery) =>
+    readWithTimeout(() => call<PurchasePage>("purchase_history", { query }), "購入履歴"),
+  purchaseStatus: () => readWithTimeout(() => call<PurchaseStatus>("purchase_status"), "購入履歴の状態"),
+  purchaseSummary: (year: number | null) =>
+    readWithTimeout(() => call<PurchaseSummary>("purchase_summary", { year }), "購入履歴の集計"),
+  setPurchaseShowPrices: (show: boolean) => call<void>("set_purchase_show_prices", { show }),
+  createPurchaseLabel: (name: string) => call<PurchaseLabel>("create_purchase_label", { name }),
+  renamePurchaseLabel: (id: number, name: string) => call<void>("rename_purchase_label", { id, name }),
+  deletePurchaseLabel: (id: number) => call<void>("delete_purchase_label", { id }),
+  setPurchaseItemLabels: (itemId: number, labelIds: number[]) =>
+    call<void>("set_purchase_item_labels", { itemId, labelIds }),
+  setPurchaseGift: (orderId: string, gift: boolean | null) => call<void>("set_purchase_gift", { orderId, gift }),
   clearBoothSession: () => call<void>("clear_booth_session"),
   closeBoothBrowser: () => call<void>("close_booth_browser"),
   boothBrowserLog: () => call<BrowserDiagnostic>("booth_browser_log"),
