@@ -256,7 +256,12 @@ test("narrow windows float the panel and keep the list usable on every tab", asy
     await act(async () => { root.render(createElement(Harness)); await tick(); });
     await wait(() => document.querySelector('[aria-label="タブを追加"]'));
     assert.ok(document.querySelector(".right-panel-float > .right-panel.floating"));
-    assert.ok(document.querySelector('[aria-label="右パネルを移動"]'), "the floating panel has a move grip");
+    // 何も選んでいないプレビューは、一覧を覆わない小さな案内になる（動かさず、大きさも変えない）。
+    const float = document.querySelector(".right-panel-float");
+    assert.ok(float.classList.contains("compact"), "an empty preview floats as a small note");
+    assert.ok(parseFloat(float.style.height) <= 136, "the note stays small");
+    assert.equal(document.querySelector('[aria-label="右パネルを移動"]'), null, "the small note has no move grip");
+    assert.equal(document.querySelectorAll(".right-panel-float-edge").length, 0, "nor resize edges");
     assert.equal(document.querySelector('[aria-label="全面表示"]'), null, "a floating panel does not maximize");
     assert.equal(document.querySelector('[aria-modal="true"]'), null, "the product list stays available");
     await click(document.querySelector('[aria-label="タブを追加"]'));
@@ -265,6 +270,8 @@ test("narrow windows float the panel and keep the list usable on every tab", asy
     const menuItem = [...document.querySelectorAll('[role="menuitem"]')].find((node) => node.textContent === label);
     await click(menuItem);
     await wait(() => document.querySelector('[role="tab"][aria-selected="true"]')?.textContent === label);
+    assert.ok(!document.querySelector(".right-panel-float").classList.contains("compact"), "another tab gets the full panel back");
+    assert.ok(document.querySelector('[aria-label="右パネルを移動"]'), "the floating panel has a move grip");
     assert.equal(document.querySelector('[aria-modal="true"]'), null, "other tabs float without blocking the list either");
     assert.ok(document.querySelector(".right-panel-float"));
     await click(document.querySelector('[aria-label="右パネルを閉じる"]'));

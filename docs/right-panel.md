@@ -43,7 +43,7 @@
 | 項目 | 挙動 | 実装 |
 | --- | --- | --- |
 | 位置 | アプリ全体のグリッドの右端の列 | `src/useAppLayout.tsx`、`src/components/RightPanel.tsx` の `RightPanelColumn` |
-| 開閉 | Ctrl+Shift+B（Mac は ⌘⇧B も可）、ヘッダーの ×。閉じている間は、ページ右上のタブ数のボタンでも開く | `isRightPanelShortcut`（`src/rightPanel.ts`）、`RightPanelLauncher` |
+| 開閉 | Ctrl+Shift+B（Mac は ⌘⇧B も可）、ヘッダーの ×。閉じている間は、ページ右上のパネルのボタン（タブの数を小さなバッジで添える）でも開く | `isRightPanelShortcut`（`src/rightPanel.ts`）、`RightPanelLauncher` |
 | 幅 | 左端の区切りをドラッグする。矢印キーなら16px ずつ。Home かダブルクリックで既定幅 | `ResizeSeparator grows="left"` |
 | 浮かぶパネル | 窓幅が 1000px 未満なら、列にせずアプリの窓の中に浮かぶ小窓として表示。広い窓でもヘッダーの「ウィンドウとして浮かせる」で同じ表示にできる。動かせて大きさも変えられ、下の一覧は操作できる | `useAppLayout` の `narrow`、`panel.floating`、`FloatingPanel`、`src/floatingPanel.ts` |
 | 全面表示 | 一覧を隠し、パネルが中央の列を使う。その場限りで保存しない | `maximized`。このとき `.main` に `hidden` を付ける |
@@ -476,6 +476,8 @@ interface RightPanelTab { id: string; kind: RightPanelKind | "web"; tabId?: stri
 - `FloatingPanel`（`RightPanel.tsx`）は `document.body` へのポータルで、`.right-panel-float`（`position: fixed`、z-index 20）の中に `.right-panel.floating` を置きます。
   - 背景幕はなく、`aria-modal` も付けません。どのタブでも一覧を操作でき、一覧で選んだ商品はそのままプレビューに出ます。Escape や外側のクリックでは閉じません。閉じるのは × と Ctrl+Shift+B です。
   - 一覧のポップオーバー（z-index 10〜12）より上、モーダルの重ね表示（z-index 30 以上）より下です。モーダルが重なると、中のページは `BROWSER_PANEL_COVER_SELECTORS` で隠れます。
+- プレビューのタブを選んでいて商品が未選択のときは、右上（窓の端から 16px）に 320×136px の小さな案内（`.right-panel-float.compact`、`compactFloatRect`）として出します。これから選ぶ一覧を覆わないためです。以前は 420px 幅の空のパネルが 920×640 の窓で最初の商品カードをほぼ覆い、カードを押してもパネルが受けていました。
+  - この間はつまみ、辺、移動、ダブルクリックを無効にします。商品を選ぶか別のタブを選ぶと、置いた位置と大きさ（最初は右上の既定）に戻るので、同じ角から広がります。
 - 位置と大きさは `src/floatingPanel.ts` の純粋関数で決めます。
   - 最初は右上（窓の端から 16px）に、幅 420px・高さ 720px を上限として出します。
   - 動かす：タブ列の空いたところか、左端のつまみ（`.right-panel-float-grip`、「右パネルを移動」）をドラッグします。タブ、＋、×などのボタンの上では動かしません。
@@ -661,14 +663,17 @@ ChatGPT アプリのサイドパネルにならい、タブ列はアプリの地
 - `.right-panel-head`：`padding: var(--space-2) var(--space-2) var(--space-2) 0`、`gap: 4px`。タブの種類を切り替えても高さは変わりません。浮かぶパネルでは左を `--space-1` にして先頭に 24px 幅のつまみを置き、空いたところは `cursor: grab` です。全面表示では左にも `--space-2`。
 - ヘッダー右端の並びは、列のときは「ウィンドウとして浮かせる」・全面表示・×、浮かせているときは「右側に戻す」（広い窓だけ）・× です。
 - `.right-panel-tabs`：横スクロールで、スクロールバーは出しません（`scrollbar-width: none`）。`gap: 4px`。`flex: 0 1 auto` なので ＋ はタブの直後に並び、全面表示と × は `.right-panel-actions` の `margin-left: auto` で右端に寄せます。
+  - タブが入りきらないときは、縦のホイールも横のスクロールに回し、選んだタブを帯の中の見える位置へ寄せます。続きのある側の端は 24px の `mask-image` でぼかします（`data-more-start` / `data-more-end`、計算は `src/scrollEdges.ts`）。
 - `.right-panel-tab`
   - 角丸は `--radius-sm`、文字は `--text-secondary` です。ホバーで `--hover` と `--text` になります。
-  - 選択中は `--surface`、`font-weight: 650`、`--line` の 1px の輪郭と弱い影、`flex-shrink: 0` です。狭くてもラベルが潰れません。
+  - 選択中は `--surface`、`font-weight: 650`、`--line` の 1px の輪郭と弱い影です。
+  - どのタブにも最低幅があります。選んでいないタブは 36px、選択中は 72px で、それ以上は縮めず、入りきらない分は帯を横にスクロールさせます。以前は選択中のタブだけを縮めない指定（`flex-shrink: 0`）だったため、1180×800 の既定幅で 3 タブにすると、ほかのタブが幅 0 まで潰れて中のボタンが重なり、プレビューを押すとファイルが選ばれていました。
+  - ヘッダー（`.right-panel-head`、`container-type: inline-size`）が 480px 未満のときは、選んでいないタブをアイコンだけにし、× も置きません。名前の 1 文字だけが切れて残ると読めず、× はアイコンと押し間違えるためです。名前は視覚的に隠して読み上げに残し、各タブの `title` にも入れます。閉じるときは選んでから閉じます。480px 以上では、選んでいないタブも最低幅 72px で名前と × を出します。
   - どのタブも幅の上限は 240px で、タブ欄がそれより狭いときはタブ欄の幅です（`max-width: min(240px, 100%)`）。ページのタイトルが長くてもラベルが省略記号で切れ、× はタブ欄の内側に残って押せ、ほかのタブも潰れません。上限が無いと、縮まない選択中のタブが × ごとスクロールバーの無いタブ欄の外へはみ出し、ほかのタブは幅0になっていました。
   - タブのボタンは `padding: 6px 4px 6px 10px` で、種類のアイコン（`.right-panel-tab-icon`：プレビューは画像、ファイルはフォルダ、ページは地球儀）と、省略記号付きの1行のラベル（`.right-panel-tab-label`）を並べます。アイコンは `aria-hidden` で、タブの名前はラベルだけです。
   - **右パネルとブラウザのタブには、朱の線のアクセントを使いません**（[デザインガイド](design/README.md) の「タブ」）。
 - タブの ×（`.right-panel-tab-close`）：22×22px、`--radius-pill`。ホバー中、選択中、`:focus-visible` のときだけ `opacity: 1` で、それ以外は 0 です。
-- ヘッダーのアイコン（`.right-panel-icon`）：32×32px。`aria-pressed` / `aria-expanded` が true のときは `--surface-secondary` です。SVG は `stroke-width: 1.4`。
+- ヘッダーのアイコン（`.right-panel-icon`）：32×32px。ヘッダーが 360px 以下（既定幅 300px のパネル）では 28×28px にし、右端の並びの間隔を 0 にして、タブに幅を回します。`aria-pressed` / `aria-expanded` が true のときは `--surface-secondary` です。SVG は `stroke-width: 1.4`。
 - 並べ替えの挿入線：幅 2px、上下の margin 6px、`--button`。
 - ＋メニュー（`.right-panel-popover`）：`.account-popover` を流用し、`min-width: 168px`、ボタンの下 4px に出します。`role="menu"`。すでに表示中の singleton には「表示中」を添えます。
 
@@ -684,7 +689,7 @@ ChatGPT アプリのサイドパネルにならい、タブ列はアプリの地
 **閉じているときの入口（`RightPanelLauncher`）**
 
 - パネルが閉じているときだけ、`.topbar` の右上（`position: absolute; top: 6px; right: var(--space-3)`）に 32×32px のボタンを出します。`.topbar` は sticky なので、一覧をスクロールしても同じ位置に残ります。
-- 中身は `1.5px` の枠・角丸 5px の四角に、パネルが表示するタブの数（`launcherCountLabel`：`visibleTabs` の件数、100 以上は「99+」）を `tabular-nums` で書きます。ページのタブは内蔵ブラウザが有効なときだけ数えます。
+- 中身は、右の列がパネルになった窓の形のアイコン（`PanelGlyph`、18px、線は `stroke-width: 1.4`）です。パネルが表示するタブの数（`launcherCountLabel`：`visibleTabs` の件数、100 以上は「99+」）は、右上の小さな丸いバッジ（高さ 14px、10px の `tabular-nums`、地は `--surface-secondary`、`--bg` の 1.5px の縁）に添え、0 件では出しません。ページのタブは内蔵ブラウザが有効なときだけ数えます。以前は枠付きの数字だけで、通知の件数やページ番号に見えました。
 - 押すと `panel.toggle` で開きます。狭い窓と、浮かせることを選んでいるときは浮かぶパネルで開きます。aria-label は「右パネルを開く（タブ N 件）」、title にショートカットを出します。
 - ボタンと重ならないよう、`.topbar` のバナーと進捗（`.banner`、`.progress`）の右の余白を広げ、狭い窓のジャンルのチップ帯（`.chip-bar-track`）にも右の余白を足します。
 - 全面表示では `.main` ごと隠れますが、そのときパネルは開いているので入口は要りません。
@@ -717,7 +722,9 @@ ChatGPT アプリのサイドパネルにならい、タブ列はアプリの地
   - メニューやダイアログが重なってネイティブ WebView を一時的に隠している間も、直前に取得したページの静止画（`.browser-panel-snapshot`、`browser_panel_snapshot` コマンド。macOS は `WKWebView` の `takeSnapshotWithConfiguration:`、見本画面は SVG）を同じ矩形に敷き、メニューの背後にページが見え続けるようにします。メモリ上だけで扱い、DB や設定には保存しません。静止画がまだないときだけ案内文を出します。
 - 幅への対応は container query です（`.browser-chrome { container-type: inline-size }`）。
   - 520px 以下：「インポート」と、ホームのアイコン（`.browser-home`）を隠す
+  - 460px 以下：アドレス欄を 2 行目の全幅に置く（`.browser-navigation` を折り返す）。既定幅 300px のパネルでは、1 行目に並べると文字の見える幅が 55px しかなく、`https://a` 程度しか読めなかった。ページの矩形は操作バーの実測から決めるので、行が増えてもずれない
   - 360px 以下：アドレス欄の「開く」ボタンを隠す
+- アドレス欄は、編集していないときは `https://` と、ホストだけの URL の末尾の `/` を省いて表示します（`src/browserAddress.ts` の `readableAddress`）。`title` に元の URL を入れ、フォーカスすると元の URL に戻して全体を選択します。
 
 ### 10.3 フォーカスとキーボード
 
@@ -725,6 +732,7 @@ ChatGPT アプリのサイドパネルにならい、タブ列はアプリの地
 - タブ列は `role="tablist"`（aria-label「右パネルのタブ」）、各タブは `role="tab"` と `aria-selected` です。←/→ で選択、Alt+←/→ で並べ替えます。
 - 各タブの × は、「〇〇のタブを閉じる」という aria-label です。
 - 別窓のタブ列（`BrowserChrome`）も、選択中のタブだけを Tab の止まる場所にし（roving tabindex）、←/→・Home・End で選択とフォーカスを一緒に移します。× は選択中のタブのものだけが Tab で止まります（`src/keyboard.ts` の `tabKeyTarget`）。
+  - 選択の反映でタブ列が描き直されても、矢印キーで選んだタブにフォーカスを戻します。選択の処理中もタブを `disabled` にせず `aria-disabled` にします。`disabled` にするとブラウザがフォーカスを外し、続けて押した矢印キーが届かず、2 回目の → で 3 番目へ進めませんでした。
 - 区切りは `role="separator"` と aria の値を持ち、矢印と Home で操作します。
 - ＋メニューは Escape で閉じます。
 - 浮かぶパネルはモードレスで、開いてもフォーカスを動かしません。つまみ（「右パネルを移動」）は矢印キーで移動、Shift+矢印キーで大きさ、Home で右上に戻します。
@@ -788,6 +796,7 @@ iframe[src*='youtube.com/embed/' i],iframe[src*='youtube-nocookie.com/embed/' i]
 | #118 | 11/02 02:09 | デザインの切り替えを削除し、標準デザインに統一 |
 | **#128** | 11/02 16:16 | Linux でも右パネルに表示する |
 | **#132** | 11/03 13:06 | Mac でページがブックマークバーを隠す（原点のずれ） |
+| — | 11/11 | UI レビューへの対応。タブの最低幅と、狭いヘッダーでのアイコンだけの表示、空のプレビューの小さな案内、アドレス欄の 2 行化、起動ボタンのアイコン、別窓のタブの矢印キー（§6.3、§10.2、§10.3） |
 
 以下、太字の PR を中心に、症状・原因・修正をまとめます。
 
@@ -897,7 +906,7 @@ iframe[src*='youtube.com/embed/' i],iframe[src*='youtube-nocookie.com/embed/' i]
 | --- | --- | --- |
 | `npm test` | 下記の node テストを含む全体 | frontend |
 | `npx tsc --noEmit` | 型検査 | frontend |
-| `npm run test:tab-click` | ヘッドレス Chromium に CDP で実際のポインター入力を送る。クリックの切り替え、6px 未満の揺れ、並べ替えと直後のクリック、Escape、ライト・ダークでの表示域の一致。`CHROME_PATH` で実行ファイルを指定。Chrome がなければスキップ | frontend（`CHROME_PATH=/usr/bin/google-chrome` に固定し、スキップさせない） |
+| `npm run test:tab-click` | ヘッドレス Chromium に CDP で実際のポインター入力を送る。クリックの切り替え、6px 未満の揺れ、並べ替えと直後のクリック、Escape、既定幅 300px で 3 タブと 5 タブを 1180×800・920×640 のどちらでも 1 つずつ押せること、ライト・ダークでの表示域の一致。`CHROME_PATH` で実行ファイルを指定。Chrome がなければスキップ | frontend（`CHROME_PATH=/usr/bin/google-chrome` に固定し、スキップさせない） |
 | `xvfb-run -a -s '-screen 0 2000x1200x24' npm run test:browser-layout` | WebKitWebDriver（`webkit2gtk-driver`）で、表示域の縦横の充填、全面表示、サイズ変更（1908×1044、1440×900、1100×700）、タブ切り替え、640px の別窓用操作バー（高さ 112） | rust（Linux 両 CPU） |
 | `cargo test --lib`（Linux は `xvfb-run -a cargo test --lib --features tauri/custom-protocol`） | `browser_surface::tests`、`browser_tabs` のテスト、`model` の正規化、`macos_geometry::tests` など | rust（Windows / macOS / Linux） |
 | `linux_browser_panel_native`（`-- --ignored`） | 実 Tauri / GTK / WebKit。手順は `docs/development.md` の「Linux のネイティブ右パネル確認」。実行前に `npm run build` が必要 | rust（Linux、`GDK_SCALE=1`・`2`） |
@@ -908,7 +917,8 @@ iframe[src*='youtube.com/embed/' i],iframe[src*='youtube-nocookie.com/embed/' i]
 - `test/right-panel.test.mjs`：種類の許可リスト、保存の形、プレビューが右パネルにあること、設定の読み込みがブラウザの同期とは別に行われること、狭い窓のパネルがどのタブでも一覧を塞がないこと
 - `test/browser-panel.test.mjs`：丸め、重なりとドラッグで隠すこと、浮かぶパネルを動かす間は隠すこと、ドックと分離の状態遷移、URL を保存しないこと、1ページだけ別窓へ出すこと
 - `test/floating-panel.test.mjs`：浮かぶパネルが窓の内側に収まること、引いた辺の反対側が動かないこと、整数の矩形
-- `test/narrow-layout.test.mjs`（`CHROME_PATH` があるとき）：実際の Chromium にマウス入力を送り、浮かぶパネルを動かす、辺で広げる、横の一覧で選ぶ、窓を縮めても収まる、右上に戻す、広い窓で浮かせて右側に戻す
+- `test/narrow-layout.test.mjs`（`CHROME_PATH` があるとき）：実際の Chromium にマウス入力を送り、空のプレビューが右上の小さな案内になる、横の一覧で選ぶと広がる、浮かぶパネルを動かす、辺で広げる、窓を縮めても収まる、右上に戻す、広い窓で浮かせて右側に戻す
+- `test/layout-helpers.test.mjs`：空のプレビューの矩形（`compactFloatRect`）、タブ列の端のぼかしと選んだタブを見せるスクロール量（`src/scrollEdges.ts`）、アドレス欄の表示（`readableAddress`）。同じファイルで、購入履歴のラベル選択を開く向きと、分類の編集の変更の判定も見る
 - `test/ui-layout.test.mjs`：幅の補助関数
 - `test/preview-pane.test.mjs`：プレビューの選択と、大きな画像の待ち
 - `test/file-browser.test.mjs`：パスの補助、見本、読み取り専用、zip の開き直し、商品名のラベル

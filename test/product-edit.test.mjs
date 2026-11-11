@@ -135,6 +135,47 @@ test("the edit dialog sends 「自動」 and says when no avatar matches", async
     assert.equal(updates[1].resetGenre ?? false, false, "an untouched automatic genre is not reset");
     assert.equal(updates[1].genre ?? null, null);
     await act(async () => { root.render(null); });
+
+    // Escape は変更があるときだけ確かめ、「いいえ」なら開いたままにする。ブラウザ標準の cancel は
+    // 直前の操作が無いと取り消せないので、キー入力の段階で止めていることも確かめる。
+    let closed = 0;
+    let answer = false;
+    const asked = [];
+    window.confirm = (message) => { asked.push(message); return answer; };
+    const escape = async (node) => {
+      const event = new window.Event("keydown", { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "key", { value: "Escape" });
+      await act(async () => {
+        node.dispatchEvent(event);
+        await tick();
+      });
+      return event;
+    };
+    const openCounting = async () => {
+      root = createRoot(document.getElementById("root"));
+      await act(async () => {
+        root.render(createElement(ShellProvider, { value: shell }, createElement(ProductEditDialog, { boothId: "424242", onClose() { closed++; } })));
+        await tick();
+        await tick();
+      });
+    };
+    current = product({});
+    await openCounting();
+    await escape(document.querySelector('select[aria-label="ジャンル"]'));
+    assert.deepEqual([closed, asked.length], [1, 0], "without changes Escape closes at once");
+    await act(async () => { root.render(null); });
+
+    await openCounting();
+    const edited = document.querySelector('select[aria-label="ジャンル"]');
+    await change(edited, "");
+    const kept = await escape(edited);
+    assert.equal(kept.defaultPrevented, true, "the dialog's own cancel does not run");
+    assert.deepEqual([closed, asked.length], [1, 1], "a declined discard keeps the dialog and its changes");
+    assert.equal(document.querySelector('select[aria-label="ジャンル"]').value, "");
+    answer = true;
+    await escape(edited);
+    assert.deepEqual([closed, asked.length], [2, 2], "an accepted discard closes");
+    await act(async () => { root.render(null); });
   } finally {
     await server.close();
   }

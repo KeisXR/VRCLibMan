@@ -9,6 +9,7 @@ import {
 import type { BrowserAction, BrowserBookmark, BrowserState } from "../types";
 import { errorText } from "../ui";
 import { tabKeyTarget } from "../keyboard";
+import { readableAddress } from "../browserAddress";
 import { BrowserTitleBar } from "./BrowserTitleBar";
 import {
   ArrowGlyph,
@@ -63,6 +64,7 @@ export function BrowserChrome({
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [address, setAddress] = useState("");
+  const [addressFocused, setAddressFocused] = useState(false);
   const [edit, setEdit] = useState<BookmarkEdit | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
   const input = useRef<HTMLInputElement>(null);
@@ -70,6 +72,8 @@ export function BrowserChrome({
   const moreRef = useRef<HTMLDivElement>(null);
   const morePopover = useRef<HTMLDivElement>(null);
   const editingAddress = useRef(false);
+  // 矢印キーで選んだタブ。選択の反映で並びが描き直されても、そのタブにフォーカスを戻す。
+  const focusTab = useRef<string | null>(null);
   const activeId = useRef<string | null>(null);
   const epoch = useRef(0);
   const reading = useRef(false);
@@ -150,6 +154,14 @@ export function BrowserChrome({
     if (switched || !editingAddress.current) setAddress(active?.url ?? "");
     if (switched) setEdit(null);
   }, [active?.id, active?.url]);
+
+  useEffect(() => {
+    const id = focusTab.current;
+    if (!id || id !== selectedId) return;
+    focusTab.current = null;
+    const node = document.getElementById(`browser-page-tab-${id}`);
+    if (node && document.activeElement !== node) node.focus();
+  }, [selectedId, working]);
 
   useEffect(() => {
     if (!moreOpen) return;
@@ -344,18 +356,22 @@ export function BrowserChrome({
                 id={`browser-page-tab-${tab.id}`}
                 aria-selected={selected}
                 tabIndex={tabStop ? 0 : -1}
-                disabled={disabled}
+                // 選択の処理中も disabled にしない。disabled にするとブラウザがフォーカスを外し、
+                // 続けて押した矢印キーが届かなくなる。処理中の操作は下で無視する。
+                aria-disabled={disabled || undefined}
                 title={tab.url}
-                onClick={() =>
-                  void action({ kind: "selectTab", tabId: tab.id })
-                }
+                onClick={() => {
+                  if (!disabled) void action({ kind: "selectTab", tabId: tab.id });
+                }}
                 onKeyDown={(event) => {
                   const target = tabKeyTarget(event.key, index, pageTabs.length);
                   if (target === null) return;
                   event.preventDefault();
+                  if (disabled) return;
                   const next = pageTabs[target];
                   if (!next) return;
                   // 選択と一緒にフォーカスも移す。移らないと次の矢印キーが元のタブから数え直す。
+                  focusTab.current = next.id;
                   document.getElementById(`browser-page-tab-${next.id}`)?.focus();
                   if (next.id !== selectedId) void action({ kind: "selectTab", tabId: next.id });
                 }}
@@ -440,21 +456,28 @@ export function BrowserChrome({
           onSubmit={(event) => {
             event.preventDefault();
             editingAddress.current = false;
+            input.current?.blur();
             void action({ kind: "navigate", url: address });
           }}
         >
           <input
             aria-label="アドレスバー"
             ref={input}
-            value={address}
+            // 編集していないときは https:// を省き、狭い欄でもホスト名を読めるようにする。
+            value={addressFocused ? address : readableAddress(address)}
+            title={address || undefined}
             placeholder="URLを入力"
             spellCheck={false}
             autoComplete="off"
-            onFocus={() => {
+            onFocus={(event) => {
               editingAddress.current = true;
+              setAddressFocused(true);
+              const field = event.currentTarget;
+              setTimeout(() => field.select(), 0);
             }}
             onBlur={() => {
               editingAddress.current = false;
+              setAddressFocused(false);
             }}
             onChange={(event) => setAddress(event.target.value)}
           />

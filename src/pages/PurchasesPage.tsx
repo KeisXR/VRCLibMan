@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { api, listenProgress, listenPurchasesChanged, openBoothLink } from "../api";
 import { useShell } from "../App";
@@ -28,6 +28,21 @@ import type {
 import { Pager, Thumb, errorText } from "../ui";
 
 const JOB = "browser-purchases";
+
+/** ラベルの一覧より下の部分（余白・新規入力）の高さの目安。 */
+const LABEL_PANEL_CHROME = 76;
+
+/**
+ * ラベル選択を開く向きと、一覧の高さの上限。下に 260px 無く、上のほうが広ければ上に開く。
+ * 一覧は 120〜280px の間で、開く側の空きに収まる高さにする。新規入力の行は一覧の外で常に見える。
+ */
+export function labelPanelPlacement(anchor: { top: number; bottom: number }, viewHeight: number): { up: boolean; listMax: number } {
+  const below = viewHeight - anchor.bottom - 12;
+  const above = anchor.top - 12;
+  const up = below < 260 && above > below;
+  const space = (up ? above : below) - LABEL_PANEL_CHROME;
+  return { up, listMax: Math.max(120, Math.min(280, Math.floor(space))) };
+}
 
 function useChanges(): [number, () => void] {
   const [changes, setChanges] = useState(0);
@@ -84,6 +99,8 @@ function LabelPicker({ item, labels, onChanged }: { item: PurchaseItemView; labe
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+  // 下に場所が無ければ上に開く。ラベルの一覧だけを、空いている高さの中でスクロールさせる。
+  const [placement, setPlacement] = useState<{ up: boolean; listMax: number }>({ up: false, listMax: 240 });
   const ref = useRef<HTMLDetailsElement>(null);
 
   useEffect(() => {
@@ -91,8 +108,24 @@ function LabelPicker({ item, labels, onChanged }: { item: PurchaseItemView; labe
     const close = (event: MouseEvent) => {
       if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false);
     };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setOpen(false);
+      ref.current?.querySelector<HTMLElement>("summary")?.focus();
+    };
     document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open || !ref.current) return;
+    setPlacement(labelPanelPlacement(ref.current.getBoundingClientRect(), window.innerHeight));
   }, [open]);
 
   async function save(labelIds: number[]) {
@@ -126,7 +159,8 @@ function LabelPicker({ item, labels, onChanged }: { item: PurchaseItemView; labe
   return (
     <details className="purchase-label-picker" ref={ref} open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary>ラベル{item.labelIds.length > 0 ? `（${item.labelIds.length}）` : ""}</summary>
-      <div className="purchase-label-panel">
+      <div className={placement.up ? "purchase-label-panel up" : "purchase-label-panel"}>
+        <div className="purchase-label-options" style={{ maxHeight: placement.listMax }}>
         {labels.length === 0 && <p className="meta">まだラベルはありません。下で作れます。</p>}
         {labels.map((label) => (
           <label key={label.id}>
@@ -143,6 +177,7 @@ function LabelPicker({ item, labels, onChanged }: { item: PurchaseItemView; labe
             {label.name}
           </label>
         ))}
+        </div>
         <form className="purchase-label-new" onSubmit={(event) => void addNew(event)}>
           <input value={name} maxLength={30} placeholder="新しいラベル" aria-label="新しいラベル" onChange={(event) => setName(event.target.value)} />
           <button className="button" type="submit" disabled={busy || !name.trim()}>
@@ -378,6 +413,8 @@ function PurchaseHistoryView({
   const [year, setYear] = useState("");
   const [offset, setOffset] = useState(0);
   const [page, setPage] = useState<PurchasePage | null>(null);
+  // 検索だけを常に出し、ラベル・アバター・年は開いたときだけ出す。アバター別から来たときは開いておく。
+  const [filtersOpen, setFiltersOpen] = useState(Boolean(initialGroup));
   const top = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -430,9 +467,10 @@ function PurchaseHistoryView({
 
   if (!page) return <p className="meta">読み込み中</p>;
   const filtered = Boolean(query || labelFilter || group || year);
+  const activeFilters = [labelFilter, group, year].filter(Boolean).length;
   return (
     <div className="purchase-history" ref={top}>
-      <div className="purchase-filters">
+      <div className="purchase-filters purchase-search-row">
         <input
           className="search"
           type="search"
@@ -441,6 +479,17 @@ function PurchaseHistoryView({
           aria-label="購入履歴を検索"
           onChange={(event) => setText(event.target.value)}
         />
+        <button
+          className="button secondary purchase-filter-toggle"
+          type="button"
+          aria-expanded={filtersOpen}
+          aria-controls="purchase-filter-fields"
+          onClick={() => setFiltersOpen((value) => !value)}
+        >
+          絞り込み{activeFilters > 0 ? `（${activeFilters}）` : ""}
+        </button>
+      </div>
+      {filtersOpen && <div className="purchase-filters purchase-filter-fields" id="purchase-filter-fields">
         <label className="field">
           <span>ラベル</span>
           <select value={labelFilter} onChange={(event) => { setLabelFilter(event.target.value); setOffset(0); }}>
@@ -476,7 +525,7 @@ function PurchaseHistoryView({
             ))}
           </select>
         </label>
-      </div>
+      </div>}
       <p className="meta purchase-count">
         {filtered ? `条件に合う注文 ${page.total} 件` : `注文 ${page.total} 件`}
         {filtered && (
@@ -704,7 +753,8 @@ export function PurchasesPage({ view, group }: { view: PurchaseView; group?: str
             </label>
           )}
           {builtinBrowser && (
-            <button className="button primary" type="button" disabled={running} onClick={() => void read()}>
+            // 読み込み済みなら閲覧が主役なので、読み込みは副操作の見た目にする。
+            <button className={empty ? "button primary" : "button secondary"} type="button" disabled={running} onClick={() => void read()}>
               購入履歴を読み込む
             </button>
           )}

@@ -180,6 +180,44 @@ test("right panel tabs switch on a real pointer click in Chromium", { timeout: 6
       await press(pageTab);
       assert.equal(await selected(), pageTab.slice(1));
     });
+    await t.test("three to five tabs remain independently clickable at narrow widths", async () => {
+      await evaluate(`(async () => {
+        const { api } = await import("/src/api.ts");
+        await api.updateSettings({ previewPaneWidth: 300 });
+      })()`);
+      for (const [width, height] of [[1180, 800], [920, 640]]) {
+        await page("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+        await pause(250);
+        for (const count of [3, 5]) {
+          await evaluate(`(async () => {
+            const { api } = await import("/src/api.ts");
+            while (document.querySelectorAll('.right-panel-tabs [role=tab]').length > ${count}) {
+              const last = [...document.querySelectorAll('.right-panel-tabs [role=tab]')].findLast(tab => tab.id.includes('-web-'));
+              await api.browserAction({ kind: "closeTab", tabId: last.id.split('-web-')[1] });
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
+            for (let n = document.querySelectorAll('.right-panel-tabs [role=tab]').length; n < ${count}; n++) {
+              await api.browserAction({ kind: "newTab", url: "https://accounts.booth.pm/library" });
+            }
+          })()`);
+          await pause(250);
+          const ids = await evaluate("[...document.querySelectorAll('.right-panel-tabs [role=tab]')].map(tab => tab.id)");
+          assert.equal(ids.length, count);
+          for (const id of ids) {
+            const hit = await evaluate(`(() => {
+              const tab = document.getElementById(${JSON.stringify(id)});
+              tab.scrollIntoView({ block: "nearest", inline: "nearest" });
+              const rect = tab.getBoundingClientRect();
+              return tab.parentElement.getBoundingClientRect().width >= 36
+                && tab.contains(document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2));
+            })()`);
+            assert.ok(hit, `${width}×${height}, ${count} tabs: ${id} has its own hit target`);
+            await press(`#${id}`);
+            assert.equal(await selected(), id);
+          }
+        }
+      }
+    });
     await t.test("standard design keeps page geometry aligned in both color schemes", async () => {
       for (const scheme of ["light", "dark"]) {
         await page("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: scheme }] });
