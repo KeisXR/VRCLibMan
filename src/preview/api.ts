@@ -3,7 +3,7 @@ import extensionManifest from "../../extension/manifest.json";
 import { previewListDirectory, previewListZip, previewPrepareUnityPackages, previewUnityPackages } from "./files";
 import { previewPurchaseDispatch, previewPurchaseExport } from "./purchases";
 import { filePresence } from "../media";
-import { GENRE_FREE, GENRE_UNSET, genresForKind } from "../types";
+import { GENRE_FREE, GENRE_LABEL, GENRE_UNSET, genresForKind } from "../types";
 import type { ClassificationSnapshot, OwnedAvatarRestore, RegisterOwnedBodyResult, SnapshotLink, UnityEditor, UnityStatus } from "../types";
 import type {
   AvatarCard,
@@ -896,6 +896,7 @@ function productForEdit(boothId: string): ProductEditView {
     thumbnailPath: item.thumbnailPath,
     category: item.category,
     genre: item.genre ?? null,
+    genreLocked: Boolean(item.genreLocked),
     isGeneric: item.isGeneric,
     linkedAvatarIds: linksOf(item.boothId),
   };
@@ -1053,6 +1054,9 @@ function stats(): LibraryStats {
     ownedAvatars: activeAvatars().filter((avatar) => avatar.owned).length,
     unextracted: activeProducts().filter((item) => item.category == null).length,
     unlinkedFiles: unlinkedFiles(0, 0).total,
+    registeredFiles:
+      store.downloads.filter((row) => row.state === "local" && row.localPath).length +
+      store.files.filter((file) => !file.isDir && file.linkedProductId).length,
   };
 }
 
@@ -1084,11 +1088,17 @@ function isIgnorableName(name: string): boolean {
 function updateProduct(update: ProductUpdate) {
   const item = store.products.find((product) => product.boothId === update.boothId);
   if (!item) throw new Error("商品が見つかりません");
+  if (update.resetGenre && update.genre) throw new Error("ジャンルの固定と「自動」は同時に指定できません");
   if (update.category) {
     item.category = update.category as Category;
     item.categoryLocked = true;
   }
   if (update.genre) { item.genre = update.genre; item.genreLocked = true; }
+  else if (update.resetGenre) {
+    // 見本の簡易版。Rust はカテゴリ・タグ・文面の規則で選び直す。
+    item.genre = item.category ? PREVIEW_AUTO_GENRE[item.category] ?? "other" : null;
+    item.genreLocked = false;
+  }
   if (typeof update.isGeneric === "boolean") item.isGeneric = update.isGeneric;
   if (update.avatarIds) {
     for (const id of update.avatarIds) {
@@ -1102,6 +1112,22 @@ function updateProduct(update: ProductUpdate) {
   }
   item.needsReview = needsReview(item, linksOf(item.boothId).length);
   item.updatedAt = new Date().toISOString();
+}
+
+const PREVIEW_AUTO_GENRE: Record<string, string> = {
+  avatar: "other", outfit: "outfit", hair: "hair", accessory: "accessory", texture: "makeup_skin", gimmick: "gimmick", world: "world", other: "other",
+};
+
+/** 見本の全文検索。Rust の search.rs と同じく、題・ショップ・説明の全文・ジャンル名・ID を AND で見る。 */
+function previewSearchProductIds(query: string): string[] {
+  const tokens = query.toLocaleLowerCase("ja").split(/\s+/).filter((token) => token.length > 0);
+  if (tokens.length === 0) return [];
+  return activeProducts()
+    .filter((item) => {
+      const haystack = [item.title, item.shop, item.descriptionSnippet, item.genre ? GENRE_LABEL[item.genre] ?? "" : "", item.boothId].join("\n").toLocaleLowerCase("ja");
+      return tokens.every((token) => haystack.includes(token));
+    })
+    .map((item) => item.boothId);
 }
 
 const GENRE_CATEGORY: Record<string, Category> = {
@@ -2216,7 +2242,14 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       extensionLink.token = extensionLink.token === "K7NP-4Q2M" ? "M8QR-5S3N" : "K7NP-4Q2M";
       return { ...extensionLink } as T;
     case "remote_sync_status":
-      return { running: false, copied: 0, skipped: 0, missing: 0, missingFiles: [], lastCompletedAt: null, error: null } as T;
+      return {
+        running: false, copied: 0, skipped: 0, missing: 0, missingFiles: [], conflicts: 0, conflictFiles: [],
+        sourceMissing: 0, sourceMissingFiles: [], failed: 0, failures: [], lastCompletedAt: null, error: null,
+      } as T;
+    case "retry_remote_sync":
+      return undefined as T;
+    case "search_product_ids":
+      return previewSearchProductIds(String(args.query ?? "")) as T;
     case "update_settings":
     case "save_settings": {
       const settings = command === "update_settings" ? { ...store.settings, ...(args.patch as Partial<Settings>) } : { ...args.settings as Settings, deviceName: store.settings.deviceName };
@@ -2511,7 +2544,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       }
       row.state = "local";
       row.localPath = `${store.settings.libraryFolder}\\${row.boothId}\\${row.filename}`;
-      return undefined as T;
+      return { status: "copied", sourceSize: null, existingSize: null } as T;
     }
     case "push_remote_file": {
       const row = store.downloads.find(
@@ -2525,7 +2558,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
         throw new Error("リモートのフォルダに届きません。接続を確認してからもう一度");
       }
       row.remotePath = `${store.settings.remoteLibraryFolder}\\${row.boothId}\\${row.filename}`;
-      return undefined as T;
+      return { status: "copied", sourceSize: null, existingSize: null } as T;
     }
     case "mark_owned_avatar": {
       const boothId = String(args.boothId ?? "");

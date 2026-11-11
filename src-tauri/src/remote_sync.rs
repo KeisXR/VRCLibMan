@@ -1,4 +1,5 @@
 use crate::{AppState, db, library_files};
+use library_files::CopyOutcome;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Mutex, mpsc};
 use std::time::Duration;
@@ -6,21 +7,56 @@ use tauri::{AppHandle, Manager};
 
 const INTERVAL: Duration = Duration::from_secs(60);
 
+/// One pass's result, split so a person can see what to fix. Each list keeps the first
+/// `LISTED` files as "id/filename"; the counts are complete.
 #[derive(Clone, Default, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Status {
     running: bool,
     copied: usize,
+    // Already on the remote: recorded and still there, or found with the same size.
     skipped: usize,
     // Recorded files that are no longer at their remote path. They are reported, never
-    // copied again automatically. `missing_files` keeps the first few as "id/filename".
+    // copied again automatically.
     missing: usize,
     missing_files: Vec<String>,
+    // A different file (another size) already has the name. Nothing is written or recorded,
+    // so the next pass looks again after the person resolves it.
+    conflicts: usize,
+    conflict_files: Vec<SyncConflict>,
+    // The registered local file is gone, so there is nothing to copy.
+    source_missing: usize,
+    source_missing_files: Vec<String>,
+    // Copies that failed. Each keeps its own error; one failure does not hide another.
+    failed: usize,
+    failures: Vec<SyncFailure>,
     last_completed_at: Option<String>,
+    // A problem with the whole pass, such as an unreachable remote folder.
     error: Option<String>,
 }
 
-const MISSING_EXAMPLES: usize = 3;
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SyncConflict {
+    file: String,
+    local_size: u64,
+    remote_size: u64,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SyncFailure {
+    file: String,
+    error: String,
+}
+
+const LISTED: usize = 20;
+
+fn listed<T>(list: &mut Vec<T>, item: T) {
+    if list.len() < LISTED {
+        list.push(item);
+    }
+}
 
 struct SyncState {
     wake: mpsc::SyncSender<()>,
@@ -183,8 +219,12 @@ fn run_pass<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<(), String> {
                     &filename,
                 )?
             };
+            let file = format!("{booth_id}/{filename}");
             // A registered local file may have been removed since the last scan.
             if !source.is_file() {
+                status.source_missing += 1;
+                listed(&mut status.source_missing_files, file);
+                *sync.status.lock().map_err(|_| "同期状態を更新できません")? = status.clone();
                 continue;
             }
             if recorded {
@@ -194,16 +234,28 @@ fn run_pass<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<(), String> {
                     Some(true) => status.skipped += 1,
                     Some(false) => {
                         status.missing += 1;
-                        if status.missing_files.len() < MISSING_EXAMPLES {
-                            status.missing_files.push(format!("{booth_id}/{filename}"));
-                        }
+                        listed(&mut status.missing_files, file);
                     }
                     None => {}
                 }
             } else {
                 match library_files::push_missing_file(&source, root, &booth_id, &filename) {
-                    Ok(copied) => {
-                        if copied {
+                    Ok(CopyOutcome::Conflict {
+                        source_size,
+                        existing_size,
+                    }) => {
+                        status.conflicts += 1;
+                        listed(
+                            &mut status.conflict_files,
+                            SyncConflict {
+                                file,
+                                local_size: source_size,
+                                remote_size: existing_size,
+                            },
+                        );
+                    }
+                    Ok(outcome) => {
+                        if outcome == CopyOutcome::Copied {
                             status.copied += 1;
                         } else {
                             status.skipped += 1;
@@ -220,9 +272,10 @@ fn run_pass<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<(), String> {
                         )?;
                     }
                     Err(error) => {
-                        status.error = Some(error);
-                        // A bad source or a conflicting destination must not block
-                        // unrelated files in this pass.
+                        // A bad source must not block unrelated files in this pass, and
+                        // the next failure must not hide this one.
+                        status.failed += 1;
+                        listed(&mut status.failures, SyncFailure { file, error });
                     }
                 }
             }
@@ -354,9 +407,9 @@ mod tests {
         let source = directory.path().join("source.zip");
         let remote = directory.path().join("remote");
         std::fs::write(&source, b"synthetic package").unwrap();
-        // Another device already put this one in the remote folder.
+        // Another device already put this one (same size) in the remote folder.
         std::fs::create_dir_all(remote.join("9002")).unwrap();
-        std::fs::write(remote.join("9002/found.zip"), b"other device").unwrap();
+        std::fs::write(remote.join("9002/found.zip"), b"synthetic package").unwrap();
         connection.execute_batch("INSERT INTO products (booth_id,title,imported_at,updated_at) VALUES ('9001','A','t','t'), ('9002','B','t','t');").unwrap();
         for (booth_id, filename) in [("9001", "file.zip"), ("9002", "found.zip")] {
             connection
@@ -401,7 +454,7 @@ mod tests {
         assert_eq!(std::fs::read_dir(&remote).unwrap().count(), 2);
 
         // A manual copy puts it back, and later passes see it again.
-        library_files::push_file(&source, &remote, "9001", "file.zip").unwrap();
+        library_files::push_file(&source, &remote, "9001", "file.zip", false).unwrap();
         run_pass(app.handle()).unwrap();
         let current = status();
         assert_eq!(
@@ -425,6 +478,101 @@ mod tests {
         assert_eq!(status().copied, 2);
         assert!(other.join("9001/file.zip").is_file());
         assert!(other.join("9002/found.zip").is_file());
+    }
+
+    #[test]
+    fn a_different_remote_file_is_a_conflict_that_is_reported_and_never_replaced() {
+        let directory = tempfile::tempdir().unwrap();
+        let connection = db::open(&directory.path().join("library.sqlite")).unwrap();
+        let source = directory.path().join("source.zip");
+        let remote = directory.path().join("remote");
+        std::fs::write(&source, b"synthetic package").unwrap();
+        std::fs::create_dir_all(remote.join("9001")).unwrap();
+        std::fs::write(remote.join("9001/file.zip"), b"older").unwrap();
+        connection.execute_batch("INSERT INTO products (booth_id,title,imported_at,updated_at) VALUES ('9001','A','t','t'), ('9002','B','t','t');").unwrap();
+        connection
+            .execute(
+                "INSERT INTO product_files (booth_id,filename,local_path) VALUES ('9001','file.zip',?1)",
+                [source.display().to_string()],
+            )
+            .unwrap();
+        // Registered, then removed from disk before the pass.
+        let gone = directory.path().join("gone.zip");
+        connection
+            .execute(
+                "INSERT INTO product_files (booth_id,filename,local_path) VALUES ('9002','gone.zip',?1)",
+                [gone.display().to_string()],
+            )
+            .unwrap();
+        db::update_settings(
+            &connection,
+            &crate::model::SettingsPatch {
+                remote_library_folder: Some(remote.display().to_string()),
+                remote_auto_sync: Some(true),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let app = sync_app(directory.path(), connection);
+        let status = || app.state::<SyncState>().status.lock().unwrap().clone();
+
+        for _ in 0..2 {
+            run_pass(app.handle()).unwrap();
+            let current = status();
+            assert_eq!((current.copied, current.skipped, current.conflicts), (0, 0, 1));
+            assert_eq!(current.conflict_files[0].file, "9001/file.zip");
+            assert_eq!(current.conflict_files[0].local_size, 17);
+            assert_eq!(current.conflict_files[0].remote_size, 5);
+            assert_eq!((current.source_missing, current.failed), (1, 0));
+            assert_eq!(current.source_missing_files, ["9002/gone.zip"]);
+            assert!(current.error.is_none());
+            assert_eq!(std::fs::read(remote.join("9001/file.zip")).unwrap(), b"older");
+            assert_eq!(std::fs::read_dir(remote.join("9001")).unwrap().count(), 1);
+        }
+        // A conflict is not recorded: once the person removes the other file, the next pass copies.
+        std::fs::remove_file(remote.join("9001/file.zip")).unwrap();
+        run_pass(app.handle()).unwrap();
+        assert_eq!((status().copied, status().conflicts), (1, 0));
+        assert_eq!(std::fs::read(remote.join("9001/file.zip")).unwrap(), b"synthetic package");
+    }
+
+    #[test]
+    fn each_failed_copy_keeps_its_own_entry() {
+        let directory = tempfile::tempdir().unwrap();
+        let connection = db::open(&directory.path().join("library.sqlite")).unwrap();
+        let remote = directory.path().join("remote");
+        std::fs::create_dir(&remote).unwrap();
+        // A file where product 9001's folder should be: both of its copies fail.
+        std::fs::write(remote.join("9001"), b"not a folder").unwrap();
+        let source = directory.path().join("source.zip");
+        std::fs::write(&source, b"synthetic package").unwrap();
+        connection.execute_batch("INSERT INTO products (booth_id,title,imported_at,updated_at) VALUES ('9001','A','t','t'), ('9002','B','t','t');").unwrap();
+        for (booth_id, filename) in [("9001", "a.zip"), ("9001", "b.zip"), ("9002", "c.zip")] {
+            connection
+                .execute(
+                    "INSERT INTO product_files (booth_id,filename,local_path) VALUES (?1,?2,?3)",
+                    rusqlite::params![booth_id, filename, source.display().to_string()],
+                )
+                .unwrap();
+        }
+        db::update_settings(
+            &connection,
+            &crate::model::SettingsPatch {
+                remote_library_folder: Some(remote.display().to_string()),
+                remote_auto_sync: Some(true),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let app = sync_app(directory.path(), connection);
+        run_pass(app.handle()).unwrap();
+        let current = app.state::<SyncState>().status.lock().unwrap().clone();
+        assert_eq!((current.copied, current.source_missing, current.failed), (1, 0, 2));
+        let files: Vec<&str> = current.failures.iter().map(|failure| failure.file.as_str()).collect();
+        assert_eq!(files, ["9001/a.zip", "9001/b.zip"]);
+        assert!(current.failures.iter().all(|failure| !failure.error.is_empty()));
+        assert!(current.error.is_none());
+        assert!(remote.join("9002/c.zip").is_file());
     }
 
     #[test]
@@ -536,13 +684,26 @@ mod tests {
         std::fs::write(&source, b"complete file").unwrap();
         assert!(library_files::push_missing_file(&source, &remote, "9001", "file.zip").is_err());
         std::fs::create_dir(&remote).unwrap();
-        assert!(library_files::push_missing_file(&source, &remote, "9001", "file.zip").unwrap());
+        assert_eq!(
+            library_files::push_missing_file(&source, &remote, "9001", "file.zip").unwrap(),
+            CopyOutcome::Copied
+        );
         assert_eq!(
             std::fs::read(remote.join("9001/file.zip")).unwrap(),
             b"complete file"
         );
+        assert_eq!(
+            library_files::push_missing_file(&source, &remote, "9001", "file.zip").unwrap(),
+            CopyOutcome::AlreadyThere
+        );
         std::fs::write(&source, b"changed local file").unwrap();
-        assert!(!library_files::push_missing_file(&source, &remote, "9001", "file.zip").unwrap());
+        assert_eq!(
+            library_files::push_missing_file(&source, &remote, "9001", "file.zip").unwrap(),
+            CopyOutcome::Conflict {
+                source_size: 18,
+                existing_size: 13
+            }
+        );
         assert_eq!(
             std::fs::read(remote.join("9001/file.zip")).unwrap(),
             b"complete file"
@@ -576,7 +737,8 @@ mod tests {
         assert_eq!(
             workers
                 .into_iter()
-                .filter_map(|worker| worker.join().unwrap().then_some(()))
+                .map(|worker| worker.join().unwrap())
+                .filter(|outcome| *outcome == CopyOutcome::Copied)
                 .count(),
             1
         );

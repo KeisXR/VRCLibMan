@@ -101,9 +101,18 @@ test("setup, import and version flows with synthetic local data", async (t) => {
     await t.test(
       "import choices persist without exposing browser-only pairing",
       async () => {
+        // 初回セットアップは保存値の既定（拡張）を選んだ状態で見せず、本人が選ぶまで進めない。
+        await wait(() => !document.querySelector(".setup-screen .import-methods").hasAttribute("disabled"));
+        assert.ok(
+          [...document.querySelectorAll('.setup-screen input[type="radio"]')].every((input) => !input.checked),
+          "no method is preselected",
+        );
+        assert.ok(button("次へ", document.querySelector(".setup-screen")).disabled, "next waits for a choice");
+        assert.ok(document.querySelector(".setup-screen .badge.recommend"), "the built-in browser is marked as recommended");
         window.confirm = () => false;
         await click(radio("アプリの内蔵ブラウザ"));
         assert.equal((await api.integrationStatus()).mode, "extension");
+        assert.ok(button("次へ", document.querySelector(".setup-screen")).disabled, "a declined confirmation is not a choice");
         window.confirm = () => true;
         await click(radio("アプリの内蔵ブラウザ"));
         await wait(
@@ -124,15 +133,31 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         assert.equal((await api.integrationStatus()).mode, "both");
         await click(radio("Chrome / Edge の拡張機能"));
         assert.ok(!(await api.settings()).builtinBrowser);
+        await wait(() => document.querySelector(".setup-screen .connection-state"));
+        assert.match(document.querySelector(".setup-screen .connection-state .state-chip").textContent, /^(受信済み|受信待ち|受信できません)$/);
         await click(button("次へ", document.querySelector(".setup-screen")));
         await wait(() => document.querySelector(".setup-guide"));
         assert.ok(document.querySelector(".setup-guide").textContent.includes("拡張機能を選択"));
         assert.equal(button("スキップ", document.querySelector(".setup-guide")), undefined);
-        await click(button("次へ", document.querySelector(".setup-guide")));
-        await click(button("次へ", document.querySelector(".setup-guide")));
-        await click(button("次へ", document.querySelector(".setup-guide")));
+        // 進む操作の文言は手順の状態に合わせる。未実施なら「あとで行う」で、終わったようには見せない。
+        const primary = () => document.querySelector(".setup-guide .button.primary");
+        const checkPrimary = () => {
+          const chip = document.querySelector(".setup-guide .state-chip")?.textContent;
+          const label = primary().textContent;
+          if (chip === "未実施") assert.equal(label, "あとで行う");
+          else if (chip === "完了" || chip === undefined) assert.equal(label, "次へ");
+        };
+        await wait(() => document.querySelector(".setup-guide .state-chip"));
+        checkPrimary();
+        await click(primary());
+        checkPrimary();
+        await click(primary());
+        assert.equal(document.querySelector(".setup-guide .state-chip"), null, "the optional manual step has no status");
+        await click(primary());
         assert.equal(button("スキップ", document.querySelector(".setup-guide")), undefined);
-        await click(button("次へ", document.querySelector(".setup-guide")));
+        await wait(() => document.querySelector(".setup-guide .state-chip"));
+        checkPrimary();
+        await click(primary());
         await click(button("あとで設定する"));
         await wait(() => !document.querySelector(".setup-screen"));
       },
@@ -259,8 +284,10 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       await wait(() => document.querySelector(".settings-nav") && document.querySelector("#settings-data"));
       const nav = document.querySelector(".settings-layout > .settings-nav");
       assert.ok(nav, "nav sits in the settings layout");
-      const buttons = [...nav.querySelectorAll("button")];
+      const buttons = [...nav.querySelectorAll("button[data-target]")];
       assert.deepEqual(buttons.map((node) => node.textContent), ["ライブラリ", "Unity", "起動と常駐", "デザイン", "更新設定", "BOOTH", "バージョン情報", "対応表を編集", "デバッグ"]);
+      // 帯があふれたときだけ出る端のボタンは、キーボードの順番に入らない。
+      for (const more of nav.querySelectorAll(".settings-nav-more")) assert.equal(more.getAttribute("tabindex"), "-1");
       for (const node of buttons) {
         const target = document.getElementById(node.dataset.target);
         assert.ok(target, `section exists: ${node.dataset.target}`);
@@ -950,7 +977,8 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         await wait(() => document.querySelector(".product-edit-dialog") === null);
         assert.equal(updates.length, 1);
         assert.equal(updates[0].category, null, "an untouched category is not pinned");
-        assert.equal(updates[0].genre, null);
+        assert.equal(updates[0].genre ?? null, null, "an untouched genre is not sent");
+        assert.equal(updates[0].resetGenre ?? false, false, "an untouched genre is not reset either");
         assert.equal(updates[0].isGeneric, null);
         assert.ok(Array.isArray(updates[0].avatarIds));
       } finally {

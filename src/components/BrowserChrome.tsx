@@ -8,6 +8,7 @@ import {
 } from "../api";
 import type { BrowserAction, BrowserBookmark, BrowserState } from "../types";
 import { errorText } from "../ui";
+import { tabKeyTarget } from "../keyboard";
 import { BrowserTitleBar } from "./BrowserTitleBar";
 import {
   ArrowGlyph,
@@ -326,36 +327,37 @@ export function BrowserChrome({
           role="tablist"
           aria-label="ブラウザのタブ"
         >
-          {pageTabs.map((tab, index) => (
+          {pageTabs.map((tab, index) => {
+            const selected = tab.id === selectedId;
+            // キーボードでは選択中のタブだけに止まる（矢印キーで移る）。選択が無ければ先頭。
+            const tabStop = selected || (index === 0 && !pageTabs.some((page) => page.id === selectedId));
+            return (
             <div
               className={
-                tab.id === selectedId ? "browser-tab active" : "browser-tab"
+                selected ? "browser-tab active" : "browser-tab"
               }
               key={tab.id}
             >
               <button
                 type="button"
                 role="tab"
-                aria-selected={tab.id === selectedId}
+                id={`browser-page-tab-${tab.id}`}
+                aria-selected={selected}
+                tabIndex={tabStop ? 0 : -1}
                 disabled={disabled}
                 title={tab.url}
                 onClick={() =>
                   void action({ kind: "selectTab", tabId: tab.id })
                 }
                 onKeyDown={(event) => {
-                  if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-                    event.preventDefault();
-                    const next =
-                      pageTabs[
-                        (index +
-                          (event.key === "ArrowRight"
-                            ? 1
-                            : pageTabs.length - 1)) %
-                          pageTabs.length
-                      ];
-                    if (next)
-                      void action({ kind: "selectTab", tabId: next.id });
-                  }
+                  const target = tabKeyTarget(event.key, index, pageTabs.length);
+                  if (target === null) return;
+                  event.preventDefault();
+                  const next = pageTabs[target];
+                  if (!next) return;
+                  // 選択と一緒にフォーカスも移す。移らないと次の矢印キーが元のタブから数え直す。
+                  document.getElementById(`browser-page-tab-${next.id}`)?.focus();
+                  if (next.id !== selectedId) void action({ kind: "selectTab", tabId: next.id });
                 }}
               >
                 {tab.loading && <span className="browser-tab-loading" aria-hidden="true" />}
@@ -364,6 +366,7 @@ export function BrowserChrome({
               <button
                 className="browser-tab-close"
                 type="button"
+                tabIndex={selected ? 0 : -1}
                 disabled={disabled}
                 aria-label={`${tab.title || "このページ"}のタブを閉じる`}
                 title="タブを閉じる"
@@ -372,7 +375,8 @@ export function BrowserChrome({
                 <CloseGlyph />
               </button>
             </div>
-          ))}
+            );
+          })}
         </div>
         <button
           className="browser-icon browser-new-tab"

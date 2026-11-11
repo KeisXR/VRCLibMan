@@ -122,7 +122,7 @@ pub fn register(app: &AppHandle,root: &Path,selections: Vec<Selection>,copy: boo
             }
             let dest=if copy {
                 // Existing helper writes through a temporary file and never overwrites.
-                if !library_files::push_missing_file(&source,Path::new(&library),&s.booth_id,&s.filename)? { return Err("コピー先に同名のファイルがあります。既存ファイルは保持しました".into()); }
+                if library_files::push_missing_file(&source,Path::new(&library),&s.booth_id,&s.filename)? != library_files::CopyOutcome::Copied { return Err("コピー先に同名のファイルがあります。既存ファイルは保持しました".into()); }
                 library_files::library_destination(Path::new(&library),&s.booth_id,&s.filename)?
             } else {source};
             let mut c=state.db.lock().map_err(|_|"登録情報を読めません")?;
@@ -201,10 +201,10 @@ mod tests {
     fn copy_never_overwrites_and_source_stays_present() {
         let (dir,_c)=fixture(); let library=tempfile::tempdir().unwrap(); let s=selection(dir.path());
         let path=source(dir.path(),&s).unwrap();
-        assert!(library_files::push_missing_file(&path,library.path(),&s.booth_id,&s.filename).unwrap());
+        assert_eq!(library_files::push_missing_file(&path,library.path(),&s.booth_id,&s.filename).unwrap(), library_files::CopyOutcome::Copied);
         let dest=library_files::library_destination(library.path(),&s.booth_id,&s.filename).unwrap();
         std::fs::write(&dest,b"existing").unwrap();
-        assert!(!library_files::push_missing_file(&path,library.path(),&s.booth_id,&s.filename).unwrap());
+        assert_ne!(library_files::push_missing_file(&path,library.path(),&s.booth_id,&s.filename).unwrap(), library_files::CopyOutcome::Copied);
         assert_eq!(std::fs::read(dest).unwrap(),b"existing"); assert!(path.is_file());
     }
     #[test]

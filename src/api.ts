@@ -50,6 +50,7 @@ import type {
   Settings,
   SyncExportReport,
   RemoteSyncStatus,
+  CopyResult,
   StagedDownload,
   DirListing,
   ZipListing,
@@ -184,6 +185,10 @@ export const api = {
   knowledge: () => call<Knowledge>("list_knowledge"),
   settings: () => call<Settings>("get_settings"),
   remoteSyncStatus: () => call<RemoteSyncStatus>("remote_sync_status"),
+  /** 自動同期のワーカーを今すぐ起こす。2 本目は作らない。 */
+  retryRemoteSync: () => call<void>("retry_remote_sync"),
+  /** 説明の全文まで含めた検索。一致した商品の BOOTH ID を返す。 */
+  searchProductIds: (query: string) => call<string[]>("search_product_ids", { query }),
   integrationStatus: () => call<IntegrationStatus>("integration_status"),
   setBoothImportMode: (mode: BoothImportMode) => call<void>("set_booth_import_mode", { mode }),
   extensionLink: () => call<ExtensionLink>("extension_link"),
@@ -271,13 +276,13 @@ export const api = {
   reopenSetup: () => call<void>("reopen_setup"),
   markOwnedAvatar: (boothId: string) => call<string>("mark_owned_avatar", { boothId }),
   addFreeProduct: (url: string) => call<string>("add_free_product", { url }),
-  pullRemoteFile: (boothId: string, variation: string, filename: string) =>
-    call<void>("pull_remote_file", { boothId, variation, filename }),
+  pullRemoteFile: (boothId: string, variation: string, filename: string, overwrite = false) =>
+    call<CopyResult>("pull_remote_file", { boothId, variation, filename, overwrite }),
   downloadBoothFile: (boothId: string, variation: string, filename: string) =>
     call<string>("download_booth_file", { boothId, variation, filename }),
   fetchFreeFiles: (boothId: string) => call<FreeFilesReport>("fetch_free_files", { boothId }),
-  pushRemoteFile: (boothId: string, variation: string, filename: string) =>
-    call<void>("push_remote_file", { boothId, variation, filename }),
+  pushRemoteFile: (boothId: string, variation: string, filename: string, overwrite = false) =>
+    call<CopyResult>("push_remote_file", { boothId, variation, filename, overwrite }),
   cacheThumbnails: () => call<number>("cache_thumbnails"),
   cacheProductPreview: (boothId: string, download: boolean, reveal: boolean) =>
     call<string | null>("cache_product_preview", { boothId, download, reveal }),

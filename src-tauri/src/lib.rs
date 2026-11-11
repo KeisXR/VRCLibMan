@@ -41,6 +41,7 @@ mod quiet;
 mod resolve;
 mod retired_classifier;
 mod scan;
+mod search;
 mod sync_export;
 mod sync_meta;
 mod thumb;
@@ -284,6 +285,8 @@ pub fn run() {
             commands::pull_remote_file,
             commands::push_remote_file,
             commands::remote_sync_status,
+            commands::retry_remote_sync,
+            commands::search_product_ids,
             commands::cache_thumbnails,
             commands::cache_product_preview,
             commands::open_booth_browser,

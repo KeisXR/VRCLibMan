@@ -708,7 +708,13 @@ mod owned_body_json_tests {
 pub struct ProductUpdate {
     pub booth_id: String,
     pub category: Option<String>,
+    /// A genre to fix (`genre_locked`). `None` or empty leaves the genre as it is,
+    /// unless `reset_genre` asks for the automatic one.
     pub genre: Option<String>,
+    /// 「自動」: unlock the genre and choose it from the category, tags and text again.
+    /// Cannot be combined with a `genre` value.
+    #[serde(default)]
+    pub reset_genre: bool,
     pub is_generic: Option<bool>,
     pub avatar_ids: Option<Vec<String>>,
 }
@@ -745,6 +751,9 @@ pub struct LibraryStats {
     pub owned_avatars: u32,
     pub unextracted: u32,
     pub unlinked_files: u32,
+    /// Local files tied to a product: scanned and linked, or recorded as downloaded there.
+    /// The setup guide uses it to tell whether files were registered.
+    pub registered_files: u32,
 }
 
 /// 進捗の状態。省略時は running（古い送り方との互換）。

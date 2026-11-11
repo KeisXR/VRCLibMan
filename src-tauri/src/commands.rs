@@ -436,6 +436,20 @@ pub fn remote_sync_status(app: AppHandle) -> Result<crate::remote_sync::Status, 
     crate::remote_sync::status(&app)
 }
 
+/// 「今すぐ再試行」. Wakes the one sync worker; it never starts a second one.
+#[tauri::command]
+pub fn retry_remote_sync(app: AppHandle) -> Result<(), String> {
+    crate::remote_sync::wake(&app);
+    Ok(())
+}
+
+/// Library search over each product's stored text, including the whole description.
+#[tauri::command]
+pub fn search_product_ids(state: State<'_, AppState>, query: String) -> Result<Vec<String>, String> {
+    let connection = db(&state)?;
+    crate::search::product_ids(&connection, &query)
+}
+
 #[tauri::command]
 pub fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
     let mut connection = db(&state)?;
@@ -712,11 +726,39 @@ pub fn add_free_product(state: State<'_, AppState>, url: String) -> Result<Strin
     db::add_free_product(&mut connection, &url)
 }
 
-fn finish_copy(progress: &ProgressGuard, filename: &str, result: &Result<(), String>) {
-    if result.is_ok() {
-        progress.done(format!("{filename} をコピーしました"));
-    } else {
-        progress.fail("コピーを中断しました");
+/// The result of 「リモートへコピー」 / 「ローカルへコピー」. `conflict` means another file
+/// already has the name and nothing was written; the screen asks before `overwrite`.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CopyResult {
+    status: &'static str,
+    source_size: Option<u64>,
+    existing_size: Option<u64>,
+}
+
+impl From<crate::library_files::CopyOutcome> for CopyResult {
+    fn from(outcome: crate::library_files::CopyOutcome) -> Self {
+        use crate::library_files::CopyOutcome;
+        match outcome {
+            CopyOutcome::Copied => Self { status: "copied", source_size: None, existing_size: None },
+            CopyOutcome::AlreadyThere => Self { status: "already", source_size: None, existing_size: None },
+            CopyOutcome::Conflict { source_size, existing_size } => Self {
+                status: "conflict",
+                source_size: Some(source_size),
+                existing_size: Some(existing_size),
+            },
+        }
+    }
+}
+
+fn finish_copy(progress: &ProgressGuard, filename: &str, result: &Result<CopyResult, String>) {
+    match result {
+        Ok(result) if result.status == "conflict" => {
+            progress.done(format!("{filename} は同じ名前の別のファイルがあるため、コピーしませんでした"))
+        }
+        Ok(result) if result.status == "already" => progress.done(format!("{filename} はコピー先にあります")),
+        Ok(_) => progress.done(format!("{filename} をコピーしました")),
+        Err(_) => progress.fail("コピーを中断しました"),
     }
 }
 
@@ -726,7 +768,8 @@ pub async fn pull_remote_file(
     booth_id: String,
     variation: String,
     filename: String,
-) -> Result<(), String> {
+    overwrite: Option<bool>,
+) -> Result<CopyResult, String> {
     let label = filename.clone();
     let progress = ProgressGuard::new(app.clone(), "copy");
     progress.update(0, 1, crate::progress::counted_message("コピー中", 1, 1, &label));
@@ -748,18 +791,23 @@ pub async fn pull_remote_file(
             }
             (settings.remote_library_folder, settings.library_folder)
         };
-        let dest = crate::library_files::pull_file(
+        let (dest, outcome) = crate::library_files::pull_file(
             Path::new(remote.trim()),
             Path::new(library.trim()),
             &booth_id,
             &filename,
+            overwrite.unwrap_or(false),
         )?;
+        if matches!(outcome, crate::library_files::CopyOutcome::Conflict { .. }) {
+            return Ok(CopyResult::from(outcome));
+        }
         let state = worker.state::<AppState>();
         let connection = state
             .db
             .lock()
             .map_err(|_| "データベースをロックできません".to_string())?;
-        db::note_downloaded_file(&connection, &booth_id, &variation, &filename, &dest)
+        db::note_downloaded_file(&connection, &booth_id, &variation, &filename, &dest)?;
+        Ok(CopyResult::from(outcome))
     })
     .await
     .map_err(|err| format!("コピーを実行できません: {err}"))?;
@@ -773,7 +821,8 @@ pub async fn push_remote_file(
     booth_id: String,
     variation: String,
     filename: String,
-) -> Result<(), String> {
+    overwrite: Option<bool>,
+) -> Result<CopyResult, String> {
     let label = filename.clone();
     let progress = ProgressGuard::new(app.clone(), "copy");
     progress.update(0, 1, crate::progress::counted_message("コピー中", 1, 1, &label));
@@ -792,7 +841,16 @@ pub async fn push_remote_file(
             }
             (source, settings.remote_library_folder)
         };
-        crate::library_files::push_file(&source, Path::new(remote.trim()), &booth_id, &filename)?;
+        let (_, outcome) = crate::library_files::push_file(
+            &source,
+            Path::new(remote.trim()),
+            &booth_id,
+            &filename,
+            overwrite.unwrap_or(false),
+        )?;
+        if matches!(outcome, crate::library_files::CopyOutcome::Conflict { .. }) {
+            return Ok(CopyResult::from(outcome));
+        }
         let size = std::fs::metadata(&source)
             .map(|meta| meta.len())
             .map_err(|err| format!("ファイルのサイズを確認できません: {err}"))?;
@@ -803,7 +861,8 @@ pub async fn push_remote_file(
             .map_err(|_| "データベースをロックできません".to_string())?;
         db::remember_file_size(&connection, &booth_id, &variation, &filename, size)?;
         // A manual copy is the way back after a recorded file left the remote folder.
-        crate::remote_sync::remember(&mut connection, &remote, &booth_id, &filename)
+        crate::remote_sync::remember(&mut connection, &remote, &booth_id, &filename)?;
+        Ok(CopyResult::from(outcome))
     })
     .await
     .map_err(|err| format!("コピーを実行できません: {err}"))?;

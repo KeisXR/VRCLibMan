@@ -56,3 +56,18 @@ export function settingsNavWheelDelta(
   const unit = wheel.deltaMode === 1 ? 16 : wheel.deltaMode === 2 ? box.clientWidth : 1;
   return delta * unit;
 }
+
+/**
+ * 1行の帯のどちら側に、隠れた項目が続いているか。縦の列（`bar` が false）と、あふれていない帯は両方 false。
+ * 1px 未満の端数は続きとみなさない。
+ */
+export function settingsNavEdges(
+  bar: boolean,
+  box: { clientWidth: number; scrollWidth: number; scrollLeft: number },
+): { start: boolean; end: boolean } {
+  if (!bar || box.scrollWidth <= box.clientWidth + 1) return { start: false, end: false };
+  return {
+    start: box.scrollLeft > 1,
+    end: box.scrollLeft + box.clientWidth < box.scrollWidth - 1,
+  };
+}

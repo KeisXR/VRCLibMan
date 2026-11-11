@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../api";
+import { useModalFocus } from "../keyboard";
 import { formatBytes } from "../media";
 import type { PreparedUnityPackage, UnityLaunchMode, UnityPackageList } from "../types";
 import { errorText } from "../ui";
@@ -184,8 +185,12 @@ function UnityOpenDialog({
 }) {
   const panel = useRef<HTMLElement>(null);
   const working = state.step === "working";
+  // Tab で背後の画面へ出ない。閉じたら押したボタンへフォーカスを戻す。
+  useModalFocus(panel);
   useEffect(() => {
-    panel.current?.querySelector<HTMLElement>("input, button:not([disabled])")?.focus();
+    const target = panel.current?.querySelector<HTMLElement>("input, button:not([disabled])");
+    if (target) target.focus();
+    else panel.current?.focus();
   }, [state.step]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -317,6 +322,7 @@ function UnityOpenDialog({
         aria-modal="true"
         aria-labelledby="unity-open-title"
         aria-busy={working}
+        tabIndex={-1}
       >
         {body}
       </section>

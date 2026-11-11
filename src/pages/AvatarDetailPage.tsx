@@ -19,6 +19,7 @@ import {
 import { ExcludeProductButton } from "../components/ProductExclusions";
 import { UnityOpenButton } from "../components/UnityOpenDialog";
 import { isUnityOpenableName } from "../unityOpen";
+import { copyWithConfirm } from "../remoteCopy";
 import { FREE_FILE_CHECK_BUSY_LABEL, FREE_FILE_CHECK_LABEL, freeFilesFoundMessage, offerFreeFileCheck } from "../freeFiles";
 import {
   type RemoteProbeStatus,
@@ -271,8 +272,7 @@ function AvatarAssetsPanel({
   async function pull(file: DownloadView) {
     setBusy(file.filename);
     try {
-      await api.pullRemoteFile(view.boothId, file.variation, file.filename);
-      notify(`${file.filename} を手元のフォルダへコピーしました`);
+      notify(await copyWithConfirm("pull", file.filename, (overwrite) => api.pullRemoteFile(view.boothId, file.variation, file.filename, overwrite)));
       refresh();
     } catch (err) {
       fail(errorText(err));
@@ -284,8 +284,7 @@ function AvatarAssetsPanel({
   async function push(file: DownloadView) {
     setBusy(file.filename);
     try {
-      await api.pushRemoteFile(view.boothId, file.variation, file.filename);
-      notify(`${file.filename} をリモートへコピーしました`);
+      notify(await copyWithConfirm("push", file.filename, (overwrite) => api.pushRemoteFile(view.boothId, file.variation, file.filename, overwrite)));
       refresh();
     } catch (err) {
       fail(errorText(err));
@@ -587,8 +586,7 @@ export function ItemCard({
   async function pull(file: DownloadView) {
     setBusy(file.filename);
     try {
-      await api.pullRemoteFile(item.boothId, file.variation, file.filename);
-      notify(`${file.filename} を手元のフォルダへコピーしました`);
+      notify(await copyWithConfirm("pull", file.filename, (overwrite) => api.pullRemoteFile(item.boothId, file.variation, file.filename, overwrite)));
       refresh();
     } catch (err) {
       fail(errorText(err));
@@ -600,8 +598,7 @@ export function ItemCard({
   async function push(file: DownloadView) {
     setBusy(file.filename);
     try {
-      await api.pushRemoteFile(item.boothId, file.variation, file.filename);
-      notify(`${file.filename} をリモートへコピーしました`);
+      notify(await copyWithConfirm("push", file.filename, (overwrite) => api.pushRemoteFile(item.boothId, file.variation, file.filename, overwrite)));
       refresh();
     } catch (err) {
       fail(errorText(err));
