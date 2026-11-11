@@ -69,7 +69,11 @@ test("browser controls preserve per-tab history, saved bookmarks, and navigation
         await tick();
       });
     };
-    const address = () => byLabel("アドレスバー").value;
+    // 編集していないアドレス欄は https:// を省いて見せる（readableAddress）。元の URL は title に残る。
+    const address = () => {
+      const field = byLabel("アドレスバー");
+      return field.getAttribute("title") ?? field.value;
+    };
     const navigate = async (url) => {
       await act(async () => {
         await api.browserAction({ kind: "navigate", url });

@@ -7,12 +7,14 @@ import {
   FLOAT_PANEL_MOVED_EVENT,
   FLOAT_PANEL_MOVING_CLASS,
   FLOAT_PANEL_STEP,
+  compactFloatRect,
   moveFloatRect,
   placeFloatRect,
   resizeFloatRect,
 } from "../floatingPanel";
 import type { FloatEdge, FloatRect } from "../floatingPanel";
 import { dragOutcome, insertionIndex, pointerInsideWindow, TAB_DRAG_THRESHOLD_PX } from "../tabStrip";
+import { horizontalWheelDelta, overflowEdges, revealScrollLeft } from "../scrollEdges";
 import { PREVIEW_PANE_WIDTH, clampStoredPreviewPaneWidth } from "../previewPane";
 import {
   RIGHT_PANEL_KINDS,
@@ -406,9 +408,20 @@ function TabGlyph({ kind }: { kind: RightPanelTab["kind"] }) {
   return <PictureGlyph />;
 }
 
+/** A window whose right column is the panel: the launcher's main mark. */
+function PanelGlyph() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+      <rect x="2" y="3" width="14" height="12" rx="2.5" />
+      <path d="M11 3v12" />
+      <path d="M12.8 6.5h1.4M12.8 9h1.4" />
+    </svg>
+  );
+}
+
 /**
- * While the right panel is closed, a small button in the top-right corner of the page shows how
- * many tabs it holds and opens it again (like the ChatGPT app's side panel).
+ * While the right panel is closed, a button in the top-right corner of the page opens it again.
+ * The panel mark says what it opens; the small number in its corner is how many tabs it holds.
  */
 export function RightPanelLauncher({ panel }: { panel: RightPanelValue }) {
   if (panel.open) return null;
@@ -422,9 +435,12 @@ export function RightPanelLauncher({ panel }: { panel: RightPanelValue }) {
       aria-keyshortcuts="Control+Shift+B"
       onClick={panel.toggle}
     >
-      <span className="right-panel-launcher-count" aria-hidden="true">
-        {launcherCountLabel(panel.tabs, panel.gates)}
-      </span>
+      <PanelGlyph />
+      {count > 0 && (
+        <span className="right-panel-launcher-count" aria-hidden="true">
+          {launcherCountLabel(panel.tabs, panel.gates)}
+        </span>
+      )}
     </button>
   );
 }
@@ -525,6 +541,8 @@ function PanelHeader({
   const shown = visibleTabs(panel.tabs, panel.gates);
   const activeId = panel.active?.id ?? null;
   const listRef = useRef<HTMLDivElement>(null);
+  // あふれたタブ列のどちら側に続きがあるか。端をぼかして示す。
+  const [edges, setEdges] = useState({ start: false, end: false });
   const drag = useRef<{
     id: string;
     tabId?: string;
@@ -537,6 +555,46 @@ function PanelHeader({
     insertAt: number | null;
   } | null>(null);
   const [insertAt, setInsertAt] = useState<number | null>(null);
+
+  // タブは最低幅を持つので、狭いパネルでは横にあふれる。あふれた分は横スクロールで出し、
+  // ホイールでも動かせるようにする。選んだタブは帯の中に見える位置へ寄せる。
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const measure = () => {
+      const next = overflowEdges(true, list);
+      setEdges((current) => (current.start === next.start && current.end === next.end ? current : next));
+    };
+    const onWheel = (event: WheelEvent) => {
+      const delta = horizontalWheelDelta(event, list);
+      if (delta === null) return;
+      event.preventDefault();
+      list.scrollLeft += delta;
+    };
+    measure();
+    list.addEventListener("scroll", measure, { passive: true });
+    list.addEventListener("wheel", onWheel, { passive: false });
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(measure) : null;
+    observer?.observe(list);
+    window.addEventListener("resize", measure);
+    return () => {
+      list.removeEventListener("scroll", measure);
+      list.removeEventListener("wheel", onWheel);
+      observer?.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [shown.length]);
+
+  useEffect(() => {
+    const list = listRef.current;
+    const tab = activeId ? [...(list?.querySelectorAll<HTMLElement>(".right-panel-tab") ?? [])].find((node) => node.dataset.tabId === activeId) : null;
+    if (!list || !tab) return;
+    const box = list.getBoundingClientRect();
+    const rect = tab.getBoundingClientRect();
+    const next = revealScrollLeft({ left: rect.left - box.left + list.scrollLeft, width: rect.width }, list);
+    if (next !== null) list.scrollLeft = next;
+    setEdges(overflowEdges(true, list));
+  }, [activeId, shown.length]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -668,6 +726,8 @@ function PanelHeader({
         role="tablist"
         aria-label="右パネルのタブ"
         ref={listRef}
+        data-more-start={edges.start ? "" : undefined}
+        data-more-end={edges.end ? "" : undefined}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -692,6 +752,7 @@ function PanelHeader({
                 aria-selected={selected}
                 aria-controls="right-panel-body"
                 tabIndex={selected ? 0 : -1}
+                title={label}
                 onClick={() => panel.select(tab.id)}
                 onKeyDown={(event) => {
                   if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
@@ -872,7 +933,9 @@ function FloatingPanel({ panel, dockable }: { panel: RightPanelValue; dockable: 
   const [placed, setPlaced] = useState<FloatRect | null>(floatPlacement);
   const [live, setLive] = useState<FloatRect | null>(null);
   const gesture = useRef<FloatGesture | null>(null);
-  const rect = live ?? placeFloatRect(placed, view.width, view.height);
+  // 何も選んでいないプレビューは、これから選ぶ一覧を覆わない小さな案内にする。
+  const compact = panel.active?.kind === "preview" && !panel.preview?.item;
+  const rect = compact ? compactFloatRect(view.width, view.height) : live ?? placeFloatRect(placed, view.width, view.height);
   const rectRef = useRef(rect);
   rectRef.current = rect;
 
@@ -898,7 +961,7 @@ function FloatingPanel({ panel, dockable }: { panel: RightPanelValue; dockable: 
   }, []);
 
   function begin(kind: FloatGesture["kind"], event: ReactPointerEvent<HTMLElement>) {
-    if (event.button !== 0 || gesture.current) return;
+    if (event.button !== 0 || gesture.current || compact) return;
     event.preventDefault();
     event.stopPropagation();
     gesture.current = { kind, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, start: rectRef.current };
@@ -939,6 +1002,7 @@ function FloatingPanel({ panel, dockable }: { panel: RightPanelValue; dockable: 
   }
 
   function onHeadDoubleClick(event: ReactMouseEvent<HTMLElement>) {
+    if (compact) return;
     const target = event.target;
     if (!(target instanceof Element) || !target.closest(".right-panel-head")) return;
     if (target.closest(FLOAT_HEAD_CONTROLS) && !target.closest(".right-panel-float-grip")) return;
@@ -985,7 +1049,7 @@ function FloatingPanel({ panel, dockable }: { panel: RightPanelValue; dockable: 
   if (typeof document === "undefined") return null;
   return createPortal(
     <div
-      className={live ? "right-panel-float moving" : "right-panel-float"}
+      className={["right-panel-float", live ? "moving" : "", compact ? "compact" : ""].filter(Boolean).join(" ")}
       style={{ left: rect.left, top: rect.top, width: rect.width, height: rect.height }}
       data-floating-panel=""
       onPointerDown={onHeadPointerDown}
@@ -995,8 +1059,8 @@ function FloatingPanel({ panel, dockable }: { panel: RightPanelValue; dockable: 
       onLostPointerCapture={finish}
       onDoubleClick={onHeadDoubleClick}
     >
-      <PanelSurface panel={panel} floating dockable={dockable} onDismiss={panel.close} headStart={grip} />
-      {FLOAT_PANEL_EDGES.map((edge) => (
+      <PanelSurface panel={panel} floating dockable={dockable} onDismiss={panel.close} headStart={compact ? undefined : grip} />
+      {!compact && FLOAT_PANEL_EDGES.map((edge) => (
         <div
           key={edge}
           className={`right-panel-float-edge edge-${edge}`}

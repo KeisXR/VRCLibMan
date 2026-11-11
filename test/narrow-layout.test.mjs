@@ -189,9 +189,10 @@ test("narrow window layout in Chromium", { timeout: 120000, skip: chromePath ? f
         await pause(50);
         return moving;
       };
-      const first = await box();
-      assert.equal(first.right, first.vw - 16, "first shown in the top-right corner");
-      assert.equal(first.top, 16);
+      const empty = await box();
+      assert.equal(empty.right, empty.vw - 16);
+      assert.equal(empty.top, 16, "the empty preview is a small note in the corner where the panel opens");
+      assert.equal(empty.height, 136);
       assert.equal(await evaluate("document.querySelector('[aria-modal=\"true\"]')"), null, "nothing blocks the list");
 
       // The list beside the panel takes clicks and fills the preview.
@@ -212,6 +213,9 @@ test("narrow window layout in Chromium", { timeout: 120000, skip: chromePath ? f
       await mouse("mouseReleased", row.x, row.y);
       await waitFor(`!(${emptyText})`, "preview filled from the list");
       assert.ok(await evaluate("!!document.querySelector('.right-panel-float')"), "selecting keeps the floating panel");
+      const first = await box();
+      assert.equal(first.right, first.vw - 16);
+      assert.equal(first.top, 16);
       await shot("float-700-preview");
 
       // The empty part of the tab strip (between the add menu and the close button) moves it.

@@ -27,6 +27,8 @@ import {
   useRemoteProductProbe,
 } from "../remoteProductProbe";
 
+const prefersReducedMotion = () =>
+  typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 function totalDownloadBytes(files: ReadonlyArray<{ sizeBytes?: number | null; size?: number | null }>): number {
   return files.reduce((sum, file) => {
@@ -132,6 +134,17 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
   const primaryOwned = detail.ownedProducts[0] ?? null;
   const backLink = <a className="button avatar-back-link" href="#/">アバター一覧へ</a>;
   const heroImage = avatarHeroSource(detail);
+  const itemCount = detail.sections.reduce((sum, section) => sum + section.items.length, 0) + detail.genericItems.length;
+  // ヒーローと本体ファイルの下にある対応アイテムへ、1回で移る。ハッシュは画面の切り替えに使うので、スクロールだけにする。
+  const jumpToItems = itemCount > 0 && (
+    <button
+      className="button secondary avatar-jump"
+      type="button"
+      onClick={() => document.getElementById("avatar-items")?.scrollIntoView?.({ block: "start", behavior: prefersReducedMotion() ? "auto" : "smooth" })}
+    >
+      対応アイテムへ（{itemCount}）
+    </button>
+  );
 
   return (
     <section className={heroSize === "off" ? undefined : "avatar-detail"}>
@@ -165,7 +178,7 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
               />
             }
           />
-          <div className="avatar-hero-toolbar">{addAction}</div>
+          <div className="avatar-hero-toolbar">{jumpToItems}{addAction}</div>
           {primaryOwned ? <AvatarAssetsPanel item={primaryOwned} itemCardProps={itemCardProps} /> : null}
         </>
       )}
@@ -190,7 +203,7 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
             </div>
           )}
           {detail.sections.map((section) => (
-            <div className="section" key={section.category}>
+            <div className="section" key={section.category} id={section === detail.sections[0] ? "avatar-items" : undefined}>
               <h2>{CATEGORY_LABEL[section.category] ?? section.category}</h2>
               <div className="stack">
                 {section.items.map((item) => (
@@ -200,7 +213,7 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
             </div>
           ))}
           {detail.genericItems.length > 0 && (
-            <details className="generic">
+            <details className="generic" id={detail.sections.length === 0 ? "avatar-items" : undefined}>
               <summary>汎用 {detail.genericItems.length} 件</summary>
               <div className="stack">
                 {detail.genericItems.map((item) => (

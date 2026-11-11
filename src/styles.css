@@ -247,8 +247,15 @@ a:hover { text-decoration: underline; }
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* 長いジャンル名（メイク・肌テクスチャ など）は2行まで出し、それでも入らないときだけ省略する。 */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  white-space: normal;
+  word-break: auto-phrase;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
 }
 .genre-link-count { flex: 0 0 auto; }
 .genre-link-zero { color: var(--faint); }
@@ -907,9 +914,13 @@ button.account-pill:hover { background: var(--hover); }
 }
 .avatar-hero-toolbar {
   display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
   justify-content: flex-end;
   margin: 0 0 var(--space-4);
 }
+/* 「対応アイテムへ」で移った先が上の固定の帯に隠れないよう、帯の高さだけ余白を取る。 */
+#avatar-items { scroll-margin-top: calc(var(--topbar-height, 0px) + var(--space-3)); }
 /* アセットファイルの開閉。件数は常に見出しに出す */
 .avatar-assets {
   margin: 0 0 var(--space-5);
@@ -1253,6 +1264,8 @@ a.tab { display: inline-flex; align-items: center; gap: 6px; text-decoration: no
   gap: 4px;
   padding: var(--space-2) var(--space-2) var(--space-2) 0;
   flex-shrink: 0;
+  /* タブの最低幅と × の出し方を、ヘッダーの幅で切り替える（下の @container）。 */
+  container-type: inline-size;
 }
 .right-panel-tabs {
   display: flex;
@@ -1263,6 +1276,10 @@ a.tab { display: inline-flex; align-items: center; gap: 6px; text-decoration: no
   overflow-x: auto;
   scrollbar-width: none;
 }
+/* 横にあふれたら、続きのある側の端をぼかして示す（RightPanel.tsx が data-more-* を付ける）。 */
+.right-panel-tabs[data-more-start] { mask-image: linear-gradient(to right, transparent, #000 24px); }
+.right-panel-tabs[data-more-end] { mask-image: linear-gradient(to left, transparent, #000 24px); }
+.right-panel-tabs[data-more-start][data-more-end] { mask-image: linear-gradient(to right, transparent, #000 24px, #000 calc(100% - 24px), transparent); }
 .right-panel-tab-insert {
   flex: 0 0 2px;
   align-self: stretch;
@@ -1272,10 +1289,12 @@ a.tab { display: inline-flex; align-items: center; gap: 6px; text-decoration: no
   background: var(--button);
 }
 .right-panel-tab {
+  position: relative;
   display: inline-flex;
   align-items: center;
   flex: 0 1 auto;
-  min-width: 0;
+  /* 選んでいないタブも、アイコンを押せる幅を残す。幅0には潰さず、入りきらない分は帯を横にスクロールさせる。 */
+  min-width: 36px;
   /* Cap long titles so the close button stays in the strip and other tabs keep their width. */
   max-width: min(240px, 100%);
   border-radius: var(--radius-sm);
@@ -1283,7 +1302,8 @@ a.tab { display: inline-flex; align-items: center; gap: 6px; text-decoration: no
   transition: background-color var(--motion) ease, color var(--motion) ease;
 }
 .right-panel-tab:hover { background: var(--hover); color: var(--text); }
-.right-panel-tab.active { flex-shrink: 0; background: var(--surface); color: var(--text); font-weight: 650; box-shadow: 0 0 0 1px var(--line), 0 1px 2px rgba(0, 0, 0, 0.04); }
+/* 選択中のタブも縮むが、名前の頭と × は残す。長いタイトルが帯を占めて、ほかのタブを隠さないため。 */
+.right-panel-tab.active { min-width: 72px; background: var(--surface); color: var(--text); font-weight: 650; box-shadow: 0 0 0 1px var(--line), 0 1px 2px rgba(0, 0, 0, 0.04); }
 .right-panel-tab [role=tab] {
   display: inline-flex;
   align-items: center;
@@ -1319,6 +1339,23 @@ a.tab { display: inline-flex; align-items: center; gap: 6px; text-decoration: no
 .right-panel-tab:hover .right-panel-tab-close,
 .right-panel-tab.active .right-panel-tab-close,
 .right-panel-tab-close:focus-visible { opacity: 1; }
+/* 狭いヘッダーでは、選んでいないタブをアイコンだけにし、× も置かない。名前の1文字だけが切れて残ると読めず、
+   × はアイコンと押し間違えるため。名前は title と読み上げに残し、閉じるときは選んでから閉じる。 */
+.right-panel-tab:not(.active) { justify-content: center; }
+.right-panel-tab:not(.active) [role=tab] { padding: 6px 10px; }
+.right-panel-tab:not(.active) .right-panel-tab-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.right-panel-tab:not(.active) .right-panel-tab-close { display: none; }
+@container (min-width: 480px) {
+  .right-panel-tab:not(.active) { min-width: 72px; justify-content: flex-start; }
+  .right-panel-tab:not(.active) [role=tab] { padding: 6px 4px 6px 10px; }
+  .right-panel-tab:not(.active) .right-panel-tab-label { position: static; width: auto; height: auto; clip-path: none; }
+  .right-panel-tab:not(.active) .right-panel-tab-close { display: inline-grid; }
+}
+/* 既定幅（300px）のパネルでは、ヘッダーのアイコンを少し詰めてタブに幅を回す。 */
+@container (max-width: 360px) {
+  .right-panel-head .right-panel-icon { width: 28px; height: 28px; }
+  .right-panel-head .right-panel-actions { gap: 0; }
+}
 .right-panel-icon { width: 32px; height: 32px; }
 .right-panel-tab-close:hover,
 .right-panel-icon:hover { background: var(--hover); color: var(--text); }
@@ -1367,7 +1404,7 @@ a.tab { display: inline-flex; align-items: center; gap: 6px; text-decoration: no
 .right-panel.maximized > .right-panel-head { padding-left: var(--space-2); }
 .right-panel.maximized > .right-panel-body { margin-left: var(--space-2); }
 .right-panel > .right-panel-body > .panel.preview-pane { padding: var(--space-2) var(--space-1); background: transparent; box-shadow: none; }
-/* Closed panel: a tab-count button in the top-right corner of the page opens it again. */
+/* Closed panel: a panel-mark button in the top-right corner of the page opens it again. The number is a small badge. */
 .right-panel-launcher {
   position: absolute;
   top: 6px;
@@ -1386,16 +1423,22 @@ a.tab { display: inline-flex; align-items: center; gap: 6px; text-decoration: no
   transition: background-color var(--motion) ease, color var(--motion) ease;
 }
 .right-panel-launcher:hover { background: var(--hover); color: var(--text); }
+.right-panel-launcher svg { fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
 .right-panel-launcher-count {
+  position: absolute;
+  top: 1px;
+  right: 0;
   display: inline-grid;
   place-items: center;
-  min-width: 18px;
-  height: 18px;
+  min-width: 14px;
+  height: 14px;
   padding: 0 3px;
   box-sizing: border-box;
-  border: 1.5px solid currentColor;
-  border-radius: 5px;
-  font-size: 11px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-secondary);
+  box-shadow: 0 0 0 1.5px var(--bg);
+  color: var(--text);
+  font-size: 10px;
   font-weight: 650;
   line-height: 1;
   font-variant-numeric: tabular-nums;
@@ -1493,6 +1536,9 @@ a.tab { display: inline-flex; align-items: center; gap: 6px; text-decoration: no
 .right-panel-float-edge.edge-sw { left: 0; bottom: 0; width: 14px; height: 14px; cursor: nesw-resize; }
 .right-panel-float.moving > .right-panel.floating { box-shadow: 0 8px 28px rgba(0, 0, 0, 0.16); }
 .right-panel-float.moving > .right-panel.floating > .right-panel-head { cursor: grabbing; }
+/* 何も選んでいないプレビュー: 右上の小さな案内。動かせず、大きさも変えない（floatingPanel.ts の compactFloatRect）。 */
+.right-panel-float.compact > .right-panel.floating > .right-panel-head { cursor: default; padding-left: var(--space-2); }
+.right-panel-float.compact .right-panel-body { overflow: hidden; }
 body.right-panel-moving { user-select: none; }
 .item.item-unpublished > .thumb,
 .item.item-unpublished > div:not(.row-actions) {
@@ -1647,6 +1693,11 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .setup-steps li { margin: 0 0 var(--space-2); }
 .picker { display: flex; flex-direction: column; gap: 4px; max-height: 240px; overflow: auto; margin-top: var(--space-2); }
 .picker-heading { margin: var(--space-3) 0 0; }
+/* チェックボックスと項目名を横に並べ、短い説明を添える（分類の編集の「汎用」）。 */
+.check-row { display: flex; align-items: flex-start; gap: var(--space-2); margin-bottom: var(--space-3); cursor: pointer; }
+.check-row input { flex: 0 0 auto; margin: 4px 0 0; accent-color: var(--button); }
+.check-row > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.check-row strong { font-size: 14px; font-weight: 650; }
 .picker-loose label { color: var(--text-secondary); }
 .picker label { display: flex; gap: 6px; align-items: center; font-size: 13px; }
 .ownership { margin-top: var(--space-5); }
@@ -1687,6 +1738,16 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
   .avatar-hero-body { bottom: 12px; flex-direction: column; align-items: stretch; }
   .avatar-hero-block { bottom: 12px; gap: var(--space-4); }
   .avatar-hero-sharp { max-width: 42%; }
+}
+
+/* 高さの低い窓（アプリの最小 920×640 や 1180×800 を含む）では、ヒーローを窓の高さの 30% にし、
+   対応アイテムまでの距離を縮める。幅が広くても高さが足りなければ効く。 */
+@media (max-height: 820px) {
+  .avatar-hero[data-size="large"],
+  .avatar-hero[data-size="small"] { --avatar-hero-h: max(180px, 30vh); }
+  .avatar-hero-title { font-size: 28px; }
+  .avatar-hero-body,
+  .avatar-hero-block { bottom: var(--space-3); }
 }
 
 /* Settings */
@@ -2111,6 +2172,13 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
   .browser-navigation > .browser-home { display: none; }
 }
 @container (max-width: 360px) { .browser-address > button { display: none; } }
+/* 狭い操作バー（既定幅の右パネルなど）では、アドレス欄を2行目に1行で置き、ホスト名を読める幅にする。
+   ページの矩形は操作バーの実測から決めるので、行が増えてもずれない。 */
+@container (max-width: 460px) {
+  .browser-navigation { flex-wrap: wrap; height: auto; min-height: 44px; row-gap: 4px; }
+  .browser-navigation > .browser-address { order: 1; flex: 1 0 100%; min-width: 0; }
+  .browser-navigation > .browser-address + * { margin-left: auto; }
+}
 /* Right panel browser tab: the controls, then the area the docked pages are placed over. */
 .right-panel-body.right-panel-body-web { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
 .right-panel.maximized .right-panel-body-web > .browser-panel { max-width: none; margin-inline: 0; }
@@ -2469,6 +2537,19 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   cursor: pointer;
 }
 .log-run-head:hover { background: var(--hover); }
+/* 開閉できる行だと分かるよう、先頭に矢印を置く。閉じているときは右向き、開くと下向き。 */
+.log-run-chevron {
+  flex: none;
+  align-self: center;
+  width: 0.55em;
+  height: 0.55em;
+  margin: 0 2px 0 1px;
+  border-right: 2px solid var(--text-secondary);
+  border-bottom: 2px solid var(--text-secondary);
+  transform: rotate(-45deg);
+  transition: transform var(--motion) var(--ease-out);
+}
+.log-run-head[aria-expanded="true"] > .log-run-chevron { transform: rotate(45deg); }
 .log-run-time { font-variant-numeric: tabular-nums; color: var(--muted); }
 .log-run-count { margin-left: auto; font-variant-numeric: tabular-nums; }
 .log-run > .pager { margin: 0 var(--space-3) var(--space-3); }
@@ -2493,6 +2574,11 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .purchase-filters { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end; margin-bottom: var(--space-3); }
 .purchase-filters .search { flex: 1 1 260px; }
 .purchase-filters .field { margin-bottom: 0; min-width: 140px; }
+/* 検索と「絞り込み」を1行にし、ラベル・アバター・年は開いたときだけ出す。一覧に高さを残すため。 */
+.purchase-search-row { flex-wrap: nowrap; align-items: center; }
+.purchase-search-row .search { min-width: 0; }
+.purchase-filter-toggle { flex: 0 0 auto; white-space: nowrap; }
+.purchase-filter-fields .field { flex: 1 1 160px; }
 .purchase-count { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin: 0 0 var(--space-2); }
 .purchase-link { padding: 0; border: 0; background: transparent; color: var(--text-secondary); font-size: 13px; text-decoration: underline; cursor: pointer; }
 .purchase-link:hover { color: var(--text); }
@@ -2531,7 +2617,12 @@ a.chip:hover { color: var(--text); }
 .purchase-label-picker > summary { list-style: none; padding: 2px 10px; border-radius: var(--radius-pill); background: var(--surface-secondary); color: var(--text-secondary); font-size: 12px; cursor: pointer; }
 .purchase-label-picker > summary:hover, .purchase-label-picker[open] > summary { color: var(--text); }
 .purchase-label-picker > summary::-webkit-details-marker { display: none; }
-.purchase-label-panel { position: absolute; z-index: 10; top: calc(100% + 4px); right: 0; min-width: 220px; display: flex; flex-direction: column; gap: 6px; padding: var(--space-2); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-control); box-shadow: var(--shadow); }
+.purchase-label-panel { position: absolute; z-index: 10; top: calc(100% + 4px); right: 0; min-width: 220px; max-width: min(320px, 90vw); display: flex; flex-direction: column; gap: 6px; padding: var(--space-2); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-control); box-shadow: var(--shadow); }
+/* 下に場所が無いときは上に開く（PurchasesPage.tsx の labelPanelPlacement）。 */
+.purchase-label-panel.up { top: auto; bottom: calc(100% + 4px); }
+/* ラベルが多くても一覧だけをスクロールし、新しいラベルの入力は下に固定して見せる。 */
+.purchase-label-options { display: flex; flex-direction: column; gap: 6px; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.purchase-label-panel > .purchase-label-new { margin-top: 0; padding-top: var(--space-2); border-top: 1px solid var(--line); }
 .purchase-label-panel label { display: flex; gap: 6px; align-items: center; font-size: 13px; }
 .purchase-label-panel .meta { margin: 0; }
 .purchase-label-new { display: flex; gap: 6px; margin-top: var(--space-1); }

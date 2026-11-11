@@ -11,6 +11,19 @@ function sameSet(left: ReadonlySet<string>, right: readonly string[]): boolean {
   return left.size === right.length && right.every((id) => left.has(id));
 }
 
+/** 開いたときから、保存すると送る変更があるか（`save` が送る項目と同じ判定）。 */
+export function editIsDirty(
+  product: Pick<ProductEditView, "category" | "genre" | "genreLocked" | "isGeneric" | "linkedAvatarIds">,
+  form: { category: string; genre: string; generic: boolean; selected: ReadonlySet<string> },
+): boolean {
+  return (
+    Boolean(form.category && form.category !== product.category) ||
+    Object.keys(genreChange(product, form.category, form.genre)).length > 0 ||
+    form.generic !== product.isGeneric ||
+    !sameSet(form.selected, product.linkedAvatarIds)
+  );
+}
+
 /**
  * ジャンル欄の値を API の 3 通りに分ける。空文字は「自動」。
  * 何も送らない＝変更しない、`resetGenre`＝自動に戻す、`genre`＝その値で固定する。
@@ -31,10 +44,16 @@ function EditForm({
   product,
   avatarIndex,
   onClose,
+  onCancel,
+  dirtyRef,
 }: {
   product: ProductEditView;
   avatarIndex: readonly AvatarHit[];
   onClose: () => void;
+  /** 保存せずに閉じる。変更があれば確認してから閉じる。 */
+  onCancel: () => void;
+  /** 保存していない変更があるか。Escape で閉じる前に親が読む。 */
+  dirtyRef: { current: boolean };
 }) {
   const { refresh, notify, fail } = useShell();
   const [category, setCategory] = useState(product.category ?? "");
@@ -52,6 +71,7 @@ function EditForm({
     !product.genreLocked && product.genre && (category || null) === product.category
       ? `自動（いまは${GENRE_LABEL[product.genre] ?? product.genre}）`
       : "自動";
+  dirtyRef.current = editIsDirty(product, { category, genre, generic, selected });
 
   const toggle = useCallback((id: string) => {
     setSelected((current) => {
@@ -138,9 +158,12 @@ function EditForm({
             {category && genresForCategory(category).map((item) => <option key={item} value={item}>{GENRE_LABEL[item]}</option>)}
           </select>
         </label>
-        <label className="field">
-          <span>汎用</span>
+        <label className="check-row">
           <input type="checkbox" checked={generic} onChange={(event) => setGeneric(event.target.checked)} />
+          <span>
+            <strong>汎用</strong>
+            <span className="meta">特定のアバターに依存せず、どのアバターにも使える商品</span>
+          </span>
         </label>
       </div>
       <div className="field">
@@ -193,8 +216,8 @@ function EditForm({
             所持アバターにする
           </button>
         )}
-        <button className="button" type="button" disabled={busy} onClick={onClose}>
-          閉じる
+        <button className="button" type="button" disabled={busy} onClick={onCancel}>
+          キャンセル
         </button>
         <button className="button primary" type="button" disabled={busy} onClick={() => void save()}>
           保存
@@ -210,6 +233,16 @@ export function ProductEditDialog({ boothId, onClose }: { boothId: string; onClo
   const dialog = useRef<HTMLDialogElement>(null);
   const [product, setProduct] = useState<ProductEditView | null>(null);
   const [avatarIndex, setAvatarIndex] = useState<AvatarHit[]>([]);
+  const dirtyRef = useRef(false);
+
+  // 変更があるときだけ、捨ててよいかを尋ねる。誤って Escape を押しても、選び直した対応アバターを失わないため。
+  const confirmDiscard = useCallback(
+    () => !dirtyRef.current || window.confirm("保存していない変更があります。変更を捨てて閉じますか？"),
+    [],
+  );
+  const cancel = useCallback(() => {
+    if (confirmDiscard()) onClose();
+  }, [confirmDiscard, onClose]);
 
   useEffect(() => {
     const element = dialog.current;
@@ -241,11 +274,22 @@ export function ProductEditDialog({ boothId, onClose }: { boothId: string; onClo
       className="product-edit-dialog"
       aria-label="分類を編集"
       onClick={(event) => event.stopPropagation()}
-      onKeyDown={(event) => event.stopPropagation()}
+      onKeyDown={(event) => {
+        event.stopPropagation();
+        // Escape はキー入力の段階で受け止める。ダイアログ標準の cancel は、直前にクリックや入力が無いと
+        // ブラウザが取り消しを許さず、確認で「いいえ」と答えても閉じてしまうため。
+        if (event.key !== "Escape" || event.defaultPrevented || event.nativeEvent.isComposing) return;
+        event.preventDefault();
+        cancel();
+      }}
+      onCancel={(event) => {
+        // キー以外の閉じる要求。取り消せるときだけ確かめ、やめたら開いたままにする。
+        if (event.cancelable && !confirmDiscard()) event.preventDefault();
+      }}
       onClose={onClose}
     >
       {product ? (
-        <EditForm product={product} avatarIndex={avatarIndex} onClose={onClose} />
+        <EditForm product={product} avatarIndex={avatarIndex} onClose={onClose} onCancel={cancel} dirtyRef={dirtyRef} />
       ) : (
         <p className="meta">読み込み中</p>
       )}

@@ -74,6 +74,25 @@ export function placeFloatRect(placed: FloatRect | null, viewWidth: number, view
   return placed ? clampFloatRect(placed, viewWidth, viewHeight) : defaultFloatRect(viewWidth, viewHeight);
 }
 
+/** The panel while the preview has nothing to show yet. */
+export const FLOAT_PANEL_COMPACT = { width: 320, height: 136 } as const;
+
+/**
+ * The preview with no product selected: a small note in the top-right corner, where the panel first
+ * opens, so it does not cover the list the user is about to pick from and grows from the same
+ * corner once a product is selected. Not movable or resizable; the user's own placement comes back
+ * as soon as a product is selected.
+ */
+export function compactFloatRect(viewWidth: number, viewHeight: number): FloatRect {
+  const max = room(viewWidth, viewHeight);
+  const width = Math.min(max.width, FLOAT_PANEL_COMPACT.width);
+  const height = Math.min(max.height, FLOAT_PANEL_COMPACT.height);
+  // The usual 16px from the edges, down to the 8px margin when the window is barely larger.
+  const inset = (span: number, size: number) =>
+    Math.max(FLOAT_PANEL_MARGIN, Math.min(FLOAT_PANEL_INSET, Math.floor((Math.floor(span) - size) / 2)));
+  return { left: Math.floor(viewWidth) - inset(viewWidth, width) - width, top: inset(viewHeight, height), width, height };
+}
+
 /** Moves the panel by the pointer's offset from where the drag started. */
 export function moveFloatRect(start: FloatRect, dx: number, dy: number, viewWidth: number, viewHeight: number): FloatRect {
   return clampFloatRect({ ...start, left: start.left + dx, top: start.top + dy }, viewWidth, viewHeight);

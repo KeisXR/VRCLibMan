@@ -133,6 +133,7 @@ function RunRow({ run }: { run: ClassificationRunView }) {
   return (
     <article className="log-run">
       <button className="log-run-head" type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+        <span className="log-run-chevron" aria-hidden="true" />
         <span className="log-run-time">{formatLogTime(run.startedAt)}</span>
         <strong>{runKindLabel(run.kind)}</strong>
         {note && <span className="meta">{note}</span>}

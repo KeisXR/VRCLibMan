@@ -1,3 +1,5 @@
+import { horizontalWheelDelta, overflowEdges } from "./scrollEdges";
+
 /** 設定画面のカテゴリ一覧。並びは画面の節の並びと同じにする。id は他の画面からの移動先でもあるので変えない。 */
 export const SETTINGS_NAV_ITEMS: ReadonlyArray<{ id: string; label: string }> = [
   { id: "settings-library", label: "ライブラリ" },
@@ -41,33 +43,8 @@ export function scrollParent(node: HTMLElement | null): HTMLElement | null {
   return null;
 }
 
-/**
- * 横にあふれたカテゴリの帯の上でホイールを回したときに、帯を横へ動かす量（px）。
- * 帯があふれていないとき、Ctrl（ピンチ・拡大縮小）のときは null を返し、ページの縦スクロールや拡大に任せる。
- * 縦と横のうち大きいほうの量を使うので、マウスホイールの縦回転もトラックパッドの横スワイプも帯の中だけで動く。
- */
-export function settingsNavWheelDelta(
-  wheel: { deltaX: number; deltaY: number; deltaMode: number; ctrlKey: boolean },
-  box: { clientWidth: number; scrollWidth: number },
-): number | null {
-  if (wheel.ctrlKey || box.scrollWidth <= box.clientWidth) return null;
-  const delta = Math.abs(wheel.deltaX) >= Math.abs(wheel.deltaY) ? wheel.deltaX : wheel.deltaY;
-  // deltaMode: 0 = px、1 = 行、2 = ページ。
-  const unit = wheel.deltaMode === 1 ? 16 : wheel.deltaMode === 2 ? box.clientWidth : 1;
-  return delta * unit;
-}
+/** 横にあふれたカテゴリの帯の上でのホイール（`scrollEdges.ts` の `horizontalWheelDelta`）。 */
+export const settingsNavWheelDelta = horizontalWheelDelta;
 
-/**
- * 1行の帯のどちら側に、隠れた項目が続いているか。縦の列（`bar` が false）と、あふれていない帯は両方 false。
- * 1px 未満の端数は続きとみなさない。
- */
-export function settingsNavEdges(
-  bar: boolean,
-  box: { clientWidth: number; scrollWidth: number; scrollLeft: number },
-): { start: boolean; end: boolean } {
-  if (!bar || box.scrollWidth <= box.clientWidth + 1) return { start: false, end: false };
-  return {
-    start: box.scrollLeft > 1,
-    end: box.scrollLeft + box.clientWidth < box.scrollWidth - 1,
-  };
-}
+/** 1行の帯のどちら側に続きがあるか（`scrollEdges.ts` の `overflowEdges`）。縦の列では両方 false。 */
+export const settingsNavEdges = overflowEdges;
