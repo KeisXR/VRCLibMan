@@ -62,19 +62,20 @@ export function BuiltinBrowserImport() {
 
   return (
     <>
-      <SettingRow label="内蔵ブラウザ" help="BOOTH へのログインと年齢確認は、開いたブラウザで行います。">
+      <SettingRow label="内蔵ブラウザ" note="BOOTH へのログインと年齢確認は、開いたブラウザで行います。">
         <div className="row-actions">
-          <button className="button" type="button" disabled={busy} onClick={() => void run(() => api.openBoothBrowser())}>
+          <button className="button secondary" type="button" disabled={busy} onClick={() => void run(() => api.openBoothBrowser())}>
             ブラウザを開く
           </button>
-          <button className="button" type="button" disabled={busy} onClick={() => void run(() => api.showBoothLibrary())}>
+          <button className="button secondary" type="button" disabled={busy} onClick={() => void run(() => api.showBoothLibrary())}>
             ライブラリを開く
           </button>
         </div>
       </SettingRow>
       <SettingRow
         label="商品情報を取得"
-        help="「ライブラリ全取得」はライブラリ、ギフト、無料ダウンロードを読み込みます。ファイルはダウンロードしません。"
+        help="「ライブラリ全取得」はライブラリ、ギフト、無料ダウンロードを読み込みます。"
+        note="ファイルはダウンロードしません。"
       >
         <div className="row-actions">
         <button className="button primary" type="button" disabled={busy} onClick={() => void walk()}>

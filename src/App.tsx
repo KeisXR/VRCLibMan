@@ -16,7 +16,7 @@ import { GenreColumn } from "./components/GenreColumn";
 import { ResizeSeparator } from "./components/ResizeSeparator";
 import { GenreBrowseProvider } from "./genreBrowseContext";
 import { useAppLayout } from "./useAppLayout";
-import { UI_GENRE_WIDTH, UI_RAIL_WIDTH } from "./uiLayout";
+import { UI_GENRE_WIDTH, UI_RAIL_COLLAPSED_WIDTH, UI_RAIL_WIDTH, UI_SEPARATOR_PX } from "./uiLayout";
 import { AppUpdaterProvider, useStartupUpdateCheck } from "./useAppUpdater";
 import { SidebarAssetUpdateButton, useSidebarAssetUpdate } from "./components/SidebarAssetUpdateButton";
 import { SidebarUpdaterBadge } from "./components/SidebarUpdaterBadge";
@@ -407,7 +407,15 @@ export default function App() {
     <DownloadsProvider value={downloads}>
     <RightPanelProvider value={rightPanel}>
       <BrowserAutoClassification />
-      {setupComplete === false && <SetupWizard onRefresh={refresh} onDone={() => { setSetupComplete(true); refresh(); }} />}
+      {setupComplete === false && (
+        <SetupWizard
+          onRefresh={refresh}
+          onDone={() => { setSetupComplete(true); refresh(); }}
+          stats={stats}
+          progress={progressBoard}
+          railInset={(collapsed ? UI_RAIL_COLLAPSED_WIDTH : layout.railWidth) + UI_SEPARATOR_PX}
+        />
+      )}
       <div className="app app-shell" style={layout.gridStyle} {...layout.railMotionAttrs}>
         <aside
           className={collapsed ? "rail collapsed" : "rail"}

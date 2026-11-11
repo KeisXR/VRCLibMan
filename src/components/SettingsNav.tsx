@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { SETTINGS_NAV_ITEMS, activeSettingsSection, scrollParent, settingsNavWheelDelta } from "../settingsNav";
+import { SETTINGS_NAV_ITEMS, activeSettingsSection, scrollParent, settingsNavEdges, settingsNavWheelDelta } from "../settingsNav";
 
 const reducedMotion = () => typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -10,9 +10,19 @@ const reducedMotion = () => typeof window.matchMedia === "function" && window.ma
 export function SettingsNav() {
   const navRef = useRef<HTMLElement>(null);
   const [active, setActive] = useState<string>(SETTINGS_NAV_ITEMS[0].id);
+  // 帯が横にあふれているとき、どちら側に続きがあるか。端の「‹」「›」とぼかしで示す。
+  const [edges, setEdges] = useState({ start: false, end: false });
   // ボタンで移動している間は、途中のスクロール位置で強調を動かさない。
   const pinned = useRef<{ id: string; timer: number } | null>(null);
   const resync = useRef<() => void>(() => {});
+
+  const updateEdges = () => {
+    const nav = navRef.current;
+    if (!nav) return;
+    const bar = typeof window.getComputedStyle === "function" && window.getComputedStyle(nav).flexDirection === "row";
+    const next = settingsNavEdges(bar, nav);
+    setEdges((current) => (current.start === next.start && current.end === next.end ? current : next));
+  };
 
   useEffect(() => {
     const nav = navRef.current;
@@ -24,6 +34,7 @@ export function SettingsNav() {
     const measure = () => {
       frame = 0;
       layout?.style.setProperty("--settings-nav-h", `${Math.ceil(nav.getBoundingClientRect().height)}px`);
+      updateEdges();
       if (pinned.current) return;
       const top = scroller ? scroller.getBoundingClientRect().top : 0;
       const bar = typeof window.getComputedStyle === "function" && window.getComputedStyle(nav).flexDirection === "row";
@@ -53,6 +64,7 @@ export function SettingsNav() {
     target.addEventListener("scrollend", release);
     target.addEventListener("wheel", release, { passive: true });
     target.addEventListener("touchstart", release, { passive: true });
+    nav.addEventListener("scroll", updateEdges, { passive: true });
     window.addEventListener("resize", schedule);
     const observer = typeof ResizeObserver === "function" ? new ResizeObserver(schedule) : null;
     observer?.observe(nav);
@@ -63,6 +75,7 @@ export function SettingsNav() {
       target.removeEventListener("scrollend", release);
       target.removeEventListener("wheel", release);
       target.removeEventListener("touchstart", release);
+      nav.removeEventListener("scroll", updateEdges);
       window.removeEventListener("resize", schedule);
       observer?.disconnect();
       if (frame) (typeof window.cancelAnimationFrame === "function" ? window.cancelAnimationFrame(frame) : window.clearTimeout(frame));
@@ -114,11 +127,25 @@ export function SettingsNav() {
     node.scrollIntoView?.({ behavior: reducedMotion() ? "instant" : "smooth", block: "start" });
   };
 
+  const page = (direction: 1 | -1) => {
+    const nav = navRef.current;
+    if (!nav) return;
+    const left = nav.scrollLeft + direction * Math.max(80, nav.clientWidth * 0.7);
+    if (typeof nav.scrollTo === "function") nav.scrollTo({ left, behavior: reducedMotion() ? "instant" : "smooth" });
+    else nav.scrollLeft = left;
+  };
+
   return (
-    <nav className="settings-nav" aria-label="設定の項目" ref={navRef}>
+    <nav className="settings-nav" aria-label="設定の項目" ref={navRef} data-more-start={edges.start ? "" : undefined} data-more-end={edges.end ? "" : undefined}>
+      <button className="settings-nav-more start" type="button" tabIndex={-1} aria-label="前の項目を表示" hidden={!edges.start} onClick={() => page(-1)}>
+        <span aria-hidden="true">‹</span>
+      </button>
       {SETTINGS_NAV_ITEMS.map(({ id, label }) => (
         <button key={id} type="button" data-target={id} aria-current={active === id ? "location" : undefined} onClick={() => go(id)}>{label}</button>
       ))}
+      <button className="settings-nav-more end" type="button" tabIndex={-1} aria-label="続きの項目を表示" hidden={!edges.end} onClick={() => page(1)}>
+        <span aria-hidden="true">›</span>
+      </button>
     </nav>
   );
 }

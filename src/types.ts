@@ -154,6 +154,8 @@ export interface ProductEditView {
   thumbnailPath: string | null;
   category: Category | null;
   genre: string | null;
+  /** ジャンルを手で固定している。false のときは「自動」で決まったジャンル。 */
+  genreLocked: boolean;
   isGeneric: boolean;
   linkedAvatarIds: string[];
 }
@@ -335,14 +337,31 @@ export interface SyncExportReport {
 export interface RemoteSyncStatus {
   running: boolean;
   copied: number;
-  /** リモートの同じ場所に既にあったファイル。 */
+  /** リモートの同じ場所に既にあったファイル（記録済みで残っている、または同じ名前・同じ大きさ）。 */
   skipped: number;
   /** コピー済みと記録したが、リモートの元の場所に無いファイル。自動ではコピーし直さない。 */
   missing: number;
-  /** missing の最初の数件（商品ID/ファイル名）。 */
+  /** missing の最初の 20 件（商品ID/ファイル名）。 */
   missingFiles: string[];
+  /** 同じ名前で大きさの違うファイルがリモートにあり、コピーしなかったもの。記録しないので次の確認でまた見る。 */
+  conflicts: number;
+  conflictFiles: { file: string; localSize: number; remoteSize: number }[];
+  /** 登録した手元のファイルが見つからず、コピーできなかったもの。 */
+  sourceMissing: number;
+  sourceMissingFiles: string[];
+  /** コピーに失敗したもの。1 件ずつの理由を持つ。 */
+  failed: number;
+  failures: { file: string; error: string }[];
   lastCompletedAt: string | null;
+  /** 確認全体の問題（リモートのフォルダに届かないなど）。 */
   error: string | null;
+}
+
+/** 「リモートへコピー」「ローカルへコピー」の結果。conflict は何も書かず、上書きは確認してから。 */
+export interface CopyResult {
+  status: "copied" | "already" | "conflict";
+  sourceSize: number | null;
+  existingSize: number | null;
 }
 
 /** 右パネル「ファイル」タブ。読み取り専用の一覧で、書き込み・削除・移動はしない。 */
@@ -406,6 +425,8 @@ export interface LibraryStats {
   ownedAvatars: number;
   unextracted: number;
   unlinkedFiles: number;
+  /** 商品に結び付いた手元のファイル（スキャンして結び付いたもの、ダウンロード先を記録したもの）。 */
+  registeredFiles: number;
 }
 
 export interface BrowserDiagnostic {
@@ -698,6 +719,8 @@ export interface ProductUpdate {
   boothId: string;
   category?: string | null;
   genre?: string | null;
+  /** 「自動」に戻す。ジャンルの固定を外し、カテゴリ・タグ・文面から選び直す。genre と同時には送らない。 */
+  resetGenre?: boolean;
   isGeneric?: boolean | null;
   avatarIds?: string[] | null;
 }

@@ -1,57 +1,30 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { api, openBoothLink } from "../api";
 import { useShell } from "../App";
+import { avatarHit, rankAvatars } from "../avatarSearch";
+import type { AvatarHit } from "../avatarSearch";
 import { CATEGORIES, CATEGORY_LABEL, GENRE_LABEL, genresForCategory } from "../types";
-import type { ProductEditView } from "../types";
+import type { ProductEditView, ProductUpdate } from "../types";
 import { Thumb, errorText } from "../ui";
-
-type AvatarHit = {
-  id: string;
-  displayName: string;
-  haystack: string;
-};
-
-function bigrams(text: string): string[] {
-  const chars = [...text];
-  const grams: string[] = [];
-  for (let index = 0; index < chars.length - 1; index += 1) grams.push(chars[index] + chars[index + 1]);
-  return grams;
-}
-
-function bigramScore(query: string, name: string): number {
-  if (!query || !name) return 0;
-  if (name === query) return 1;
-  if (name.startsWith(query) || query.startsWith(name)) return 0.92;
-  if (name.includes(query) || query.includes(name)) return 0.75;
-  const left = bigrams(query);
-  const right = bigrams(name);
-  if (left.length === 0 || right.length === 0) return 0;
-  const counts = new Map<string, number>();
-  for (const gram of right) counts.set(gram, (counts.get(gram) ?? 0) + 1);
-  let overlap = 0;
-  for (const gram of left) {
-    const have = counts.get(gram) ?? 0;
-    if (have > 0) {
-      overlap += 1;
-      counts.set(gram, have - 1);
-    }
-  }
-  return (2 * overlap) / (left.length + right.length);
-}
-
-function rankAvatars(index: readonly AvatarHit[], query: string, limit: number): AvatarHit[] {
-  const needle = query.trim().toLowerCase();
-  if (!needle) return [];
-  const ranked = index.map((hit) => ({
-    hit,
-    score: Math.max(bigramScore(needle, hit.displayName.toLowerCase()), bigramScore(needle, hit.haystack)),
-  }));
-  ranked.sort((left, right) => right.score - left.score || left.hit.displayName.localeCompare(right.hit.displayName, "ja"));
-  return ranked.slice(0, limit).map((item) => item.hit);
-}
 
 function sameSet(left: ReadonlySet<string>, right: readonly string[]): boolean {
   return left.size === right.length && right.every((id) => left.has(id));
+}
+
+/**
+ * ジャンル欄の値を API の 3 通りに分ける。空文字は「自動」。
+ * 何も送らない＝変更しない、`resetGenre`＝自動に戻す、`genre`＝その値で固定する。
+ */
+export function genreChange(
+  product: Pick<ProductEditView, "category" | "genre" | "genreLocked">,
+  category: string,
+  genre: string,
+): Pick<ProductUpdate, "genre" | "resetGenre"> {
+  const categoryChanged = Boolean(category) && category !== product.category;
+  const initial = product.genreLocked ? product.genre ?? "" : "";
+  if (genre) return genre !== initial || categoryChanged ? { genre } : {};
+  // 「自動」: 固定を外すとき、またはカテゴリを変えて新しいカテゴリで選び直すとき。
+  return product.genreLocked || categoryChanged ? { resetGenre: true } : {};
 }
 
 function EditForm({
@@ -65,14 +38,20 @@ function EditForm({
 }) {
   const { refresh, notify, fail } = useShell();
   const [category, setCategory] = useState(product.category ?? "");
-  const [genre, setGenre] = useState(product.genre ?? "");
+  // 自動で決まったジャンルは「自動」として見せる。固定したジャンルだけを値として選ぶ。
+  const [genre, setGenre] = useState(product.genreLocked ? product.genre ?? "" : "");
   const [generic, setGeneric] = useState(product.isGeneric);
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set(product.linkedAvatarIds));
   const [filter, setFilter] = useState("");
   const [busy, setBusy] = useState(false);
   const deferred = useDeferredValue(filter);
-  const hits = useMemo(() => rankAvatars(avatarIndex, deferred, 30), [avatarIndex, deferred]);
+  const ranked = useMemo(() => rankAvatars(avatarIndex, deferred, 30), [avatarIndex, deferred]);
+  const searching = deferred.trim().length > 0;
   const nameById = useMemo(() => new Map(avatarIndex.map((avatar) => [avatar.id, avatar.displayName])), [avatarIndex]);
+  const autoLabel =
+    !product.genreLocked && product.genre && (category || null) === product.category
+      ? `自動（いまは${GENRE_LABEL[product.genre] ?? product.genre}）`
+      : "自動";
 
   const toggle = useCallback((id: string) => {
     setSelected((current) => {
@@ -90,7 +69,7 @@ function EditForm({
       await api.updateProduct({
         boothId: product.boothId,
         category: category && category !== product.category ? category : null,
-        genre: genre && genre !== product.genre ? genre : null,
+        ...genreChange(product, category, genre),
         isGeneric: generic !== product.isGeneric ? generic : null,
         avatarIds: sameSet(selected, product.linkedAvatarIds) ? null : [...selected],
       });
@@ -155,7 +134,7 @@ function EditForm({
         <label className="field">
           <span>ジャンル</span>
           <select aria-label="ジャンル" value={genre} onChange={(event) => setGenre(event.target.value)}>
-            <option value="">自動</option>
+            <option value="">{autoLabel}</option>
             {category && genresForCategory(category).map((item) => <option key={item} value={item}>{GENRE_LABEL[item]}</option>)}
           </select>
         </label>
@@ -176,18 +155,35 @@ function EditForm({
         <input
           className="search"
           value={filter}
+          aria-label="対応アバターを名前で探す"
           placeholder="名前を入力すると候補が出ます"
           onChange={(event) => setFilter(event.target.value)}
         />
-        {hits.length > 0 && (
+        {searching && ranked.close.length === 0 && ranked.loose.length === 0 && (
+          <p className="meta note-strong" role="status">一致するアバターがありません。名前か別名の一部を入力してください。</p>
+        )}
+        {ranked.close.length > 0 && (
           <div className="picker">
-            {hits.map((avatar) => (
+            {ranked.close.map((avatar) => (
               <label key={avatar.id}>
                 <input type="checkbox" checked={selected.has(avatar.id)} onChange={() => toggle(avatar.id)} />
                 {avatar.displayName}
               </label>
             ))}
           </div>
+        )}
+        {ranked.loose.length > 0 && (
+          <>
+            <p className="meta picker-heading">名前が似ている候補（一致は不確かです。名前を確かめてから選んでください）</p>
+            <div className="picker picker-loose">
+              {ranked.loose.map((avatar) => (
+                <label key={avatar.id}>
+                  <input type="checkbox" checked={selected.has(avatar.id)} onChange={() => toggle(avatar.id)} />
+                  {avatar.displayName}
+                </label>
+              ))}
+            </div>
+          </>
         )}
         <p className="meta">対応アバターを変えると固定され、自動の分類では変わらなくなります。</p>
       </div>
@@ -226,13 +222,7 @@ export function ProductEditDialog({ boothId, onClose }: { boothId: string; onClo
       ([next, known]) => {
         if (!alive) return;
         setProduct(next);
-        setAvatarIndex(
-          known.avatars.map((avatar) => ({
-            id: avatar.id,
-            displayName: avatar.displayName,
-            haystack: [avatar.displayName, ...avatar.aliases].join(" ").toLowerCase(),
-          })),
-        );
+        setAvatarIndex(known.avatars.map(avatarHit));
       },
       (err: unknown) => {
         if (!alive) return;

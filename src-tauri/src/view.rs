@@ -185,6 +185,8 @@ pub struct ProductEditView {
     pub thumbnail_path: Option<String>,
     pub category: Option<Category>,
     pub genre: Option<String>,
+    /// The genre was fixed by hand. Otherwise the dialog shows it as 「自動」.
+    pub genre_locked: bool,
     pub is_generic: bool,
     pub linked_avatar_ids: Vec<String>,
 }
@@ -412,6 +414,7 @@ pub fn product_edit_view(snapshot: &Snapshot, booth_id: &str) -> Option<ProductE
         thumbnail_path: product.thumbnail_path.clone(),
         category: product.category,
         genre: product.genre.clone(),
+        genre_locked: product.genre_locked,
         is_generic: product.is_generic,
         linked_avatar_ids: snapshot
             .links
@@ -475,6 +478,16 @@ pub fn library_stats(snapshot: &Snapshot) -> LibraryStats {
             .iter()
             .filter(|file| file.linked_product_id.is_none())
             .count() as u32,
+        registered_files: (snapshot
+            .files
+            .iter()
+            .filter(|file| !file.is_dir && file.linked_product_id.is_some())
+            .count()
+            + snapshot
+                .download_rows
+                .iter()
+                .filter(|row| row.local_path.as_deref().is_some_and(|path| !path.is_empty()))
+                .count()) as u32,
     }
 }
 

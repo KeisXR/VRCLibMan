@@ -9,6 +9,7 @@
   --text: #20222b;
   --text-secondary: #858995;
   --avatar-hero-sub: #5d616c;
+  --text-note: #5d616c;
   --muted: var(--text-secondary);
   --faint: #a0a4ae;
   --button: #20222b;
@@ -61,6 +62,7 @@
     --text: #f3f3f5;
     --text-secondary: #9b9ba6;
     --avatar-hero-sub: #b4b4be;
+    --text-note: #c4c4cc;
     --faint: #7e7e88;
     --button: #f5f5f7;
     --button-text: #161618;
@@ -1012,6 +1014,9 @@ button.account-pill:hover { background: var(--hover); }
 .button.primary:hover { background: var(--button-hover); filter: none; }
 .button.danger { color: var(--danger); }
 .button.danger:hover { background: var(--hover); }
+/* 押せることを見せたい副操作。地なしの .button が説明文に紛れる場所で使う（主ボタンほど強くしない）。 */
+.button.secondary { background: var(--surface-secondary); box-shadow: inset 0 0 0 1px var(--line); }
+.button.secondary:hover { background: var(--hover); }
 .button:disabled { opacity: 0.45; cursor: default; }
 .icon-button {
   width: 36px;
@@ -1049,7 +1054,8 @@ button.account-pill:hover { background: var(--hover); }
 }
 .avatar-card:hover { background: var(--surface); text-decoration: none; }
 .group { margin-bottom: var(--space-5); }
-.group h2 { margin: 0 0 var(--space-2); font-size: 13px; color: var(--faint); font-weight: 650; letter-spacing: 0.02em; }
+/* グループの小見出しだけ。中のカード題（アバター名）まで薄く小さくしない。 */
+.group > h2 { margin: 0 0 var(--space-2); font-size: 13px; color: var(--faint); font-weight: 650; letter-spacing: 0.02em; }
 .thumb {
   width: 64px;
   height: 64px;
@@ -1066,7 +1072,13 @@ button.account-pill:hover { background: var(--hover); }
 }
 .thumb.small { width: 44px; height: 44px; border-radius: 8px; font-size: 16px; }
 .card-title { margin: 0; font-size: 16px; letter-spacing: -0.01em; }
+/* アバター名はカードでいちばん大事な情報。詰めた表示でも 16px・本文色にする。 */
+.avatar-card .card-title,
+.density-compact .avatar-card .card-title { color: var(--text); font-size: 16px; font-weight: 650; overflow-wrap: anywhere; }
 .meta { color: var(--text-secondary); font-size: 13px; }
+/* 操作の結果・前提条件・失敗に関わる説明。補足（.meta）より大きく濃くし、読み飛ばされないようにする。 */
+.note-strong,
+.meta.note-strong { color: var(--text-note); font-size: 14px; line-height: 1.6; }
 .state-local { color: var(--good); }
 .state-remote { color: var(--text-secondary); }
 .state-missing { color: var(--faint); }
@@ -1610,13 +1622,32 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
   overflow-y: auto;
   overscroll-behavior: contain;
   background: var(--bg);
-  padding: 64px var(--space-4);
+  --setup-pad-y: 64px;
+  /* 下の余白はカードの margin で取る。スクロール領域の padding があると、下端に固定した操作の行がその分だけ浮き、下に本文が透ける。 */
+  padding: var(--setup-pad-y) var(--space-4) 0;
 }
-.setup-card { max-width: 640px; margin: 0 auto; padding: 32px; border-radius: var(--radius-lg); }
+.setup-card { max-width: 640px; margin: 0 auto var(--setup-pad-y); padding: 32px; border-radius: var(--radius-lg); }
 .setup-card h1 { margin: 0 0 var(--space-3); font-size: 28px; letter-spacing: -0.03em; }
+/* 説明が長い手順でも、進む・戻るを表示域の下端に残す。 */
+.setup-card .setup-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin: var(--space-4) 0 0;
+  padding: var(--space-3) 0;
+  background: var(--surface);
+  box-shadow: 0 -1px 0 var(--line);
+}
+@media (max-height: 760px) {
+  .setup-screen { --setup-pad-y: var(--space-5); }
+  .setup-card { padding: 24px; }
+  .setup-card h1 { font-size: 24px; }
+}
 .setup-steps { margin: 0 0 var(--space-4); padding-left: 1.2em; color: var(--text); }
 .setup-steps li { margin: 0 0 var(--space-2); }
 .picker { display: flex; flex-direction: column; gap: 4px; max-height: 240px; overflow: auto; margin-top: var(--space-2); }
+.picker-heading { margin: var(--space-3) 0 0; }
+.picker-loose label { color: var(--text-secondary); }
 .picker label { display: flex; gap: 6px; align-items: center; font-size: 13px; }
 .ownership { margin-top: var(--space-5); }
 .ownership-title { margin: 0 0 var(--space-2); font-size: 20px; letter-spacing: -0.02em; }
@@ -1681,8 +1712,11 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .settings-nav button { position: relative; flex: 0 0 auto; text-align: left; padding: 8px 12px; border: 0; border-radius: 10px; background: transparent; color: var(--text-secondary); font: inherit; font-size: 13px; white-space: nowrap; cursor: pointer; }
 .settings-nav button:hover { background: var(--hover); color: var(--text); }
 .settings-nav button[aria-current] { background: var(--surface); color: var(--text); font-weight: 650; box-shadow: var(--shadow); } /* 朱の縦棒・下線は「線のアクセント」の集約ブロック */
+/* 1行の帯であふれたときだけ出す、続きの向きを示す端のボタン（SettingsNav.tsx）。 */
+.settings-nav .settings-nav-more { display: none; }
 .setting-copy strong { display: block; font-size: 14px; font-weight: 650; }
 .setting-copy p { margin: 3px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.setting-copy p.note-strong { margin-top: 4px; color: var(--text-note); font-size: 14px; line-height: 1.6; }
 .setting-control { min-width: 0; }
 .setting-control > input, .setting-control > select, .inline-control > input, .inline-control > select { width: 100%; min-width: 0; padding: 8px 12px; border: 0; border-radius: var(--radius-control); background: var(--surface-secondary); }
 .setting-control .short-input { width: 110px; }
@@ -1708,6 +1742,10 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .choice-row strong { font-size: 14px; overflow-wrap: anywhere; }
 .choice-row .meta { display: block; margin-top: 3px; line-height: 1.6; }
 .import-guidance { margin-top: var(--space-4); border-top: 1px solid var(--line); padding-top: var(--space-3); }
+/* 受信口が開いているだけの「受信待ち」と、拡張から実際に届いた「受信済み」を分けて見せる。 */
+.connection-state { display: flex; align-items: baseline; gap: var(--space-2); margin: 0 0 var(--space-3); color: var(--text-note); font-size: 14px; line-height: 1.5; }
+.badge.recommend { color: var(--good); font-weight: 650; }
+.extension-instructions-details { padding: 0 0 var(--space-3); }
 .version-info p { margin: 4px 0; overflow-wrap: anywhere; }
 .sidebar-updater {
   display: flex;
@@ -1956,7 +1994,7 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .browser-window-controls svg { fill: none; stroke: currentColor; stroke-width: 1; }
 .browser-chrome .browser-window-controls .browser-window-close:hover:not(:disabled) { color: #fff; background: #c42b1c; }
 /* Browser tabs share the small corner radius used by the other tab strips. */
-.browser-tabs { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.browser-tabs { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
 .browser-tab {
   display: inline-flex;
   align-items: center;
@@ -1974,7 +2012,8 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .browser-tab-loading { flex: 0 0 10px; width: 10px; height: 10px; box-sizing: border-box; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: browser-tab-spin 800ms linear infinite; }
 @keyframes browser-tab-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .browser-tab-loading { animation: none; border-right-color: currentColor; opacity: .6; } }
-.browser-chrome .browser-tab-close { display: inline-grid; place-items: center; flex: 0 0 22px; width: 22px; height: 22px; margin-right: 4px; padding: 0; border-radius: var(--radius-pill); background: transparent; color: var(--text-secondary); opacity: 0; transition: background-color var(--motion) ease, color var(--motion) ease, opacity var(--motion) ease; }
+/* 記号は小さいまま、押せる範囲を 26px にする。タブの選択部分とは 2px、隣のタブとは 6px 離す。 */
+.browser-chrome .browser-tab-close { display: inline-grid; place-items: center; flex: 0 0 26px; width: 26px; height: 26px; margin: 0 1px 0 2px; padding: 0; border-radius: var(--radius-pill); background: transparent; color: var(--text-secondary); opacity: 0; transition: background-color var(--motion) ease, color var(--motion) ease, opacity var(--motion) ease; }
 .browser-tab:hover .browser-tab-close,
 .browser-tab.active .browser-tab-close,
 .browser-chrome .browser-tab-close:focus-visible { opacity: 1; }
@@ -2056,11 +2095,12 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .browser-tools { display: flex; align-items: center; height: 32px; background: var(--surface); border-bottom: 1px solid var(--line); box-sizing: border-box; }
 .browser-bookmarks { display: flex; align-items: center; flex: 1; min-width: 0; gap: 6px; height: 100%; padding: 0 8px; overflow-x: auto; scrollbar-width: thin; box-sizing: border-box; }
 .browser-zoom { display: flex; align-items: center; flex: 0 0 auto; padding: 0 4px; border-left: 1px solid var(--line); }
-.browser-zoom button { height: 26px; min-width: 26px; padding: 0 4px; font-size: 14px; }
+.browser-zoom { gap: 2px; }
+.browser-zoom button { height: 28px; min-width: 28px; padding: 0 4px; font-size: 14px; }
 .browser-zoom .browser-zoom-reset { min-width: 48px; font-size: 12px; font-variant-numeric: tabular-nums; }
-.browser-bookmark { display: inline-flex; align-items: center; flex-shrink: 0; }
-.browser-bookmark button { height: 25px; background: none; padding: 0 6px; font-size: 12px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
-.browser-bookmark .bookmark-edit { width: 22px; padding: 0; }
+.browser-bookmark { display: inline-flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.browser-bookmark button { height: 28px; background: none; padding: 0 6px; font-size: 12px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+.browser-bookmark .bookmark-edit { width: 28px; padding: 0; }
 .browser-bookmark-editor { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px; background: var(--surface); border-bottom: 1px solid var(--line); }
 .browser-bookmark-editor label { display: flex; align-items: center; gap: 8px; flex: 1 1 230px; }
 .browser-bookmark-editor input { flex: 1; min-width: 0; height: 32px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--sunken); }
@@ -2243,6 +2283,25 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   .settings-nav button[aria-current] { box-shadow: none; } /* 帯では影を消し、朱の直線の下線にする（集約ブロック） */
   /* 帯の下に見出しが隠れないよう、帯の高さ（SettingsNav.tsx が測る）だけ余白を取る。 */
   .settings-layout [id^="settings-"] { scroll-margin-top: calc(var(--settings-nav-h, 48px) + var(--space-3)); }
+  /* 隠れた項目がある側の端に「‹」「›」とぼかしを重ねる。押すと帯の 7 割ぶん送る。 */
+  .settings-nav .settings-nav-more:not([hidden]) {
+    position: sticky;
+    z-index: 1;
+    display: grid;
+    place-items: center;
+    flex: 0 0 32px;
+    width: 32px;
+    padding: 0;
+    border-radius: 0;
+    color: var(--text);
+    font-size: 20px;
+    line-height: 1;
+  }
+  .settings-nav .settings-nav-more.start { left: 0; margin-right: calc(-32px - var(--space-1)); justify-items: start; background: linear-gradient(to right, var(--bg) 60%, transparent); }
+  .settings-nav .settings-nav-more.end { right: 0; margin-left: calc(-32px - var(--space-1)); justify-items: end; background: linear-gradient(to left, var(--bg) 60%, transparent); }
+  .settings-nav .settings-nav-more:hover { color: var(--text); }
+  .settings-nav .settings-nav-more.start:hover { background: linear-gradient(to right, var(--bg) 60%, transparent); }
+  .settings-nav .settings-nav-more.end:hover { background: linear-gradient(to left, var(--bg) 60%, transparent); }
   .knowledge-section .knowledge { grid-template-columns: minmax(0, 1fr); }
 }
 @container (max-width: 600px) {
@@ -2312,10 +2371,36 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   overflow: auto;
 }
 .setup-guide-card { margin: 0; padding: 20px; border-radius: var(--radius-lg); box-shadow: 0 12px 36px #0004; }
-.setup-guide-card h1 { margin: 0 0 var(--space-3); font-size: 21px; }
+.setup-guide-card h1 { margin: 2px 0 var(--space-3); font-size: 21px; }
 .setup-guide-card p { margin: 0 0 var(--space-3); }
-.setup-guide-toggle { float: right; margin: -4px 0 8px 8px; }
-.setup-guide .row-actions { clear: both; }
+.setup-guide-head { display: flex; align-items: flex-start; gap: var(--space-3); }
+.setup-guide-heading { flex: 1 1 auto; min-width: 0; }
+.setup-guide-card .setup-guide-heading .meta { margin: 0; }
+.setup-guide-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
+.setup-guide-toggle { flex: 0 0 auto; }
+/* 手順の状態。「次へ」を押しただけで完了に見えないよう、未実施・処理中・完了を文字で出す。 */
+.setup-guide-card .setup-status { display: flex; align-items: baseline; gap: var(--space-2); margin: var(--space-2) 0 var(--space-3); color: var(--text-note); font-size: 14px; line-height: 1.5; }
+.setup-status-text { min-width: 0; }
+.state-chip { flex: 0 0 auto; padding: 0 8px; border: 1px solid currentColor; border-radius: var(--radius-pill); font-size: 12px; font-weight: 650; line-height: 18px; }
+.state-chip.todo { color: var(--warn); }
+.state-chip.running { color: var(--text-secondary); }
+.state-chip.done { color: var(--good); }
+.setup-guide .setup-actions { margin-top: var(--space-2); }
+.setup-guide.collapsed .setup-guide-card { padding: 12px 16px; }
+.setup-guide.collapsed .setup-guide-card .setup-status { margin: var(--space-2) 0; }
+.setup-guide.collapsed .setup-status-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 小さい窓: 左サイドバーを塞がず、その右の下端に細い帯で出す（最初は折りたたむ）。中身の下端には 64px の余白がある。 */
+.setup-guide.compact {
+  left: calc(var(--guide-left, 0px) + 12px);
+  bottom: 12px;
+  width: min(600px, calc(100vw - var(--guide-left, 0px) - 24px));
+  max-height: min(60vh, 520px);
+}
+.setup-guide.compact.collapsed .setup-guide-card { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); padding: 10px 14px; }
+.setup-guide.compact.collapsed .setup-guide-head { flex: 1 1 100%; align-items: center; }
+.setup-guide.compact.collapsed .setup-guide-card .setup-status { flex: 1 1 200px; min-width: 0; margin: 0; }
+.setup-guide.compact.collapsed .setup-actions { flex: 0 0 auto; margin: 0 0 0 auto; }
+.setup-guide.compact.collapsed .setup-guide-card > p[role="alert"] { flex: 1 1 100%; margin: 0; }
 
 /* ==== 切替の動き: 押して切り替わる場所の控えめな動き ====
    動かすのは opacity と transform だけ（幅・高さ・位置の計算は動かさない）。長さは 120〜160ms。

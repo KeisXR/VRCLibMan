@@ -2119,6 +2119,7 @@ pub(crate) fn move_product_genre_with_avatars(
                 booth_id: booth_id.to_string(),
                 category: Some(category.as_str().to_string()),
                 genre: Some(genre.to_string()),
+                reset_genre: false,
                 is_generic: avatar_ids.as_ref().filter(|ids| !ids.is_empty()).map(|_| false),
                 avatar_ids,
             },
@@ -2577,14 +2578,26 @@ pub(crate) fn update_product(
 ) -> Result<(), String> {
     let mut product = require_product(connection, &update.booth_id)?;
     let threshold = settings(connection)?.confidence_threshold;
+    let fixed_genre = update.genre.as_deref().filter(|value| !value.is_empty());
+    if update.reset_genre && fixed_genre.is_some() {
+        return Err("ジャンルの固定と「自動」は同時に指定できません".into());
+    }
     if let Some(category) = &update.category {
         product.category = Some(Category::parse(category).ok_or("カテゴリが不正です")?);
         product.category_locked = true;
     }
-    if let Some(genre) = update.genre.as_deref().filter(|value| !value.is_empty()) {
+    if let Some(genre) = fixed_genre {
         let category = product.category.ok_or("ジャンルを選ぶ前にカテゴリを選んでください")?;
         product.genre = Some(crate::genre::validate(category, Some(genre)));
         product.genre_locked = true;
+    } else if update.reset_genre {
+        // 「自動」: the genre follows the category, tags and text again, and later
+        // reclassification may change it. A locked category stays as it is.
+        product.genre = match product.category {
+            Some(category) => Some(automatic_genre(connection, &product, category)?),
+            None => None,
+        };
+        product.genre_locked = false;
     } else if update.category.is_some() {
         product.genre = product.category.map(|category| crate::genre::validate(category, product.genre.as_deref()));
     }
@@ -2643,6 +2656,26 @@ pub(crate) fn update_product(
     crate::sync_meta::touch_product(&tx, &product.booth_id)?;
     tx.commit().sql()?;
     Ok(())
+}
+
+/// The genre the rules choose for this category without an extraction run: a product-type
+/// phrase first, then tags that fit the category, then the keyword rules on the text.
+fn automatic_genre(
+    connection: &Connection,
+    product: &Product,
+    category: Category,
+) -> Result<String, String> {
+    let tags = booth_tags_of(connection, &product.booth_id)?;
+    let preferred =
+        crate::genre::prefer_listing(category, &product.title, &product.description_snippet);
+    let from_tags = crate::genre::genre_from_tags(category, &tags)
+        .filter(|genre| crate::genre::fits(category, genre));
+    let from_text =
+        crate::genre::classify_text(category, &product.title, &product.description_snippet);
+    Ok(crate::genre::validate(
+        category,
+        preferred.or(from_tags).or(from_text).as_deref(),
+    ))
 }
 
 pub(crate) fn link_file(
@@ -6972,6 +7005,7 @@ mod tests {
                 booth_id: "1004".into(),
                 category: Some("outfit".into()),
                 genre: None,
+                reset_genre: false,
                 is_generic: Some(false),
                 avatar_ids: Some(vec!["manuka".into()]),
             },
@@ -7009,7 +7043,7 @@ mod tests {
         import_products(&mut connection, &parse_export(SAMPLE).unwrap()).unwrap();
         update_product(&mut connection, &ProductUpdate {
             booth_id: "1004".into(), category: Some("outfit".into()), genre: Some("shader".into()),
-            is_generic: None, avatar_ids: None,
+            reset_genre: false, is_generic: None, avatar_ids: None,
         }).unwrap();
         apply_extraction(&mut connection, "1004", &Extraction {
             category: Category::Outfit, genre: Some("outfit".into()), compatible_avatars: vec![],
@@ -7024,12 +7058,50 @@ mod tests {
     }
 
     #[test]
+    fn automatic_genre_is_separate_from_unchanged_and_fixed() {
+        let mut connection = open_memory().unwrap();
+        import_products(&mut connection, &parse_export(SAMPLE).unwrap()).unwrap();
+        let update = |genre: Option<&str>, category: Option<&str>, reset_genre: bool| ProductUpdate {
+            booth_id: "1004".into(),
+            category: category.map(str::to_string),
+            genre: genre.map(str::to_string),
+            reset_genre,
+            is_generic: None,
+            avatar_ids: None,
+        };
+        update_product(&mut connection, &update(Some("shader"), Some("outfit"), false)).unwrap();
+        // Nothing about the genre sent: the fixed genre stays fixed.
+        update_product(&mut connection, &update(None, None, false)).unwrap();
+        let product = require_product(&connection, "1004").unwrap();
+        assert_eq!((product.genre.as_deref(), product.genre_locked), (Some("shader"), true));
+
+        // 「自動」 unlocks the genre and chooses it again from the category and text.
+        update_product(&mut connection, &update(None, None, true)).unwrap();
+        let product = require_product(&connection, "1004").unwrap();
+        assert!(!product.genre_locked);
+        let auto = product.genre.clone().unwrap();
+        assert_ne!(auto, "shader");
+        assert!(crate::genre::ASSET_GENRES.iter().any(|(key, _)| *key == auto));
+        assert!(product.category_locked, "the category stays fixed");
+        assert!(!classification_pinned(&product), "reclassification may change the genre again");
+
+        // A category change with 「自動」 picks a genre of the new category, not a leftover.
+        update_product(&mut connection, &update(None, Some("world"), true)).unwrap();
+        let product = require_product(&connection, "1004").unwrap();
+        assert_eq!(product.category, Some(Category::World));
+        assert!(!product.genre_locked);
+        assert!(crate::genre::WORLD_GENRES.iter().any(|(key, _)| Some(*key) == product.genre.as_deref()));
+
+        assert!(update_product(&mut connection, &update(Some("skybox"), None, true)).is_err());
+    }
+
+    #[test]
     fn world_genre_query_lists_missing_or_foreign_genres_as_unset() {
         let mut connection = open_memory().unwrap();
         import_products(&mut connection, &parse_export(SAMPLE).unwrap()).unwrap();
         update_product(&mut connection, &ProductUpdate {
             booth_id: "1004".into(), category: Some("world".into()), genre: Some("skybox".into()),
-            is_generic: None, avatar_ids: None,
+            reset_genre: false, is_generic: None, avatar_ids: None,
         }).unwrap();
         let has = |ids: Vec<String>| ids.contains(&"1004".to_string());
         assert!(has(product_ids_by_genre(&connection, "world", Some("skybox")).unwrap()));

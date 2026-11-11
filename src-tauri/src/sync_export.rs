@@ -502,6 +502,7 @@ mod tests {
                 booth_id: id.into(),
                 category: Some("outfit".into()),
                 genre: None,
+                reset_genre: false,
                 is_generic: None,
                 avatar_ids: avatars,
             },

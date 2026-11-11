@@ -14,6 +14,7 @@ import { AssetUpdates } from "../components/AssetUpdates";
 import { UnitySettings } from "../components/UnitySettings";
 import { SettingsNav } from "../components/SettingsNav";
 import { SyncExportSettings } from "../components/SyncExportSettings";
+import { RemoteSyncReport } from "../components/RemoteSyncReport";
 import { AVATAR_HERO_CHOICES, AVATAR_HERO_BASE, normalizeAvatarHero } from "../avatarHero";
 import { readWithTimeout } from "../ipcRecovery";
 
@@ -59,7 +60,14 @@ export function SettingsPage() {
     let cancelled = false;
     const update = () => void api.remoteSyncStatus().then(
       (next) => { if (!cancelled) setRemoteSync(next); },
-      (err: unknown) => { if (!cancelled) setRemoteSync({ running: false, copied: 0, skipped: 0, missing: 0, missingFiles: [], lastCompletedAt: null, error: errorText(err) }); },
+      (err: unknown) => {
+        if (!cancelled) {
+          setRemoteSync({
+            running: false, copied: 0, skipped: 0, missing: 0, missingFiles: [], conflicts: 0, conflictFiles: [],
+            sourceMissing: 0, sourceMissingFiles: [], failed: 0, failures: [], lastCompletedAt: null, error: errorText(err),
+          });
+        }
+      },
     );
     setRemoteSync(null);
     update();
@@ -257,8 +265,8 @@ export function SettingsPage() {
             <SettingRow label="リモートへ自動同期" help="アプリ起動中、登録済みの手元のファイルを約1分ごとにリモートへコピーします。">
               <label className="switch-label"><input aria-label="リモートへ自動同期" type="checkbox" checked={settings.remoteAutoSync} disabled={!settings.remoteLibraryFolder.trim()} onChange={(e) => changeSettings({ remoteAutoSync: e.target.checked })} /></label>
             </SettingRow>
-            {settings.remoteAutoSync && <div className="section-body"><p className="meta" role="status">{remoteSync?.running ? `同期中（${remoteSync.copied} 件コピー済み）` : remoteSync?.error ? `同期を再試行します: ${remoteSync.error}` : remoteSync?.lastCompletedAt ? `最終確認: ${new Date(remoteSync.lastCompletedAt).toLocaleString("ja-JP")}（${remoteSync.copied} 件コピー、${remoteSync.skipped} 件はリモートにあり）` : "同期を待っています"}</p>{remoteSync && remoteSync.missing > 0 && <p className="meta">{`${remoteSync.missing} 件はリモートの元の場所に見つかりません（${remoteSync.missingFiles.join("、")}${remoteSync.missing > remoteSync.missingFiles.length ? " ほか" : ""}）。名前の変更や削除の可能性があるため、自動ではコピーし直しません。戻すときはアバター詳細のファイル一覧で「リモートへコピー」を押してください。`}</p>}</div>}
-            <details className="settings-details"><summary>リモートライブラリについて</summary><p>自動同期は既定でオフです。オンにすると、登録済みのファイルをリモートの商品IDフォルダへコピーします。保存先を変更すると自動同期はオフになります。除外した商品と未登録のファイルは対象外です。同名ファイルは上書きせず、ローカルとリモートのファイルを削除しません。</p><p>コピーしたファイルとリモートで見つけたファイルは記録します。その後リモートで名前が変わったり消えたりしても、自動ではコピーし直しません。同期サービスが同じフォルダを作り続けないようにするためです。</p><p>接続できないときは後で再試行します。オフにしても、処理中の1件は完了する場合があります。リモートから取得する場合は「ローカルへコピー」を使ってください。</p></details>
+            {settings.remoteAutoSync && <RemoteSyncReport status={remoteSync} onRetry={() => void api.retryRemoteSync().catch((err: unknown) => fail(errorText(err)))} />}
+            <details className="settings-details"><summary>リモートライブラリについて</summary><p>自動同期は既定でオフです。オンにすると、登録済みのファイルをリモートの商品IDフォルダへコピーします。保存先を変更すると自動同期はオフになります。除外した商品と未登録のファイルは対象外です。同名ファイルは上書きせず、ローカルとリモートのファイルを削除しません。同じ名前で大きさの違うファイルがリモートにあるときは、競合として一覧に出し、コピーしません。同じ名前で同じ大きさなら同じファイルとみなします。</p><p>コピーしたファイルとリモートで見つけたファイルは記録します。その後リモートで名前が変わったり消えたりしても、自動ではコピーし直しません。同期サービスが同じフォルダを作り続けないようにするためです。</p><p>接続できないときは後で再試行します。オフにしても、処理中の1件は完了する場合があります。リモートから取得する場合は「ローカルへコピー」を使ってください。</p></details>
             <SettingRow label="ダウンロードを自動整理" help="自分でダウンロードしたファイルだけを商品別にライブラリへ移動します。">
               <label className="switch-label"><input aria-label="ダウンロードを自動整理" type="checkbox" checked={settings.routeDownloads} onChange={(e) => void changeRouting(e.target.checked)} /></label>
             </SettingRow>

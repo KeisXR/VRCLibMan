@@ -501,6 +501,7 @@ mod tests {
             booth_id: id.into(),
             category: Some(category.into()),
             genre: None,
+            reset_genre: false,
             is_generic: None,
             avatar_ids: None,
         }

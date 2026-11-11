@@ -24,6 +24,7 @@
   --text: #20222b;
   --text-secondary: #858995;
   --avatar-hero-sub: #5d616c;
+  --text-note: #5d616c;         /* 操作の結果・前提条件・失敗の説明（.note-strong）。白地で約 6.2:1 */
   --muted: var(--text-secondary);
   --faint: #a0a4ae;             /* 件数ゼロ・小見出し・欠けている状態 */
 
@@ -89,6 +90,7 @@
     --text: #f3f3f5;
     --text-secondary: #9b9ba6;
   --avatar-hero-sub: #b4b4be;
+    --text-note: #c4c4cc;
     --faint: #7e7e88;
     --button: #f5f5f7;
     --button-text: #161618;

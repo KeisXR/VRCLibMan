@@ -40,8 +40,12 @@ export function filterAvatarsByQuery(cards: AvatarCard[], query: string): Avatar
   return cards.filter((card) => matchesAll(avatarHaystack(card), tokens));
 }
 
-export function filterProductsByQuery(items: ItemView[], query: string): ItemView[] {
+/**
+ * `fullTextIds` are products that Rust matched on the stored text, including the part of
+ * the description after the card's first 500 characters. They are added to the card matches.
+ */
+export function filterProductsByQuery(items: ItemView[], query: string, fullTextIds?: ReadonlySet<string>): ItemView[] {
   const tokens = searchTokens(query);
   if (tokens.length === 0) return [];
-  return items.filter((item) => matchesAll(productHaystack(item), tokens));
+  return items.filter((item) => fullTextIds?.has(item.boothId) || matchesAll(productHaystack(item), tokens));
 }

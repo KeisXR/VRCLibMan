@@ -1,6 +1,6 @@
 use crate::library_files::{
-    choose_download_name, file_looks_like_login_page, looks_like_login_page, safe_filename,
-    without_verbatim_prefix,
+    MAX_NUMBERED_NAME, choose_download_name, file_looks_like_login_page, looks_like_login_page,
+    numbered_name, safe_filename, without_verbatim_prefix,
 };
 use serde::Serialize;
 use std::io::Write;
@@ -694,37 +694,12 @@ fn decode_percent(value: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
-fn unique_name(dir: &Path, preferred: &str) -> String {
-    let preferred = safe_filename(preferred).unwrap_or_else(|| "received.bin".to_string());
-    if std::fs::symlink_metadata(dir.join(&preferred)).is_err() {
-        return preferred;
-    }
-    let path = Path::new(&preferred);
-    let stem = path
-        .file_stem()
-        .and_then(|name| name.to_str())
-        .unwrap_or("file");
-    let extension = path.extension().and_then(|name| name.to_str());
-    for index in 2..50 {
-        let name = match extension {
-            Some(extension) => format!("{stem} ({index}).{extension}"),
-            None => format!("{stem} ({index})"),
-        };
-        if std::fs::symlink_metadata(dir.join(&name)).is_err() {
-            return name;
-        }
-    }
-    match extension {
-        Some(extension) => format!("{stem}-copy.{extension}"),
-        None => format!("{stem}-copy"),
-    }
-}
-
-/// 同じ商品のファイルを並行して受け取るので、名前を決めてから作るまでの間に
-/// 別の受け取りが同じ名前を作っても上書きしない（create_new で作り、取られていたら次の名前）。
+/// 同じ商品のファイルを並行して受け取るので、名前ごとに create_new で作り、
+/// 取られていたら次の番号へ進む。既にあるファイルを上書きしない。
 fn create_unique(dir: &Path, preferred: &str) -> Result<(PathBuf, std::fs::File), QuietError> {
-    for _ in 0..8 {
-        let path = without_verbatim_prefix(&dir.join(unique_name(dir, preferred)));
+    let preferred = safe_filename(preferred).unwrap_or_else(|| "received.bin".to_string());
+    for index in 1..=MAX_NUMBERED_NAME {
+        let path = without_verbatim_prefix(&dir.join(numbered_name(&preferred, index)));
         match std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)

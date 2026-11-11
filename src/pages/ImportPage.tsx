@@ -305,7 +305,7 @@ export function ImportPage() {
           </header>
           <details className="settings-details"><summary>商品を管理・除外</summary><ProductExclusions /></details>
           {integration?.mode !== "browser" && <><SettingRow label="拡張機能" help={receiverStatus}>
-            <a className="button" href="#/settings">
+            <a className="button secondary" href="#/settings">
               読み込み方とペアリングの設定
             </a>
           </SettingRow>
@@ -336,7 +336,7 @@ export function ImportPage() {
             <BuiltinBrowserImport />
           ) : (
             <SettingRow label="内蔵ブラウザ" help="無効です。設定で読み込み方を変更できます。">
-              <a className="button" href="#/settings">読み込み方を選ぶ</a>
+              <a className="button secondary" href="#/settings">読み込み方を選ぶ</a>
             </SettingRow>
           )}
           {integration?.browserImport && (
@@ -419,11 +419,11 @@ export function ImportPage() {
           <StaleReclassifyRow busy={busy} onExtract={() => void extract("stale")} />
           <details className="settings-details">
             <summary>すべて再分類</summary>
-            <p>
+            <p className="note-strong">
               既存の分類結果を上書きすることがあります。手動で固定した情報は維持します。
             </p>
             <button
-              className="button"
+              className="button secondary"
               type="button"
               disabled={busy}
               onClick={() => void extract("all")}
@@ -447,7 +447,7 @@ export function ImportPage() {
             }
           >
             <button
-              className="button"
+              className="button secondary"
               type="button"
               disabled={busy}
               onClick={() => void scan()}
@@ -455,8 +455,8 @@ export function ImportPage() {
               フォルダを調べる
             </button>
           </SettingRow>
-          <SettingRow label="ダウンロード済みファイルを登録" help="Downloads や別のフォルダを選び、ZIP・Unitypackage を BOOTH の配布ファイル名と照合します。元の場所に登録します。">
-            <button className="button" type="button" disabled={busy} onClick={() => void findExisting()}>取り込み元を選ぶ</button>
+          <SettingRow label="ダウンロード済みファイルを登録" help="Downloads や別のフォルダを選び、ZIP・Unitypackage を BOOTH の配布ファイル名と照合します。取り込むときに、元の場所のまま登録するか、ライブラリへコピーするかを選べます。" note="選んだだけではファイルは移動しません。">
+            <button className="button secondary" type="button" disabled={busy} onClick={() => void findExisting()}>取り込み元を選ぶ</button>
           </SettingRow>
           {existingPreview && <div className="panel">
             <h3>照合結果</h3>
@@ -483,7 +483,7 @@ export function ImportPage() {
             <label className="field"><span>取り込み方法</span><select value={existingCopy ? "copy" : "register"} disabled={busy} onChange={(e) => setExistingCopy(e.target.value === "copy")}>
               <option value="register">元の場所のまま登録</option><option value="copy" disabled={!libraryFolder}>ライブラリへコピー（元のファイルを残す）</option>
             </select></label>
-            {existingCopy && <p className="meta">コピー先: {libraryFolder}。同名ファイルは上書きしません。</p>}
+            {existingCopy && <p className="note-strong">コピー先: {libraryFolder}。同名ファイルは上書きしません。</p>}
             <button className="button primary" type="button" disabled={busy || Object.keys(selectedExisting).length === 0} onClick={() => void registerExisting()}>{busy ? "取り込み中…" : `選択した ${Object.keys(selectedExisting).length} 件を取り込む`}</button>
           </div>}
           {staged.length > 0 && (
@@ -533,7 +533,7 @@ export function ImportPage() {
               }}
             >
               <p>書き出した JSON をここにドロップ</p>
-              <label className="button">
+              <label className="button secondary">
                 ファイルを選ぶ
                 <input
                   type="file"
@@ -593,7 +593,7 @@ export function ImportPage() {
                 />
               </label>
               <button
-                className="button"
+                className="button secondary"
                 type="submit"
                 disabled={busy || freeUrl.trim() === ""}
               >
@@ -606,7 +606,7 @@ export function ImportPage() {
             help="登録済み商品のサムネイルを手元に保存します。"
           >
             <button
-              className="button"
+              className="button secondary"
               type="button"
               disabled={busy}
               onClick={() => void cache()}

@@ -1309,6 +1309,7 @@ mod tests {
                 booth_id: "7103".into(),
                 category: None,
                 genre: None,
+                reset_genre: false,
                 is_generic: None,
                 avatar_ids: Some(vec![lime]),
             },
