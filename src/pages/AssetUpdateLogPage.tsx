@@ -54,7 +54,7 @@ export function AssetUpdateLogPage({ onAcknowledge }: { onAcknowledge: () => voi
     {status?.running && <p role="status">アセットの更新を確認中… {status.progress ? `${status.progress.done} / ${status.progress.total} 件` : "確認の準備中です。"}</p>}
     {error && <div className="banner error" role="alert">{error} <button className="button" type="button" onClick={() => setReload(n => n + 1)}>再読み込み</button></div>}
     {candidates.length > 0 && <details open>
-      <summary>未確認の更新候補（{candidates.length}件）</summary>
+      <summary>未確認の更新（{candidates.length}件）</summary>
       <ul className="log-entries">{candidates.map(row => <li className="log-entry" key={row.boothId}>
         <strong>{row.title}</strong><p className="meta">{row.changes.join("・")}</p>
         <div className="row-actions"><button type="button" className="button" onClick={() => openProduct(row.boothId)}>BOOTHで確認</button>

@@ -367,6 +367,12 @@ fn migrate(connection: &Connection) -> Result<(), String> {
         tx.execute_batch("PRAGMA user_version = 12;").sql()?;
         tx.commit().sql()?;
     }
+    if version < 13 {
+        let tx = connection.unchecked_transaction().sql()?;
+        tx.execute_batch(crate::purchased_editions::TABLES).sql()?;
+        tx.execute_batch("PRAGMA user_version = 13;").sql()?;
+        tx.commit().sql()?;
+    }
     Ok(())
 }
 
@@ -2116,6 +2122,7 @@ pub(crate) fn move_product_genre_with_avatars(
         update_product(
             connection,
             &ProductUpdate {
+                purchased_editions: None,
                 booth_id: booth_id.to_string(),
                 category: Some(category.as_str().to_string()),
                 genre: Some(genre.to_string()),
@@ -2652,6 +2659,9 @@ pub(crate) fn update_product(
     .sql()?;
     if let Some(ids) = replacement {
         replace_links(&tx, &product.booth_id, &ids, "manual")?;
+    }
+    if let Some(choice) = &update.purchased_editions {
+        crate::purchased_editions::save(&tx, &product.booth_id, choice)?;
     }
     crate::sync_meta::touch_product(&tx, &product.booth_id)?;
     tx.commit().sql()?;
@@ -3277,7 +3287,10 @@ pub(crate) fn load_snapshot(connection: &Connection) -> Result<Snapshot, String>
     for avatar in &mut avatars {
         avatar.owned = avatar.owned && owned.contains(avatar.id.as_str());
     }
+    let editions = crate::purchased_editions::Catalog::load(connection)?;
     Ok(Snapshot {
+        purchased_editions: editions.scopes(),
+        manual_editions: editions.manual,
         products,
         files: load_files(connection)?
             .into_iter()
@@ -4491,6 +4504,7 @@ fn merge_avatars_unlogged(
         )
         .sql()?;
     }
+    crate::purchased_editions::merge_avatar(&tx, from_id, into_id)?;
     tx.execute("DELETE FROM avatars WHERE id = ?1", params![from_id])
         .sql()?;
     tx.commit().sql()?;
@@ -5973,7 +5987,7 @@ fn load_products(connection: &Connection) -> Result<Vec<Product>, String> {
     rows.collect::<Result<Vec<_>, _>>().sql()
 }
 
-fn load_avatars(connection: &Connection) -> Result<Vec<Avatar>, String> {
+pub(crate) fn load_avatars(connection: &Connection) -> Result<Vec<Avatar>, String> {
     let mut statement = connection
         .prepare(
             "SELECT id, display_name, base_body, aliases_json, is_builtin, owned, notes, hero_image_path FROM avatars",
@@ -6368,7 +6382,7 @@ mod tests {
             connection
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
-            12
+            13
         );
         let detail_at: Option<String> = connection
             .query_row(
@@ -6951,6 +6965,8 @@ mod tests {
         )
         .unwrap();
 
+        // This compatibility fixture owns all editions; metadata alone is not ownership.
+        connection.execute_batch("INSERT OR REPLACE INTO purchased_editions SELECT booth_id, '{\"mode\":\"all\",\"avatarIds\":[]}' FROM products").unwrap();
         let snapshot = load_snapshot(&mut connection).unwrap();
         let lime_links: Vec<_> = snapshot
             .links
@@ -7002,6 +7018,7 @@ mod tests {
         update_product(
             &mut connection,
             &ProductUpdate {
+                purchased_editions: None,
                 booth_id: "1004".into(),
                 category: Some("outfit".into()),
                 genre: None,
@@ -7042,6 +7059,7 @@ mod tests {
         let mut connection = open_memory().unwrap();
         import_products(&mut connection, &parse_export(SAMPLE).unwrap()).unwrap();
         update_product(&mut connection, &ProductUpdate {
+                purchased_editions: None,
             booth_id: "1004".into(), category: Some("outfit".into()), genre: Some("shader".into()),
             reset_genre: false, is_generic: None, avatar_ids: None,
         }).unwrap();
@@ -7062,6 +7080,7 @@ mod tests {
         let mut connection = open_memory().unwrap();
         import_products(&mut connection, &parse_export(SAMPLE).unwrap()).unwrap();
         let update = |genre: Option<&str>, category: Option<&str>, reset_genre: bool| ProductUpdate {
+                purchased_editions: None,
             booth_id: "1004".into(),
             category: category.map(str::to_string),
             genre: genre.map(str::to_string),
@@ -7100,6 +7119,7 @@ mod tests {
         let mut connection = open_memory().unwrap();
         import_products(&mut connection, &parse_export(SAMPLE).unwrap()).unwrap();
         update_product(&mut connection, &ProductUpdate {
+                purchased_editions: None,
             booth_id: "1004".into(), category: Some("world".into()), genre: Some("skybox".into()),
             reset_genre: false, is_generic: None, avatar_ids: None,
         }).unwrap();
@@ -7121,7 +7141,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 12);
+        assert_eq!(version, 13);
         let json = r#"{
             "products": [
                 {
@@ -7722,7 +7742,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 12);
+        assert_eq!(version, 13);
         let report = import_products(&mut connection, &parsed).unwrap();
         assert_eq!(report.inserted, 7);
         assert_eq!(report.skipped, 0);
@@ -7792,6 +7812,8 @@ mod tests {
         let mut connection = open(&db_path).unwrap();
         let again = import_products(&mut connection, &parsed).unwrap();
         assert_eq!(again.unchanged, 7);
+        // This compatibility fixture owns all editions; metadata alone is not ownership.
+        connection.execute_batch("INSERT OR REPLACE INTO purchased_editions SELECT booth_id, '{\"mode\":\"all\",\"avatarIds\":[]}' FROM products").unwrap();
         let snapshot = load_snapshot(&mut connection).unwrap();
         let mut ids: Vec<_> = avatar_cards(&snapshot)
             .into_iter()
@@ -7997,7 +8019,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 12);
+        assert_eq!(version, 13);
         assert!(!settings(&connection).unwrap().ui_rail_collapsed);
         let saved = update_settings(
             &connection,
@@ -8066,7 +8088,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 12);
+        assert_eq!(version, 13);
         assert!(!settings(&connection).unwrap().preview_pane);
         assert_eq!(settings(&connection).unwrap().preview_pane_width, 300);
         let saved = update_settings(
@@ -8114,7 +8136,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 12);
+        assert_eq!(version, 13);
     }
 
     #[test]
@@ -8123,7 +8145,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 12);
+        assert_eq!(version, 13);
         assert!(!settings(&connection).unwrap().browser_force_dark);
         connection
             .execute("DELETE FROM settings WHERE key = 'browser_force_dark'", [])
@@ -8170,7 +8192,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 12);
+        assert_eq!(version, 13);
     }
 
     #[test]
@@ -8250,7 +8272,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 12);
+        assert_eq!(version, 13);
     }
 
     #[test]
@@ -10943,7 +10965,7 @@ mod tests {
             ]
         );
         let detail = avatar_detail(&load_snapshot(&connection).unwrap(), "lime").unwrap();
-        assert!(section_items(&detail, "uncategorized").iter().any(|(booth_id, _)| booth_id == "515151"));
+        assert!(detail.unset_edition_items.iter().any(|item| item.booth_id == "515151"));
 
         apply_extraction(
             &mut connection,
@@ -11549,6 +11571,8 @@ mod tests {
             0.6,
         )
         .unwrap();
+        // This compatibility fixture owns all editions; metadata alone is not ownership.
+        connection.execute_batch("INSERT OR REPLACE INTO purchased_editions SELECT booth_id, '{\"mode\":\"all\",\"avatarIds\":[]}' FROM products").unwrap();
         let snapshot = load_snapshot(&mut connection).unwrap();
         let kipfel = avatar_detail(&snapshot, "mf-5813187").unwrap();
         assert!(kipfel.siblings.iter().any(|sibling| sibling.id == "mf-4340548"));

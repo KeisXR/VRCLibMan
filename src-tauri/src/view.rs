@@ -7,6 +7,8 @@ use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone)]
 pub struct Snapshot {
+    pub purchased_editions: HashMap<String, crate::purchased_editions::Choice>,
+    pub manual_editions: HashMap<String, crate::purchased_editions::Choice>,
     pub products: Vec<Product>,
     pub files: Vec<LocalFile>,
     pub avatars: Vec<Avatar>,
@@ -56,6 +58,7 @@ pub struct DownloadView {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ItemView {
+    pub purchased_editions: crate::purchased_editions::Choice,
     pub booth_id: String,
     pub title: String,
     pub shop: String,
@@ -171,12 +174,14 @@ pub struct AvatarDetail {
     pub sections: Vec<Section>,
     pub generic_items: Vec<ItemView>,
     pub unsupported_outfits: Vec<ItemView>,
+    pub unset_edition_items: Vec<ItemView>,
 }
 
 /// What the product editor needs. Saving goes through `update_product`.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProductEditView {
+    pub purchased_editions: crate::purchased_editions::Choice,
     pub booth_id: String,
     pub title: String,
     pub shop: String,
@@ -225,6 +230,7 @@ struct Classified {
     owned: Vec<ItemView>,
     sections: Vec<Section>,
     generic: Vec<ItemView>,
+    unset: Vec<ItemView>,
 }
 
 pub fn avatar_cards(snapshot: &Snapshot) -> Vec<AvatarCard> {
@@ -290,6 +296,7 @@ pub fn avatar_detail(snapshot: &Snapshot, id: &str) -> Option<AvatarDetail> {
         sections: classified.sections,
         generic_items: classified.generic,
         unsupported_outfits: outfits_for_adjustment(snapshot, avatar),
+        unset_edition_items: classified.unset,
     })
 }
 
@@ -406,6 +413,7 @@ pub fn product_edit_view(snapshot: &Snapshot, booth_id: &str) -> Option<ProductE
         .iter()
         .find(|product| product.booth_id == booth_id)?;
     Some(ProductEditView {
+        purchased_editions: snapshot.manual_editions.get(booth_id).cloned().unwrap_or_default(),
         booth_id: product.booth_id.clone(),
         title: product.title.clone(),
         shop: product.shop.clone(),
@@ -508,6 +516,7 @@ pub fn product_options(snapshot: &Snapshot) -> Vec<ProductOption> {
 
 fn classify(snapshot: &Snapshot, avatar: &Avatar) -> Classified {
     let family = family_ids(snapshot, avatar);
+    let mut unset = Vec::new();
     let mut specific: Vec<(String, ItemView)> = Vec::new();
     let mut generic = Vec::new();
     let mut owned = Vec::new();
@@ -521,7 +530,10 @@ fn classify(snapshot: &Snapshot, avatar: &Avatar) -> Classified {
             .filter(|link| link.product_id == product.booth_id)
             .map(|link| link.avatar_id.as_str())
             .collect();
-        let in_family = linked.iter().any(|id| family.contains(*id));
+        let compatibility_linked = linked.contains(avatar.id.as_str());
+        let scope = snapshot.purchased_editions.get(&product.booth_id);
+        let purchased: HashSet<&str> = scope.map(|s| s.avatar_ids.iter().map(String::as_str).collect()).unwrap_or_default();
+        let in_family = purchased.iter().any(|id| linked.contains(id) && family.contains(*id));
         let directly_linked = linked.contains(avatar.id.as_str());
         if product.category == Some(Category::Avatar) {
             if directly_linked {
@@ -529,8 +541,13 @@ fn classify(snapshot: &Snapshot, avatar: &Avatar) -> Classified {
             }
             continue;
         }
+        if scope.is_none_or(|s| s.mode == "unknown") && compatibility_linked {
+            unset.push(item_view(snapshot, product, false));
+            continue;
+        }
+        let directly_linked = compatibility_linked && purchased.contains(avatar.id.as_str());
         // Sharing a body does not establish compatibility with another head.
-        if directly_linked || (in_family && product.category != Some(Category::Hair)) {
+        if directly_linked || (!compatibility_linked && in_family && product.category != Some(Category::Hair)) {
             let key = product
                 .category
                 .map(Category::as_str)
@@ -581,6 +598,7 @@ fn classify(snapshot: &Snapshot, avatar: &Avatar) -> Classified {
         owned,
         sections,
         generic,
+        unset,
     }
 }
 
@@ -641,6 +659,7 @@ fn item_view(snapshot: &Snapshot, product: &Product, via_base_body: bool) -> Ite
         .iter()
         .find(|flag| flag.booth_id == product.booth_id);
     ItemView {
+        purchased_editions: snapshot.purchased_editions.get(&product.booth_id).cloned().unwrap_or_else(crate::purchased_editions::Choice::unknown),
         booth_id: product.booth_id.clone(),
         title: product.title.clone(),
         shop: product.shop.clone(),
@@ -887,8 +906,21 @@ mod tests {
         }
     }
 
+    // Compatibility fixtures own the full set; edition ownership itself is tested separately.
+    fn with_full_sets(snapshot: &Snapshot) -> Snapshot {
+        let mut result = snapshot.clone();
+        for product in &result.products {
+            result.purchased_editions.insert(product.booth_id.clone(), crate::purchased_editions::Choice {
+                mode: "all".into(), avatar_ids: result.links.iter().filter(|l| l.product_id == product.booth_id).map(|l| l.avatar_id.clone()).collect(),
+            });
+        }
+        result
+    }
+
     fn sample() -> Snapshot {
         Snapshot {
+            purchased_editions: HashMap::new(),
+            manual_editions: HashMap::new(),
             products: vec![
                 product("1", "ライム", Some(Category::Avatar), false),
                 product("2", "プラム", Some(Category::Avatar), false),
@@ -932,7 +964,7 @@ mod tests {
     #[test]
     fn shared_base_shows_outfit_without_owning_unrelated_avatars() {
         let snapshot = sample();
-        let cards = avatar_cards(&snapshot);
+        let cards = avatar_cards(&with_full_sets(&snapshot));
         let ids: HashSet<_> = cards.iter().map(|card| card.id.as_str()).collect();
         assert_eq!(ids, HashSet::from(["lime", "plum", "manuka", "shinano"]));
         assert!(cards.iter().find(|card| card.id == "lime").unwrap().owned);
@@ -944,7 +976,7 @@ mod tests {
                 .owned
         );
 
-        let lime = avatar_detail(&snapshot, "lime").unwrap();
+        let lime = avatar_detail(&with_full_sets(&snapshot), "lime").unwrap();
         assert!(lime.sections.iter().any(|section| {
             section.category == "outfit"
                 && section
@@ -956,7 +988,7 @@ mod tests {
         assert!(!lime.generic_items.iter().any(|item| item.booth_id == "7"));
         assert!(lime.siblings.iter().any(|sibling| sibling.id == "plum"));
 
-        let plum = avatar_detail(&snapshot, "plum").unwrap();
+        let plum = avatar_detail(&with_full_sets(&snapshot), "plum").unwrap();
         let outfit = plum
             .sections
             .iter()
@@ -965,7 +997,7 @@ mod tests {
             .unwrap();
         assert!(outfit.via_base_body);
 
-        let manuka = avatar_detail(&snapshot, "manuka").unwrap();
+        let manuka = avatar_detail(&with_full_sets(&snapshot), "manuka").unwrap();
         assert!(
             !manuka
                 .sections
@@ -993,7 +1025,7 @@ mod tests {
         ]);
 
         for (id, expected) in [("lime", vec!["20", "21", "23"]), ("plum", vec!["21"])] {
-            let detail = avatar_detail(&snapshot, id).unwrap();
+            let detail = avatar_detail(&with_full_sets(&snapshot), id).unwrap();
             let hair = detail
                 .sections
                 .iter()
@@ -1008,14 +1040,14 @@ mod tests {
             assert_eq!(ids, expected, "{id}");
             assert!(hair.items.iter().all(|item| !item.via_base_body));
             assert!(detail.generic_items.iter().any(|item| item.booth_id == "22"));
-            let cards = avatar_cards(&snapshot);
+            let cards = avatar_cards(&with_full_sets(&snapshot));
             assert_eq!(
                 cards.iter().find(|card| card.id == id).unwrap().hair_count,
                 expected.len() as u32
             );
         }
         // Clothes still follow the shared body.
-        let plum = avatar_detail(&snapshot, "plum").unwrap();
+        let plum = avatar_detail(&with_full_sets(&snapshot), "plum").unwrap();
         assert!(
             plum.sections
                 .iter()
@@ -1038,7 +1070,7 @@ mod tests {
             remote_path: None,
             downloadable_id: None,
         });
-        let lime = avatar_detail(&snapshot, "lime").unwrap();
+        let lime = avatar_detail(&with_full_sets(&snapshot), "lime").unwrap();
         let body = lime
             .owned_products
             .iter()
@@ -1080,7 +1112,7 @@ mod tests {
             .push(product("9", "表情ギミック", Some(Category::Gimmick), false));
         snapshot.links.push(link("9", "lime"));
         for id in ["lime", "plum", "manuka", "world-only"] {
-            let detail = avatar_detail(&snapshot, id).unwrap();
+            let detail = avatar_detail(&with_full_sets(&snapshot), id).unwrap();
             assert!(
                 detail
                     .sections
@@ -1100,7 +1132,7 @@ mod tests {
                     .all(|item| item.category != Some(Category::World))
             );
         }
-        let lime = avatar_detail(&snapshot, "lime").unwrap();
+        let lime = avatar_detail(&with_full_sets(&snapshot), "lime").unwrap();
         assert!(
             lime.sections
                 .iter()
@@ -1109,7 +1141,7 @@ mod tests {
         );
         assert!(lime.generic_items.iter().any(|item| item.booth_id == "5"));
         assert!(
-            avatar_cards(&snapshot)
+            avatar_cards(&with_full_sets(&snapshot))
                 .iter()
                 .all(|card| card.id != "world-only")
         );
@@ -1145,7 +1177,7 @@ mod tests {
             link("16", "shinano"),
         ]);
         for id in ["lime", "plum"] {
-            let detail = avatar_detail(&snapshot, id).unwrap();
+            let detail = avatar_detail(&with_full_sets(&snapshot), id).unwrap();
             let ids: HashSet<_> = detail
                 .unsupported_outfits
                 .iter()
@@ -1171,13 +1203,13 @@ mod tests {
                     .iter()
                     .any(|item| item.booth_id == "15")
             );
-            let card = avatar_cards(&snapshot)
+            let card = avatar_cards(&with_full_sets(&snapshot))
                 .into_iter()
                 .find(|card| card.id == id)
                 .unwrap();
             assert_eq!(card.outfit_count, 2);
         }
-        let manuka = avatar_detail(&snapshot, "manuka").unwrap();
+        let manuka = avatar_detail(&with_full_sets(&snapshot), "manuka").unwrap();
         let ids: HashSet<_> = manuka
             .unsupported_outfits
             .iter()
@@ -1206,7 +1238,7 @@ mod tests {
                 .products
                 .push(product(id, title, Some(Category::Outfit), false));
         }
-        let detail = avatar_detail(&snapshot, "lime").unwrap();
+        let detail = avatar_detail(&with_full_sets(&snapshot), "lime").unwrap();
         assert_eq!(
             detail
                 .unsupported_outfits

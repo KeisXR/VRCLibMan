@@ -142,7 +142,7 @@ export default function App() {
   useAssetUpdateNotice(notify);
   const assetUpdate = useSidebarAssetUpdate(notify, fail);
   const pendingAssetUpdates = assetUpdate.status?.rows.filter((row) => row.enabled && row.changes.length > 0).length ?? 0;
-  const pendingUpdateLabel = pendingAssetUpdates > 0 ? `未確認のアセット更新候補 ${pendingAssetUpdates} 件` : undefined;
+  const pendingUpdateLabel = pendingAssetUpdates > 0 ? `未確認の更新 ${pendingAssetUpdates} 件` : undefined;
   const [revision, setRevision] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   // While an IME composition is open in the sidebar box, moving to the search page would

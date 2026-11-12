@@ -429,6 +429,8 @@ struct LibraryProduct {
 
 /// 分類の今の値。購入履歴は分類を写さず、表示のたびにここから引く。
 struct Library {
+    avatars: HashMap<String, AvatarRef>,
+    editions: crate::purchased_editions::Catalog,
     products: HashMap<String, LibraryProduct>,
     links: HashMap<String, Vec<AvatarRef>>,
     bodies: HashMap<String, AvatarRef>,
@@ -507,6 +509,8 @@ fn load_library(connection: &Connection) -> Result<Library, String> {
         }
     }
     Ok(Library {
+        avatars: crate::db::load_avatars(connection)?.into_iter().map(|a| (a.id.clone(), AvatarRef { id: a.id, name: a.display_name, owned: a.owned })).collect(),
+        editions: crate::purchased_editions::Catalog::load(connection)?,
         products,
         links,
         bodies,
@@ -527,7 +531,7 @@ pub struct PurchaseGroup {
 
 /// アバター別の枠。本体ならそのアバター、対応アバターがあれば直接の対応だけ、無ければ汎用か分類なし。
 /// 同じ素体のほかのアバターには広げない。
-fn groups_for(library: &Library, booth_id: &str) -> (Vec<PurchaseGroup>, Vec<bool>) {
+fn groups_for(library: &Library, booth_id: &str, name: &str) -> (Vec<PurchaseGroup>, Vec<bool>) {
     if let Some(avatar) = library.bodies.get(booth_id) {
         return (
             vec![PurchaseGroup {
@@ -540,7 +544,14 @@ fn groups_for(library: &Library, booth_id: &str) -> (Vec<PurchaseGroup>, Vec<boo
             vec![avatar.owned],
         );
     }
-    if let Some(avatars) = library.links.get(booth_id).filter(|avatars| !avatars.is_empty()) {
+    let hint = library.products.get(booth_id).and_then(|p| variation_of(name, &p.title));
+    let scope = library.editions.scope(booth_id, hint.as_deref());
+    if !scope.avatar_ids.is_empty() || library.links.get(booth_id).is_some_and(|a| !a.is_empty()) {
+        let avatars: Vec<_> = scope.avatar_ids.iter().filter_map(|id| library.avatars.get(id)).collect();
+        if avatars.len() != 1 {
+            let (key, label) = if avatars.len() > 1 { ("multiple", "複数アバター対応") } else { ("unset", "対応版未設定") };
+            return (vec![PurchaseGroup { key: key.into(), kind: key, label: label.into(), avatar_id: None, body: false }], vec![false]);
+        }
         return (
             avatars
                 .iter()
@@ -578,13 +589,7 @@ fn groups_for(library: &Library, booth_id: &str) -> (Vec<PurchaseGroup>, Vec<boo
 
 /// 商品名が「商品名 (バリエーション)」の形なら、括弧の中をバリエーションとして返す。
 fn variation_of(name: &str, title: &str) -> Option<String> {
-    let title = title.trim();
-    if title.is_empty() {
-        return None;
-    }
-    let rest = name.strip_prefix(title)?.trim_start();
-    let inner = rest.strip_prefix('(')?.strip_suffix(')')?.trim();
-    (!inner.is_empty()).then(|| inner.to_string())
+    crate::purchased_editions::variation_of(name, title)
 }
 
 fn amount(item: &StoredItem) -> Option<i64> {
@@ -765,11 +770,11 @@ pub(crate) fn status(connection: &Connection, running: bool) -> Result<PurchaseS
 
 fn item_view(library: &Library, item: &StoredItem) -> PurchaseItemView {
     let product = library.products.get(&item.booth_id);
-    let (groups, _) = groups_for(library, &item.booth_id);
+    let (groups, _) = groups_for(library, &item.booth_id, &item.name);
     PurchaseItemView {
         id: item.id,
         booth_id: item.booth_id.clone(),
-        name: item.name.clone(),
+        name: product.map(|p| p.title.clone()).unwrap_or_else(|| item.name.clone()),
         variation: product.and_then(|product| variation_of(&item.name, &product.title)),
         shop: item.shop.clone(),
         price_yen: item.price_yen,
@@ -808,6 +813,7 @@ fn haystack(view: &PurchaseOrderView, label_names: &HashMap<i64, String>) -> Str
     }
     for item in &view.items {
         parts.push(item.name.clone());
+        parts.extend(item.variation.clone());
         parts.push(item.shop.clone());
         parts.push(item.booth_id.clone());
         parts.extend(item.groups.iter().map(|group| group.label.clone()));
@@ -934,7 +940,7 @@ pub struct PurchaseSummary {
     pub show_prices: bool,
 }
 
-/// アバター別の集計。複数のアバターに対応する商品は各アバターに全額で数え、全体の合計では一度だけ数える。
+/// 購入した対応版ごとの集計。複数アバター対応は専用の枠に一度だけ数える。
 /// 贈ったギフトは枠に入れない。
 pub(crate) fn summary(connection: &Connection, year: Option<i32>) -> Result<PurchaseSummary, String> {
     let library = load_library(connection)?;
@@ -967,7 +973,7 @@ pub(crate) fn summary(connection: &Connection, year: Option<i32>) -> Result<Purc
                 summary.gift_yen += value.unwrap_or(0);
                 continue;
             }
-            let (item_groups, owned) = groups_for(&library, &item.booth_id);
+            let (item_groups, owned) = groups_for(&library, &item.booth_id, &item.name);
             for (group, owned) in item_groups.into_iter().zip(owned) {
                 let entry = groups.entry(group.key.clone()).or_insert_with(|| SummaryGroup {
                     key: group.key.clone(),
@@ -1346,8 +1352,8 @@ mod tests {
         let hair = page(&connection, &PurchaseQuery { query: "ﾌﾟﾗﾑ 黒".into(), ..Default::default() }, false).unwrap();
         assert_eq!(hair.total, 1);
         assert_eq!(hair.orders[0].items[0].variation.as_deref(), Some("黒"));
-        assert_eq!(hair.orders[0].items[0].groups[0].key, "avatar:plum");
-        let by_group = page(&connection, &PurchaseQuery { group: Some("avatar:plum".into()), ..Default::default() }, false).unwrap();
+        assert_eq!(hair.orders[0].items[0].groups[0].key, "unset");
+        let by_group = page(&connection, &PurchaseQuery { group: Some("unset".into()), ..Default::default() }, false).unwrap();
         assert_eq!(by_group.total, 1);
         let gifts = page(&connection, &PurchaseQuery { gift: Some(true), ..Default::default() }, false).unwrap();
         assert_eq!(gifts.total, 1);
@@ -1366,7 +1372,7 @@ mod tests {
     }
 
     #[test]
-    fn avatar_totals_count_each_avatar_once_and_leave_gifts_out() {
+    fn totals_do_not_assign_unresolved_editions_to_compatible_avatars() {
         let mut connection = db();
         product(&connection, "4000", "プラム本体", false);
         connection
@@ -1392,8 +1398,9 @@ mod tests {
         assert_eq!((all.gift_items, all.gift_yen), (1, 2000));
         let get = |key: &str| all.groups.iter().find(|group| group.key == key).unwrap().clone();
         let plum = get("avatar:plum");
-        assert_eq!((plum.items, plum.body_items, plum.amount_yen), (2, 1, 7500));
-        assert_eq!(get("avatar:lime").amount_yen, 2500);
+        assert_eq!((plum.items, plum.body_items, plum.amount_yen), (1, 1, 5000));
+        assert_eq!(get("unset").amount_yen, 2500);
+        assert!(!all.groups.iter().any(|g| g.key == "avatar:lime"));
         assert_eq!(get("generic").amount_yen, 300);
         let unclassified = get("unclassified");
         assert_eq!((unclassified.items, unclassified.unknown_amount_items), (1, 1));
@@ -1409,6 +1416,26 @@ mod tests {
         set_gift_override(&connection, "1003", None).unwrap();
         assert_eq!(summary(&connection, None).unwrap().gift_items, 1);
         assert!(set_gift_override(&connection, "9999", Some(true)).is_err());
+    }
+
+    #[test]
+    fn individual_orders_and_full_sets_have_disjoint_nonduplicating_spend_groups() {
+        let mut c = db();
+        product(&c, "6001", "衣装A", false);
+        for id in ["lime", "plum", "manuka"] { link(&c, "6001", id); }
+        for (id, variant, price) in [("1001", "Lime", 1500), ("1002", "Plum", 1600), ("1003", "フルセット", 5000), ("1004", "黒", 100)] {
+            apply_detail(&mut c, &detail(id, "2026-01-01T00:00:00+09:00", false, vec![item("6001", &format!("衣装A ({variant})"), Some(price), Some(0))])).unwrap();
+        }
+        let summary = summary(&c, None).unwrap();
+        assert_eq!(summary.total_yen, 8200);
+        assert_eq!(summary.groups.iter().map(|g| g.amount_yen).sum::<i64>(), 8200);
+        for (key, expected) in [("avatar:lime",1500),("avatar:plum",1600),("multiple",5000),("unset",100)] {
+            assert_eq!(summary.groups.iter().find(|g| g.key==key).unwrap().amount_yen, expected);
+        }
+        assert!(!summary.groups.iter().any(|g| g.key=="avatar:manuka"));
+        let lime = page(&c, &PurchaseQuery { group: Some("avatar:lime".into()), ..Default::default() }, false).unwrap();
+        assert_eq!(lime.total, 1);
+        assert_eq!(lime.orders[0].items[0].variation.as_deref(), Some("Lime"));
     }
 
     #[test]

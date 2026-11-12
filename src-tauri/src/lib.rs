@@ -37,6 +37,7 @@ mod preview_image;
 mod progress;
 mod purchase_walk;
 mod purchases;
+mod purchased_editions;
 mod quiet;
 mod resolve;
 mod retired_classifier;

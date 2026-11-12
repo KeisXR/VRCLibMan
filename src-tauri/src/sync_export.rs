@@ -17,7 +17,7 @@ use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
 const FORMAT: &str = "vrclibman-sync";
-const VERSION: u32 = 3;
+const VERSION: u32 = 4;
 const MANIFEST_ENTRY: &str = "manifest.json";
 const THUMBNAIL_ENTRIES: &str = "files/thumbnails";
 const HERO_ENTRIES: &str = "files/heroes";
@@ -45,6 +45,7 @@ pub(crate) struct SyncFile {
     pub file_links: Vec<SyncFileLink>,
     /// 購入履歴。注文、金額、ラベル。版 3 で足した。
     pub purchases: crate::purchases::SyncPurchases,
+    pub purchased_editions: BTreeMap<String, crate::purchased_editions::Choice>,
     pub counts: SyncCounts,
 }
 
@@ -330,6 +331,7 @@ pub(crate) fn build(connection: &mut Connection, app_version: &str) -> Result<Sy
     let avatars = load_avatars(&tx, &products)?;
     let file_links = load_file_links(&tx)?;
     let purchases = crate::purchases::export(&tx)?;
+    let purchased_editions = crate::purchased_editions::Catalog::load(&tx)?.manual.into_iter().filter(|(id, _)| products.iter().any(|p| &p.booth_id == id)).collect();
     sql(tx.commit())?;
     let counts = SyncCounts {
         products: products.len(),
@@ -356,6 +358,7 @@ pub(crate) fn build(connection: &mut Connection, app_version: &str) -> Result<Sy
         avatars,
         file_links,
         purchases,
+        purchased_editions,
         counts,
     })
 }
@@ -499,6 +502,7 @@ mod tests {
         db::update_product(
             connection,
             &ProductUpdate {
+                purchased_editions: None,
                 booth_id: id.into(),
                 category: Some("outfit".into()),
                 genre: None,
@@ -592,12 +596,12 @@ mod tests {
         let file = export(&mut connection);
         for key in [
             "format", "version", "device", "appVersion", "exportedAt", "config", "products",
-            "avatars", "fileLinks", "purchases", "counts",
+            "avatars", "fileLinks", "purchases", "purchasedEditions", "counts",
         ] {
             assert!(file.get(key).is_some(), "{key}");
         }
         assert_eq!(file["format"], "vrclibman-sync");
-        assert_eq!(file["version"], 3);
+        assert_eq!(file["version"], 4);
         assert_eq!(file["appVersion"], "9.9.9");
         assert_eq!(file["products"].as_array().unwrap().len(), 0);
         assert_eq!(file["config"]["values"].as_object().unwrap().len(), 6);
@@ -942,7 +946,7 @@ mod tests {
             ["files/heroes/lime.png", "files/thumbnails/1001.jpg", "manifest.json"]
         );
         assert_eq!(file["format"], "vrclibman-sync");
-        assert_eq!(file["version"], 3);
+        assert_eq!(file["version"], 4);
         let item = product(&file, "1001");
         assert_eq!(item["shop"], "見本工房");
         assert_eq!(item["descriptionSnippet"], "見本の説明本文");
@@ -1159,7 +1163,7 @@ mod tests {
         std::fs::write(&path, "older content that is not a package").unwrap();
         save_empty(&path).unwrap();
         let manifest: Value = serde_json::from_slice(&entry_bytes(&path, MANIFEST_ENTRY)).unwrap();
-        assert_eq!(manifest["version"], 3);
+        assert_eq!(manifest["version"], 4);
         let names = std::fs::read_dir(dir.path()).unwrap().count();
         assert_eq!(names, 1);
     }

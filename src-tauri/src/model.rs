@@ -717,6 +717,7 @@ pub struct ProductUpdate {
     pub reset_genre: bool,
     pub is_generic: Option<bool>,
     pub avatar_ids: Option<Vec<String>>,
+    pub purchased_editions: Option<crate::purchased_editions::Choice>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

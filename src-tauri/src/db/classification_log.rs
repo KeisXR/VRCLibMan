@@ -925,7 +925,7 @@ mod tests {
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(run_count(&connection), 0);
-        assert_eq!(version, 12);
+        assert_eq!(version, 13);
     }
 
     #[test]
@@ -945,7 +945,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 12);
+        assert_eq!(version, 13);
         assert_eq!(run_count(&connection), 0, "the migration writes no pseudo history");
         let product = require_product(&connection, "9001").unwrap();
         assert_eq!(product.category, Some(Category::Outfit));
@@ -1306,6 +1306,7 @@ mod tests {
         update_product(
             &mut connection,
             &ProductUpdate {
+                purchased_editions: None,
                 booth_id: "7103".into(),
                 category: None,
                 genre: None,

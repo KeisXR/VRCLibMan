@@ -498,6 +498,7 @@ mod tests {
 
     fn manual_update(id: &str, category: &str) -> ProductUpdate {
         ProductUpdate {
+                purchased_editions: None,
             booth_id: id.into(),
             category: Some(category.into()),
             genre: None,
@@ -546,7 +547,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 12);
+        assert_eq!(version, 13);
         for (entity, key) in [
             (ENTITY_CLASSIFICATION, "9001"),
             (ENTITY_LINKS, "9001"),
@@ -681,6 +682,7 @@ mod tests {
         db::update_product(
             &mut connection,
             &ProductUpdate {
+                purchased_editions: None,
                 avatar_ids: Some(vec!["lime".into()]),
                 ..manual_update("9001", "outfit")
             },

@@ -149,3 +149,12 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
     transition: none !important;
   }
 }
+
+/* 商品の対応範囲と購入した対応版 */
+.product-edit-dialog { overflow: hidden; }
+.product-edit-dialog .edit-card { max-height: calc(100dvh - 48px); overflow: auto; }
+.product-edit-dialog .edit-card > .row-actions { position: sticky; bottom: -16px; z-index: 1; background: var(--surface); padding: 12px 0; }
+.product-edit-dialog .edition-avatar-list { min-height: 70px; max-height: min(200px, 25dvh); overflow: auto; }
+.product-edit-dialog .edit-main .card-title { max-height: 4em; overflow: auto; }
+
+.product-edit-dialog .picker label.picker-loose { color: var(--text-secondary); }

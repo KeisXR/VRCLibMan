@@ -718,6 +718,18 @@ function browseGenre(item: Product, known: readonly string[]): string {
   return item.genre && known.includes(item.genre) ? item.genre : GENRE_UNSET;
 }
 
+const manualEditions = new Map<string, import("../types").PurchasedEditions>();
+function previewEdition(item: Product): import("../types").PurchasedEditions {
+ const manual = manualEditions.get(item.boothId);
+ if (manual && manual.mode !== "auto") return manual.mode === "all" ? { mode: "all", avatarIds: linksOf(item.boothId) } : manual;
+ const ids = new Set<string>();
+ for (const v of store.variations.filter(v => v.boothId === item.boothId && v.owned)) {
+  const hits = store.avatars.filter(a => [a.displayName, ...a.aliases].some(n => n.toLowerCase() === v.name.toLowerCase()));
+  if (hits.length === 1) ids.add(hits[0].id);
+ }
+ return { mode: ids.size ? "specific" : "unknown", avatarIds: [...ids] };
+}
+
 function itemView(item: Product, viaBaseBody: boolean): ItemView {
   const downloads = placedDownloads(item.boothId);
   const names = new Set(downloads.map((file) => file.filename));
@@ -725,6 +737,7 @@ function itemView(item: Product, viaBaseBody: boolean): ItemView {
   const remoteConfigured = store.settings.remoteLibraryFolder.trim().length > 0;
   const remoteChecked = !remoteConfigured || store.remoteChecked;
   return {
+    purchasedEditions: previewEdition(item),
     boothId: item.boothId,
     title: item.title,
     shop: item.shop,
@@ -757,23 +770,28 @@ function classify(avatar: AvatarRecord): {
   owned: ItemView[];
   sections: Section[];
   generic: ItemView[];
+  unset: ItemView[];
   thumbnailPath: string | null;
   thumbnailUrl: string | null;
 } {
   const family = familyOf(avatar);
   const specific: { key: string; item: ItemView }[] = [];
   const generic: ItemView[] = [];
+  const unset: ItemView[] = [];
   const owned: ItemView[] = [];
   for (const item of activeProducts()) {
     if (item.category === "world") continue;
     const linked = new Set(linksOf(item.boothId));
-    const inFamily = [...linked].some((id) => family.has(id));
-    const directlyLinked = linked.has(avatar.id);
+    const edition = previewEdition(item);
+    const inFamily = edition.avatarIds.some((id) => linked.has(id) && family.has(id));
+    let directlyLinked = linked.has(avatar.id);
     if (item.category === "avatar") {
       if (directlyLinked) owned.push(itemView(item, false));
       continue;
     }
-    if (directlyLinked || (inFamily && item.category !== "hair")) {
+    if (edition.mode === "unknown" && directlyLinked) { unset.push(itemView(item, false)); continue; }
+    directlyLinked = linked.has(avatar.id) && edition.avatarIds.includes(avatar.id);
+    if (directlyLinked || (!linked.has(avatar.id) && inFamily && item.category !== "hair")) {
       specific.push({
         key: item.category ?? "uncategorized",
         item: itemView(item, !directlyLinked),
@@ -791,6 +809,7 @@ function classify(avatar: AvatarRecord): {
     owned,
     sections,
     generic,
+    unset,
     thumbnailPath: owned.find((body) => body.thumbnailPath)?.thumbnailPath ?? null,
     thumbnailUrl: owned.find((body) => body.thumbnailUrl)?.thumbnailUrl ?? null,
   };
@@ -881,6 +900,7 @@ function detail(id: string): AvatarDetail {
     sections: view.sections,
     genericItems: view.generic,
     unsupportedOutfits,
+    unsetEditionItems: view.unset,
   };
 }
 
@@ -888,6 +908,7 @@ function productForEdit(boothId: string): ProductEditView {
   const item = activeProducts().find((product) => product.boothId === boothId);
   if (!item) throw new Error("商品が見つかりません");
   return {
+    purchasedEditions: manualEditions.get(boothId) ?? { mode: "auto", avatarIds: [] },
     boothId: item.boothId,
     title: item.title,
     shop: item.shop,
@@ -1086,6 +1107,7 @@ function isIgnorableName(name: string): boolean {
 }
 
 function updateProduct(update: ProductUpdate) {
+  if (update.purchasedEditions) manualEditions.set(update.boothId, update.purchasedEditions);
   const item = store.products.find((product) => product.boothId === update.boothId);
   if (!item) throw new Error("商品が見つかりません");
   if (update.resetGenre && update.genre) throw new Error("ジャンルの固定と「自動」は同時に指定できません");
@@ -1266,8 +1288,9 @@ function previewSyncExport(): string {
     }));
   const purchases = previewPurchaseExport();
   return `${JSON.stringify({
+    purchasedEditions: Object.fromEntries([...manualEditions].sort(([a], [b]) => a.localeCompare(b))),
     format: "vrclibman-sync",
-    version: 3,
+    version: 4,
     device,
     appVersion: "preview",
     exportedAt: new Date().toISOString(),
