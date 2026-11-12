@@ -470,7 +470,7 @@ export interface LibraryWalkReport {
   unchanged: number;
 }
 
-export type PurchaseGroupKind = "avatar" | "generic" | "unclassified" | "multiple" | "unset";
+export type PurchaseGroupKind = "avatar" | "generic" | "world" | "unclassified" | "multiple" | "unset";
 
 /** アバター別の枠。`key` は `avatar:<id>`、`generic`、`unclassified`。 */
 export interface PurchaseGroup {

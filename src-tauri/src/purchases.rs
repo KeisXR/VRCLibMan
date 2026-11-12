@@ -520,7 +520,7 @@ fn load_library(connection: &Connection) -> Result<Library, String> {
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PurchaseGroup {
-    /// `avatar:<id>`、`generic`、`unclassified`。
+    /// アバター・購入版または分類別の枠のキー。
     pub key: String,
     pub kind: &'static str,
     pub label: String,
@@ -529,10 +529,29 @@ pub struct PurchaseGroup {
     pub body: bool,
 }
 
-/// アバター別の枠。本体ならそのアバター、対応アバターがあれば直接の対応だけ、無ければ汎用か分類なし。
+fn body_for<'a>(library: &'a Library, booth_id: &str) -> Option<&'a AvatarRef> {
+    library.bodies.get(booth_id).or_else(|| {
+        if library.products.get(booth_id)?.category.as_deref() != Some("avatar") {
+            return None;
+        }
+        let [avatar] = library.links.get(booth_id)?.as_slice() else { return None };
+        Some(avatar)
+    })
+}
+
+/// 購入版か、アバター別に分けない商品の分類で集計する。
 /// 同じ素体のほかのアバターには広げない。
 fn groups_for(library: &Library, booth_id: &str, name: &str) -> (Vec<PurchaseGroup>, Vec<bool>) {
-    if let Some(avatar) = library.bodies.get(booth_id) {
+    let special = |key: &'static str, label: &str| {
+        (vec![PurchaseGroup {
+            key: key.into(), kind: key, label: label.into(), avatar_id: None, body: false,
+        }], vec![false])
+    };
+    let product = library.products.get(booth_id);
+    if product.is_some_and(|p| p.category.as_deref() == Some("world")) {
+        return special("world", "ワールド");
+    }
+    if let Some(avatar) = body_for(library, booth_id) {
         return (
             vec![PurchaseGroup {
                 key: format!("avatar:{}", avatar.id),
@@ -544,13 +563,17 @@ fn groups_for(library: &Library, booth_id: &str, name: &str) -> (Vec<PurchaseGro
             vec![avatar.owned],
         );
     }
-    let hint = library.products.get(booth_id).and_then(|p| variation_of(name, &p.title));
-    let scope = library.editions.scope(booth_id, hint.as_deref());
-    if !scope.avatar_ids.is_empty() || library.links.get(booth_id).is_some_and(|a| !a.is_empty()) {
+    let hint = product.and_then(|p| variation_of(name, &p.title));
+    let title_only = product.is_some_and(|p| {
+        name.trim() == p.title.trim()
+            || nfkc(name).trim() == nfkc(&p.title).trim()
+    });
+    let scope = library.editions.order_scope(booth_id, hint.as_deref(), title_only);
+    if !scope.avatar_ids.is_empty() || library.links.contains_key(booth_id) {
         let avatars: Vec<_> = scope.avatar_ids.iter().filter_map(|id| library.avatars.get(id)).collect();
         if avatars.len() != 1 {
             let (key, label) = if avatars.len() > 1 { ("multiple", "複数アバター対応") } else { ("unset", "対応版未設定") };
-            return (vec![PurchaseGroup { key: key.into(), kind: key, label: label.into(), avatar_id: None, body: false }], vec![false]);
+            return special(key, label);
         }
         return (
             avatars
@@ -566,25 +589,11 @@ fn groups_for(library: &Library, booth_id: &str, name: &str) -> (Vec<PurchaseGro
             avatars.iter().map(|avatar| avatar.owned).collect(),
         );
     }
-    let generic = library.products.get(booth_id).is_some_and(|product| product.is_generic);
-    let group = if generic {
-        PurchaseGroup {
-            key: GENERIC_KEY.into(),
-            kind: "generic",
-            label: "汎用".into(),
-            avatar_id: None,
-            body: false,
-        }
+    if product.is_some_and(|product| product.is_generic) {
+        special(GENERIC_KEY, "汎用")
     } else {
-        PurchaseGroup {
-            key: UNCLASSIFIED_KEY.into(),
-            kind: "unclassified",
-            label: "分類なし".into(),
-            avatar_id: None,
-            body: false,
-        }
-    };
-    (vec![group], vec![false])
+        special(UNCLASSIFIED_KEY, "分類なし")
+    }
 }
 
 /// 商品名が「商品名 (バリエーション)」の形なら、括弧の中をバリエーションとして返す。
@@ -609,7 +618,7 @@ pub struct LibraryLink {
 fn library_link(library: &Library, booth_id: &str) -> Option<LibraryLink> {
     let product = library.products.get(booth_id).filter(|product| !product.excluded)?;
     match product.category.as_deref()? {
-        "avatar" => library.bodies.get(booth_id).map(|avatar| LibraryLink {
+        "avatar" => body_for(library, booth_id).map(|avatar| LibraryLink {
             kind: "avatar",
             avatar_id: Some(avatar.id.clone()),
         }),
@@ -771,11 +780,18 @@ pub(crate) fn status(connection: &Connection, running: bool) -> Result<PurchaseS
 fn item_view(library: &Library, item: &StoredItem) -> PurchaseItemView {
     let product = library.products.get(&item.booth_id);
     let (groups, _) = groups_for(library, &item.booth_id, &item.name);
+    let variation = product.and_then(|product| variation_of(&item.name, &product.title));
+    let name = product
+        .map(|p| match (&variation, crate::purchased_editions::trailing_variation(&p.title)) {
+            (Some(_), Some((base, _))) => base.to_string(),
+            _ => p.title.clone(),
+        })
+        .unwrap_or_else(|| item.name.clone());
     PurchaseItemView {
         id: item.id,
         booth_id: item.booth_id.clone(),
-        name: product.map(|p| p.title.clone()).unwrap_or_else(|| item.name.clone()),
-        variation: product.and_then(|product| variation_of(&item.name, &product.title)),
+        name,
+        variation,
         shop: item.shop.clone(),
         price_yen: item.price_yen,
         boost_yen: item.boost_yen,
@@ -906,7 +922,8 @@ fn group_rank(kind: &str) -> u8 {
     match kind {
         "avatar" => 0,
         "generic" => 1,
-        _ => 2,
+        "world" => 2,
+        _ => 3,
     }
 }
 
@@ -1352,8 +1369,9 @@ mod tests {
         let hair = page(&connection, &PurchaseQuery { query: "ﾌﾟﾗﾑ 黒".into(), ..Default::default() }, false).unwrap();
         assert_eq!(hair.total, 1);
         assert_eq!(hair.orders[0].items[0].variation.as_deref(), Some("黒"));
-        assert_eq!(hair.orders[0].items[0].groups[0].key, "unset");
-        let by_group = page(&connection, &PurchaseQuery { group: Some("unset".into()), ..Default::default() }, false).unwrap();
+        // A color of a single-avatar product still belongs to that avatar.
+        assert_eq!(hair.orders[0].items[0].groups[0].key, "avatar:plum");
+        let by_group = page(&connection, &PurchaseQuery { group: Some("avatar:plum".into()), ..Default::default() }, false).unwrap();
         assert_eq!(by_group.total, 1);
         let gifts = page(&connection, &PurchaseQuery { gift: Some(true), ..Default::default() }, false).unwrap();
         assert_eq!(gifts.total, 1);
@@ -1416,6 +1434,91 @@ mod tests {
         set_gift_override(&connection, "1003", None).unwrap();
         assert_eq!(summary(&connection, None).unwrap().gift_items, 1);
         assert!(set_gift_override(&connection, "9999", Some(true)).is_err());
+    }
+
+    #[test]
+    fn title_only_purchases_use_a_single_known_edition_and_worlds_have_their_own_group() {
+        let mut c = db();
+        for (id, title, category) in [
+            ("6001", "専用の衣装", "outfit"),
+            ("6002", "二人対応の衣装", "outfit"),
+            ("6003", "見本ワールド", "world"),
+            ("6004", "ライム本体", "avatar"),
+            ("6005", "対応に未解決名がある髪", "hair"),
+            ("6006", "【17アバター対応】ミルキーチル (フルセット)", "outfit"),
+            ("6007", "【14アバター対応】アイテクスチャ (ショコラ -Chocolat-)", "texture"),
+            ("6008", "22アバター対応 衣装 (ライム・プラム対応)", "outfit"),
+        ] {
+            product(&c, id, title, false);
+            c.execute("UPDATE products SET category=?2 WHERE booth_id=?1", params![id, category]).unwrap();
+            if id != "6003" { link(&c, id, "lime"); }
+        }
+        link(&c, "6002", "plum");
+        link(&c, "6006", "plum");
+        link(&c, "6007", "chocolat");
+        link(&c, "6008", "plum");
+        c.execute("UPDATE products SET unresolved_names_json='[\"見本ちゃん\"]' WHERE booth_id='6005'", []).unwrap();
+        let items = [
+            ("6001", "専用の衣装", 100),
+            ("6002", "二人対応の衣装", 200),
+            ("6002", "二人対応の衣装 （プラム版）", 300),
+            ("6003", "見本ワールド", 400),
+            ("6004", "ライム本体", 500),
+            ("6005", "対応に未解決名がある髪", 600),
+            ("6006", "【17アバター対応】ミルキーチル (フルセット)", 700),
+            ("6007", "【14アバター対応】アイテクスチャ (ショコラ -Chocolat-)", 800),
+            ("6008", "22アバター対応 衣装 (ライム・プラム対応)", 900),
+        ].into_iter().map(|(id, name, price)| item(id, name, Some(price), None)).collect();
+        apply_detail(&mut c, &detail("1001", "2026-01-01T00:00:00+09:00", false, items)).unwrap();
+
+        let totals = summary(&c, None).unwrap();
+        let group = |key| totals.groups.iter().find(|g| g.key == key).unwrap();
+        assert_eq!((group("avatar:lime").items, group("avatar:lime").body_items, group("avatar:lime").amount_yen), (2, 1, 600));
+        assert_eq!(group("avatar:plum").amount_yen, 300);
+        assert_eq!(group("avatar:chocolat").amount_yen, 800);
+        assert_eq!(group("multiple").amount_yen, 1600);
+        assert_eq!(group("unset").amount_yen, 800);
+        assert_eq!(group("world").amount_yen, 400);
+        assert_eq!(totals.groups.iter().map(|g| g.amount_yen).sum::<i64>(), totals.total_yen);
+        let worlds = page(&c, &PurchaseQuery { group: Some("world".into()), ..Default::default() }, false).unwrap();
+        assert_eq!(worlds.total, 1);
+        assert!(worlds.groups.iter().any(|g| g.key == "world" && g.items == 1));
+
+        let catalog = crate::purchased_editions::Catalog::load(&c).unwrap();
+        assert_eq!(catalog.scope("6001").avatar_ids, ["lime"]);
+        assert_eq!(catalog.scope("6005").mode, "unknown");
+        crate::purchased_editions::save(&c, "6001", &crate::purchased_editions::Choice::unknown()).unwrap();
+        let updated = summary(&c, None).unwrap();
+        assert_eq!(updated.groups.iter().find(|g| g.key == "unset").unwrap().amount_yen, 900);
+    }
+
+    #[test]
+    fn one_package_for_every_avatar_counts_once_and_per_avatar_files_do_not() {
+        let mut c = db();
+        for (id, title, other) in [("7001", "ふたり対応の髪", "plum"), ("7002", "ふたり対応の衣装", "plum"), ("7003", "ふたり対応の目", "chocolat")] {
+            product(&c, id, title, false);
+            link(&c, id, "lime");
+            link(&c, id, other);
+        }
+        c.execute_batch(
+            "INSERT INTO product_files(booth_id,variation,filename) VALUES
+                ('7001','','Calm_Hair.zip'),
+                ('7002','','Outfit_Lime.zip'),('7002','','Outfit_Plum.zip'),
+                ('7003','','Eye_Lime.zip'),('7003','','Eye_Chocolate.zip');",
+        )
+        .unwrap();
+        let items = [("7001", "ふたり対応の髪", 100), ("7002", "ふたり対応の衣装", 200), ("7003", "ふたり対応の目 (chocolate)", 400)]
+            .into_iter()
+            .map(|(id, name, price)| item(id, name, Some(price), None))
+            .collect();
+        apply_detail(&mut c, &detail("1001", "2026-01-01T00:00:00+09:00", false, items)).unwrap();
+        let totals = summary(&c, None).unwrap();
+        let amount = |key| totals.groups.iter().find(|g| g.key == key).map(|g| g.amount_yen);
+        // One shared package covers every compatible avatar.
+        assert_eq!(amount("multiple"), Some(100));
+        // Files split by avatar and an unknown spelling leave the edition to the user.
+        assert_eq!(amount("unset"), Some(200 + 400));
+        assert_eq!(amount("avatar:chocolat"), None);
     }
 
     #[test]

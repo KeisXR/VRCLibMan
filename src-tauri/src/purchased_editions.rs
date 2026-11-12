@@ -2,7 +2,7 @@
 use crate::{db, model::Avatar};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub const TABLES: &str = "CREATE TABLE IF NOT EXISTS purchased_editions (product_id TEXT PRIMARY KEY REFERENCES products(booth_id) ON DELETE CASCADE, choice_json TEXT NOT NULL);";
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -31,22 +31,98 @@ impl Choice {
 pub struct Catalog {
     avatars: Vec<Avatar>,
     links: HashMap<String, Vec<String>>,
+    unresolved: HashSet<String>,
+    titles: HashMap<String, String>,
+    tool_editors: HashSet<String>,
+    unified_files: HashSet<String>,
     names: HashMap<String, Vec<String>>,
     pub manual: HashMap<String, Choice>,
 }
 fn error(e: impl std::fmt::Display) -> String {
     format!("購入した対応版を読み込めません：{e}")
 }
+
+pub(crate) fn trailing_variation(text: &str) -> Option<(&str, &str)> {
+    let s = text.trim();
+    if !s.ends_with(')') {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (idx, ch) in s.char_indices().rev() {
+        match ch {
+            ')' | '）' => depth += 1,
+            '(' | '（' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    if ch == '(' && idx > 0 && s.as_bytes()[idx - 1] == b' ' {
+                        let base = s[..idx - 1].trim();
+                        let inner = s[idx + 1..s.len() - 1].trim();
+                        if !base.is_empty() && !inner.is_empty() {
+                            return Some((base, inner));
+                        }
+                    }
+                    return None;
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 pub fn variation_of(name: &str, title: &str) -> Option<String> {
-    let rest = name.strip_prefix(title.trim())?.trim();
-    let inner = rest.strip_prefix('(')?.strip_suffix(')')?.trim();
-    (!title.trim().is_empty() && !inner.is_empty()).then(|| inner.to_string())
+    fn extract<'a>(name: &'a str, title: &str) -> Option<&'a str> {
+        let title = title.trim();
+        if title.is_empty() {
+            return None;
+        }
+        let rest = name.trim().strip_prefix(title)?.trim();
+        let inner = rest.strip_prefix('(')?.strip_suffix(')')?.trim();
+        (!inner.is_empty()).then_some(inner)
+    }
+    if let Some(found) = extract(name, title).map(str::to_owned).or_else(|| {
+        extract(&crate::normalize::nfkc(name), &crate::normalize::nfkc(title)).map(str::to_owned)
+    }) {
+        return Some(found);
+    }
+    let (name_base, name_var) = trailing_variation(name)?;
+    let (title_base, _) = trailing_variation(title)?;
+    (name_base == title_base
+        || crate::normalize::nfkc(name_base) == crate::normalize::nfkc(title_base))
+    .then(|| name_var.to_owned())
+}
+
+fn is_full_set_label(name: &str) -> bool {
+    let normalized = crate::normalize::nfkc(name)
+        .to_lowercase()
+        .replace([' ', '　', '-', '_'], "");
+    if [
+        "フルセット",
+        "全対応版セット",
+        "全アバターセット",
+        "全対応セット",
+        "fullset",
+        "fullpack",
+        "completeset",
+        "allavatars",
+    ]
+    .iter()
+    .any(|kw| normalized.contains(kw))
+    {
+        return true;
+    }
+    let alnum: String = normalized.chars().filter(|c| c.is_alphanumeric()).collect();
+    alnum == "full"
 }
 impl Catalog {
     pub fn load(c: &Connection) -> Result<Self, String> {
         let mut result = Self {
             avatars: db::load_avatars(c)?,
             links: HashMap::new(),
+            unresolved: HashSet::new(),
+            titles: HashMap::new(),
+            tool_editors: HashSet::new(),
+            unified_files: HashSet::new(),
             names: HashMap::new(),
             manual: HashMap::new(),
         };
@@ -59,6 +135,29 @@ impl Catalog {
         {
             let (id, avatar) = row.map_err(error)?;
             result.links.entry(id).or_default().push(avatar);
+        }
+        let mut stmt = c
+            .prepare("SELECT booth_id, title, unresolved_names_json != '[]', COALESCE(category = 'other' AND genre = 'tool_editor', 0) FROM products")
+            .map_err(error)?;
+        for row in stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, bool>(2)?,
+                    r.get::<_, bool>(3)?,
+                ))
+            })
+            .map_err(error)?
+        {
+            let (id, title, has_unresolved, is_tool_editor) = row.map_err(error)?;
+            if has_unresolved {
+                result.unresolved.insert(id.clone());
+            }
+            if is_tool_editor {
+                result.tool_editors.insert(id.clone());
+            }
+            result.titles.insert(id, title);
         }
         let mut stmt = c
             .prepare("SELECT booth_id, name FROM product_variations WHERE owned=1")
@@ -86,6 +185,35 @@ impl Catalog {
                 result.names.entry(id).or_default().push(name);
             }
         }
+        for (id, title) in &result.titles {
+            if let Some((_, var)) = trailing_variation(title) {
+                let list = result.names.entry(id.clone()).or_default();
+                if !list.iter().any(|existing| existing == var) {
+                    list.push(var.to_owned());
+                }
+            }
+        }
+        let mut files_by_product: HashMap<String, Vec<String>> = HashMap::new();
+        let mut stmt = c
+            .prepare("SELECT booth_id, filename FROM product_files WHERE filename != ''")
+            .map_err(error)?;
+        for row in stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(error)?
+        {
+            let (id, filename) = row.map_err(error)?;
+            files_by_product.entry(id).or_default().push(filename);
+        }
+        for (id, files) in files_by_product {
+            if !result.tool_editors.contains(&id)
+                && result.links.get(&id).is_some_and(|l| l.len() > 1)
+            {
+                let linked = result.linked_avatars(&id);
+                if crate::compat::avatar_names_in_files(&files, &linked).is_empty() {
+                    result.unified_files.insert(id);
+                }
+            }
+        }
         let mut stmt = c
             .prepare("SELECT product_id, choice_json FROM purchased_editions")
             .map_err(error)?;
@@ -100,45 +228,173 @@ impl Catalog {
         }
         Ok(result)
     }
-    pub fn scope(&self, id: &str, hint: Option<&str>) -> Choice {
+    fn manual_scope(&self, id: &str) -> Option<Choice> {
         if let Some(choice) = self.manual.get(id) {
-            return if choice.mode == "all" {
+            Some(if choice.mode == "all" {
                 Choice {
                     mode: "all".into(),
                     avatar_ids: self.links.get(id).cloned().unwrap_or_default(),
                 }
             } else {
                 choice.clone()
+            })
+        } else {
+            None
+        }
+    }
+
+    pub fn scope(&self, id: &str) -> Choice {
+        self.manual_scope(id).unwrap_or_else(|| {
+            let names = self.names.get(id).map(Vec::as_slice).unwrap_or_default();
+            let inferred = self.infer(id, names.iter().map(String::as_str));
+            if inferred.mode != "unknown" {
+                return inferred;
+            }
+            self.fallback_scope(id)
+        })
+    }
+
+    pub fn order_scope(&self, id: &str, hint: Option<&str>, title_only: bool) -> Choice {
+        if let Some(choice) = self.manual_scope(id) {
+            return choice;
+        }
+        if let Some(hint) = hint {
+            let inferred = self.infer(id, [hint]);
+            if inferred.mode != "unknown" {
+                return inferred;
+            }
+            // A color or size names no avatar; product-level facts still decide.
+            if !title_only {
+                return self.fallback_scope(id);
+            }
+        }
+        if title_only {
+            let fallback = self.fallback_scope(id);
+            if fallback.mode != "unknown" {
+                let matches_single = self.names.get(id).is_none_or(|names| {
+                    names.iter().all(|name| {
+                        let other = self.infer(id, [name.as_str()]);
+                        other.mode == "unknown" || other.avatar_ids == fallback.avatar_ids
+                    })
+                });
+                if matches_single {
+                    return fallback;
+                }
+            }
+        }
+        Choice::unknown()
+    }
+
+    fn fallback_scope(&self, id: &str) -> Choice {
+        if let Some(single) = self.single_compatible_edition(id) {
+            return single;
+        }
+        if let Some(title) = self.titles.get(id) {
+            if trailing_variation(title).is_none() {
+                let linked = self.linked_avatars(id);
+                if let Some(avatar) = crate::resolve::match_title(title, &linked) {
+                    return Choice {
+                        mode: "specific".into(),
+                        avatar_ids: vec![avatar.id.clone()],
+                    };
+                }
+            }
+        }
+        if self.unified_files.contains(id) {
+            return Choice {
+                mode: "all".into(),
+                avatar_ids: self.links.get(id).cloned().unwrap_or_default(),
             };
         }
-        let names = hint
-            .map(|s| vec![s.to_string()])
-            .unwrap_or_else(|| self.names.get(id).cloned().unwrap_or_default());
-        self.infer(id, &names)
+        Choice::unknown()
     }
-    fn infer(&self, id: &str, names: &[String]) -> Choice {
+
+    fn single_compatible_edition(&self, id: &str) -> Option<Choice> {
+        let [avatar_id] = self.links.get(id)?.as_slice() else { return None };
+        if self.unresolved.contains(id) {
+            return None;
+        }
+        Some(Choice { mode: "specific".into(), avatar_ids: vec![avatar_id.clone()] })
+    }
+
+    fn linked_avatars(&self, id: &str) -> Vec<Avatar> {
+        let Some(ids) = self.links.get(id) else {
+            return Vec::new();
+        };
+        self.avatars
+            .iter()
+            .filter(|a| ids.iter().any(|lid| lid == &a.id))
+            .cloned()
+            .collect()
+    }
+
+    fn resolve_piece(&self, piece: &str, linked: &[Avatar]) -> Option<String> {
+        let piece = piece.trim();
+        if piece.is_empty() {
+            return None;
+        }
+        let stripped = piece.strip_suffix('版').map(str::trim_end);
+        for candidate in [Some(piece), stripped].into_iter().flatten() {
+            if !linked.is_empty() {
+                if let Some(avatar) = crate::resolve::resolve_name(candidate, linked) {
+                    return Some(avatar.id.clone());
+                }
+            }
+            if let Some(avatar) = crate::resolve::resolve_name(candidate, &self.avatars) {
+                return Some(avatar.id.clone());
+            }
+        }
+        None
+    }
+
+    fn resolve_variation_avatars(&self, id: &str, name: &str) -> Vec<String> {
+        let linked = self.linked_avatars(id);
+        if let Some(single) = self.resolve_piece(name, &linked) {
+            return vec![single];
+        }
+        let pool = if linked.is_empty() {
+            self.avatars.as_slice()
+        } else {
+            linked.as_slice()
+        };
+        let mut found = Vec::new();
+        for part in name.split([
+            '/', '／', '&', '＆', '・', '･', ',', '、', '+', '＋', '(', ')', '（', '）', '[',
+            ']', '【', '】', '✿', '💭', '-',
+        ]) {
+            let part = part.trim().trim_end_matches('版').trim_end();
+            if let Some(avatar) = crate::resolve::resolve_name(part, pool) {
+                found.push(avatar.id.clone());
+            }
+        }
+        if !found.is_empty() {
+            return found;
+        }
+        // Free-text search only among the product's own compatible avatars.
+        if !linked.is_empty() {
+            for dname in crate::resolve::known_names_in(name, &linked) {
+                if let Some(avatar) = linked.iter().find(|a| a.display_name == dname) {
+                    found.push(avatar.id.clone());
+                }
+            }
+        }
+        found
+    }
+
+    fn infer<'a>(&self, id: &str, names: impl IntoIterator<Item = &'a str>) -> Choice {
         let mut ids = Vec::new();
 
         for name in names {
-            let normalized = crate::normalize::nfkc(name)
-                .to_lowercase()
-                .replace([' ', '　', '-', '_'], "");
-            if [
-                "フルセット",
-                "全対応版セット",
-                "全アバターセット",
-                "fullset",
-                "allavatars",
-            ]
-            .contains(&normalized.as_str())
-            {
+            let resolved = self.resolve_variation_avatars(id, name);
+            if !resolved.is_empty() {
+                ids.extend(resolved);
+                continue;
+            }
+            if is_full_set_label(name) {
                 return Choice {
                     mode: "all".into(),
                     avatar_ids: self.links.get(id).cloned().unwrap_or_default(),
                 };
-            }
-            if let Some(avatar) = crate::resolve::resolve_name(name, &self.avatars) {
-                ids.push(avatar.id.clone());
             }
         }
         ids.sort();
@@ -158,7 +414,7 @@ impl Catalog {
             .keys()
             .chain(self.names.keys())
             .chain(self.manual.keys())
-            .map(|id| (id.clone(), self.scope(id, None)))
+            .map(|id| (id.clone(), self.scope(id)))
             .collect()
     }
 }
@@ -243,7 +499,7 @@ mod tests {
     fn compatibility_is_not_a_purchased_edition_and_library_needs_no_orders() {
         let c = fixture();
         assert_eq!(
-            Catalog::load(&c).unwrap().scope("1234", None),
+            Catalog::load(&c).unwrap().scope("1234"),
             Choice::unknown()
         );
         c.execute(
@@ -252,9 +508,9 @@ mod tests {
         )
         .unwrap();
         let catalog = Catalog::load(&c).unwrap();
-        assert_eq!(catalog.scope("1234", None).avatar_ids, ["lime"]);
-        assert_eq!(catalog.scope("1234", Some("Plum")).avatar_ids, ["plum"]);
-        assert_eq!(catalog.scope("1234", Some("黒")), Choice::unknown());
+        assert_eq!(catalog.scope("1234").avatar_ids, ["lime"]);
+        assert_eq!(catalog.order_scope("1234", Some("Plum"), false).avatar_ids, ["plum"]);
+        assert_eq!(catalog.order_scope("1234", Some("黒"), false), Choice::unknown());
         let s = db::load_snapshot(&c).unwrap();
         let lime = crate::view::avatar_detail(&s, "lime").unwrap();
         let plum = crate::view::avatar_detail(&s, "plum").unwrap();
@@ -321,7 +577,7 @@ mod tests {
         assert_eq!(
             Catalog::load(&c)
                 .unwrap()
-                .scope("1234", None)
+                .scope("1234")
                 .avatar_ids
                 .len(),
             2
@@ -334,7 +590,7 @@ mod tests {
         assert_eq!(
             Catalog::load(&c)
                 .unwrap()
-                .scope("1234", None)
+                .scope("1234")
                 .avatar_ids
                 .len(),
             3
@@ -351,7 +607,7 @@ mod tests {
         assert_eq!(
             Catalog::load(&c)
                 .unwrap()
-                .scope("1234", Some("フルセット"))
+                .order_scope("1234", Some("フルセット"), false)
                 .avatar_ids,
             ["lime"]
         );
@@ -359,13 +615,13 @@ mod tests {
         assert_eq!(
             Catalog::load(&c)
                 .unwrap()
-                .scope("1234", Some("フルセット"))
+                .order_scope("1234", Some("フルセット"), false)
                 .avatar_ids
                 .len(),
             3
         );
         assert_eq!(
-            Catalog::load(&c).unwrap().scope("1234", Some("色違い")),
+            Catalog::load(&c).unwrap().order_scope("1234", Some("色違い"), false),
             Choice::unknown()
         );
     }
@@ -418,7 +674,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            Catalog::load(&c).unwrap().scope("1234", None).avatar_ids,
+            Catalog::load(&c).unwrap().scope("1234").avatar_ids,
             ["lime"]
         );
         assert_eq!(
@@ -463,7 +719,7 @@ mod tests {
             db::merge_avatars(&mut c, "edition-source", "lime").unwrap();
             let catalog = Catalog::load(&c).unwrap();
             assert_eq!(catalog.manual["1234"].mode, "specific");
-            assert_eq!(catalog.scope("1234", None).avatar_ids, ["lime"]);
+            assert_eq!(catalog.scope("1234").avatar_ids, ["lime"]);
             let snapshot = db::load_snapshot(&c).unwrap();
             assert!(snapshot.avatars.iter().all(|a| a.id != "edition-source"));
             let detail = crate::view::avatar_detail(&snapshot, "lime").unwrap();
@@ -613,7 +869,7 @@ mod tests {
             assert!(save(&c, "1234", &choice).is_err());
         }
         assert_eq!(
-            Catalog::load(&c).unwrap().scope("1234", None).avatar_ids,
+            Catalog::load(&c).unwrap().scope("1234").avatar_ids,
             ["lime"]
         );
     }
