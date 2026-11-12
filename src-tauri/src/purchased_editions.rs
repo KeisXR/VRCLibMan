@@ -196,6 +196,41 @@ pub fn save(c: &Connection, id: &str, choice: &Choice) -> Result<(), String> {
     Ok(())
 }
 
+/// Move persisted references together with the avatar's compatibility links and deletion.
+pub(crate) fn merge_avatar(
+    tx: &rusqlite::Transaction<'_>,
+    from_id: &str,
+    into_id: &str,
+) -> Result<(), String> {
+    let rows = {
+        let mut statement = tx
+            .prepare("SELECT product_id, choice_json FROM purchased_editions")
+            .map_err(error)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(error)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(error)?
+    };
+    // A purchase reference can exist without a current compatibility link to the source.
+    for (product_id, json) in rows {
+        let mut choice: Choice = serde_json::from_str(&json).map_err(error)?;
+        if choice.mode != "specific" || !choice.avatar_ids.iter().any(|id| id == from_id) {
+            continue;
+        }
+        for id in &mut choice.avatar_ids {
+            if id == from_id {
+                *id = into_id.to_string();
+            }
+        }
+        // save validates the destination and removes duplicate editions after the replacement.
+        save(tx, &product_id, &choice)?;
+        crate::sync_meta::touch_product(tx, &product_id)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -399,6 +434,156 @@ mod tests {
         assert_eq!(exported.version, 4);
         assert_eq!(exported.purchased_editions["1234"].avatar_ids, ["lime"]);
     }
+    fn merge_fixture() -> Connection {
+        let c = fixture();
+        c.execute_batch(
+            "INSERT INTO avatars(id,display_name) VALUES ('edition-source','統合前のアバター');
+             UPDATE products SET category_locked=1, genre='outfit', genre_locked=1, links_locked=1 WHERE booth_id='1234';
+             DELETE FROM product_avatars WHERE product_id='1234';
+             INSERT INTO product_avatars VALUES ('1234','edition-source','manual'),('1234','lime','manual');
+             INSERT INTO purchase_orders(order_id,total_yen,recorded_at,updated_at,source) VALUES ('1001',1700,'','','history');
+             INSERT INTO purchase_items(order_id,position,booth_id,name,price_yen,boost_yen) VALUES ('1001',0,'1234','衣装A',1500,200);"
+        ).unwrap();
+        c
+    }
+
+    #[test]
+    fn merging_avatars_preserves_manual_editions_asset_counts_and_purchase_totals() {
+        for ids in [vec!["edition-source"], vec!["edition-source", "lime"]] {
+            let mut c = merge_fixture();
+            save(
+                &c,
+                "1234",
+                &Choice {
+                    mode: "specific".into(),
+                    avatar_ids: ids.into_iter().map(str::to_owned).collect(),
+                },
+            )
+            .unwrap();
+            db::merge_avatars(&mut c, "edition-source", "lime").unwrap();
+            let catalog = Catalog::load(&c).unwrap();
+            assert_eq!(catalog.manual["1234"].mode, "specific");
+            assert_eq!(catalog.scope("1234", None).avatar_ids, ["lime"]);
+            let snapshot = db::load_snapshot(&c).unwrap();
+            assert!(snapshot.avatars.iter().all(|a| a.id != "edition-source"));
+            let detail = crate::view::avatar_detail(&snapshot, "lime").unwrap();
+            assert_eq!(
+                detail
+                    .sections
+                    .iter()
+                    .flat_map(|s| &s.items)
+                    .filter(|i| i.booth_id == "1234")
+                    .count(),
+                1
+            );
+            assert!(detail.unset_edition_items.is_empty());
+            assert_eq!(
+                crate::view::avatar_cards(&snapshot)
+                    .iter()
+                    .find(|a| a.id == "lime")
+                    .unwrap()
+                    .outfit_count,
+                1
+            );
+            let summary = crate::purchases::summary(&c, None).unwrap();
+            assert_eq!(summary.total_yen, 1700);
+            assert_eq!(summary.groups.len(), 1);
+            assert_eq!(summary.groups[0].key, "avatar:lime");
+            assert_eq!(summary.groups[0].items, 1);
+            assert_eq!(summary.groups[0].amount_yen, 1700);
+        }
+    }
+
+    #[test]
+    fn merging_avatars_remaps_all_specific_choices_and_preserves_other_modes() {
+        let mut c = merge_fixture();
+        for id in ["3456", "4567", "5678", "6789"] {
+            c.execute("INSERT INTO products(booth_id,title,imported_at,updated_at) VALUES (?1,'別の商品','','')", [id]).unwrap();
+        }
+        save(
+            &c,
+            "1234",
+            &Choice {
+                mode: "specific".into(),
+                avatar_ids: vec!["edition-source".into(), "plum".into()],
+            },
+        )
+        .unwrap();
+        save(
+            &c,
+            "3456",
+            &Choice {
+                mode: "all".into(),
+                avatar_ids: vec![],
+            },
+        )
+        .unwrap();
+        save(&c, "4567", &Choice::unknown()).unwrap();
+        save(
+            &c,
+            "5678",
+            &Choice {
+                mode: "specific".into(),
+                avatar_ids: vec!["edition-source".into()],
+            },
+        )
+        .unwrap();
+        save(
+            &c,
+            "6789",
+            &Choice {
+                mode: "specific".into(),
+                avatar_ids: vec!["plum".into()],
+            },
+        )
+        .unwrap();
+        let before = Catalog::load(&c).unwrap().manual;
+        db::merge_avatars(&mut c, "edition-source", "lime").unwrap();
+        let after = Catalog::load(&c).unwrap().manual;
+        assert_eq!(after["1234"].avatar_ids, ["lime", "plum"]);
+        // References must move even if this product has no compatibility link to the source.
+        assert_eq!(after["5678"].avatar_ids, ["lime"]);
+        for id in ["3456", "4567", "6789"] {
+            assert_eq!(before[id], after[id]);
+        }
+    }
+
+    #[test]
+    fn a_failed_avatar_merge_rolls_back_edition_references_and_compatibility() {
+        let mut c = merge_fixture();
+        save(
+            &c,
+            "1234",
+            &Choice {
+                mode: "specific".into(),
+                avatar_ids: vec!["edition-source".into()],
+            },
+        )
+        .unwrap();
+        c.execute_batch("CREATE TRIGGER prevent_source_delete BEFORE DELETE ON avatars WHEN OLD.id='edition-source' BEGIN SELECT RAISE(ABORT,'synthetic failure'); END;").unwrap();
+        assert!(db::merge_avatars(&mut c, "edition-source", "lime").is_err());
+        assert_eq!(
+            Catalog::load(&c).unwrap().manual["1234"].avatar_ids,
+            ["edition-source"]
+        );
+        let snapshot = db::load_snapshot(&c).unwrap();
+        assert!(snapshot.avatars.iter().any(|a| a.id == "edition-source"));
+        assert!(!snapshot
+            .avatars
+            .iter()
+            .find(|a| a.id == "lime")
+            .unwrap()
+            .aliases
+            .contains(&"統合前のアバター".into()));
+        assert!(snapshot
+            .links
+            .iter()
+            .any(|l| l.product_id == "1234" && l.avatar_id == "edition-source"));
+        let summary = crate::purchases::summary(&c, None).unwrap();
+        assert_eq!(summary.groups[0].key, "avatar:edition-source");
+        assert_eq!(summary.total_yen, 1700);
+    }
+
     #[test]
     fn invalid_manual_choices_are_rejected_without_replacing_a_valid_choice() {
         let c = fixture();

@@ -4504,6 +4504,7 @@ fn merge_avatars_unlogged(
         )
         .sql()?;
     }
+    crate::purchased_editions::merge_avatar(&tx, from_id, into_id)?;
     tx.execute("DELETE FROM avatars WHERE id = ?1", params![from_id])
         .sql()?;
     tx.commit().sql()?;
