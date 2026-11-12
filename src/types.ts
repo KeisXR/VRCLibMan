@@ -85,6 +85,7 @@ export interface RemoteProductProbe {
 }
 
 export interface ItemView {
+  purchasedEditions: PurchasedEditions;
   boothId: string;
   title: string;
   shop: string;
@@ -143,9 +144,13 @@ export interface AvatarDetail {
   sections: Section[];
   genericItems: ItemView[];
   unsupportedOutfits: ItemView[];
+  unsetEditionItems: ItemView[];
 }
 
+export interface PurchasedEditions { mode: "auto" | "specific" | "all" | "unknown"; avatarIds: string[]; }
+
 export interface ProductEditView {
+  purchasedEditions: PurchasedEditions;
   boothId: string;
   title: string;
   shop: string;
@@ -465,7 +470,7 @@ export interface LibraryWalkReport {
   unchanged: number;
 }
 
-export type PurchaseGroupKind = "avatar" | "generic" | "unclassified";
+export type PurchaseGroupKind = "avatar" | "generic" | "unclassified" | "multiple" | "unset";
 
 /** アバター別の枠。`key` は `avatar:<id>`、`generic`、`unclassified`。 */
 export interface PurchaseGroup {
@@ -716,6 +721,7 @@ export type RegisterOwnedBodyResult =
     };
 
 export interface ProductUpdate {
+  purchasedEditions?: PurchasedEditions;
   boothId: string;
   category?: string | null;
   genre?: string | null;

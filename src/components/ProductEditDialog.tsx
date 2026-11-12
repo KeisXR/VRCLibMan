@@ -4,7 +4,7 @@ import { useShell } from "../App";
 import { avatarHit, rankAvatars } from "../avatarSearch";
 import type { AvatarHit } from "../avatarSearch";
 import { CATEGORIES, CATEGORY_LABEL, GENRE_LABEL, genresForCategory } from "../types";
-import type { ProductEditView, ProductUpdate } from "../types";
+import type { ProductEditView, ProductUpdate, PurchasedEditions } from "../types";
 import { Thumb, errorText } from "../ui";
 
 function sameSet(left: ReadonlySet<string>, right: readonly string[]): boolean {
@@ -63,15 +63,19 @@ function EditForm({
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set(product.linkedAvatarIds));
   const [filter, setFilter] = useState("");
   const [busy, setBusy] = useState(false);
+  const initialEditions = product.purchasedEditions ?? { mode: "auto", avatarIds: [] };
+  const [editions, setEditions] = useState<PurchasedEditions>(initialEditions);
+  const [ownedOnly, setOwnedOnly] = useState(false);
+  const [selectedOnly, setSelectedOnly] = useState(false);
   const deferred = useDeferredValue(filter);
-  const ranked = useMemo(() => rankAvatars(avatarIndex, deferred, 30), [avatarIndex, deferred]);
+  const ranked = useMemo(() => rankAvatars(avatarIndex, deferred, avatarIndex.length), [avatarIndex, deferred]);
   const searching = deferred.trim().length > 0;
-  const nameById = useMemo(() => new Map(avatarIndex.map((avatar) => [avatar.id, avatar.displayName])), [avatarIndex]);
+  const visible = (searching ? [...ranked.close, ...ranked.loose] : avatarIndex).filter(a => (!ownedOnly || a.owned) && (!selectedOnly || selected.has(a.id)));
   const autoLabel =
     !product.genreLocked && product.genre && (category || null) === product.category
       ? `自動（いまは${GENRE_LABEL[product.genre] ?? product.genre}）`
       : "自動";
-  dirtyRef.current = editIsDirty(product, { category, genre, generic, selected });
+  dirtyRef.current = editIsDirty(product, { category, genre, generic, selected }) || JSON.stringify(editions) !== JSON.stringify(initialEditions);
 
   const toggle = useCallback((id: string) => {
     setSelected((current) => {
@@ -88,6 +92,7 @@ function EditForm({
     try {
       await api.updateProduct({
         boothId: product.boothId,
+        purchasedEditions: JSON.stringify(editions) !== JSON.stringify(initialEditions) ? editions : undefined,
         category: category && category !== product.category ? category : null,
         ...genreChange(product, category, genre),
         isGeneric: generic !== product.isGeneric ? generic : null,
@@ -167,13 +172,10 @@ function EditForm({
         </label>
       </div>
       <div className="field">
-        <span>対応アバター</span>
-        <div className="pills">
-          {[...selected].map((id) => (
-            <button key={id} className="chip" type="button" onClick={() => toggle(id)}>
-              {nameById.get(id) ?? id} ×
-            </button>
-          ))}
+        <span>商品の対応範囲（選択中：{selected.size}件）</span>
+        <div className="row-actions">
+          <label><input type="checkbox" checked={ownedOnly} onChange={e => setOwnedOnly(e.target.checked)} />所持アバターのみ</label>
+          <label><input type="checkbox" checked={selectedOnly} onChange={e => setSelectedOnly(e.target.checked)} />選択済みのみ</label>
         </div>
         <input
           className="search"
@@ -182,33 +184,30 @@ function EditForm({
           placeholder="名前を入力すると候補が出ます"
           onChange={(event) => setFilter(event.target.value)}
         />
-        {searching && ranked.close.length === 0 && ranked.loose.length === 0 && (
-          <p className="meta note-strong" role="status">一致するアバターがありません。名前か別名の一部を入力してください。</p>
-        )}
-        {ranked.close.length > 0 && (
-          <div className="picker">
-            {ranked.close.map((avatar) => (
-              <label key={avatar.id}>
-                <input type="checkbox" checked={selected.has(avatar.id)} onChange={() => toggle(avatar.id)} />
-                {avatar.displayName}
-              </label>
-            ))}
-          </div>
-        )}
-        {ranked.loose.length > 0 && (
-          <>
-            <p className="meta picker-heading">名前が似ている候補（一致は不確かです。名前を確かめてから選んでください）</p>
-            <div className="picker picker-loose">
-              {ranked.loose.map((avatar) => (
-                <label key={avatar.id}>
-                  <input type="checkbox" checked={selected.has(avatar.id)} onChange={() => toggle(avatar.id)} />
-                  {avatar.displayName}
-                </label>
-              ))}
-            </div>
-          </>
-        )}
+        <div className="picker edition-avatar-list">
+          {visible.map(avatar => <label key={avatar.id} className={searching && ranked.loose.some(a => a.id === avatar.id) ? "picker-loose" : undefined}>
+            <input type="checkbox" checked={selected.has(avatar.id)} onChange={() => toggle(avatar.id)} />
+            {avatar.displayName}
+            {searching && ranked.loose.some(a => a.id === avatar.id) && <span className="meta">（名前が似ている候補・一致は不確か）</span>}
+          </label>)}
+          {visible.length === 0 && <p className="meta" role="status">一致するアバターがありません。</p>}
+        </div>
         <p className="meta">対応アバターを変えると固定され、自動の分類では変わらなくなります。</p>
+      </div>
+      <div className="field">
+        <span>購入した対応版</span>
+        <select aria-label="購入した対応版" value={editions.mode} onChange={e => setEditions({ mode: e.target.value as PurchasedEditions["mode"], avatarIds: [] })}>
+          <option value="auto">購入情報から判定</option>
+          <option value="specific">個別の対応版を指定</option>
+          <option value="all">全対応版セット・1版で全アバター対応（商品の対応範囲に従う）</option>
+          <option value="unknown">対応版未設定</option>
+        </select>
+        {editions.mode === "specific" && <div className="picker edition-avatar-list" aria-label="購入した対応版のアバター">
+          {(searching ? [...ranked.close, ...ranked.loose] : avatarIndex).map(a => <label key={a.id}>
+            <input type="checkbox" checked={editions.avatarIds.includes(a.id)} onChange={e => setEditions(current => ({ ...current, avatarIds: e.target.checked ? [...current.avatarIds, a.id] : current.avatarIds.filter(id => id !== a.id) }))} />{a.displayName}
+          </label>)}
+        </div>}
+        <p className="meta">商品の対応範囲とは別に保存します。アバター本体の所持は変わりません。</p>
       </div>
       <div className="row-actions">
         {showOwn && (

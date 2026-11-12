@@ -87,6 +87,7 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
       ...detail.ownedProducts,
       ...detail.sections.flatMap((section) => section.items),
       ...detail.genericItems,
+      ...(detail.unsetEditionItems ?? []),
       ...detail.unsupportedOutfits,
     ];
   }, [detail]);
@@ -225,6 +226,10 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
           {detail.sections.length === 0 && detail.genericItems.length === 0 && (
             <p className="empty">このアバターに結び付いた衣装・髪・ギミックはまだありません。</p>
           )}
+          {(detail.unsetEditionItems?.length ?? 0) > 0 && <details className="generic-section">
+            <summary>対応版未設定 {detail.unsetEditionItems.length} 件</summary>
+            <div className="stack">{detail.unsetEditionItems.map(item => <ItemCard key={item.boothId} {...itemCardProps(item)} />)}</div>
+          </details>}
           {detail.unsupportedOutfits.length > 0 && (
             <UnsupportedOutfits key={detail.id} items={detail.unsupportedOutfits} itemCardProps={itemCardProps} />
           )}
@@ -659,6 +664,7 @@ export function ItemCard({
         <h3>
           {item.title}
           {item.classificationPinned && <span className="badge">手動</span>}
+          {item.category !== "avatar" && item.purchasedEditions?.mode === "unknown" && <span className="badge">対応版未設定</span>}
           {item.unpublished && <span className="badge">非公開</span>}
           {item.isFree && <span className="badge">無料</span>}
           {item.isAdult && <span className="badge adult">R-18</span>}

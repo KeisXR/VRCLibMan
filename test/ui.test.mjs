@@ -972,7 +972,7 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         await wait(() => document.querySelector(".product-edit-dialog .edit-card"));
         const dialog = document.querySelector(".product-edit-dialog");
         assert.equal(button("確認済みにする", dialog), undefined);
-        await click(dialog.querySelector(".pills .chip"));
+        await click([...dialog.querySelectorAll(".edition-avatar-list input")].find(node => node.checked));
         await click(button("保存", dialog));
         await wait(() => document.querySelector(".product-edit-dialog") === null);
         assert.equal(updates.length, 1);
@@ -1021,7 +1021,7 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       assert.ok(assets.classList.contains("active"));
       assert.equal(assets.getAttribute("aria-current"), "page");
       assert.match(rail().querySelector('a[href="#/"]').getAttribute("title"), /^アバター（\d+）$/);
-      // 更新候補がなければ「ログ」は件数なしで分類記録を開く。
+      // 更新がなければ「ログ」は件数なしで分類記録を開く。
       assert.equal(rail().querySelector('a[href="#/classification-log"]').getAttribute("title"), "ログ");
       assert.equal(rail().querySelector('a[href="#/queue"]'), null);
       assert.equal(rail().querySelector(".rail-status"), null);
@@ -1318,6 +1318,7 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       await wait(() => panel.textContent.includes("追加できる商品がありません"));
       await typeInto(input, "汎用ペンライト");
       await wait(() => button("汎用ペンライト", panel));
+      await api.updateProduct({ boothId: "8800103", purchasedEditions: { mode: "all", avatarIds: [] } });
       await click(button("汎用ペンライト", panel));
       await wait(() => text().includes("アイテムを追加しました"));
       await wait(() => {
@@ -1335,7 +1336,7 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       await assert.rejects(() => api.attachProductToAvatar("lime", "4876459"), /アバター本体/);
     });
     await t.test("shared bodies do not share hair until the avatar is explicitly added", async () => {
-      await api.updateProduct({ boothId: "8800102", category: "hair", avatarIds: ["lime"] });
+      await api.updateProduct({ boothId: "8800102", category: "hair", avatarIds: ["lime"], purchasedEditions: { mode: "all", avatarIds: [] } });
       const title = (await api.productsByCategory("hair")).find((item) => item.boothId === "8800102").title;
       const hairOf = (detail) => detail.sections.find((section) => section.category === "hair")?.items ?? [];
       assert.ok(hairOf(await api.avatar("lime")).some((item) => item.boothId === "8800102"));

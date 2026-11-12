@@ -58,13 +58,13 @@ test("summary always shows counts and state", async () => {
     );
     assert.match(
       m.assetUpdateListSummary(status([row("1"), row("2"), row("3", { changes: ["商品説明の変更"] }), row("4", { error: "失敗", enabled: false })])),
-      /更新候補 1 件/,
+      /更新 1 件/,
     );
     assert.match(
       m.assetUpdateListSummary(status([row("1"), row("2"), row("3", { changes: ["商品説明の変更"] }), row("4", { error: "失敗", enabled: false })])),
       /確認失敗 1 件/,
     );
-    assert.match(m.assetUpdateListSummary(status([row("1"), row("2")])), /更新候補なし/);
+    assert.match(m.assetUpdateListSummary(status([row("1"), row("2")])), /更新なし/);
   });
 });
 

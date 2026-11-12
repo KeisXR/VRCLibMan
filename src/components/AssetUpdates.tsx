@@ -98,13 +98,13 @@ export function AssetUpdates() {
       {Boolean(status?.rows.length) && listOpen && <div id="asset-update-list-panel" className="asset-update-panel">
         <div className="inline-control">
           <input aria-label="確認対象の商品を絞り込む" placeholder="確認対象の商品名・BOOTH ID" value={listQuery} onChange={(e) => { setListQuery(e.target.value); setPage(0); }} />
-          <select aria-label="確認結果で絞り込む" value={filter} onChange={(e) => { setFilter(e.target.value); setPage(0); }}><option value="all">すべての結果</option><option value="changed">更新候補あり</option><option value="error">確認失敗</option></select>
+          <select aria-label="確認結果で絞り込む" value={filter} onChange={(e) => { setFilter(e.target.value); setPage(0); }}><option value="all">すべての結果</option><option value="changed">更新あり</option><option value="error">確認失敗</option></select>
           <span>{matching.length} 件</span>
         </div>
         <ul className="asset-update-list">{visible.map((r) => <li key={r.boothId}>
           <label className="switch-label"><input type="checkbox" checked={r.enabled} disabled={pending} onChange={(e) => void configure({ boothId: r.boothId, enabled: e.target.checked })} /><span className="asset-update-title" title={r.title}>{r.title}</span></label>
-          <p role="status">{r.error ? `確認失敗：${r.error}` : r.changes.length ? `更新候補あり：${r.changes.join("・")}` : r.checkedAt ? "比較できる公開情報に変更なし" : "未確認"}</p>
-          {r.error && r.changes.length > 0 && <p>前回の更新候補：{r.changes.join("・")}</p>}
+          <p role="status">{r.error ? `確認失敗：${r.error}` : r.changes.length ? `更新あり：${r.changes.join("・")}` : r.checkedAt ? "比較できる公開情報に変更なし" : "未確認"}</p>
+          {r.error && r.changes.length > 0 && <p>前回の更新：{r.changes.join("・")}</p>}
           <p>最終確認：{r.checkedAt ? new Date(r.checkedAt).toLocaleString() : "未確認"}</p>
           <div className="inline-control"><button type="button" className="button" onClick={() => void openExternal(`https://booth.pm/ja/items/${r.boothId}`).catch((err: unknown) => fail(errorText(err)))}>BOOTH で確認</button>{r.changes.length > 0 && <button type="button" className="button" disabled={pending || checking || status?.running} onClick={() => void configure({ boothId: r.boothId, acknowledge: true })}>確認済みにする</button>}</div>
         </li>)}</ul>

@@ -17,7 +17,7 @@ export function useAssetUpdateNotice(notify: (message: string, action?: NoticeAc
         const keys = new Set(status.rows.filter(r => r.enabled && r.changes.length).map(r => `${r.boothId}:${r.candidateKey ?? r.changes.join(",")}`));
         const count = [...keys].filter(key => !seen.current.has(key)).length;
         seen.current = keys;
-        if (count) notify(`${count} 件のアセットに更新候補があります`, { label: "アセット更新記録を開く", run: () => { window.location.hash = "#/asset-update-log"; } });
+        if (count) notify(`${count} 件のアセットが更新されました`, { label: "アセット更新記録を開く", run: () => { window.location.hash = "#/asset-update-log"; } });
       } catch { /* The settings screen reports read failures; do not repeat background banners. */ }
     }
     void import("@tauri-apps/api/event").then(({ listen }) => listen("asset-updates-changed", () => void update())).then((unlisten) => { if (alive) stop = unlisten; else unlisten(); });

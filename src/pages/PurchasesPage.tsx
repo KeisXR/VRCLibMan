@@ -217,18 +217,7 @@ function PurchaseItemRow({
           {!item.inLibrary && <span>・ライブラリに無い商品</span>}
         </div>
         <div className="pills">
-          {item.groups.map((group) =>
-            group.avatarId ? (
-              <a key={group.key} className="chip" href={`#/avatar/${encodeURIComponent(group.avatarId)}`}>
-                {group.label}
-                {group.body ? "（本体）" : ""}
-              </a>
-            ) : (
-              <span key={group.key} className="chip">
-                {group.label}
-              </span>
-            ),
-          )}
+          <span className="meta">購入した対応版：{item.variation ?? (item.groups.some(g => g.body) ? "アバター本体" : item.groups.filter(g => g.kind !== "generic").map(g => g.label).join("・") || "対応版未設定")}</span>
           {item.labelIds
             .filter((id) => names.has(id))
             .map((id) => (
@@ -241,7 +230,7 @@ function PurchaseItemRow({
       <div className="purchase-item-side">
         {showPrices && (
           <div className="purchase-price">
-            {formatYen(item.priceYen)}
+            商品代金 {formatYen(item.priceYen)}
             {item.boostYen ? <span className="meta">BOOST {formatYen(item.boostYen)}</span> : null}
           </div>
         )}
@@ -298,7 +287,7 @@ function OrderCard({
           {!order.detailRead && <span className="badge">詳細は未取得</span>}
         </div>
         <div className="purchase-order-side">
-          {showPrices && order.totalYen != null && <span className="purchase-total">お支払 {formatYen(order.totalYen)}</span>}
+          {showPrices && !(order.items.length === 1 && order.items[0].amountYen != null && order.items[0].amountYen === order.totalYen) && <span className="purchase-total">お支払 {formatYen(order.totalYen)}</span>}
           <select
             className="purchase-gift-select"
             aria-label={`注文 ${order.orderId} のギフトの扱い`}
@@ -562,6 +551,7 @@ function PurchaseSummaryView({ changes }: { changes: number }) {
   const { fail } = useShell();
   const [year, setYear] = useState<number | null>(null);
   const [summary, setSummary] = useState<PurchaseSummary | null>(null);
+  const [includeUnowned, setIncludeUnowned] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -596,6 +586,8 @@ function PurchaseSummaryView({ changes }: { changes: number }) {
           </select>
         </label>
       </div>
+      <label className="check-row"><input type="checkbox" checked={includeUnowned} onChange={e => setIncludeUnowned(e.target.checked)} />未所持アバターも表示する</label>
+      <p className="meta">複数アバター対応の購入額は専用の枠に1回だけ数えます。対応版未設定は別枠です。上部の合計は全購入を含みます。</p>
       <dl className="purchase-totals">
         <div>
           <dt>注文</dt>
@@ -632,7 +624,7 @@ function PurchaseSummaryView({ changes }: { changes: number }) {
             </tr>
           </thead>
           <tbody>
-            {summary.groups.map((group) => {
+            {summary.groups.filter(group => includeUnowned || group.kind !== "avatar" || group.owned).map((group) => {
               const value = prices ? group.amountYen : group.items;
               return (
                 <tr key={group.key}>

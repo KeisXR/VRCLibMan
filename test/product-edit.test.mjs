@@ -129,7 +129,7 @@ test("the edit dialog sends 「自動」 and says when no avatar matches", async
     assert.equal(document.querySelectorAll(".picker label").length, 0, "no unrelated candidate is offered");
     await change(search, "ライン");
     assert.ok(document.body.textContent.includes("名前が似ている候補"), "a loose candidate is marked as uncertain");
-    assert.equal(document.querySelectorAll(".picker-loose label").length, 1);
+    assert.equal(document.querySelectorAll("label.picker-loose").length, 1);
     await click(button("保存"));
     assert.equal(updates.length, 2);
     assert.equal(updates[1].resetGenre ?? false, false, "an untouched automatic genre is not reset");

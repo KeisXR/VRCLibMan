@@ -8,6 +8,7 @@ export interface AvatarHit {
   displayName: string;
   /** 表示名と別名。小文字にしてある。 */
   names: string[];
+  owned?: boolean;
 }
 
 export interface RankedAvatars {
@@ -20,9 +21,10 @@ export const CLOSE_SCORE = 0.75;
 /** 文字の並び（2 文字ずつ）の重なりがこれ未満の候補は出さない。 */
 export const LOOSE_SCORE = 0.3;
 
-export function avatarHit(avatar: { id: string; displayName: string; aliases: string[] }): AvatarHit {
+export function avatarHit(avatar: { id: string; displayName: string; aliases: string[]; owned?: boolean }): AvatarHit {
   return {
     id: avatar.id,
+    owned: avatar.owned,
     displayName: avatar.displayName,
     names: [avatar.displayName, ...avatar.aliases].map((name) => name.trim().toLowerCase()).filter(Boolean),
   };

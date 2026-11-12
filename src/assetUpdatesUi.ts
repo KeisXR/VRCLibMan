@@ -15,9 +15,9 @@ export function assetUpdateListSummary(status: AssetUpdateStatus | null): string
   const changed = status.rows.filter((r) => r.changes.length > 0).length;
   const errors = status.rows.filter((r) => r.error).length;
   const parts = [`確認対象 ${enabled} 件`];
-  if (changed > 0) parts.push(`更新候補 ${changed} 件`);
+  if (changed > 0) parts.push(`更新 ${changed} 件`);
   if (errors > 0) parts.push(`確認失敗 ${errors} 件`);
-  if (changed === 0 && errors === 0) parts.push("更新候補なし");
+  if (changed === 0 && errors === 0) parts.push("更新なし");
   if (enabled !== total) parts.push(`登録 ${total} 件`);
   return parts.join("・");
 }

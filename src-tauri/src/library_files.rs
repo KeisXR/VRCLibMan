@@ -1936,6 +1936,8 @@ mod tests {
         std::fs::create_dir_all(remote.join(booth_a)).unwrap();
         std::fs::write(remote.join(booth_a).join("a.zip"), b"a").unwrap();
         let mut snapshot = Snapshot {
+            purchased_editions: HashMap::new(),
+            manual_editions: HashMap::new(),
             products: vec![probe_product(booth_a), probe_product(booth_b)],
             files: Vec::new(),
             avatars: Vec::new(),
@@ -1974,6 +1976,8 @@ mod tests {
         use crate::view::Snapshot;
 
         let mut snapshot = Snapshot {
+            purchased_editions: HashMap::new(),
+            manual_editions: HashMap::new(),
             products: Vec::new(),
             files: Vec::new(),
             avatars: Vec::new(),

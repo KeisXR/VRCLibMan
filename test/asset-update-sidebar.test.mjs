@@ -93,7 +93,7 @@ test("sidebar asset update button runs the configured check and reports a quiet 
     assert.match(button.textContent, /アセットの更新を確認/);
     await act(async () => { button.click(); await tick(); });
     assert.equal(checks, 1, "press runs the check");
-    assert.ok(notes.some((n) => n.message.includes("更新候補なし")), "a quiet result is reported");
+    assert.ok(notes.some((n) => n.message.includes("更新なし")), "a quiet result is reported");
 
     // A result with failures stays on screen as a persistent notice.
     notes.length = 0;
