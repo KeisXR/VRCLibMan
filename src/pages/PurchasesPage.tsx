@@ -204,6 +204,8 @@ function PurchaseItemRow({
   const names = new Map(labels.map((label) => [label.id, label.name]));
   const open = () => void openBoothLink(`https://booth.pm/ja/items/${item.boothId}`).catch((err) => fail(errorText(err)));
   const libraryTarget = item.libraryLink ? libraryHref(item.libraryLink, item.boothId) : null;
+  const group = item.groups[0];
+  const editionLabel = group?.body ? "アバター本体" : group?.label;
   return (
     <li className="purchase-item">
       <Thumb path={item.thumbnailPath} url={item.thumbnailUrl} name={item.name} small />
@@ -217,7 +219,12 @@ function PurchaseItemRow({
           {!item.inLibrary && <span>・ライブラリに無い商品</span>}
         </div>
         <div className="pills">
-          <span className="meta">購入した対応版：{item.variation ?? (item.groups.some(g => g.body) ? "アバター本体" : item.groups.filter(g => g.kind !== "generic").map(g => g.label).join("・") || "対応版未設定")}</span>
+          {editionLabel && (
+            <span className="meta">
+              {group.kind === "avatar" || group.kind === "multiple" ? `購入した対応版：${editionLabel}` : editionLabel}
+              {item.variation && `（${item.variation}）`}
+            </span>
+          )}
           {item.labelIds
             .filter((id) => names.has(id))
             .map((id) => (
@@ -650,8 +657,9 @@ function PurchaseSummaryView({ changes }: { changes: number }) {
         </table>
       )}
       <p className="meta">
-        対応アバターと汎用は、今の分類から数えます。分類を直すと集計も変わります。複数のアバターに対応する商品は、それぞれのアバターに全額で数え、上の合計では 1 回だけ数えます。
-        同じ素体のほかのアバターには広げません。贈ったギフトはアバター別に入れません。送料と手数料は含みません。
+        ワールドと汎用品はそれぞれの枠に数えます。「対応版未設定」は対応先が登録されていて購入版を判別できない商品、
+        「分類なし」はアバター別の集計先が決まっていない商品です。分類を直すと集計も変わります。
+        贈ったギフトはアバター別に入れません。送料と手数料は含みません。
         {summary.unknownAmountItems > 0 && prices && ` 金額がまだ分からない商品が ${summary.unknownAmountItems} 件あります。`}
       </p>
     </div>

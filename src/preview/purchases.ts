@@ -35,6 +35,7 @@ function changed(): void {
 
 const avatar = (id: string, label: string, body = false): PurchaseGroup => ({ key: `avatar:${id}`, kind: "avatar", label, avatarId: id, body });
 const GENERIC: PurchaseGroup = { key: "generic", kind: "generic", label: "汎用", avatarId: null, body: false };
+const WORLD: PurchaseGroup = { key: "world", kind: "world", label: "ワールド", avatarId: null, body: false };
 const UNCLASSIFIED: PurchaseGroup = { key: "unclassified", kind: "unclassified", label: "分類なし", avatarId: null, body: false };
 const OWNED = new Set(["lime", "plum", "manuka"]);
 
@@ -56,10 +57,11 @@ const POOL: Sample[] = [
   { boothId: "8800101", name: "しなの・ライム・マヌカ対応 ワンピース (フルセット)", variation: "フルセット", shop: "サンプル工房", priceYen: 2500, boostYen: 300, inLibrary: true, thumbnailUrl: "/samples/ribbon.svg", groups: [{ key: "multiple", kind: "multiple", label: "複数アバター対応", avatarId: null, body: false }], libraryLink: { kind: "asset", avatarId: null } },
   { boothId: "8800140", name: "見本のヘアピン", variation: null, shop: "見本工房", priceYen: 300, boostYen: 0, inLibrary: true, thumbnailUrl: null, groups: [GENERIC] },
   { boothId: "8800141", name: "プラム用 見本テクスチャ (プラム版)", variation: "プラム版", shop: "見本工房", priceYen: 800, boostYen: 0, inLibrary: true, thumbnailUrl: null, groups: [avatar("plum", "プラム")] },
-  { boothId: "8800142", name: "見本のワールド小物", variation: null, shop: "見本ワールド店", priceYen: 500, boostYen: 0, inLibrary: false, thumbnailUrl: null, groups: [UNCLASSIFIED] },
+  { boothId: "8800142", name: "見本のワールド小物", variation: null, shop: "見本ワールド店", priceYen: 500, boostYen: 0, inLibrary: true, thumbnailUrl: null, groups: [WORLD] },
   { boothId: "8800143", name: "マヌカ向け 見本パーカー (マヌカ版)", variation: "マヌカ版", shop: "サンプル工房", priceYen: 1800, boostYen: 200, inLibrary: true, thumbnailUrl: "/samples/seal.svg", groups: [avatar("manuka", "マヌカ")] },
   { boothId: "4876459", name: "ライム -Lime- / オリジナル3Dモデル", variation: null, shop: "こまど", priceYen: 5500, boostYen: 0, inLibrary: true, thumbnailUrl: "/samples/avatar-hero.png", groups: [avatar("lime", "ライム", true)], libraryLink: { kind: "avatar", avatarId: "lime" } },
   { boothId: "8800144", name: "ライム・プラム対応 見本の髪", variation: null, shop: "見本ヘア", priceYen: 1200, boostYen: 0, inLibrary: true, thumbnailUrl: null, groups: [{ key: "unset", kind: "unset", label: "対応版未設定", avatarId: null, body: false }] },
+  { boothId: "8800145", name: "見本のグッズ", variation: null, shop: "見本工房", priceYen: 400, boostYen: 0, inLibrary: false, thumbnailUrl: null, groups: [UNCLASSIFIED] },
 ];
 
 interface StoredItem {
