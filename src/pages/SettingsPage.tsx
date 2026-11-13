@@ -151,6 +151,7 @@ export function SettingsPage() {
 
   async function removeAvatar() {
     if (!avatar.id || avatar.builtin) return;
+    if (!window.confirm(`「${avatar.displayName}」を対応表から削除します。このアバターに結び付いた商品の対応は計算し直します。元に戻せません。続けますか？`)) return;
     try {
       await api.deleteAvatar(avatar.id);
       setAvatar(emptyAvatar);
@@ -177,6 +178,7 @@ export function SettingsPage() {
 
   async function removeBody() {
     if (!body.id) return;
+    if (!window.confirm(`素体「${body.displayName}」を削除します。この素体に入っているアバターは素体なしになり、共通素体を通した衣装の表示が無くなります。初期データの素体は「デバッグ → 初期データを追加」で戻せます。続けますか？`)) return;
     try {
       await api.deleteBaseBody(body.id);
       setBody({ id: "", displayName: "", note: "" });

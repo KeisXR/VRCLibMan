@@ -1,7 +1,7 @@
 import type { ItemView } from "./types";
 
 /**
- * 「ファイルを取得」の純粋な判断。ファイル情報が 1 件も無い商品だけに出し、
+ * 「無料配布のファイルを探す」の純粋な判断。ファイル情報が 1 件も無い商品だけに出し、
  * 内蔵ブラウザが無効のときと、BOOTH で非公開の商品には出さない
  * （ダウンロードは内蔵ブラウザの 1 件ずつの経路を使い、非公開の商品は公開情報を読めないため）。
  * 押すと BOOTH の公開情報を 1 回だけ読み、無料配布のファイルだけを行として加える。
@@ -14,9 +14,16 @@ export function offerFreeFileCheck(
   return builtinBrowser && !item.unpublished && item.downloads.length === 0 && item.localFileCount === 0;
 }
 
-export const FREE_FILE_CHECK_LABEL = "ファイルを取得";
-export const FREE_FILE_CHECK_BUSY_LABEL = "取得中…";
+export const FREE_FILE_CHECK_LABEL = "無料配布のファイルを探す";
+export const FREE_FILE_CHECK_BUSY_LABEL = "探しています…";
 
+
+/**
+ * 押したあとの通知。見つからなかったとき（有料・一覧なし）は失敗ではないので、Rust の理由をそのまま通常の通知で出す。
+ */
+export function freeFilesResultMessage(report: { files: number; notice?: string | null }): string {
+  return report.notice || freeFilesFoundMessage(report.files);
+}
 
 export function freeFilesFoundMessage(count: number): string {
   return count > 0

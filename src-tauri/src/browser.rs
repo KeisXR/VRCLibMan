@@ -1318,6 +1318,8 @@ pub struct LibraryWalkReport {
     pub inserted: u32,
     pub updated: u32,
     pub unchanged: u32,
+    /// 最後まで読めたので、続けて未分類の分類を始めた（`auto_classify`）。
+    pub classifying: bool,
 }
 
 fn walk_page_script() -> String {
@@ -1832,6 +1834,7 @@ pub async fn import_library(app: AppHandle) -> Result<LibraryWalkReport, String>
         inserted: 0,
         updated: 0,
         unchanged: 0,
+        classifying: false,
     };
     if !collected.products.is_empty() {
         let authoritative = collected.stop == WalkStop::Finished;
@@ -1875,7 +1878,18 @@ pub async fn import_library(app: AppHandle) -> Result<LibraryWalkReport, String>
     }
     let skip_detail = report.cancelled || report.notice == db::BROWSER_AGE_MESSAGE;
     if !skip_detail {
-        fill_public_details(&app, &progress).await?;
+        match fill_public_details(&app, &progress).await? {
+            DetailFill::Done => {}
+            DetailFill::Cancelled => {
+                browser_log(&app, "ライブラリ全取得を中止しました");
+                report.cancelled = true;
+            }
+            DetailFill::Stopped => {
+                if report.notice.is_empty() {
+                    report.notice = DETAIL_STOPPED_NOTICE.to_string();
+                }
+            }
+        }
     }
     if report.cancelled {
         progress.cancel(summary);
@@ -2309,9 +2323,20 @@ async fn read_order_reader(
     Ok(())
 }
 
-async fn fill_public_details(app: &AppHandle, progress: &ProgressGuard) -> Result<(), String> {
+/// 公開情報の確認を最後まで終えたか。読み残しがあると、続けての自動の分類はしない（`auto_classify::after_walk`）。
+#[derive(Debug, PartialEq, Eq)]
+enum DetailFill {
+    Done,
+    Cancelled,
+    /// BOOTH の応答待ち（429 / 503）か通信の失敗で止めた。読み残しは次の全取得で続きから読む。
+    Stopped,
+}
+
+pub const DETAIL_STOPPED_NOTICE: &str = "BOOTH の公開情報の確認を途中で止めました。次の「ライブラリ全取得」で続きから確認します。今すぐ分類するときは「2. 分類」の「未分類を分類」を押してください";
+
+async fn fill_public_details(app: &AppHandle, progress: &ProgressGuard) -> Result<DetailFill, String> {
     if walk_cancel_requested() {
-        return Ok(());
+        return Ok(DetailFill::Cancelled);
     }
     let ids = {
         let state = app.state::<crate::AppState>();
@@ -2323,7 +2348,7 @@ async fn fill_public_details(app: &AppHandle, progress: &ProgressGuard) -> Resul
     };
     let total = ids.len() as u32;
     if total == 0 {
-        return Ok(());
+        return Ok(DetailFill::Done);
     }
     let pause = {
         let state = app.state::<crate::AppState>();
@@ -2337,18 +2362,18 @@ async fn fill_public_details(app: &AppHandle, progress: &ProgressGuard) -> Resul
     };
     for (index, booth_id) in ids.iter().enumerate() {
         if walk_cancel_requested() {
-            return Ok(());
+            return Ok(DetailFill::Cancelled);
         }
         pause_for(pause).await;
         if walk_cancel_requested() {
-            return Ok(());
+            return Ok(DetailFill::Cancelled);
         }
         let current = (index as u32) + 1;
         emit_walk_progress(
             progress,
             current,
             total,
-            &library_walk::detail_progress_line(current, total),
+            &library_walk::detail_progress_line(current, total, pause),
         );
         let interval_ms = pause.as_millis() as u64;
         let outcome = match crate::booth_detail::fetch_public_item(booth_id).await {
@@ -2375,7 +2400,7 @@ async fn fill_public_details(app: &AppHandle, progress: &ProgressGuard) -> Resul
                     ),
                 );
                 browser_log(app, "商品情報の確認を中断しました");
-                return Ok(());
+                return Ok(DetailFill::Stopped);
             }
         };
         let app_for_db = app.clone();
@@ -2392,10 +2417,10 @@ async fn fill_public_details(app: &AppHandle, progress: &ProgressGuard) -> Resul
         .map_err(|_| "商品情報を保存できません".to_string())??;
         if stop {
             browser_log(app, "商品情報の確認を中断しました");
-            return Ok(());
+            return Ok(DetailFill::Stopped);
         }
     }
-    Ok(())
+    Ok(DetailFill::Done)
 }
 
 #[cfg(test)]

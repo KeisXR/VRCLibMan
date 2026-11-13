@@ -2,6 +2,7 @@ import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useRef, useS
 import type { FormEvent } from "react";
 import { api, listenProgress, listenPurchasesChanged, openBoothLink } from "../api";
 import { useShell } from "../App";
+import { SettingsLink } from "../components/SettingsLink";
 import {
   GIFT_LABEL,
   PURCHASE_PAGE_SIZE,
@@ -84,9 +85,9 @@ function PurchaseGuide({ builtinBrowser }: { builtinBrowser: boolean }) {
         <>
           <p>購入履歴の読み込みには内蔵ブラウザを使います。設定の「BOOTH の読み込み方」で内蔵ブラウザを選んでから、ここに戻ってください。</p>
           <div className="row-actions">
-            <a className="button" href="#/settings">
+            <SettingsLink section="settings-booth" className="button">
               設定を開く
-            </a>
+            </SettingsLink>
           </div>
         </>
       )}

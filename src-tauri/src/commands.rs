@@ -926,8 +926,12 @@ pub async fn import_booth_library(
     app: tauri::AppHandle,
 ) -> Result<crate::browser::LibraryWalkReport, String> {
     // 移動と eval は import_library の中で dispatch_ui に渡す。
-    let report = crate::browser::import_library(app.clone()).await?;
+    let mut report = crate::browser::import_library(app.clone()).await?;
     let _ = app.emit("library-changed", ());
+    // 最後まで読めたときだけ、続けて未分類を分類する。中止・途中停止では公開情報が揃っていない。
+    if crate::auto_classify::after_walk(report.cancelled, &report.notice) {
+        report.classifying = crate::auto_classify::request(&app);
+    }
     Ok(report)
 }
 
@@ -1056,9 +1060,12 @@ pub async fn download_booth_file(
 #[serde(rename_all = "camelCase")]
 pub struct FreeFilesReport {
     pub files: usize,
+    /// 有料・一覧なしのように、確認できたが無料配布のファイルが無かったとき。何も保存していない。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notice: Option<String>,
 }
 
-/// 「ファイルを取得」: one cookie-less public read for one product the user clicked.
+/// 「無料配布のファイルを探す」: one cookie-less public read for one product the user clicked.
 /// Stores only free-download file rows. It does not download, buy, or add anything to BOOTH.
 #[tauri::command]
 pub async fn fetch_free_files(
@@ -1082,6 +1089,9 @@ pub async fn fetch_free_files(
         &app,
         &crate::free_files::log_line(&booth_id, report.http_status, &report.outcome),
     );
+    if let Some(message) = crate::free_files::nothing_found(&report.outcome) {
+        return Ok(FreeFilesReport { files: 0, notice: Some(message.to_string()) });
+    }
     if let Some(message) = crate::free_files::refusal(&report.outcome) {
         return Err(message.to_string());
     }
@@ -1102,7 +1112,7 @@ pub async fn fetch_free_files(
     .await
     .map_err(|_| "ファイル情報を保存できません".to_string())??;
     let _ = app.emit("library-changed", ());
-    Ok(FreeFilesReport { files: count })
+    Ok(FreeFilesReport { files: count, notice: None })
 }
 
 /// スキャン済みファイルと、記録済みの商品ファイルだけを既定のアプリで開く。
@@ -1392,14 +1402,22 @@ pub fn classification_status(
 }
 
 #[tauri::command]
-pub async fn extract_products(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    target: String,
-) -> Result<ExtractReport, String> {
+pub async fn extract_products(app: AppHandle, target: String) -> Result<ExtractReport, String> {
+    let report = run_extract(&app, &target).await?;
+    // 取り込みのあとの分類がこの実行の間に頼まれていたら、続けて行う（中断したときは捨てる）。
+    crate::auto_classify::after_run(&app, report.cancelled);
+    Ok(report)
+}
+
+/// 分類がすでに走っているときの `run_extract` のエラー。
+pub(crate) const EXTRACT_ALREADY_RUNNING: &str = "分類はすでに実行中です";
+
+/// 分類の本体。画面の「未分類を分類」などと、取り込みのあとの自動の分類（`auto_classify`）が使う。
+pub(crate) async fn run_extract(app: &AppHandle, target: &str) -> Result<ExtractReport, String> {
+    let state = app.state::<AppState>();
     let running = Arc::clone(&state.extract_running);
     if running.swap(true, Ordering::SeqCst) {
-        return Err("分類はすでに実行中です".into());
+        return Err(EXTRACT_ALREADY_RUNNING.into());
     }
     state.cancel_extract.store(false, Ordering::SeqCst);
     let _clear = ClearRunning(running);
@@ -2001,6 +2019,14 @@ mod browser_action_tests {
 pub fn product_avatar_suggestions(state: State<'_, AppState>, boothId: String) -> Result<db::AvatarSuggestions, String> {
     let connection = db(&state)?;
     db::product_avatar_suggestions(&connection, &boothId)
+}
+
+/// 「取得した商品の分類」で最初に選んでおく候補。読むだけで保存しない。
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn product_genre_suggestion(state: State<'_, AppState>, boothId: String) -> Result<db::GenreSuggestion, String> {
+    let connection = db(&state)?;
+    db::product_genre_suggestion(&connection, &boothId)
 }
 
 #[tauri::command]

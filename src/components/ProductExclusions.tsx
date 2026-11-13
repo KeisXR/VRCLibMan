@@ -7,6 +7,23 @@ import type { GenreKind, ManagedProduct } from "../types";
 import { errorText } from "../ui";
 import { ProductEditDialog } from "./ProductEditDialog";
 import { useGenreMove, useRegisterOwnedBody, useUnpinProduct } from "../useGenreMove";
+import type { NoticeAction, NotifyOptions } from "../notice";
+
+/** 除外の「元に戻す」。除外を外して一覧を読み直す。 */
+async function restoreExcluded(
+  boothId: string,
+  notify: (message: string, action?: NoticeAction | (() => void), options?: NotifyOptions) => void,
+  fail: (message: string) => void,
+  refresh: () => void,
+): Promise<void> {
+  try {
+    await api.setProductExcluded(boothId, false);
+    notify("除外を元に戻しました");
+    refresh();
+  } catch (err) {
+    fail(errorText(err));
+  }
+}
 
 export function ExcludeProductButton({
   boothId,
@@ -200,7 +217,8 @@ export function ExcludeProductButton({
                 .setProductExcluded(boothId, true)
                 .then(
                   () => {
-                    notify("除外しました。インポートの「商品を管理・除外」から元に戻せます");
+                    // 関数だけを渡すと「元に戻す」になる。消えたあとは「商品を管理・除外」から戻せる。
+                    notify(`「${title}」を管理対象から除外しました`, () => void restoreExcluded(boothId, notify, fail, refresh));
                     refresh();
                   },
                   (err: unknown) => fail(errorText(err)),
@@ -321,11 +339,8 @@ export function ProductExclusions() {
     setPending((current) => new Set(current).add(product.boothId));
     try {
       await api.setProductExcluded(product.boothId, !product.excluded);
-      notify(
-        product.excluded
-          ? "除外を解除しました"
-          : "管理対象から除外しました",
-      );
+      if (product.excluded) notify("除外を解除しました");
+      else notify(`「${product.title}」を管理対象から除外しました`, () => void restoreExcluded(product.boothId, notify, fail, refresh));
       refresh();
     } catch (err) {
       fail(errorText(err));

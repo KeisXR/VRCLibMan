@@ -596,7 +596,13 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
     match imported {
         Ok(report) => {
             let _ = app.emit("library-changed", ());
-            if request.url().split('?').next() == Some("/import-download") {
+            let download = request.url().split('?').next() == Some("/import-download");
+            // 拡張から受け取った商品は、続けて未分類を分類する。ダウンロードから届いた 1 件は
+            // 「取得した商品の分類」で本人が決めるので、ここでは分類しない。
+            if !download && report.inserted + report.updated > 0 {
+                crate::auto_classify::request(app);
+            }
+            if download {
                 crate::presence::show_main_later(app);
                 let _ = app.emit_to("main", "browser-auto-pending", ());
                 if let Ok(product) = serde_json::from_str::<serde_json::Value>(&text) {

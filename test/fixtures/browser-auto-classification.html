@@ -22,6 +22,9 @@ api.browserAutoPending = async () => { fixture.fetches += 1; return fixture.pend
 api.knowledge = async () => ({avatars:[{id:'lime',displayName:'ライム',aliases:['Lime']},{id:'manuka',displayName:'マヌカ',aliases:['Manuka']}],baseBodies:[]});
 api.productForEdit = async id => ({boothId:id,linkedAvatarIds:[]});
 api.productAvatarSuggestions = async () => ({avatarIds:['lime'],unresolvedNames:[]});
+// 候補のある商品（衣装・髪）と、候補の無い商品（ワールド ほか）。
+const suggestions = { '123456': {kind:'asset',genre:'outfit',source:'rules'}, '345678': {kind:'asset',genre:'hair',source:'booth'} };
+api.productGenreSuggestion = async id => suggestions[id] ?? {kind:null,genre:null,source:null};
 api.moveProductGenre = async (id, kind, genre, avatarIds) => {
   if (fixture.failNext) { fixture.failNext = false; throw new Error('保存失敗の見本'); }
   if (fixture.holdSave) await new Promise(resolve => { fixture.releaseSave = resolve; });

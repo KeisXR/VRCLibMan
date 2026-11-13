@@ -20,12 +20,21 @@ import { ExcludeProductButton } from "../components/ProductExclusions";
 import { UnityOpenButton } from "../components/UnityOpenDialog";
 import { isUnityOpenableName } from "../unityOpen";
 import { copyWithConfirm } from "../remoteCopy";
-import { FREE_FILE_CHECK_BUSY_LABEL, FREE_FILE_CHECK_LABEL, freeFilesFoundMessage, offerFreeFileCheck } from "../freeFiles";
+import { FREE_FILE_CHECK_BUSY_LABEL, FREE_FILE_CHECK_LABEL, freeFilesResultMessage, offerFreeFileCheck } from "../freeFiles";
 import {
   type RemoteProbeStatus,
   placeLabelForFile,
   useRemoteProductProbe,
 } from "../remoteProductProbe";
+
+/** 統合の確認。統合元は消え、元に戻す操作は無い。 */
+export function mergeConfirmText(from: string, into: string): string {
+  return `「${from}」を「${into}」へ統合します。商品の対応先と別名を「${into}」へまとめ、「${from}」は削除します。元に戻せません。続けますか？`;
+}
+
+/** 「対応版未設定」の印と欄の説明。どの対応版を買ったか判定できず、どこで直すか。 */
+export const EDITION_UNSET_HINT =
+  "対応版ごとに売られている商品で、どのアバター向けを買ったか判定できていません。「⋯ → 分類を編集」の「購入した対応版」で設定できます";
 
 const prefersReducedMotion = () =>
   typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -107,6 +116,8 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
 
   async function merge() {
     if (!detail || !intoId) return;
+    const into = knowledge?.avatars.find((avatar) => avatar.id === intoId)?.displayName ?? intoId;
+    if (!window.confirm(mergeConfirmText(detail.displayName, into))) return;
     try {
       await api.mergeAvatars(detail.id, intoId);
       notify("アバターを統合し、対応づけをやり直しました");
@@ -228,6 +239,7 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
           )}
           {(detail.unsetEditionItems?.length ?? 0) > 0 && <details className="generic-section">
             <summary>対応版未設定 {detail.unsetEditionItems.length} 件</summary>
+            <p className="meta">{EDITION_UNSET_HINT}。このアバター向けを買っていれば、設定すると上の一覧に移ります。</p>
             <div className="stack">{detail.unsetEditionItems.map(item => <ItemCard key={item.boothId} {...itemCardProps(item)} />)}</div>
           </details>}
           {detail.unsupportedOutfits.length > 0 && (
@@ -372,7 +384,7 @@ function FreeFileCheckButton({ boothId }: { boothId: string }) {
     setCheckingFree(true);
     try {
       const report = await api.fetchFreeFiles(boothId);
-      notify(freeFilesFoundMessage(report.files));
+      notify(freeFilesResultMessage(report));
       refresh();
     } catch (err) {
       fail(errorText(err));
@@ -592,7 +604,7 @@ export function ItemCard({
     setCheckingFree(true);
     try {
       const report = await api.fetchFreeFiles(item.boothId);
-      notify(freeFilesFoundMessage(report.files));
+      notify(freeFilesResultMessage(report));
       refresh();
     } catch (err) {
       fail(errorText(err));
@@ -664,7 +676,7 @@ export function ItemCard({
         <h3>
           {item.title}
           {item.classificationPinned && <span className="badge">手動</span>}
-          {item.category !== "avatar" && item.purchasedEditions?.mode === "unknown" && <span className="badge">対応版未設定</span>}
+          {item.editionUnset && <span className="badge" title={EDITION_UNSET_HINT}>対応版未設定</span>}
           {item.unpublished && <span className="badge">非公開</span>}
           {item.isFree && <span className="badge">無料</span>}
           {item.isAdult && <span className="badge adult">R-18</span>}

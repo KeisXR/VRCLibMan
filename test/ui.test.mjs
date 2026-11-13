@@ -158,8 +158,25 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         await wait(() => document.querySelector(".setup-guide .state-chip"));
         checkPrimary();
         await click(primary());
-        await click(button("あとで設定する"));
+        // ダウンロードしたファイルの置き場所。自動整理を選ぶまで「次へ」は押せず、「あとで設定する」は何も変えずに進む。
+        const screen = () => document.querySelector(".setup-screen");
+        await wait(() => screen()?.textContent.includes("ダウンロードしたファイルの置き場所"));
+        assert.ok(button("次へ", screen()).disabled, "next waits for an organizing choice");
+        const routedBefore = (await api.settings()).routeDownloads;
+        await click(button("あとで設定する", screen()));
+        assert.equal((await api.settings()).routeDownloads, routedBefore, "skipping changes nothing");
+        await wait(() => screen()?.textContent.includes("終了と起動の設定"));
+        await click(button("戻る", screen()));
+        await wait(() => screen()?.textContent.includes("ダウンロードしたファイルの置き場所"));
+        await wait(() => screen().querySelector('input[aria-label="ライブラリのフォルダ"]').value !== "");
+        await click(button("ライブラリへ自動整理する", screen()));
+        await click(button("次へ", screen()));
+        await wait(() => screen()?.textContent.includes("終了と起動の設定"));
+        assert.equal((await api.settings()).routeDownloads, true, "the chosen organizing is saved");
+        await click(button("あとで設定する", screen()));
         await wait(() => !document.querySelector(".setup-screen"));
+        // 終えたら、未分類が残っているので分類の節へ移り、その旨を伝える。
+        await wait(() => location.hash === "#/import" && text().includes("未分類の商品が"));
       },
     );
 

@@ -5,6 +5,15 @@ import type { LibraryWalkReport } from "../types";
 import { errorText } from "../ui";
 import { SettingRow } from "./SettingRow";
 
+/**
+ * 「ライブラリ全取得」の説明。かかる時間の目安は Rust の `library_walk::DETAIL_DELAY_MS`（1 件 3 秒以上）から。
+ * 公開情報は読んでいない商品だけを読み、中止しても次回は続きから読む。
+ */
+export const WALK_HELP =
+  "ライブラリ、ギフト、無料ダウンロードを1ページずつ読み、最後まで読めたら続けて未分類の商品を分類します。" +
+  "公開情報（カテゴリとタグ）をまだ読んでいない商品は1件ずつ約3秒おきに確認するので、初回は100件でおよそ5分かかります。" +
+  "中止しても、公開情報は次回続きから確認します。";
+
 /** Import page actions for the built-in browser: open, import the current page, and walk the library. */
 export function BuiltinBrowserImport() {
   const { refresh, notify, fail, refreshAccount } = useShell();
@@ -49,6 +58,7 @@ export function BuiltinBrowserImport() {
       const counts = `追加 ${result.inserted} 件、更新 ${result.updated} 件`;
       if (result.notice) fail(`${counts}。${result.notice}`);
       else if (result.cancelled) notify(`中止しました。${counts}`);
+      else if (result.classifying) notify(`${counts}。続けて未分類の商品を分類しています`);
       else notify(counts);
       refresh();
       refreshAccount();
@@ -75,7 +85,7 @@ export function BuiltinBrowserImport() {
       <SettingRow
         id="import-library-walk"
         label="商品情報を取得"
-        help="「ライブラリ全取得」はライブラリ、ギフト、無料ダウンロードを読み込みます。"
+        help={WALK_HELP}
         note="ファイルはダウンロードしません。"
       >
         <div className="row-actions">
@@ -100,6 +110,7 @@ export function BuiltinBrowserImport() {
             追加 {walkReport.inserted} 件、更新 {walkReport.updated} 件
             {walkReport.cancelled ? "。中止しました" : ""}
             {walkReport.notice ? `。${walkReport.notice}` : ""}
+            {walkReport.classifying ? "。続けて未分類の商品を分類しています" : ""}
           </p>
           <details className="settings-details">
             <summary>読み込み結果の詳細</summary>

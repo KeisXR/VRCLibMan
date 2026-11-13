@@ -88,6 +88,9 @@ test("acquisition classification defers, retries failed saves, and classifies mu
       await waitFor(`window.autoFixture.fetches > ${before}`, "pending list did not reload");
     }
     assert.equal(await evaluate("document.querySelector('dialog').open"), true);
+    // 決め打ちの初期値は無く、候補があるときだけ、その出どころを添えて選んでおく。
+    await waitFor("document.querySelector('dialog [role=status]')?.textContent.includes('タイトルと説明から')", "the suggestion did not load");
+    assert.equal(await evaluate("[...document.querySelectorAll('dialog select')].map(s => s.value).join('/')"), 'asset/outfit');
     await waitFor("!!document.querySelector('.auto-avatar-chip button')", "extracted avatar did not autofill");
     assert.equal(await evaluate("document.querySelector('.auto-avatar-chip').textContent"), 'ライム×');
     const hoverUnavailable = await evaluate("matchMedia('(hover: none)').matches");
@@ -117,8 +120,17 @@ test("acquisition classification defers, retries failed saves, and classifies mu
     assert.equal(await evaluate('window.autoFixture.pending.length'), 1);
     assert.deepEqual(await evaluate('window.autoFixture.savedAvatars[0]'), ['manuka']);
     assert.equal(await evaluate("document.querySelector('dialog p').textContent"), '見本のワールド');
+    // 候補が無ければ「選んでください」から始まり、種類と分類先を選ぶまで確定できない。
+    await waitFor("document.querySelector('dialog [role=status]')?.textContent === '種類と分類先を選んでください。'", "a product without a candidate did not ask for a choice");
+    const confirmDisabled = "[...document.querySelectorAll('dialog button')].find(n => n.textContent === '分類を確定').disabled";
+    assert.equal(await evaluate("document.querySelector('dialog select').value"), '');
+    assert.equal(await evaluate(confirmDisabled), true, "no blind default can be confirmed");
     await evaluate("(() => { const s = document.querySelector('dialog select'); s.value='world'; s.dispatchEvent(new Event('change',{bubbles:true})); })()");
     await pause(150);
+    assert.equal(await evaluate(confirmDisabled), true, "the genre still has to be chosen");
+    await evaluate("(() => { const s = document.querySelectorAll('dialog select')[1]; s.value='world'; s.dispatchEvent(new Event('change',{bubbles:true})); })()");
+    await pause(150);
+    assert.equal(await evaluate(confirmDisabled), false);
     await clickText('分類を確定');
     assert.equal(await evaluate('window.autoFixture.pending.length'), 0);
     assert.equal(await evaluate("document.querySelector('dialog').open"), false);

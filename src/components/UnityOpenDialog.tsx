@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { openSettingsSection } from "../anchorScroll";
 import { api } from "../api";
 import { useModalFocus } from "../keyboard";
 import { formatBytes } from "../media";
@@ -32,10 +33,7 @@ export interface UnityOpenTarget {
 }
 
 export function openUnitySettings() {
-  window.location.hash = "#/settings";
-  window.setTimeout(() => {
-    document.getElementById("settings-unity")?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, 0);
+  openSettingsSection("settings-unity");
 }
 
 /**
