@@ -1,9 +1,55 @@
 import { useEffect, useMemo, useState } from "react";
+import { openPageSection } from "../anchorScroll";
 import { api } from "../api";
 import { useShell } from "../App";
 import { CATEGORY_LABEL } from "../types";
-import type { AvatarCard } from "../types";
+import type { AvatarCard, LibraryStats } from "../types";
 import { Thumb, errorText } from "../ui";
+
+export type OwnedAvatarsHint =
+  | { kind: "no-products" }
+  | { kind: "unclassified"; count: number }
+  | { kind: "no-body" };
+
+/**
+ * 持っているアバターが 1 体も無いときの案内。読み込んでいないのか、分類していないのか、
+ * 分類したが本体が見つからなかったのかで、次にすることが違う。
+ */
+export function ownedAvatarsHint(stats: LibraryStats | null, ownedCount: number): OwnedAvatarsHint | null {
+  if (!stats || ownedCount > 0) return null;
+  if (stats.products === 0) return { kind: "no-products" };
+  if (stats.unextracted > 0) return { kind: "unclassified", count: stats.unextracted };
+  return { kind: "no-body" };
+}
+
+function OwnedAvatarsEmpty({ hint }: { hint: OwnedAvatarsHint }) {
+  if (hint.kind === "no-products") {
+    return (
+      <div className="empty">
+        <p>BOOTH の商品情報をまだ読み込んでいません。読み込んで分類すると、持っているアバターと対応する衣装がここに出ます。</p>
+        <a className="button secondary" href="#/import" onClick={(event) => { event.preventDefault(); openPageSection("#/import", "import-booth"); }}>
+          BOOTH から読み込む
+        </a>
+      </div>
+    );
+  }
+  if (hint.kind === "unclassified") {
+    return (
+      <div className="empty">
+        <p>読み込んだ商品のうち {hint.count} 件がまだ分類されていません。分類すると、アバター本体と対応する衣装がここに出ます。</p>
+        <a className="button secondary" href="#/import" onClick={(event) => { event.preventDefault(); openPageSection("#/import", "import-classification"); }}>
+          分類へ
+        </a>
+      </div>
+    );
+  }
+  return (
+    <div className="empty">
+      <p>持っているアバター本体が見つかりませんでした。アバター本体の商品が別のジャンルに入っているときは、その商品カードの「⋯ → アバター本体として登録」で登録できます。</p>
+      <a className="button secondary" href="#/assets">アセットを見る</a>
+    </div>
+  );
+}
 
 export function AvatarsPage() {
   const { revision, fail } = useShell();
@@ -11,6 +57,7 @@ export function AvatarsPage() {
   const [query, setQuery] = useState("");
   const [grouped, setGrouped] = useState(true);
   const [onlyOwned, setOnlyOwned] = useState(false);
+  const [stats, setStats] = useState<LibraryStats | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -21,6 +68,12 @@ export function AvatarsPage() {
       (err: unknown) => {
         if (!cancelled) fail(errorText(err));
       },
+    );
+    api.stats().then(
+      (value) => {
+        if (!cancelled) setStats(value);
+      },
+      () => undefined,
     );
     return () => {
       cancelled = true;
@@ -38,6 +91,8 @@ export function AvatarsPage() {
       return haystack.includes(needle);
     });
   }, [cards, query, onlyOwned]);
+  // 一覧を読めたあとだけ案内する（読み込み中に「見つかりません」と出さない）。
+  const hint = cards ? ownedAvatarsHint(stats, cards.filter((card) => card.owned).length) : null;
 
   return (
     <section>
@@ -61,12 +116,13 @@ export function AvatarsPage() {
           </button>
         </div>
       </div>
-      {cards && cards.length === 0 && (
-        <div className="empty">
-          アバターはまだ登録されていません。<a href="#/import">インポート</a>から BOOTH の商品を読み込んでください。
+      {hint && !query.trim() && (
+        <div className="ownership">
+          {!onlyOwned && <h2 className="ownership-title">持っているアバター</h2>}
+          <OwnedAvatarsEmpty hint={hint} />
         </div>
       )}
-      {cards && cards.length > 0 && filtered.length === 0 && <div className="empty">一致するアバターがありません。</div>}
+      {cards && cards.length > 0 && filtered.length === 0 && (query.trim() || !hint) && <div className="empty">一致するアバターがありません。</div>}
       <AvatarGroups title={onlyOwned ? "" : "持っているアバター"} cards={filtered.filter((card) => card.owned)} grouped={grouped} />
       {!onlyOwned && (
         <AvatarGroups title="衣装の対応先" cards={filtered.filter((card) => !card.owned)} grouped={grouped} note="所持が登録されていないアバターです。" />

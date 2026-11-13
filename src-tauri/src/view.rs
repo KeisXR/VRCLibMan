@@ -59,6 +59,9 @@ pub struct DownloadView {
 #[serde(rename_all = "camelCase")]
 pub struct ItemView {
     pub purchased_editions: crate::purchased_editions::Choice,
+    /// 商品カードの「対応版未設定」の印。対応先のアバターがあって、買った対応版を判定できないときだけ。
+    /// 対応先の無いワールド・ギミック・汎用品や、アバター本体には付けない。
+    pub edition_unset: bool,
     pub booth_id: String,
     pub title: String,
     pub shop: String,
@@ -633,6 +636,11 @@ fn outfits_for_adjustment(snapshot: &Snapshot, avatar: &Avatar) -> Vec<ItemView>
     outfits
 }
 
+/// アバター詳細の「対応版未設定」の欄と同じ条件（対応先があり、対応版を判定できない）。
+fn edition_unset(product: &Product, scope: Option<&crate::purchased_editions::Choice>, linked: bool) -> bool {
+    product.category != Some(Category::Avatar) && linked && scope.is_none_or(|choice| choice.mode == "unknown")
+}
+
 fn item_view(snapshot: &Snapshot, product: &Product, via_base_body: bool) -> ItemView {
     let mut files: Vec<FileBrief> = snapshot
         .files
@@ -658,8 +666,11 @@ fn item_view(snapshot: &Snapshot, product: &Product, via_base_body: bool) -> Ite
         .product_flags
         .iter()
         .find(|flag| flag.booth_id == product.booth_id);
+    let scope = snapshot.purchased_editions.get(&product.booth_id);
+    let edition_unset = edition_unset(product, scope, snapshot.links.iter().any(|link| link.product_id == product.booth_id));
     ItemView {
-        purchased_editions: snapshot.purchased_editions.get(&product.booth_id).cloned().unwrap_or_else(crate::purchased_editions::Choice::unknown),
+        purchased_editions: scope.cloned().unwrap_or_else(crate::purchased_editions::Choice::unknown),
+        edition_unset,
         booth_id: product.booth_id.clone(),
         title: product.title.clone(),
         shop: product.shop.clone(),
@@ -959,6 +970,24 @@ mod tests {
             remote_checked: true,
             remote_reachable: false,
         }
+    }
+
+    #[test]
+    fn edition_badge_only_marks_linked_items_whose_edition_is_unknown() {
+        let snapshot = sample();
+        let item = |id: &str, snapshot: &Snapshot| {
+            let product = snapshot.products.iter().find(|product| product.booth_id == id).unwrap();
+            item_view(snapshot, product, false)
+        };
+        // 対応先のある衣装で、対応版を判定できないもの（scope が無い）だけに付ける。
+        assert!(item("4", &snapshot).edition_unset);
+        assert!(!item("5", &snapshot).edition_unset, "a generic item with no avatar has no edition to choose");
+        assert!(!item("1", &snapshot).edition_unset, "an avatar body is not an edition");
+        let full = with_full_sets(&snapshot);
+        assert!(!item("4", &full).edition_unset, "a known edition is not marked");
+        let mut unknown = snapshot.clone();
+        unknown.purchased_editions.insert("4".into(), crate::purchased_editions::Choice::unknown());
+        assert!(item("4", &unknown).edition_unset);
     }
 
     #[test]

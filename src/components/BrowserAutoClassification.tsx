@@ -4,17 +4,33 @@ import { api, isTauri } from "../api";
 import { useShell } from "../App";
 import { postponeShown, promptOpen, reconcilePostponed, showsResume } from "../browserAutoPrompt";
 import { GENRE_LABEL, genresForKind } from "../types";
-import type { GenreKind, Knowledge } from "../types";
+import type { GenreKind, GenreSuggestion, Knowledge } from "../types";
 import { errorText } from "../ui";
 
 type Item = { boothId: string; title: string };
+type Kind = GenreKind | "avatar";
+
+/** 候補の出どころを、確定前の注記として出す文。 */
+export const SUGGESTION_SOURCE_LABEL: Record<NonNullable<GenreSuggestion["source"]>, string> = {
+  classified: "自動の分類の結果を候補にしています。",
+  booth: "BOOTH のカテゴリとタグから候補を選んでいます。",
+  rules: "タイトルと説明から候補を選んでいます。",
+};
+
+/** 確定できるか。種類と、アセット・ワールドなら分類先を本人が選んでいる（候補でもよい）こと。 */
+export function autoClassificationReady(kind: Kind | "", genre: string): boolean {
+  if (kind === "") return false;
+  return kind === "avatar" || genre !== "";
+}
 
 export function BrowserAutoClassification() {
   const { revision, refresh, fail, notify } = useShell();
   const [items, setItems] = useState<Item[]>([]);
   const [postponedIds, setPostponedIds] = useState<readonly string[]>([]);
-  const [kind, setKind] = useState<GenreKind | "avatar">("asset");
-  const [genre, setGenre] = useState("outfit");
+  // 決め打ちの初期値（衣装）は置かない。候補が無ければ本人が選ぶまで確定できない（確定は手動の固定になるため）。
+  const [kind, setKind] = useState<Kind | "">("");
+  const [genre, setGenre] = useState("");
+  const [suggestion, setSuggestion] = useState<GenreSuggestion | null>(null);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -58,7 +74,21 @@ export function BrowserAutoClassification() {
     setPostponedIds((prev) => reconcilePostponed(prev, items.map((item) => item.boothId)));
   }, [items]);
 
-  useEffect(() => { setKind("asset"); setGenre("outfit"); setName(""); setSaveError(null); }, [current?.boothId]);
+  useEffect(() => {
+    setKind(""); setGenre(""); setSuggestion(null); setName(""); setSaveError(null);
+    if (!current) return;
+    let alive = true;
+    void api.productGenreSuggestion(current.boothId).then(
+      (value) => {
+        if (!alive) return;
+        setSuggestion(value);
+        if (value.kind) { setKind(value.kind); setGenre(value.genre ?? ""); }
+      },
+      // 候補を読めなくても、本人が選べば確定できる。
+      () => undefined,
+    );
+    return () => { alive = false; };
+  }, [current?.boothId]);
 
   useEffect(() => {
     if (!current) return;
@@ -103,7 +133,8 @@ export function BrowserAutoClassification() {
       if (kind === "avatar") {
         const result = await api.registerOwnedBody(current.boothId, name.trim() || null);
         if (result.kind === "needsName") { setName(result.suggestedName); throw new Error("アバター名を入力して、もう一度確定してください。"); }
-      } else { await api.moveProductGenre(current.boothId, kind, genre, kind === "asset" ? selected : undefined); }
+      } else if (kind !== "" && genre) { await api.moveProductGenre(current.boothId, kind, genre, kind === "asset" ? selected : undefined); }
+      else throw new Error("種類と分類先を選んでください。");
       await api.browserAutoFinish(current.boothId);
       setItems(value => value.filter(item => item.boothId !== current.boothId));
       notify("分類を確定しました"); refresh();
@@ -123,11 +154,23 @@ export function BrowserAutoClassification() {
       {current && <>
         <h2 id="browser-auto-title">取得した商品の分類</h2><p>{current.title}</p>
         <p className="meta">残り{items.length}件。確定すると、再ダウンロード時の確認を省略します。</p>
+        <p className="meta" role="status">
+          {suggestion?.source ? `${SUGGESTION_SOURCE_LABEL[suggestion.source]}違っていたら選び直してください。` : "種類と分類先を選んでください。"}
+        </p>
         <label className="field"><span>種類</span><select autoFocus disabled={busy} value={kind} onChange={event => {
-          const next = event.target.value as typeof kind; setKind(next); setGenre(next === "world" ? "world" : "outfit");
-        }}><option value="asset">アセット</option><option value="world">ワールド</option><option value="avatar">アバター本体</option></select></label>
+          const next = event.target.value as Kind | "";
+          setKind(next);
+          // 候補と同じ種類に戻したときだけ候補の分類先を入れ、それ以外は選び直してもらう。
+          setGenre(next !== "" && next === suggestion?.kind ? suggestion.genre ?? "" : "");
+        }}>
+          {kind === "" && <option value="">選んでください</option>}
+          <option value="asset">アセット</option><option value="world">ワールド</option><option value="avatar">アバター本体</option>
+        </select></label>
         {kind === "avatar" ? <label className="field"><span>アバター名（自動で決まらない場合）</span><input disabled={busy} value={name} onChange={event => setName(event.target.value)} /></label>
-          : <label className="field"><span>分類先</span><select disabled={busy} value={genre} onChange={event => setGenre(event.target.value)}>{genresForKind(kind).map(value => <option key={value} value={value}>{GENRE_LABEL[value] ?? value}</option>)}</select></label>}
+          : kind !== "" && <label className="field"><span>分類先</span><select disabled={busy} value={genre} onChange={event => setGenre(event.target.value)}>
+            {genre === "" && <option value="">選んでください</option>}
+            {genresForKind(kind).map(value => <option key={value} value={value}>{GENRE_LABEL[value] ?? value}</option>)}
+          </select></label>}
         {kind === "asset" && <div className="field">
           <span>対応アバター</span>
           <p className="meta">ページの対応表記から自動入力します。不要なものは×で外し、検索して追加できます。</p>
@@ -143,7 +186,7 @@ export function BrowserAutoClassification() {
           {filter.trim() && <div className="auto-avatar-results">{avatars.filter(a => !selected.includes(a.id) && [a.displayName, ...a.aliases].some(n => n.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase()))).slice(0,30).map(a => <button className="button" type="button" disabled={busy} key={a.id} onClick={() => {setSelected(value => [...value, a.id]); setFilter("");}}>{a.displayName}を追加</button>)}</div>}
         </div>}
         {saveError && <p className="banner error" role="alert">{saveError}</p>}
-        <div className="row-actions"><button className="button primary" type="button" disabled={busy || (kind === "asset" && (loadingAvatars || !!avatarError))} onClick={() => void save()}>{busy ? "保存中…" : "分類を確定"}</button><button type="button" className="button" disabled={busy} onClick={postpone}>後で分類する</button></div>
+        <div className="row-actions"><button className="button primary" type="button" disabled={busy || !autoClassificationReady(kind, genre) || (kind === "asset" && (loadingAvatars || !!avatarError))} onClick={() => void save()}>{busy ? "保存中…" : "分類を確定"}</button><button type="button" className="button" disabled={busy} onClick={postpone}>後で分類する</button></div>
         <p className="meta">後回しにしても商品は登録されたままです。新しい商品が届くと再表示します。左下の「取得した商品の分類」からも再開できます。</p>
       </>}
     </dialog>

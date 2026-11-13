@@ -1045,9 +1045,12 @@ pub async fn download_booth_file(
 #[serde(rename_all = "camelCase")]
 pub struct FreeFilesReport {
     pub files: usize,
+    /// 有料・一覧なしのように、確認できたが無料配布のファイルが無かったとき。何も保存していない。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notice: Option<String>,
 }
 
-/// 「ファイルを取得」: one cookie-less public read for one product the user clicked.
+/// 「無料配布のファイルを探す」: one cookie-less public read for one product the user clicked.
 /// Stores only free-download file rows. It does not download, buy, or add anything to BOOTH.
 #[tauri::command]
 pub async fn fetch_free_files(
@@ -1071,6 +1074,9 @@ pub async fn fetch_free_files(
         &app,
         &crate::free_files::log_line(&booth_id, report.http_status, &report.outcome),
     );
+    if let Some(message) = crate::free_files::nothing_found(&report.outcome) {
+        return Ok(FreeFilesReport { files: 0, notice: Some(message.to_string()) });
+    }
     if let Some(message) = crate::free_files::refusal(&report.outcome) {
         return Err(message.to_string());
     }
@@ -1091,7 +1097,7 @@ pub async fn fetch_free_files(
     .await
     .map_err(|_| "ファイル情報を保存できません".to_string())??;
     let _ = app.emit("library-changed", ());
-    Ok(FreeFilesReport { files: count })
+    Ok(FreeFilesReport { files: count, notice: None })
 }
 
 /// スキャン済みファイルと、記録済みの商品ファイルだけを既定のアプリで開く。
@@ -1993,6 +1999,14 @@ mod browser_action_tests {
 pub fn product_avatar_suggestions(state: State<'_, AppState>, boothId: String) -> Result<db::AvatarSuggestions, String> {
     let connection = db(&state)?;
     db::product_avatar_suggestions(&connection, &boothId)
+}
+
+/// 「取得した商品の分類」で最初に選んでおく候補。読むだけで保存しない。
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn product_genre_suggestion(state: State<'_, AppState>, boothId: String) -> Result<db::GenreSuggestion, String> {
+    let connection = db(&state)?;
+    db::product_genre_suggestion(&connection, &boothId)
 }
 
 #[tauri::command]

@@ -90,9 +90,15 @@ export type SettingsSectionId =
   | "settings-knowledge"
   | "settings-debug";
 
+/** 画面（`#/import` など）を開き、その中の節までスクロールする。その画面にいるときは、その場でなめらかに動かす。 */
+export function openPageSection(hash: string, section: string): void {
+  const page = (value: string) => value.replace(/^#/, "").split("/").filter(Boolean)[0] ?? "";
+  const here = page(window.location.hash) === page(hash);
+  if (!here) window.location.hash = hash;
+  scrollToAnchor(section, { smooth: here });
+}
+
 /** 設定画面を開き、その節までスクロールする。設定画面にいるときは、その場でなめらかに動かす。 */
 export function openSettingsSection(section: SettingsSectionId): void {
-  const here = window.location.hash.replace(/^#/, "").split("/").filter(Boolean)[0] === "settings";
-  if (!here) window.location.hash = "#/settings";
-  scrollToAnchor(section, { smooth: here });
+  openPageSection("#/settings", section);
 }

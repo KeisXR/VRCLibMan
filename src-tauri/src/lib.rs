@@ -252,6 +252,7 @@ pub fn run() {
             commands::move_product_genre,
             commands::browser_auto_pending,
             commands::product_avatar_suggestions,
+            commands::product_genre_suggestion,
             commands::browser_auto_finish,
             commands::restore_product_classification,
             commands::unpin_product_classification,

@@ -11807,6 +11807,67 @@ pub(crate) fn product_avatar_suggestions(connection: &Connection, id: &str) -> R
     Ok(result)
 }
 
+/// 「取得した商品の分類」で最初に選んでおく候補。保存はしない（確定は本人が押したときの手動分類）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GenreSuggestion {
+    /// `asset` / `world` / `avatar`。候補が無いときは None（本人が選ぶまで確定できない）。
+    pub kind: Option<String>,
+    /// `kind` が `asset` / `world` のときのジャンル。
+    pub genre: Option<String>,
+    /// 候補の出どころ。`classified`（自動の分類済み）、`booth`（BOOTH のカテゴリとタグ）、`rules`（タイトルと説明）。
+    pub source: Option<String>,
+}
+
+/// 分類と同じ順（自動の分類の結果、BOOTH のカテゴリとタグ、タイトルと説明の規則）で候補を決める。
+/// 規則で何も手がかりが無い「その他」は候補にしない。見本の「衣装」のような決め打ちの初期値を確定させないため。
+pub(crate) fn product_genre_suggestion(connection: &Connection, id: &str) -> Result<GenreSuggestion, String> {
+    let product = require_product(connection, id)?;
+    let pick = |category: Category, genre: Option<String>, source: &str| -> Option<GenreSuggestion> {
+        let kind = match category {
+            Category::Avatar => return Some(GenreSuggestion { kind: Some("avatar".into()), genre: None, source: Some(source.into()) }),
+            Category::World => "world",
+            _ => "asset",
+        };
+        let genre = genre.filter(|value| {
+            crate::genre::kind_genres(kind).is_some_and(|list| list.iter().any(|(key, _)| key == value))
+        })?;
+        Some(GenreSuggestion { kind: Some(kind.into()), genre: Some(genre), source: Some(source.into()) })
+    };
+    if product.extracted_at.is_some() {
+        if let Some(category) = product.category {
+            if let Some(found) = pick(category, product.genre.clone(), "classified") {
+                return Ok(found);
+            }
+        }
+    }
+    let meta = booth_meta(connection, id)?;
+    if let Some(mut settlement) = crate::booth_category::settle(meta.id, &meta.name, &meta.tags) {
+        if crate::booth_category::is_coarse_tool(meta.id, &meta.name) {
+            if let Some((category, genre)) =
+                crate::classifier::coarse_tool_override(&product.title, &product.description_snippet)
+            {
+                settlement.category = category;
+                settlement.genre = Some(genre);
+            }
+        }
+        let genre = settlement.genre.clone().or_else(|| Some(crate::genre::validate(settlement.category, None)));
+        if let Some(found) = pick(settlement.category, genre, "booth") {
+            return Ok(found);
+        }
+    }
+    if product.description_snippet != crate::model::UNAVAILABLE_DESCRIPTION {
+        let extraction = crate::classifier::rule_extraction(&product.title, &product.description_snippet);
+        let no_signal = extraction.category == Category::Other && extraction.genre.as_deref() == Some("other");
+        if !no_signal {
+            if let Some(found) = pick(extraction.category, extraction.genre, "rules") {
+                return Ok(found);
+            }
+        }
+    }
+    Ok(GenreSuggestion { kind: None, genre: None, source: None })
+}
+
 #[cfg(test)]
 mod browser_auto_tests {
     use super::*;
@@ -11818,6 +11879,30 @@ mod browser_auto_tests {
     fn product(id: &str) -> serde_json::Value {
         serde_json::json!({"boothId": id, "title": "見本の衣装", "description": "対応する衣装の見本"})
     }
+    #[test]
+    fn genre_suggestion_is_a_candidate_and_never_a_blind_default() {
+        let mut c = open_memory().unwrap();
+        let json = r#"{"products":[
+            {"boothId":"1001","title":"【複数アバター対応】見本のワンピース","shop":"s","description":"衣装です"},
+            {"boothId":"1002","title":"見本","shop":"s","description":""},
+            {"boothId":"1003","title":"ワールド用 見本の家具セット","shop":"s","description":"ワールドに置ける家具"}
+        ]}"#;
+        import_products(&mut c, &crate::import_data::parse_export(json).unwrap()).unwrap();
+        let outfit = product_genre_suggestion(&c, "1001").unwrap();
+        assert_eq!((outfit.kind.as_deref(), outfit.genre.as_deref(), outfit.source.as_deref()), (Some("asset"), Some("outfit"), Some("rules")));
+        let blank = product_genre_suggestion(&c, "1002").unwrap();
+        assert_eq!(blank, GenreSuggestion { kind: None, genre: None, source: None }, "no evidence: the person chooses");
+        let world = product_genre_suggestion(&c, "1003").unwrap();
+        assert_eq!(world.kind.as_deref(), Some("world"));
+        // BOOTH のカテゴリが決まっていれば、それを先に使う。
+        c.execute("UPDATE products SET booth_category_id = 209, booth_category_name = '3D衣装' WHERE booth_id = '1002'", []).unwrap();
+        let booth = product_genre_suggestion(&c, "1002").unwrap();
+        assert_eq!((booth.kind.as_deref(), booth.source.as_deref()), (Some("asset"), Some("booth")));
+        // 読むだけで、分類も固定もしない。
+        let product = require_product(&c, "1001").unwrap();
+        assert!(product.category.is_none() && !product.category_locked && !product.genre_locked);
+    }
+
     #[test]
     fn extension_import_prompts_without_builtin_browser_and_keeps_manual_edits() {
         let mut c = open_memory().unwrap();

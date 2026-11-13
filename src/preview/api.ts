@@ -727,7 +727,11 @@ function previewEdition(item: Product): import("../types").PurchasedEditions {
   const hits = store.avatars.filter(a => [a.displayName, ...a.aliases].some(n => n.toLowerCase() === v.name.toLowerCase()));
   if (hits.length === 1) ids.add(hits[0].id);
  }
- return { mode: ids.size ? "specific" : "unknown", avatarIds: [...ids] };
+ if (ids.size) return { mode: "specific", avatarIds: [...ids] };
+ // Rust の single_compatible_edition: 対応先が 1 体だけなら、その版とみなす。
+ const links = linksOf(item.boothId);
+ if (links.length === 1 && item.unresolvedNames.length === 0) return { mode: "specific", avatarIds: links };
+ return { mode: "unknown", avatarIds: [] };
 }
 
 function itemView(item: Product, viaBaseBody: boolean): ItemView {
@@ -736,8 +740,11 @@ function itemView(item: Product, viaBaseBody: boolean): ItemView {
   const files = filesFor(item.boothId).filter((file) => !names.has(file.filename));
   const remoteConfigured = store.settings.remoteLibraryFolder.trim().length > 0;
   const remoteChecked = !remoteConfigured || store.remoteChecked;
+  const purchasedEditions = previewEdition(item);
   return {
-    purchasedEditions: previewEdition(item),
+    purchasedEditions,
+    // Rust の view::edition_unset と同じ条件。
+    editionUnset: item.category !== "avatar" && linksOf(item.boothId).length > 0 && purchasedEditions.mode === "unknown",
     boothId: item.boothId,
     title: item.title,
     shop: item.shop,
@@ -2220,6 +2227,15 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       return productForEdit(String(args.boothId ?? "")) as T;
     case "product_avatar_suggestions":
       return { avatarIds: linksOf(String(args.boothId ?? "")), unresolvedNames: [] } as T;
+    case "product_genre_suggestion": {
+      // 見本は自動の分類の結果だけを候補にする（BOOTH のカテゴリと規則は Rust だけ）。
+      const item = store.products.find((row) => row.boothId === String(args.boothId ?? ""));
+      if (item?.category === "avatar") return { kind: "avatar", genre: null, source: "classified" } as T;
+      if (item?.category && item.genre) {
+        return { kind: item.category === "world" ? "world" : "asset", genre: item.genre, source: "classified" } as T;
+      }
+      return { kind: null, genre: null, source: null } as T;
+    }
     case "list_unlinked_files":
       return unlinkedFiles(Number(args.offset ?? 0), Number(args.limit ?? 50)) as T;
     case "classification_log_runs":
@@ -2503,10 +2519,12 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       const boothId = String(args.boothId ?? "");
       const product = store.products.find((item) => item.boothId === boothId);
       if (!product) throw new Error("商品が見つかりません");
+      // Rust と同じく、有料は失敗ではなく「無かった」として返す。
       if (!product.isFree) {
-        throw new Error(
-          "無料でダウンロードできるファイルはありません。有料の商品は、購入後に BOOTH のライブラリから読み込んでください",
-        );
+        return {
+          files: 0,
+          notice: "無料配布のファイルはありませんでした。有料の商品は、購入後に BOOTH のライブラリを読み込むとファイルが出ます",
+        } as T;
       }
       for (const filename of ["ribbon_v1.zip", "ribbon_textures.zip"]) {
         if (!store.downloads.some((row) => row.boothId === boothId && row.filename === filename)) {

@@ -185,16 +185,23 @@ pub async fn fetch(booth_id: &str) -> Result<FreeFilesFetch, String> {
     })
 }
 
-/// The message the card shows when nothing was stored.
-pub fn refusal(outcome: &FreeFilesOutcome) -> Option<&'static str> {
+/// 確認できたが、無料配布のファイルが無かったとき。失敗ではないので、画面は通常の通知で伝える。
+pub fn nothing_found(outcome: &FreeFilesOutcome) -> Option<&'static str> {
     match outcome {
-        FreeFilesOutcome::Free { .. } => None,
         FreeFilesOutcome::NotFree => Some(
-            "無料でダウンロードできるファイルはありません。有料の商品は、購入後に BOOTH のライブラリから読み込んでください",
+            "無料配布のファイルはありませんでした。有料の商品は、購入後に BOOTH のライブラリを読み込むとファイルが出ます",
         ),
         FreeFilesOutcome::NoFiles => Some(
-            "無料の配布ですが、ファイルの一覧がありません。BOOTH の商品ページで確認してください",
+            "無料の配布ですが、ファイルの一覧はありませんでした。BOOTH の商品ページで確認してください",
         ),
+        _ => None,
+    }
+}
+
+/// The message the card shows when the check itself failed. Nothing was stored.
+pub fn refusal(outcome: &FreeFilesOutcome) -> Option<&'static str> {
+    match outcome {
+        FreeFilesOutcome::Free { .. } | FreeFilesOutcome::NotFree | FreeFilesOutcome::NoFiles => None,
         FreeFilesOutcome::Unavailable(DetailOutcome::Missing) => {
             Some("BOOTH で商品が見つかりません。公開が終了した可能性があります")
         }
@@ -324,12 +331,15 @@ mod tests {
             classify(200, url, "application/json", FREE),
             FreeFilesOutcome::Free { .. }
         ));
-        assert!(
-            refusal(&FreeFilesOutcome::NotFree)
-                .unwrap()
-                .contains("有料")
-        );
+        // 有料と一覧なしは失敗ではなく「無かった」。確認できなかったときだけ失敗にする。
+        assert!(nothing_found(&FreeFilesOutcome::NotFree).unwrap().contains("有料"));
+        assert!(nothing_found(&FreeFilesOutcome::NoFiles).is_some());
+        assert!(refusal(&FreeFilesOutcome::NotFree).is_none());
+        assert!(refusal(&FreeFilesOutcome::NoFiles).is_none());
+        assert!(nothing_found(&FreeFilesOutcome::Unavailable(DetailOutcome::RetryLater)).is_none());
+        assert!(refusal(&FreeFilesOutcome::Unavailable(DetailOutcome::RetryLater)).is_some());
         assert!(refusal(&classify(200, url, "application/json", FREE)).is_none());
+        assert!(nothing_found(&classify(200, url, "application/json", FREE)).is_none());
     }
 
     #[test]

@@ -1000,6 +1000,8 @@ button.account-pill:hover { background: var(--hover); }
 .search-group > h2 { margin-bottom: var(--space-2); }
 .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: var(--space-3); }
 .field span { color: var(--text-secondary); font-size: 13px; }
+/* 欄の見出しのすぐ下の説明。行の間は .field の gap で取る。 */
+.field > p.meta { margin: 0; }
 .field textarea { min-height: 88px; resize: vertical; }
 .button, button.button {
   border: 0;

@@ -86,6 +86,8 @@ export interface RemoteProductProbe {
 
 export interface ItemView {
   purchasedEditions: PurchasedEditions;
+  /** 「対応版未設定」の印を出すか（Rust が決める）。対応先があって、買った対応版を判定できないときだけ。 */
+  editionUnset: boolean;
   boothId: string;
   title: string;
   shop: string;
@@ -653,9 +655,18 @@ export interface JobProgress {
   background?: boolean;
 }
 
-/** 「ファイルを取得」の結果。保存後の商品のファイル行の数。 */
+/** 「無料配布のファイルを探す」の結果。保存後の商品のファイル行の数と、見つからなかったときの理由。 */
 export interface FreeFilesReport {
   files: number;
+  /** 有料・一覧なしのように、失敗ではなく「無かった」とき。何も保存していない。 */
+  notice?: string | null;
+}
+
+/** 「取得した商品の分類」で最初に選んでおく候補。候補が無いときは kind が null。 */
+export interface GenreSuggestion {
+  kind: "asset" | "world" | "avatar" | null;
+  genre: string | null;
+  source: "classified" | "booth" | "rules" | null;
 }
 
 export interface BoothFileStatus {

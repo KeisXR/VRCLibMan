@@ -35,6 +35,7 @@ import type {
   PurchaseWalkReport,
   BoothFileStatus,
   FreeFilesReport,
+  GenreSuggestion,
   JobProgress,
   Knowledge,
   LibraryStats,
@@ -236,6 +237,7 @@ export const api = {
   browserAutoPending: () => call<{ boothId: string; title: string }[]>("browser_auto_pending"),
   browserAutoFinish: (boothId: string) => call<void>("browser_auto_finish", { boothId }),
   productAvatarSuggestions: (boothId: string) => call<{ avatarIds: string[]; unresolvedNames: string[] }>("product_avatar_suggestions", { boothId }),
+  productGenreSuggestion: (boothId: string) => call<GenreSuggestion>("product_genre_suggestion", { boothId }),
   moveProductGenre: (boothId: string, kind: GenreKind, genre: string, avatarIds?: string[]) =>
     call<ClassificationSnapshot>("move_product_genre", { boothId, kind, genre, avatarIds: avatarIds ?? null }),
   restoreProductClassification: (snapshot: ClassificationSnapshot) =>
