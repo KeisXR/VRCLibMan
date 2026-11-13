@@ -431,8 +431,8 @@ export default function App() {
               <input
                 className="search"
                 type="search"
-                aria-label="ライブラリを検索"
-                placeholder="ライブラリを検索"
+                aria-label="ライブラリ・設定を検索"
+                placeholder="ライブラリ・設定を検索"
                 value={searchQuery}
                 onChange={(event) => {
                   setSearchQuery(event.target.value);

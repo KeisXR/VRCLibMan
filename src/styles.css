@@ -1051,6 +1051,32 @@ button.account-pill:hover { background: var(--hover); }
 .search-page-input { width: 100%; min-width: 0; margin-bottom: var(--space-3); }
 .search-group { margin-top: var(--space-4); }
 .search-group > h2 { margin-bottom: var(--space-2); }
+/* 検索の「画面と設定」: 移動先の行。題・場所・（今は出ない項目なら）注記の3段。 */
+.app-search-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
+  gap: var(--space-2);
+}
+.app-search-link {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  height: 100%;
+  padding: 10px var(--space-3);
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  text-decoration: none;
+  transition: background-color var(--motion) ease;
+}
+.app-search-link:hover { background: var(--hover); text-decoration: none; }
+.app-search-title { font-weight: 650; overflow-wrap: anywhere; }
+.app-search-path, .app-search-note { font-size: 12px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.app-search-more { margin-top: var(--space-2); }
 .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: var(--space-3); }
 .field span { color: var(--text-secondary); font-size: 13px; }
 .field textarea { min-height: 88px; resize: vertical; }
@@ -2321,6 +2347,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   outline-offset: 2px;
 }
 .choice-row:has(input:checked), .scope-choices label:has(input:checked) { border-color: var(--line-selection); }
+/* 検索の結果から移った先を一瞬だけ示す（src/appSearchJump.ts が 2 秒で外す）。親に切られないよう内側に描く。 */
+.search-jump-target { outline: 2px solid var(--line-selection); outline-offset: -2px; }
 
 /* 部品2: 直線の縦棒（端の丸み --accent-cap は曲線に含めない） */
 .nav-link, .genre-link, .settings-nav button { position: relative; }

@@ -82,6 +82,7 @@ export function BoothImportSettings({
   onReady,
   navigateBrowser,
   requireChoice = false,
+  pairingId,
 }: {
   onChange?: (mode: BoothImportMode) => void;
   onFail: (message: string) => void;
@@ -89,6 +90,8 @@ export function BoothImportSettings({
   onReady?: (ready: boolean) => void;
   navigateBrowser?: () => void;
   requireChoice?: boolean;
+  /** 「拡張機能をつなぐ」の枠の id。設定画面だけが渡す（検索の移動先。セットアップと重ならないように）。 */
+  pairingId?: string;
 }) {
   const id = useId();
   const [state, setState] = useState<IntegrationStatus | null>(null);
@@ -259,7 +262,7 @@ export function BoothImportSettings({
         </p>
       )}
       {state && chosen && state.mode !== "browser" && (
-        <div className="import-guidance">
+        <div className="import-guidance" id={pairingId}>
           <h3>拡張機能をつなぐ</h3>
           <ExtensionInstructions collapsible={requireChoice} />
           {link && (
