@@ -642,6 +642,18 @@ button.account-pill:hover { background: var(--hover); }
   from { opacity: 0; transform: translateY(-4px); }
   to { opacity: 1; transform: none; }
 }
+/* 閉じる動き。まず帯がその場で薄れて少し上がり（banner-in の逆）、続けて下の内容が帯の高さ分だけ滑らかに詰まる。
+   急に跳ね上がらないよう、高さを上の余白（負）で吸収する。--banner-top と --banner-height は閉じ始めに
+   NoticeBanner.tsx が測って置く。動いている間は押せない。prefers-reduced-motion では JS がすぐ取り除く。 */
+.banner[data-leaving] {
+  pointer-events: none;
+  animation: banner-out 260ms ease forwards;
+}
+@keyframes banner-out {
+  from { opacity: 1; transform: none; margin-top: var(--banner-top, 0px); }
+  35% { opacity: 0; transform: translateY(-4px); margin-top: var(--banner-top, 0px); }
+  to { opacity: 0; transform: translateY(-4px); margin-top: calc(-1 * var(--banner-height, 0px)); }
+}
 .progress { margin: var(--space-3) var(--space-6) 0; }
 .progress p { margin: 0 0 6px; color: var(--text-secondary); font-size: 13px; }
 /* 「ほか N 件」は文言と同じ行の右端に置き、帯の高さを変えない（右パネルの配置がずれないように）。 */

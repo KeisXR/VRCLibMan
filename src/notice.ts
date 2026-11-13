@@ -16,18 +16,25 @@ export interface NoticeEntry {
   action?: NoticeAction;
   /** 失敗や注意を含む通知。時間では消さず、×で閉じるまで残す。 */
   persist?: boolean;
+  /** 閉じる動きの途中。動きが終わったら取り除く。 */
+  leaving?: boolean;
 }
 
 /** 失敗の帯。時間では消さない。 */
 export interface ErrorEntry {
   id: number;
   message: string;
+  /** 閉じる動きの途中。動きが終わったら取り除く。 */
+  leaving?: boolean;
 }
 
 export interface NotifyOptions {
   /** true のときは時間で消さない（失敗件数や途中打ち切りを含む結果など）。 */
   persist?: boolean;
 }
+
+/** 閉じる動き（`banner-out`）が終わらないときに取り除くまでの上限。CSS の長さより長くする。 */
+export const BANNER_LEAVE_FALLBACK_MS = 400;
 
 /** 通知を出しておく時間（ミリ秒）。文字数や操作ボタンの有無によらず同じ。 */
 export const NOTICE_DURATION_MS = 3000;
@@ -100,4 +107,9 @@ export interface Numbered {
 
 export function dismissIfCurrent<T extends Numbered>(current: T | null, id: number): T | null {
   return current && current.id === id ? null : current;
+}
+
+/** 閉じる動きを始める。番号が違う・既に閉じ始めているときはそのまま。 */
+export function leaveIfCurrent<T extends Numbered & { leaving?: boolean }>(current: T | null, id: number): T | null {
+  return current && current.id === id && !current.leaving ? { ...current, leaving: true } : current;
 }

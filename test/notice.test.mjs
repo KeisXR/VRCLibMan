@@ -266,6 +266,117 @@ test("banners: notices auto-dismiss, errors stay until closed", async () => {
   }
 });
 
+test("banners slide out before they are removed, unless motion is reduced", async () => {
+  const { parseHTML } = await import("linkedom");
+  const { window } = parseHTML('<html><body><div id="root"></div></body></html>');
+  window.location = new URL("http://localhost:1420/");
+  for (const name of ["window", "document", "location", "HTMLElement", "Element", "Node", "Event", "CustomEvent", "EventTarget", "FocusEvent", "MouseEvent"]) {
+    if (window[name] !== undefined) Object.defineProperty(globalThis, name, { configurable: true, writable: true, value: window[name] });
+  }
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: { userAgent: "test" } });
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  let now = 1_000_000;
+  let nextTimer = 1;
+  const timers = new Map();
+  const realNow = Date.now;
+  Date.now = () => now;
+  window.setTimeout = (fn, ms) => { const id = nextTimer++; timers.set(id, { at: now + Math.max(0, ms ?? 0), fn }); return id; };
+  window.clearTimeout = (id) => { timers.delete(id); };
+  Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
+  let reduced = false;
+  window.matchMedia = (query) => ({ matches: query.includes("reduce") && reduced, media: query });
+
+  const { act, createElement, Fragment } = await import("react");
+  const { createRoot } = await import("react-dom/client");
+  const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  let root;
+  try {
+    const { useBanners } = await server.ssrLoadModule("/src/useBanners.ts");
+    const { NoticeBanner, ErrorBanner } = await server.ssrLoadModule("/src/components/NoticeBanner.tsx");
+    const { BANNER_LEAVE_FALLBACK_MS } = await server.ssrLoadModule("/src/notice.ts");
+    let shell;
+    function Harness() {
+      const b = useBanners();
+      shell = b;
+      return createElement(
+        Fragment,
+        null,
+        b.error && createElement(ErrorBanner, { key: b.error.id, error: b.error, onDismiss: b.dismissError, onRemoved: b.removeError }),
+        b.notice && createElement(NoticeBanner, { key: b.notice.id, notice: b.notice, onDismiss: b.dismissNotice, onAction: b.runNoticeAction, onRemoved: b.removeNotice }),
+      );
+    }
+    const advance = async (ms) => {
+      const until = now + ms;
+      for (;;) {
+        const due = [...timers.entries()].filter(([, t]) => t.at <= until).sort((a, b) => a[1].at - b[1].at)[0];
+        if (!due) break;
+        timers.delete(due[0]);
+        now = due[1].at;
+        await act(async () => { due[1].fn(); });
+      }
+      now = until;
+    };
+    const noticeEl = () => document.querySelector(".banner.notice");
+    const errorEl = () => document.querySelector(".banner.error");
+    const fire = async (el, type, init = {}) => {
+      const event = new window.Event(type, { bubbles: true });
+      Object.assign(event, init);
+      await act(async () => { el.dispatchEvent(event); });
+    };
+    root = createRoot(document.getElementById("root"));
+    await act(async () => { root.render(createElement(Harness)); });
+
+    // 時間切れでは閉じる動きに入り、animationend で取り除く。
+    await act(async () => { shell.notify("保存しました"); });
+    assert.equal(noticeEl().getAttribute("data-leaving"), null);
+    await advance(3000);
+    assert.equal(noticeEl()?.getAttribute("data-leaving"), "true", "the notice starts leaving instead of vanishing");
+    await fire(noticeEl(), "animationend", { animationName: "banner-in" });
+    assert.ok(noticeEl(), "only banner-out ends the leave");
+    await fire(noticeEl(), "animationend", { animationName: "banner-out" });
+    assert.equal(noticeEl(), null, "removed once the slide-out ends");
+
+    // animationend が来なくても上限の時間で取り除く。
+    await act(async () => { shell.notify("閉じるの確認"); });
+    await fire(noticeEl().querySelector(".banner-close"), "click");
+    assert.equal(noticeEl()?.getAttribute("data-leaving"), "true");
+    await advance(BANNER_LEAVE_FALLBACK_MS - 1);
+    assert.ok(noticeEl());
+    await advance(1);
+    assert.equal(noticeEl(), null, "the fallback removes a banner whose animation never ended");
+
+    // 操作ボタンは閉じ始めてすぐ実行する。閉じる途中の帯は新しい通知にすぐ置き換わる。
+    let ran = 0;
+    await act(async () => { shell.notify("実行の確認", { label: "保存先を開く", run: () => ran++ }); });
+    await fire(noticeEl().querySelector("button.button"), "click");
+    assert.equal(ran, 1);
+    assert.equal(noticeEl()?.getAttribute("data-leaving"), "true");
+    await act(async () => { shell.notify("次の通知"); });
+    assert.equal(noticeEl()?.getAttribute("data-leaving"), null);
+    assert.ok(noticeEl().textContent.includes("次の通知"));
+    await advance(BANNER_LEAVE_FALLBACK_MS);
+    assert.ok(noticeEl()?.textContent.includes("次の通知"), "the old leave timer does not remove the new notice");
+
+    // 失敗の帯も×で閉じる動きに入る。
+    await act(async () => { shell.fail("保存できませんでした"); });
+    await fire(errorEl().querySelector(".banner-close"), "click");
+    assert.equal(errorEl()?.getAttribute("data-leaving"), "true");
+    await fire(errorEl(), "animationend", { animationName: "banner-out" });
+    assert.equal(errorEl(), null);
+
+    // 動きを減らす設定ではすぐ取り除く。
+    reduced = true;
+    await act(async () => { shell.notify("動きを減らす"); });
+    await advance(3000);
+    assert.equal(noticeEl(), null, "reduced motion removes the notice at once");
+  } finally {
+    if (root) await act(async () => root.unmount());
+    Date.now = realNow;
+    delete window.matchMedia;
+    await server.close();
+  }
+});
+
 test("failures that go through notify are marked to stay", () => {
   const importPage = readFileSync(new URL("../src/pages/ImportPage.tsx", import.meta.url), "utf8");
   assert.match(importPage, /\{ persist: result\.truncated \}/);
@@ -275,4 +386,11 @@ test("failures that go through notify are marked to stay", () => {
   assert.match(unity, /"Unity が見つかりませんでした", undefined, \{ persist: true \}/);
   const css = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
   assert.match(css, /prefers-reduced-motion: reduce\)\s*\{\s*\*, \*::before, \*::after \{\s*animation: none !important;/);
+  // 閉じる動きは JS の上限より短く、押せない状態で動く。
+  const leave = css.match(/\.banner\[data-leaving\]\s*\{([^}]*)\}/);
+  assert.ok(leave, "banners have a leaving rule");
+  assert.match(leave[1], /pointer-events: none/);
+  const ms = Number(leave[1].match(/banner-out (\d+)ms/)?.[1]);
+  assert.ok(ms >= 120 && ms < 400, `banner-out ${ms}ms`);
+  assert.match(css, /@keyframes banner-out \{[\s\S]*?margin-top: calc\(-1 \* var\(--banner-height/);
 });

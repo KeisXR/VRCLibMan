@@ -138,7 +138,7 @@ export default function App() {
   const [hash, setHash] = useState(window.location.hash);
   const [stats, setStats] = useState<LibraryStats | null>(null);
   const [progressBoard, setProgressBoard] = useState<ProgressBoard>(EMPTY_PROGRESS);
-  const { notice, error, notify, fail, setError, dismissNotice, dismissError, runNoticeAction } = useBanners();
+  const { notice, error, notify, fail, setError, dismissNotice, dismissError, removeNotice, removeError, runNoticeAction } = useBanners();
   useAssetUpdateNotice(notify);
   const assetUpdate = useSidebarAssetUpdate(notify, fail);
   const pendingAssetUpdates = assetUpdate.status?.rows.filter((row) => row.enabled && row.changes.length > 0).length ?? 0;
@@ -350,8 +350,8 @@ export default function App() {
     <div className="main" ref={contentRef} hidden={layout.panelMaximized}>
       <div className="topbar" ref={topbarRef}>
         <RightPanelLauncher panel={rightPanel} />
-        {error && <ErrorBanner key={error.id} error={error} onDismiss={dismissError} />}
-        {notice && <NoticeBanner key={notice.id} notice={notice} onDismiss={dismissNotice} onAction={runNoticeAction} />}
+        {error && <ErrorBanner key={error.id} error={error} onDismiss={dismissError} onRemoved={removeError} />}
+        {notice && <NoticeBanner key={notice.id} notice={notice} onDismiss={dismissNotice} onAction={runNoticeAction} onRemoved={removeNotice} />}
         {strip && (
           <div className="progress">
             {strip.others > 0 ? (
