@@ -144,6 +144,16 @@ fn strip_version_tail(input: &str) -> String {
     re.replace(input, "").to_string()
 }
 
+/// A version number such as v2, V3 or v1.0.8. The catalog keeps these as aliases, but in
+/// running text they name a release of the product, not an avatar.
+pub fn is_version_label(input: &str) -> bool {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        Regex::new(r"(?i)^(?:v|ver\.?|version)\s*\d+(?:\.\d+)*$").expect("version label")
+    });
+    re.is_match(nfkc(input).trim())
+}
+
 pub fn quoted_segments(title: &str) -> Vec<String> {
     let pairs = [('「', '」'), ('『', '』'), ('"', '"'), ('“', '”')];
     let chars: Vec<char> = title.chars().collect();

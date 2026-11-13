@@ -6301,6 +6301,44 @@ mod tests {
     use crate::view::{avatar_cards, avatar_detail, products_by_ids};
 
     #[test]
+    fn reclassifying_drops_links_made_from_a_version_number_in_the_title() {
+        let mut connection = open_memory().unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO avatars (id, display_name, base_body, aliases_json, is_builtin, owned, notes)
+                 VALUES ('fictional-v3a', '架空フェイ', NULL, '[\"FictionalFei\",\"v3\"]', 0, 0, ''),
+                        ('fictional-v3b', '架空ハゲ', NULL, '[\"V3\"]', 0, 0, '');",
+            )
+            .unwrap();
+        let title = "【アバター衣装変換ツール】架空の変換ツール V3.6.0";
+        import_export_json(
+            &mut connection,
+            &format!(r#"[{{"boothId":"8800991","title":"{title}","description":"衣装を変換するツールです。"}}]"#),
+        )
+        .unwrap();
+        // The state an older classifier left behind.
+        connection
+            .execute_batch(
+                "INSERT INTO product_avatars VALUES ('8800991','fictional-v3a','extracted'),('8800991','fictional-v3b','extracted');
+                 UPDATE products SET classifier_version = 9, compatible_avatars_json = '[\"架空フェイ\",\"架空ハゲ\"]' WHERE booth_id = '8800991';",
+            )
+            .unwrap();
+        let stale = products_for_extract(&connection, ExtractTarget::All).unwrap();
+        assert!(stale.iter().any(|job| job.booth_id == "8800991"));
+        let extraction = crate::classifier::rule_extraction(title, "衣装を変換するツールです。");
+        apply_extraction(&mut connection, "8800991", &extraction, 0.6).unwrap();
+        reresolve_all(&mut connection).unwrap();
+        let linked: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM product_avatars WHERE product_id = '8800991'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(linked, 0);
+    }
+
+    #[test]
     fn only_registered_local_paths_may_be_opened() {
         let connection = open_memory().unwrap();
         connection
