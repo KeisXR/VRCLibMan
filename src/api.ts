@@ -355,7 +355,7 @@ export async function exportSyncData(deviceName: string): Promise<SyncExportRepo
   }
   const { save } = await import("@tauri-apps/plugin-dialog");
   const selected = await save({
-    title: "データ移行のファイルをエクスポート",
+    title: "データを ZIP に書き出す",
     defaultPath: filename,
     filters: [{ name: "ZIP", extensions: ["zip"] }],
   });

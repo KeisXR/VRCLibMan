@@ -296,16 +296,27 @@ function OrderCard({
         </div>
         <div className="purchase-order-side">
           {showPrices && !(order.items.length === 1 && order.items[0].amountYen != null && order.items[0].amountYen === order.totalYen) && <span className="purchase-total">お支払 {formatYen(order.totalYen)}</span>}
-          <select
-            className="purchase-gift-select"
-            aria-label={`注文 ${order.orderId} のギフトの扱い`}
-            value={giftChoice(order)}
-            onChange={(event) => void changeGift(event.target.value as GiftChoice)}
-          >
-            <option value="auto">{order.giftDetected ? "ギフト（自動判定）" : "自分用（自動判定）"}</option>
-            <option value="gift">贈ったギフト</option>
-            <option value="self">自分用</option>
-          </select>
+          {/* ギフトの判定を直すことはまれなので、注文ごとの選択欄は畳んでおく。贈ったギフトは題の横の印で分かる。 */}
+          <details className="purchase-order-menu">
+            <summary aria-label={`注文 ${order.orderId} の操作`} title="ギフトの扱いを直す">⋯</summary>
+            {/* role="dialog" は、浮かせた右パネルのページ（ネイティブ）と重なったときにページを隠すため（BROWSER_PANEL_COVER_SELECTORS）。 */}
+            <div className="purchase-label-panel" role="dialog" aria-label={`注文 ${order.orderId} の扱い`}>
+              <label className="field">
+                <span>この注文の扱い</span>
+                <select
+                  className="purchase-gift-select"
+                  aria-label={`注文 ${order.orderId} のギフトの扱い`}
+                  value={giftChoice(order)}
+                  onChange={(event) => void changeGift(event.target.value as GiftChoice)}
+                >
+                  <option value="auto">{order.giftDetected ? "ギフト（自動判定）" : "自分用（自動判定）"}</option>
+                  <option value="gift">贈ったギフト</option>
+                  <option value="self">自分用</option>
+                </select>
+              </label>
+              <p className="meta">贈ったギフトは、アバター別の集計とライブラリの所持に入りません。</p>
+            </div>
+          </details>
         </div>
       </header>
       {order.items.length > 0 ? (

@@ -485,6 +485,9 @@ interface RightPanelTab { id: string; kind: RightPanelKind | "web"; tabId?: stri
   - `min(上限, 保存幅)` です。保存幅そのものは書き換えません。窓を広げれば元の幅に戻ります。
 - **保存幅の範囲**
   - 240〜1600 です（`clamp_preview_pane_width`、TS の `clampStoredPreviewPaneWidth`）。
+- **ページを初めて出したときの幅（`widenForFirstPage`）**
+  - その起動で初めてページのタブが右パネルに入ったとき、保存幅が既定の 300 のままなら 480（`PAGE_PANEL_WIDTH`）にして保存します。300px では BOOTH のページが崩れ、操作バーの「インポート」も「⋯」に隠れるためです。
+  - 利用者が幅を変えていれば（300 以外なら）触れません。保存幅を読み終える前にページが入ったときは、読み終えてから判断します。画面に出す幅は上の上限で抑えられます。
 - **区切り（`ResizeSeparator`）**
   - `role="separator"` で、aria の値を持ちます。ポインターを捕捉してドラッグします。
   - 矢印キーで 16px（`UI_RESIZE_STEP_PX`）ずつ動かして確定します。Home かダブルクリックで既定の 300 に戻ります。
@@ -722,9 +725,9 @@ ChatGPT アプリのサイドパネルにならい、タブ列はアプリの地
 
 **閉じているときの入口（`RightPanelLauncher`）**
 
-- パネルが閉じているときだけ、`.topbar` の右上（`position: absolute; top: 6px; right: var(--space-3)`）に 32×32px のボタンを出します。`.topbar` は sticky なので、一覧をスクロールしても同じ位置に残ります。
-- 中身は、右の列がパネルになった窓の形のアイコン（`PanelGlyph`、18px、線は `stroke-width: 1.4`）です。パネルが表示するタブの数（`launcherCountLabel`：`visibleTabs` の件数、100 以上は「99+」）は、右上の小さな丸いバッジ（高さ 14px、10px の `tabular-nums`、地は `--surface-secondary`、`--bg` の 1.5px の縁）に添え、0 件では出しません。ページのタブは内蔵ブラウザが有効なときだけ数えます。以前は枠付きの数字だけで、通知の件数やページ番号に見えました。
-- 押すと `panel.toggle` で開きます。狭い窓と、浮かせることを選んでいるときは浮かぶパネルで開きます。aria-label は「右パネルを開く（タブ N 件）」、title にショートカットを出します。
+- パネルが閉じているときだけ、`.topbar` の右上（`position: absolute; top: 6px; right: var(--space-3)`）に高さ 28px のボタンを出します。`.topbar` は sticky なので、一覧をスクロールしても同じ位置に残ります。
+- 中身は、右の列がパネルになった窓の形のアイコン（`PanelGlyph`、18px、線は `stroke-width: 1.4`）と「パネル」の文字（13px、`.right-panel-launcher-label`）です。タブの数は出しません。以前はアイコンの右上に数字のバッジを添えていましたが、通知の件数に見え、何の数か分かりませんでした。タブはパネルを開くとタブ列で見えます。
+- 押すと `panel.toggle` で開きます。狭い窓と、浮かせることを選んでいるときは浮かぶパネルで開きます。aria-label は「右パネルを開く」、title に開くもの（プレビュー・ファイル・ブラウザ）とショートカットを出します。
 - ボタンと重ならないよう、`.topbar` のバナーと進捗（`.banner`、`.progress`）の右の余白を広げ、狭い窓のジャンルのチップ帯（`.chip-bar-track`）にも右の余白を足します。
 - 全面表示では `.main` ごと隠れますが、そのときパネルは開いているので入口は要りません。
 

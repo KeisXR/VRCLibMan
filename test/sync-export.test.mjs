@@ -47,12 +47,14 @@ test("both export commands refuse every window except main", () => {
 test("the settings screen offers export only and states what the file holds", () => {
   const panel = readFileSync(new URL("../src/components/SyncExportSettings.tsx", import.meta.url), "utf8");
   const page = readFileSync(new URL("../src/pages/SettingsPage.tsx", import.meta.url), "utf8");
-  assert.match(panel, />エクスポート</);
+  assert.match(panel, />ZIP に書き出す</);
   assert.doesNotMatch(panel, /インポート/);
-  assert.match(panel, /label="データ移行"/);
+  assert.match(panel, /label="データの書き出し"/);
+  // 取り込む機能がまだ無いことを、書き出す前に伝える。
+  assert.match(panel, /取り込む機能はまだありません/);
   assert.match(panel, /ZIP に書き出します/);
   assert.match(panel, /商品名、説明文、画像、ファイル名を含みます/);
-  assert.match(page, /エクスポートしたファイルには商品名、ショップ名、説明文、サムネイル、ヒーロー画像、ファイル名が含まれます/);
+  assert.match(page, /書き出したファイルには商品名、ショップ名、説明文、サムネイル、見出し画像、ファイル名が含まれます/);
 });
 
 test("the old name is gone, and the separate remote library sync keeps its own", () => {
@@ -65,7 +67,7 @@ test("the old name is gone, and the separate remote library sync keeps its own",
 
 test("the save dialog asks for a zip", () => {
   const api = readFileSync(new URL("../src/api.ts", import.meta.url), "utf8");
-  assert.match(api, /title: "データ移行のファイルをエクスポート"/);
+  assert.match(api, /title: "データを ZIP に書き出す"/);
   assert.match(api, /filters: \[\{ name: "ZIP", extensions: \["zip"\] \}\]/);
 });
 
@@ -124,9 +126,9 @@ test("clicking export in the preview saves the manifest as JSON and reports ever
         onFail: (message) => failures.push(message),
       }));
     });
-    assert.match(document.body.textContent, /データ移行/);
+    assert.match(document.body.textContent, /データの書き出し/);
     assert.doesNotMatch(document.body.textContent, /同期データ/);
-    const button = [...document.querySelectorAll("button")].find((node) => node.textContent === "エクスポート");
+    const button = [...document.querySelectorAll("button")].find((node) => node.textContent === "ZIP に書き出す");
     await act(async () => {
       button.dispatchEvent(new window.Event("click", { bubbles: true }));
       await new Promise((resolve) => setTimeout(resolve, 20));

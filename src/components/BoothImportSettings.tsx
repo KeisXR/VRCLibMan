@@ -1,5 +1,7 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api, openExternal } from "../api";
+import { useModalFocus } from "../keyboard";
 import type {
   BoothImportMode,
   ExtensionLink,
@@ -10,8 +12,67 @@ import { errorText } from "../ui";
 export const EXTENSION_RELEASES_URL =
   "https://github.com/KeisXR/VRCLibMan/releases";
 export const LIBRARY_URL = "https://accounts.booth.pm/library";
-export const BUILTIN_BROWSER_CONFIRM =
-  "内蔵ブラウザで BOOTH / pixiv にログインし、ログイン状態をアプリ専用の保存場所に保持します。ファイルの「ダウンロード」を押すと、その 1 件の BOOTH 向け要求に BOOTH のクッキーを使います。クッキーを開発者のサーバーや別ドメインには送りません。拡張機能より、アカウントが制限・停止されるリスクが高くなることがあります。ライブラリのページ巡回は「ライブラリ全取得」を押したときだけ行い、年齢確認の自動通過や一括ダウンロードはしません。有効にしますか？";
+/**
+ * 内蔵ブラウザを有効にする前の確認。1 段落の OS のダイアログでは読まれないので、項目ごとに分けて出す。
+ * 「おすすめ」と注意が同時に出て矛盾して見えないよう、何を保存し、いつ使い、何をしないかを並べる。
+ */
+export const BUILTIN_BROWSER_CONFIRM: ReadonlyArray<{ title: string; items: readonly string[] }> = [
+  {
+    title: "保存するもの",
+    items: ["内蔵ブラウザで BOOTH / pixiv にログインした状態を、この PC のアプリ専用の場所に保存します。パスワードはアプリでは扱いません。"],
+  },
+  {
+    title: "使う場面",
+    items: [
+      "「ライブラリ全取得」を押したときだけ、ライブラリのページを 1 ページずつ読みます。",
+      "ファイルの「ダウンロード」を押したときだけ、その 1 件の BOOTH への要求にログイン状態（Cookie）を使います。開発者のサーバーや別のサイトには送りません。",
+    ],
+  },
+  {
+    title: "しないこと",
+    items: ["購入、一括のダウンロード、年齢確認の自動通過はしません。"],
+  },
+  {
+    title: "注意",
+    items: ["BOOTH の非公式アプリです。ログインした状態で読み込むので、拡張機能より、アカウントが制限・停止されるリスクが高くなることがあります。"],
+  },
+];
+
+/** 内蔵ブラウザを有効にする前の確認。アプリの中のダイアログで、項目を分けて出す。 */
+function BuiltinBrowserConfirm({ onAnswer }: { onAnswer: (ok: boolean) => void }) {
+  const box = useRef<HTMLElement>(null);
+  useModalFocus(box);
+  useEffect(() => {
+    box.current?.querySelector<HTMLButtonElement>(".button.primary")?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onAnswer(false);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onAnswer]);
+  return createPortal(
+    <div className="preview-overlay unity-open-overlay">
+      <section ref={box} className="panel unity-open-dialog builtin-browser-confirm" role="dialog" aria-modal="true" aria-labelledby="builtin-browser-confirm-title" tabIndex={-1}>
+        <h2 id="builtin-browser-confirm-title">内蔵ブラウザを使う前に</h2>
+        {BUILTIN_BROWSER_CONFIRM.map((group) => (
+          <div key={group.title}>
+            <h3>{group.title}</h3>
+            <ul>{group.items.map((item) => <li key={item}>{item}</li>)}</ul>
+          </div>
+        ))}
+        <p className="meta">あとから「設定 → BOOTH の読み込み方」で変えられます。ログイン状態は「内蔵ブラウザの閲覧データを削除」で消せます。</p>
+        <div className="row-actions">
+          <button className="button primary" type="button" onClick={() => onAnswer(true)}>内蔵ブラウザを使う</button>
+          <button className="button" type="button" onClick={() => onAnswer(false)}>キャンセル</button>
+        </div>
+      </section>
+    </div>,
+    document.body,
+  );
+}
 
 export function ExtensionInstructions({ collapsible = false }: { collapsible?: boolean }) {
   const steps = (
@@ -99,6 +160,17 @@ export function BoothImportSettings({
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [chosen, setChosen] = useState(!requireChoice);
+  // 内蔵ブラウザを有効にする前の確認の答えを待つ。
+  const [confirming, setConfirming] = useState<{ resolve: (ok: boolean) => void } | null>(null);
+  const asking = useRef(false);
+  const askBuiltinBrowser = async () => {
+    asking.current = true;
+    try {
+      return await new Promise<boolean>((resolve) => setConfirming({ resolve }));
+    } finally {
+      asking.current = false;
+    }
+  };
 
   async function load() {
     const next = await api.integrationStatus();
@@ -149,7 +221,7 @@ export function BoothImportSettings({
   }, [waitingForExtension]);
 
   async function choose(mode: BoothImportMode) {
-    if (!state || busy) return;
+    if (!state || busy || asking.current) return;
     if (mode === state.mode) {
       // 保存値と同じでも、初回セットアップでは本人が選んだことを記録して進めるようにする。
       if (!chosen) {
@@ -159,12 +231,7 @@ export function BoothImportSettings({
       }
       return;
     }
-    if (
-      state.mode === "extension" &&
-      mode !== "extension" &&
-      !window.confirm(BUILTIN_BROWSER_CONFIRM)
-    )
-      return;
+    if (state.mode === "extension" && mode !== "extension" && !(await askBuiltinBrowser())) return;
     setBusy(true);
     onReady?.(false);
     let saved = false;
@@ -203,6 +270,14 @@ export function BoothImportSettings({
 
   return (
     <div className="booth-import-settings">
+      {confirming && (
+        <BuiltinBrowserConfirm
+          onAnswer={(ok) => {
+            confirming.resolve(ok);
+            setConfirming(null);
+          }}
+        />
+      )}
       {!state && (
         <button
           className="button"
@@ -218,14 +293,14 @@ export function BoothImportSettings({
         {(
           [
             [
-              "extension",
-              "Chrome / Edge の拡張機能",
-              "普段のブラウザで BOOTH を開き、拡張のボタンでアプリへ送ります。ブラウザのログインを使い、クッキーはアプリへ送りません。",
-            ],
-            [
               "browser",
               "アプリの内蔵ブラウザ",
-              "アプリの右パネルで BOOTH にログインします。拡張は不要で、ライブラリの全取得とファイルのダウンロードもアプリの中でできます。ログイン状態はアプリ専用に保存されます。",
+              "アプリの右パネルで BOOTH にログインします。拡張は不要で、ライブラリの全取得、購入履歴、ファイルのダウンロードもアプリの中でできます。ログイン状態はこの PC のアプリ専用の場所に保存します。",
+            ],
+            [
+              "extension",
+              "Chrome / Edge の拡張機能",
+              "普段のブラウザで BOOTH を開き、拡張のボタンでアプリへ送ります。アプリにログイン状態を置かず、クッキーもアプリへ送りません。拡張の導入とペアリングが必要です。",
             ],
             [
               "both",

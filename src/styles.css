@@ -1333,6 +1333,12 @@ a.tab { display: inline-flex; align-items: center; gap: 6px; text-decoration: no
 .unity-open-choice { display: flex; gap: 6px; align-items: center; min-width: 0; }
 .unity-open-choice .download-name { min-width: 0; }
 .unity-open-dialog .row-actions { margin-top: var(--space-3); }
+/* 内蔵ブラウザを使う前の確認（BoothImportSettings.tsx）。項目ごとに短い見出しと箇条書き。 */
+.builtin-browser-confirm h2 { margin: 0 0 var(--space-3); font-size: 18px; }
+.builtin-browser-confirm h3 { margin: var(--space-3) 0 var(--space-1); font-size: 14px; }
+.builtin-browser-confirm ul { margin: 0; padding-left: 1.2em; }
+.builtin-browser-confirm li { margin: 2px 0; line-height: 1.6; }
+.builtin-browser-confirm > .meta { margin: var(--space-3) 0 0; }
 
 /* Right panel: one tab strip for preview and later tools, docked as the app grid's last column. */
 .main[hidden] { display: none; }
@@ -1498,41 +1504,26 @@ a.tab { display: inline-flex; align-items: center; gap: 6px; text-decoration: no
   top: 6px;
   right: var(--space-3);
   z-index: 1;
-  display: inline-grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px 0 8px;
   border: 0;
   border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--text-secondary);
   box-shadow: none;
+  font: inherit;
+  font-size: 13px;
+  white-space: nowrap;
   transition: background-color var(--motion) ease, color var(--motion) ease;
 }
 .right-panel-launcher:hover { background: var(--hover); color: var(--text); }
-.right-panel-launcher svg { fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
-.right-panel-launcher-count {
-  position: absolute;
-  top: 1px;
-  right: 0;
-  display: inline-grid;
-  place-items: center;
-  min-width: 14px;
-  height: 14px;
-  padding: 0 3px;
-  box-sizing: border-box;
-  border-radius: var(--radius-pill);
-  background: var(--surface-secondary);
-  box-shadow: 0 0 0 1.5px var(--bg);
-  color: var(--text);
-  font-size: 10px;
-  font-weight: 650;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-}
-.topbar:has(> .right-panel-launcher) > :is(.banner, .progress) { margin-right: calc(var(--space-3) + 40px); }
-.main:has(> .topbar > .right-panel-launcher) .chip-bar-track { padding-right: 28px; }
+.right-panel-launcher svg { flex: none; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+/* 入口のボタン（アイコンと「パネル」、約 80px）と重ならないよう、上部の帯とチップ帯の右をあける。 */
+.topbar:has(> .right-panel-launcher) > :is(.banner, .progress) { margin-right: calc(var(--space-3) + 88px); }
+.main:has(> .topbar > .right-panel-launcher) .chip-bar-track { padding-right: 88px; }
 .right-panel .panel.preview-pane { position: static; margin-bottom: 0; }
 .right-panel.maximized .right-panel-body > * { max-width: 960px; margin-inline: auto; }
 .right-panel.maximized .preview-frame { max-height: min(720px, 64vh); }
@@ -1682,9 +1673,15 @@ body.right-panel-moving { user-select: none; }
 .download-row.missing,
 .download-row.missing .download-name { color: var(--faint); }
 .download-row.can-receive { cursor: pointer; }
-.download-row { flex-wrap: wrap; }
+/* ファイル 1 件を 1 行にし、操作は同じ行の右に置く。名前は長ければ折り返す（操作を下の行へ落とさない）。
+   操作の列がどうしても入らない狭い幅だけ、操作を次の行の右に回す。 */
+.download-row { flex-wrap: wrap; padding: 3px 0; }
+.download-row + .download-row { border-top: 1px solid var(--line); }
 .download-row > div { min-width: 0; }
-.download-row > div:first-child { flex: 1 1 auto; min-width: min(100%, 16rem); }
+.download-row > div:first-child { flex: 1 1 0; min-width: min(100%, 9rem); }
+.download-row .row-actions { gap: var(--space-1); flex-wrap: wrap; justify-content: flex-end; }
+/* 行の中の操作は小さめのボタン（.button.secondary）。地なしの文字だとファイル名や説明に紛れるため。 */
+.file-list .button.secondary { padding: 3px 10px; font-size: 12px; line-height: 1.5; }
 .download-name { overflow-wrap: break-word; }
 .badge {
   display: inline-block;
@@ -2558,6 +2555,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .setup-guide.collapsed .setup-guide-card > p[role="alert"] { flex: 1 1 100%; margin: 0; }
 /* 案内が出ている間は、中身の下に案内の高さぶんの余白を取り、最後の行まで案内の上へ出せるようにする。 */
 html.has-setup-guide .content { padding-bottom: calc(var(--setup-guide-height, 0px) + 24px); }
+/* インポート画面のペアリングコード。拡張へ貼る値なので、読み間違えない等幅で出す。 */
+.pairing-code { padding: 6px 10px; border-radius: var(--radius-sm); background: var(--surface-secondary); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; letter-spacing: .04em; }
 /* ファイルの置き場所の手順で、選んだフォルダを出す欄。 */
 .setup-folder { justify-content: flex-start; margin-bottom: var(--space-2); }
 .setup-folder > input { flex: 1 1 auto; }
@@ -2708,11 +2707,20 @@ a.chip:hover { color: var(--text); }
 .purchase-label-chip { background: transparent; box-shadow: inset 0 0 0 1px var(--line); }
 .purchase-label-picker { position: relative; }
 .purchase-item-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; align-items: center; }
-.purchase-open { padding: 2px 10px; border-radius: var(--radius-pill); background: var(--surface-secondary); color: var(--text-secondary); font-size: 12px; text-decoration: none; }
-.purchase-open:hover { color: var(--text); text-decoration: none; }
-.purchase-label-picker > summary { list-style: none; padding: 2px 10px; border-radius: var(--radius-pill); background: var(--surface-secondary); color: var(--text-secondary); font-size: 12px; cursor: pointer; }
-.purchase-label-picker > summary:hover, .purchase-label-picker[open] > summary { color: var(--text); }
-.purchase-label-picker > summary::-webkit-details-marker { display: none; }
+/* 行の操作（アセットを見る・ラベル・注文の ⋯）は .button.secondary と同じ見た目の小さなボタン。
+   丸いカプセルは状態の印（ラベルのチップ・バッジ）と見分けがつかなかったため、角は --radius-sm にする。 */
+.purchase-open,
+.purchase-label-picker > summary,
+.purchase-order-menu > summary { list-style: none; padding: 3px 10px; border-radius: var(--radius-sm); background: var(--surface-secondary); box-shadow: inset 0 0 0 1px var(--line); color: var(--text); font-size: 12px; line-height: 1.5; text-decoration: none; cursor: pointer; }
+.purchase-open:hover,
+.purchase-label-picker > summary:hover, .purchase-label-picker[open] > summary,
+.purchase-order-menu > summary:hover, .purchase-order-menu[open] > summary { background: var(--hover); text-decoration: none; }
+.purchase-label-picker > summary::-webkit-details-marker,
+.purchase-order-menu > summary::-webkit-details-marker { display: none; }
+.purchase-order-menu { position: relative; }
+.purchase-order-menu .field { margin: 0; align-items: flex-start; }
+.purchase-order-menu .purchase-label-panel { text-align: left; }
+.purchase-order-menu .purchase-label-panel .meta { margin: 0; }
 .purchase-label-panel { position: absolute; z-index: 10; top: calc(100% + 4px); right: 0; min-width: 220px; max-width: min(320px, 90vw); display: flex; flex-direction: column; gap: 6px; padding: var(--space-2); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-control); box-shadow: var(--shadow); }
 /* 下に場所が無いときは上に開く（PurchasesPage.tsx の labelPanelPlacement）。 */
 .purchase-label-panel.up { top: auto; bottom: calc(100% + 4px); }

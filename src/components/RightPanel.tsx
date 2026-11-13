@@ -16,7 +16,7 @@ import {
 import type { FloatEdge, FloatRect } from "../floatingPanel";
 import { dragOutcome, insertionIndex, insertMarkerLeft, pointerInsideWindow, TAB_DRAG_THRESHOLD_PX } from "../tabStrip";
 import { horizontalWheelDelta, overflowEdges, revealScrollLeft } from "../scrollEdges";
-import { PREVIEW_PANE_WIDTH, clampStoredPreviewPaneWidth } from "../previewPane";
+import { PREVIEW_PANE_WIDTH, clampStoredPreviewPaneWidth, widenForFirstPage } from "../previewPane";
 import {
   RIGHT_PANEL_KINDS,
   RIGHT_PANEL_KIND_INFO,
@@ -28,7 +28,6 @@ import {
   focusWebTab,
   isRightPanelShortcut,
   kindAvailable,
-  launcherCountLabel,
   mergePanelWebTabs,
   moveTab,
   openTab,
@@ -80,6 +79,8 @@ export interface RightPanelShell {
   resize: (width: number) => void;
   commitWidth: (width: number) => void;
   resetWidth: () => void;
+  /** A page landed in the panel. The first time this runs, a width still at the default widens once. */
+  widenForPage: () => void;
 }
 
 /** The shell and the tabs together, for the panel itself. */
@@ -139,6 +140,11 @@ export function useRightPanelState(fail: (message: string) => void, gates: Right
   const [floating, setFloatingState] = useState(false);
   const [width, setWidth] = useState<number>(PREVIEW_PANE_WIDTH.default);
   const dirty = useRef({ open: false, width: false });
+  // ページを初めて出したときの幅の調整。保存した幅を読む前に頼まれたら、読んだあとで判断する。
+  const widthRef = useRef(width);
+  widthRef.current = width;
+  const widthLoaded = useRef(false);
+  const pageWiden = useRef<"idle" | "pending" | "done">("idle");
   const openRef = useRef(open);
   openRef.current = open;
   const failRef = useRef(fail);
@@ -155,9 +161,17 @@ export function useRightPanelState(fail: (message: string) => void, gates: Right
           openRef.current = settings.previewPane;
           setOpenState(settings.previewPane);
         }
-        if (!dirty.current.width) setWidth(clampStoredPreviewPaneWidth(settings.previewPaneWidth));
+        if (!dirty.current.width) {
+          const stored = clampStoredPreviewPaneWidth(settings.previewPaneWidth);
+          widthRef.current = stored;
+          setWidth(stored);
+        }
+        widthLoaded.current = true;
+        if (pageWiden.current === "pending") widenPageRef.current();
       },
-      () => undefined,
+      () => {
+        widthLoaded.current = true;
+      },
     );
     return () => {
       alive = false;
@@ -193,6 +207,18 @@ export function useRightPanelState(fail: (message: string) => void, gates: Right
   const resize = useCallback((next: number) => publishWidth(next, false), [publishWidth]);
   const commitWidth = useCallback((next: number) => publishWidth(next, true), [publishWidth]);
   const resetWidth = useCallback(() => publishWidth(PREVIEW_PANE_WIDTH.default, true), [publishWidth]);
+  const widenForPage = useCallback(() => {
+    if (pageWiden.current === "done") return;
+    if (!widthLoaded.current) {
+      pageWiden.current = "pending";
+      return;
+    }
+    pageWiden.current = "done";
+    const next = widenForFirstPage(widthRef.current);
+    if (next !== null) publishWidth(next, true);
+  }, [publishWidth]);
+  const widenPageRef = useRef(widenForPage);
+  widenPageRef.current = widenForPage;
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -220,8 +246,9 @@ export function useRightPanelState(fail: (message: string) => void, gates: Right
       resize,
       commitWidth,
       resetWidth,
+      widenForPage,
     }),
-    [open, maximized, floating, width, stableGates, failStable, setOpen, toggle, close, setFloating, resize, commitWidth, resetWidth],
+    [open, maximized, floating, width, stableGates, failStable, setOpen, toggle, close, setFloating, resize, commitWidth, resetWidth, widenForPage],
   );
 }
 
@@ -231,7 +258,7 @@ export function useRightPanelState(fail: (message: string) => void, gates: Right
  * state updater (React may run an updater twice).
  */
 function useRightPanelTabs(shell: RightPanelShell): RightPanelValue {
-  const { gates, open, setOpen, fail } = shell;
+  const { gates, open, setOpen, fail, widenForPage } = shell;
   const builtinBrowser = gates.builtinBrowser === true;
   const [tabs, setTabs] = useState<RightPanelTabs>(defaultRightPanelTabs);
   const tabsRef = useRef(tabs);
@@ -296,8 +323,9 @@ function useRightPanelTabs(shell: RightPanelShell): RightPanelValue {
         title: state.tabs.find((tab) => tab.id === tabId)?.title || "ページ",
       }));
       commit(mergePanelWebTabs(tabsRef.current, pages));
+      if (pages.length > 0) widenForPage();
     },
-    [commit],
+    [commit, widenForPage],
   );
 
   useEffect(() => {
@@ -522,28 +550,23 @@ function PanelGlyph() {
 
 /**
  * While the right panel is closed, a button in the top-right corner of the page opens it again.
- * The panel mark says what it opens; the small number in its corner is how many tabs it holds.
- * `panel` is the app shell's handle (open and toggle); the tabs come from `RightPanelProvider`.
+ * The panel mark and the word「パネル」say what it opens. A bare number read as a notification count,
+ * so the tab count is not shown here; the panel's own tab strip shows the tabs.
+ * `panel` is the app shell's handle (open and toggle).
  */
 export function RightPanelLauncher({ panel }: { panel: RightPanelShell }) {
-  const { tabs, gates } = useRightPanel();
   if (panel.open) return null;
-  const count = visibleTabs(tabs, gates).length;
   return (
     <button
       className="right-panel-launcher"
       type="button"
-      aria-label={`右パネルを開く（タブ ${count} 件）`}
-      title={`右パネルを開く（${RIGHT_PANEL_SHORTCUT_LABEL}）`}
+      aria-label="右パネルを開く"
+      title={`右パネル（プレビュー・ファイル・ブラウザ）を開く（${RIGHT_PANEL_SHORTCUT_LABEL}）`}
       aria-keyshortcuts="Control+Shift+B"
       onClick={panel.toggle}
     >
       <PanelGlyph />
-      {count > 0 && (
-        <span className="right-panel-launcher-count" aria-hidden="true">
-          {launcherCountLabel(tabs, gates)}
-        </span>
-      )}
+      <span className="right-panel-launcher-label" aria-hidden="true">パネル</span>
     </button>
   );
 }

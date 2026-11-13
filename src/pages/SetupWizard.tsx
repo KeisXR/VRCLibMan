@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode, RefObject } from "react";
 import { scrollToAnchor } from "../anchorScroll";
 import { api, chooseFolder, isTauri, openExternal } from "../api";
+import { HOW_TO_USE_URL } from "../helpLinks";
 import { useShell } from "../App";
 import { BoothImportSettings } from "../components/BoothImportSettings";
 import { isProgressEnded } from "../progress";
@@ -19,6 +20,16 @@ export interface StepStatus {
 }
 
 export const STEP_STATE_LABEL: Record<StepState, string> = { todo: "未実施", running: "処理中", done: "完了" };
+
+/**
+ * セットアップの手順の通し番号（紹介の画面は数えない）。カードの画面も、作業中の画面の下端に出す案内も、
+ * 同じ「初回セットアップ · n / 7」で数える。どこまで進んだか、あと何画面かが分かるようにするため。
+ */
+export const SETUP_STEPS = ["extension", "library", "classify", "manual", "files", "storage", "presence"] as const;
+
+export function setupStepLabel(step: (typeof SETUP_STEPS)[number]): string {
+  return `初回セットアップ · ${SETUP_STEPS.indexOf(step) + 1} / ${SETUP_STEPS.length}`;
+}
 
 /** これより小さい窓では、案内を最初から折りたたむ。どの大きさでも、左サイドバーの右・下端に置く。 */
 export const COMPACT_GUIDE = { width: 1100, height: 760 };
@@ -333,9 +344,8 @@ export function SetupWizard({
 
   if (step === "library" || step === "classify" || step === "manual" || step === "files") {
     const status = guideStatus(step, stats, progress, integration);
-    const guides: Record<Guided, { index: number; title: string; body: ReactNode; back: () => void; extra?: ReactNode; next: () => void }> = {
+    const guides: Record<Guided, { title: string; body: ReactNode; back: () => void; extra?: ReactNode; next: () => void }> = {
       library: {
-        index: 2,
         title: "ライブラリを取得する",
         body: <>
           {browserEnabled ? (
@@ -358,7 +368,6 @@ export function SetupWizard({
         next: () => guide("classify"),
       },
       classify: {
-        index: 3,
         title: "商品を分類する",
         body: <>
           <p>インポート画面の「2. 分類」で「未分類を分類」を押します。BOOTH のカテゴリ・タグで決まらない商品は、タイトルと説明文から分類します。</p>
@@ -369,7 +378,6 @@ export function SetupWizard({
         next: () => guide("manual"),
       },
       manual: {
-        index: 4,
         title: "分類を手動で直す",
         body: <>
           <ol className="setup-steps">
@@ -384,7 +392,6 @@ export function SetupWizard({
         next: () => guide("files"),
       },
       files: {
-        index: 5,
         title: "ダウンロード済みファイルを登録する",
         body: <>
           <ol className="setup-steps">
@@ -412,7 +419,7 @@ export function SetupWizard({
         <div className="setup-guide-card panel">
           <div className="setup-guide-head">
             <div className="setup-guide-heading">
-              <p className="meta">使い方ガイド · {current.index} / 5</p>
+              <p className="meta">{setupStepLabel(step)}</p>
               {collapsed ? <strong className="setup-guide-title">{current.title}</strong> : <h1>{current.title}</h1>}
             </div>
             <button className="setup-guide-toggle button secondary" type="button" onClick={() => setCollapsed(!collapsed)} aria-expanded={!collapsed}>
@@ -440,7 +447,7 @@ export function SetupWizard({
   return (
     <div className="setup-screen">
       <div className="setup-card panel">
-        <p className="meta">初回セットアップ</p>
+        <p className="meta">{step === "intro" ? "初回セットアップ" : setupStepLabel(step)}</p>
         <h1>
           {step === "intro"
             ? "VRCLibMan へようこそ"
@@ -453,8 +460,12 @@ export function SetupWizard({
         {step === "intro" && <>
           <p>BOOTH の商品と手元のファイルをまとめて管理し、持っているアバターや対応する衣装を探せるアプリです。</p>
           <p>商品は BOOTH のカテゴリとタグ、タイトルと説明文、ダウンロードファイルの名前から分類します。追加のソフトは要りません。分類結果は手動で修正できます。</p>
-          <p>ライブラリの取得、分類、ファイルの登録を順に進めます。</p>
-          <div className="row-actions setup-actions"><button className="button primary" type="button" onClick={() => setStep("extension")}>はじめる</button></div>
+          <p>読み込み方を選んだあと、ライブラリの取得、分類、ファイルの登録を順に進めます（全 {SETUP_STEPS.length} 画面）。途中で「あとで行う」を選んでも、あとから同じ操作ができます。</p>
+          <div className="row-actions setup-actions">
+            <button className="button primary" type="button" onClick={() => setStep("extension")}>はじめる</button>
+            <button className="button secondary" type="button" onClick={() => void openExternal(HOW_TO_USE_URL).catch((err: unknown) => setMessage(errorText(err)))}>使い方ガイドを開く</button>
+          </div>
+          {message && <p className="note-strong" role="alert">{message}</p>}
         </>}
         {step === "extension" && (
           <>
@@ -521,8 +532,7 @@ export function SetupWizard({
         )}
         {step === "presence" && (
           <>
-            <p>最後に、ウィンドウを閉じたときの動作と自動起動を選びます。</p>
-            <button className="button secondary" type="button" onClick={() => void openExternal("https://github.com/KeisXR/VRCLibMan/blob/main/how-to-use.md").catch((err: unknown) => setMessage(errorText(err)))}>使い方を詳しく見る</button>
+            <p>最後に、ウィンドウを閉じたときの動作と自動起動を選びます。使い方ガイドとセットアップのやり直しは、あとから「設定 → アプリ情報とデータ → 使い方」で開けます。</p>
             <p>ウィンドウを閉じたとき</p>
             <div className="row-actions">
               <button

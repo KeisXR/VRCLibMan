@@ -18,7 +18,8 @@ import type {
 import { errorText } from "../ui";
 import { SettingRow } from "../components/SettingRow";
 import { SettingsLink } from "../components/SettingsLink";
-import { ProductExclusions } from "../components/ProductExclusions";
+import { ProductExclusions, type ManagedProductFilter } from "../components/ProductExclusions";
+import { scrollToAnchor } from "../anchorScroll";
 import { UnlinkedFiles } from "../components/UnlinkedFiles";
 import { ExtensionInstructions } from "../components/BoothImportSettings";
 import { BuiltinBrowserImport } from "../components/BuiltinBrowserControls";
@@ -68,6 +69,17 @@ export function ImportPage() {
   const [extracting, setExtracting] = useState(false);
   const [extractStats, setExtractStats] = useState<{ boothSettled: number; ruleFilled: number } | null>(null);
   const [receiverStatus, setReceiverStatus] = useState("確認中");
+  const [pairingCode, setPairingCode] = useState("");
+  const [codeCopied, setCodeCopied] = useState(false);
+  const [manageOpen, setManageOpen] = useState(false);
+  const [manageFilter, setManageFilter] = useState<ManagedProductFilter>("all");
+
+  /** 「2. 分類」から、商品の管理を未分類の商品だけにして開く。 */
+  function showUnclassified() {
+    setManageFilter("uncategorized");
+    setManageOpen(true);
+    scrollToAnchor("import-exclusions", { smooth: true });
+  }
   const [staged, setStaged] = useState<StagedDownload[]>([]);
 
   useEffect(() => {
@@ -81,6 +93,7 @@ export function ImportPage() {
         if (cancelled) return;
         setIntegration(next);
         setUnextracted(stats.unextracted);
+        setPairingCode(link.token);
         setReceiverStatus(
           !link.listening
             ? link.error || "受信できません"
@@ -307,12 +320,30 @@ export function ImportPage() {
               拡張か内蔵ブラウザで商品情報を送ります。受け取った商品は、次の「分類」で整理できます。
             </p>
           </header>
-          <details className="settings-details" id="import-exclusions"><summary>商品を管理・除外</summary><ProductExclusions /></details>
           {integration?.mode !== "browser" && <><SettingRow label="拡張機能" help={receiverStatus}>
             <SettingsLink section="settings-booth">
               読み込み方とペアリングの設定
             </SettingsLink>
           </SettingRow>
+          {pairingCode && (
+            <SettingRow id="import-pairing-code" label="ペアリングコード" help="拡張機能のポップアップの「ペアリングコード」に貼り、「コードを保存して接続を確認」を押します。">
+              <div className="inline-control">
+                <code className="pairing-code">{pairingCode}</code>
+                <button
+                  className="button secondary"
+                  type="button"
+                  onClick={() =>
+                    void navigator.clipboard.writeText(pairingCode).then(
+                      () => setCodeCopied(true),
+                      (err: unknown) => fail(errorText(err)),
+                    )
+                  }
+                >
+                  {codeCopied ? "コピーしました" : "コードをコピー"}
+                </button>
+              </div>
+            </SettingRow>
+          )}
           <details className="settings-details" id="import-extension-help">
             <summary>拡張機能の使い方・受信履歴</summary>
             <ExtensionInstructions />
@@ -385,9 +416,14 @@ export function ImportPage() {
                 ? "未分類の件数を確認中"
                 : `未分類 ${unextracted} 件`
             }
-            help="分類結果は商品カードの「分類を編集」で直せます。"
+            help="分類結果は商品カードの「分類を編集」で直せます。カードの無い未分類の商品は、下の「商品の管理」で直せます。"
           >
             <div className="row-actions">
+              {(unextracted ?? 0) > 0 && (
+                <button className="button secondary" type="button" onClick={showUnclassified}>
+                  未分類の商品を見る
+                </button>
+              )}
               <button
                 className="button primary"
                 type="button"
@@ -516,6 +552,21 @@ export function ImportPage() {
             </div>
           )}
           <UnlinkedFiles />
+        </section>
+        <section className="settings-section">
+          <header>
+            <h2 id="import-manage">商品の管理</h2>
+            <p>管理対象から外す（除外）・元に戻す操作と、カードの無い未分類の商品の分類の編集です。</p>
+          </header>
+          <details
+            className="settings-details"
+            id="import-exclusions"
+            open={manageOpen}
+            onToggle={(event) => setManageOpen(event.currentTarget.open)}
+          >
+            <summary>商品を管理・除外</summary>
+            <ProductExclusions filter={manageFilter} onFilterChange={setManageFilter} />
+          </details>
         </section>
         <section className="settings-section">
           <header>

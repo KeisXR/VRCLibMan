@@ -23,11 +23,11 @@ const status = (rows, extra = {}) => ({
   ...extra,
 });
 
-test("the settings section is labelled 更新設定 and the sidebar button sits above the account pill", () => {
+test("the settings section is labelled アセットの更新 and the sidebar button sits above the account pill", () => {
   const nav = readFileSync("src/settingsNav.ts", "utf8");
-  assert.match(nav, /id: "settings-asset-updates", label: "更新設定"/, "nav label");
+  assert.match(nav, /id: "settings-asset-updates", label: "アセットの更新"/, "nav label");
   const section = readFileSync("src/components/AssetUpdates.tsx", "utf8");
-  assert.match(section, /<h2>アセットの更新設定<\/h2>/, "section heading");
+  assert.match(section, /<h2>アセットの更新<\/h2>/, "section heading");
   const app = readFileSync("src/App.tsx", "utf8");
   const buttonAt = app.indexOf("<SidebarAssetUpdateButton");
   const accountAt = app.indexOf("<AccountPill");

@@ -109,12 +109,19 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         );
         assert.ok(button("次へ", document.querySelector(".setup-screen")).disabled, "next waits for a choice");
         assert.ok(document.querySelector(".setup-screen .badge.recommend"), "the built-in browser is marked as recommended");
-        window.confirm = () => false;
+        // 内蔵ブラウザを有効にする前に、アプリの中の確認を出す。キャンセルは選んだことにしない。
+        const confirmBox = () => document.querySelector(".builtin-browser-confirm");
         await click(radio("アプリの内蔵ブラウザ"));
+        await wait(() => confirmBox());
+        assert.match(confirmBox().textContent, /保存するもの/);
+        assert.match(confirmBox().textContent, /アカウントが制限・停止されるリスク/);
+        await click(button("キャンセル", confirmBox()));
+        await wait(() => !confirmBox());
         assert.equal((await api.integrationStatus()).mode, "extension");
         assert.ok(button("次へ", document.querySelector(".setup-screen")).disabled, "a declined confirmation is not a choice");
-        window.confirm = () => true;
         await click(radio("アプリの内蔵ブラウザ"));
+        await wait(() => confirmBox());
+        await click(button("内蔵ブラウザを使う", confirmBox()));
         await wait(
           () =>
             !document
@@ -189,7 +196,7 @@ test("setup, import and version flows with synthetic local data", async (t) => {
           [
             ...document.querySelectorAll("main .settings-section > header h2"),
           ].map((h) => h.textContent),
-          ["1. BOOTH から読み込む", "2. 分類", "3. 手元のファイル", "その他"],
+          ["1. BOOTH から読み込む", "2. 分類", "3. 手元のファイル", "商品の管理", "その他"],
         );
         assert.ok(text().includes("決まらない商品はタイトルと説明から分類します"));
         const drop = document.querySelector(".drop");
@@ -288,9 +295,9 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         assert.equal(button("設定を保存"), undefined);
         assert.ok(text().includes("一般設定は自動保存"));
         assert.ok(text().includes("対応表の編集は保存ボタンで確定"));
-        await click(radio("大 400px"));
+        await click(radio("大（400px）"));
         await wait(async () => (await api.settings()).avatarHero === "large");
-        await click(radio("小 320px"));
+        await click(radio("小（320px）"));
         await wait(async () => (await api.settings()).avatarHero === "small");
         assert.equal((await api.settings()).avatarHero, "small");
       },
@@ -302,7 +309,7 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       const nav = document.querySelector(".settings-layout > .settings-nav");
       assert.ok(nav, "nav sits in the settings layout");
       const buttons = [...nav.querySelectorAll("button[data-target]")];
-      assert.deepEqual(buttons.map((node) => node.textContent), ["ライブラリ", "Unity", "起動と常駐", "デザイン", "更新設定", "BOOTH", "バージョン情報", "対応表を編集", "デバッグ"]);
+      assert.deepEqual(buttons.map((node) => node.textContent), ["ライブラリ", "Unity", "起動と常駐", "デザイン", "アセットの更新", "BOOTH", "アプリ情報とデータ", "対応表を編集", "デバッグ"]);
       // 帯があふれたときだけ出る端のボタンは、キーボードの順番に入らない。
       for (const more of nav.querySelectorAll(".settings-nav-more")) assert.equal(more.getAttribute("tabindex"), "-1");
       for (const node of buttons) {
@@ -315,10 +322,13 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       const debug = document.getElementById("settings-debug");
       assert.equal(debug.tagName, "DETAILS");
       assert.ok(!debug.hasAttribute("open"));
-      for (const name of ["初期データを追加", "対応表を再適用", "セットアップを再表示"]) {
+      for (const name of ["初期データを追加", "対応表を再適用"]) {
         assert.ok(button(name, debug), `maintenance lives in debug: ${name}`);
         assert.equal(button(name, document.getElementById("settings-data")), undefined);
       }
+      // セットアップのやり直しは、デバッグではなくアプリ情報の「使い方」に置く。
+      assert.ok(button("セットアップを再表示", document.getElementById("settings-help")?.closest(".settings-section")));
+      assert.equal(button("セットアップを再表示", debug), undefined);
       await click(buttons.find((node) => node.textContent === "デバッグ"));
       assert.ok(debug.hasAttribute("open"), "jumping to debug opens it");
       assert.equal(nav.querySelector("[aria-current]").textContent, "デバッグ");
@@ -329,7 +339,7 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       await route("#/settings");
       const section = document.querySelector("#settings-design");
       assert.ok(section, "avatar hero design section is present");
-      assert.match(section.textContent, /アバター詳細のヒーロー/);
+      assert.match(section.textContent, /アバター詳細の見出し画像/);
       assert.match(section.textContent, /2400×1200/);
       assert.equal(document.documentElement.classList.contains("theme-liquid"), false);
       assert.equal((await api.settings()).avatarHero ?? "small", "small");
@@ -372,8 +382,9 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       await wait(() => text().includes("BOOTH の読み込み方"));
       assert.equal(settingRow("強制ダークモード"), undefined);
       assert.equal((await api.settings()).browserForceDark, false);
-      window.confirm = () => true;
       await click(radio("アプリの内蔵ブラウザ"));
+      await wait(() => document.querySelector(".builtin-browser-confirm"));
+      await click(button("内蔵ブラウザを使う", document.querySelector(".builtin-browser-confirm")));
       await wait(() => settingRow("強制ダークモード"));
       const row = () => settingRow("強制ダークモード");
       const box = () => row().querySelector('input[type="checkbox"]');
