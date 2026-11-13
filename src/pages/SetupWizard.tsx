@@ -1,14 +1,15 @@
-import { useEffect, useState } from "react";
-import type { CSSProperties, ReactNode } from "react";
-import { api, openExternal } from "../api";
+import { useEffect, useRef, useState } from "react";
+import type { CSSProperties, ReactNode, RefObject } from "react";
+import { scrollToAnchor } from "../anchorScroll";
+import { api, chooseFolder, isTauri, openExternal } from "../api";
 import { useShell } from "../App";
 import { BoothImportSettings } from "../components/BoothImportSettings";
 import { isProgressEnded } from "../progress";
 import type { ProgressBoard } from "../progress";
-import type { ImportReceipt, IntegrationStatus, LibraryStats } from "../types";
+import type { ImportReceipt, IntegrationStatus, LibraryStats, Settings } from "../types";
 import { errorText } from "../ui";
 
-type Step = "intro" | "extension" | "library" | "classify" | "manual" | "files" | "presence";
+type Step = "intro" | "extension" | "library" | "classify" | "manual" | "files" | "storage" | "presence";
 type Guided = "library" | "classify" | "manual" | "files";
 
 export type StepState = "todo" | "running" | "done";
@@ -19,7 +20,7 @@ export interface StepStatus {
 
 export const STEP_STATE_LABEL: Record<StepState, string> = { todo: "未実施", running: "処理中", done: "完了" };
 
-/** これより小さい窓では、案内を作業中の画面の下端の細い帯にする（最初は折りたたむ）。 */
+/** これより小さい窓では、案内を最初から折りたたむ。どの大きさでも、左サイドバーの右・下端に置く。 */
 export const COMPACT_GUIDE = { width: 1100, height: 760 };
 
 export function compactGuide(width: number, height: number): boolean {
@@ -29,6 +30,66 @@ export function compactGuide(width: number, height: number): boolean {
 function runningJob(progress: ProgressBoard, job: string) {
   const entry = progress.jobs[job];
   return entry && !isProgressEnded(entry) ? entry : null;
+}
+
+/** 分類（「未分類を分類」や、全取得のあとの自動の分類）が走っているか。 */
+export function classificationRunning(progress: ProgressBoard): boolean {
+  return runningJob(progress, "extract") !== null;
+}
+
+export interface RectLike {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * 案内の右端を、右パネル（右の列でも、浮かせた小窓でも）の手前で止めるための幅。
+ * 右パネルのページはネイティブの WebView で、案内が重なるとページを隠す（BROWSER_PANEL_COVER_SELECTORS）。
+ * ログインの手順で右パネルのページを見えなくしないよう、案内の高さに掛かるパネルだけを避ける。
+ */
+export function guideRightClearance(viewWidth: number, panels: readonly RectLike[], guideTop: number): number {
+  let clear = 0;
+  for (const rect of panels) {
+    if (!(rect.width > 0 && rect.height > 0)) continue;
+    if (rect.top + rect.height <= guideTop) continue;
+    clear = Math.max(clear, viewWidth - rect.left);
+  }
+  return Math.max(0, Math.ceil(clear));
+}
+
+export interface SetupLanding {
+  hash: string;
+  /** 移った画面の中でスクロールする節の id。 */
+  section?: string;
+  message: string;
+}
+
+/**
+ * セットアップを終えたあとに開く画面。商品が無ければ読み込みへ、未分類が残っていれば分類へ、
+ * そうでなければ探す画面（持っているアバターがあればアバター、無ければアセット）へ移る。
+ */
+export function setupLanding(stats: LibraryStats | null, classifying: boolean): SetupLanding {
+  if (!stats || stats.products === 0) {
+    return {
+      hash: "#/import",
+      section: "import-booth",
+      message: "セットアップを終えました。商品情報は「1. BOOTH から読み込む」から読み込めます",
+    };
+  }
+  if (stats.unextracted > 0 && !classifying) {
+    return {
+      hash: "#/import",
+      section: "import-classification",
+      message: `セットアップを終えました。未分類の商品が ${stats.unextracted} 件あります。「未分類を分類」を押すと、一覧に出ます`,
+    };
+  }
+  const hash = stats.ownedAvatars > 0 ? "#/" : "#/assets";
+  if (classifying) return { hash, message: "セットアップを終えました。分類を続けています。終わった商品から一覧に出ます" };
+  return stats.ownedAvatars > 0
+    ? { hash, message: "セットアップを終えました。アバターを選ぶと、対応する衣装や髪を探せます" }
+    : { hash, message: "セットアップを終えました。アセットをジャンルごとに探せます" };
 }
 
 function latestImport(integration: IntegrationStatus | null): string | null {
@@ -87,6 +148,34 @@ export function guideNextLabel(status: StepStatus | null): string {
   return "あとで行う";
 }
 
+/** 案内の置き場所を、右パネルの位置と案内自身の高さに合わせて保つ。浮かせた小窓は動くので、短い間隔で測り直す。 */
+function useGuidePlacement(ref: RefObject<HTMLDivElement | null>, active: boolean): number {
+  const [right, setRight] = useState(0);
+  useEffect(() => {
+    if (!active) return;
+    const root = document.documentElement;
+    const measure = () => {
+      const guide = ref.current?.getBoundingClientRect();
+      const panels = Array.from(document.querySelectorAll<HTMLElement>(".right-panel"), (panel) => panel.getBoundingClientRect());
+      const next = guideRightClearance(window.innerWidth, panels, guide ? guide.top : window.innerHeight - 160);
+      setRight((current) => (current === next ? current : next));
+      // 中身の下に案内の高さぶんの余白を取り、最後の行まで案内の上へ出せるようにする（styles.css）。
+      if (guide) root.style.setProperty("--setup-guide-height", `${Math.ceil(guide.height)}px`);
+    };
+    root.classList.add("has-setup-guide");
+    measure();
+    const timer = window.setInterval(measure, 500);
+    window.addEventListener("resize", measure);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("resize", measure);
+      root.classList.remove("has-setup-guide");
+      root.style.removeProperty("--setup-guide-height");
+    };
+  }, [active, ref]);
+  return right;
+}
+
 function useWindowSize() {
   const [size, setSize] = useState(() => ({ width: window.innerWidth, height: window.innerHeight }));
   useEffect(() => {
@@ -111,7 +200,7 @@ export function SetupWizard({
   /** 左サイドバーの幅。小さい窓では案内をその右に置き、サイドバーを塞がない。 */
   railInset?: number;
 }) {
-  const { revision } = useShell();
+  const { revision, notify, fail } = useShell();
   const [step, setStep] = useState<Step>("intro");
   const [backgroundChoice, setBackgroundChoice] = useState<"unset" | "on" | "off">("unset");
   const [loginChoice, setLoginChoice] = useState<"unset" | "on" | "off">("unset");
@@ -122,6 +211,12 @@ export function SetupWizard({
   const [collapsed, setCollapsed] = useState(compact);
   const [browserEnabled, setBrowserEnabled] = useState(false);
   const [integration, setIntegration] = useState<IntegrationStatus | null>(null);
+  const [storageFolder, setStorageFolder] = useState("");
+  const [routeChoice, setRouteChoice] = useState<"unset" | "on" | "off">("unset");
+  const [storageBusy, setStorageBusy] = useState(false);
+  const guideRef = useRef<HTMLDivElement>(null);
+  const guiding = step === "library" || step === "classify" || step === "manual" || step === "files";
+  const guideRight = useGuidePlacement(guideRef, guiding);
 
   useEffect(() => {
     let alive = true;
@@ -137,6 +232,63 @@ export function SetupWizard({
       alive = false;
     };
   }, [revision, step]);
+
+  // ファイルの置き場所の手順に入ったら、保存済みのフォルダと自動整理を読む。
+  useEffect(() => {
+    if (step !== "storage") return;
+    let alive = true;
+    void api.settings().then(
+      (value) => {
+        if (!alive) return;
+        setStorageFolder(value.libraryFolder);
+        setRouteChoice(value.routeDownloads ? "on" : "unset");
+      },
+      (err: unknown) => {
+        if (alive) setMessage(errorText(err));
+      },
+    );
+    return () => {
+      alive = false;
+    };
+  }, [step]);
+
+  async function pickStorage() {
+    setMessage("");
+    try {
+      // 見本（ブラウザ確認用）ではフォルダを選べないので、見本のフォルダを使う。
+      const folder = isTauri() ? await chooseFolder() : "C:\\Assets";
+      if (folder) setStorageFolder(folder);
+    } catch (err) {
+      setMessage(errorText(err));
+    }
+  }
+
+  async function finishStorage() {
+    if (routeChoice === "unset" || storageBusy) return;
+    setMessage("");
+    setStorageBusy(true);
+    try {
+      const saved = await api.settings();
+      const folder = storageFolder.trim();
+      const patch: Partial<Settings> = {};
+      if (folder && folder !== saved.libraryFolder) patch.libraryFolder = folder;
+      const route = routeChoice === "on" && folder !== "";
+      if (route !== saved.routeDownloads) patch.routeDownloads = route;
+      if (Object.keys(patch).length > 0) await api.updateSettings(patch);
+      // 設定画面でフォルダを選んだときと同じく、選んだフォルダを調べて商品と結び付ける。
+      if (patch.libraryFolder) {
+        void api.scanLibrary(patch.libraryFolder).then(
+          (report) => notify(`${report.indexed} 件を調べ、${report.linked} 件を商品と結び付けました`),
+          (err: unknown) => fail(errorText(err)),
+        );
+      }
+      setStep("presence");
+    } catch (err) {
+      setMessage(errorText(err));
+    } finally {
+      setStorageBusy(false);
+    }
+  }
 
   async function savePresence(backgroundMode: boolean, launchAtLogin: boolean) {
     const settings = await api.settings();
@@ -173,8 +325,7 @@ export function SetupWizard({
     setStep(next);
     window.location.hash = next === "manual" ? "#/classification-log" : "#/import";
     if (next !== "manual") {
-      const target = next === "library" ? "import-booth" : next === "classify" ? "import-classification" : "import-existing-files";
-      window.setTimeout(() => document.getElementById(target)?.scrollIntoView?.({ block: "start" }), 100);
+      scrollToAnchor(next === "library" ? "import-booth" : next === "classify" ? "import-classification" : "import-existing-files");
     }
   }
 
@@ -246,14 +397,15 @@ export function SetupWizard({
         </>,
         back: () => guide("manual"),
         extra: <button className="button secondary" type="button" onClick={() => guide("files")}>ファイル登録画面へ</button>,
-        next: () => setStep("presence"),
+        next: () => setStep("storage"),
       },
     };
     const current = guides[step];
     return (
       <div
+        ref={guideRef}
         className={`setup-guide${compact ? " compact" : ""}${collapsed ? " collapsed" : ""}`}
-        style={{ "--guide-left": `${railInset}px` } as CSSProperties}
+        style={{ "--guide-left": `${railInset}px`, "--guide-right": `${guideRight}px` } as CSSProperties}
         role="region"
         aria-label="使い方ガイド"
       >
@@ -290,7 +442,13 @@ export function SetupWizard({
       <div className="setup-card panel">
         <p className="meta">初回セットアップ</p>
         <h1>
-          {step === "intro" ? "VRCLibMan へようこそ" : step === "extension" ? "BOOTH の読み込み方" : "終了と起動の設定"}
+          {step === "intro"
+            ? "VRCLibMan へようこそ"
+            : step === "extension"
+              ? "BOOTH の読み込み方"
+              : step === "storage"
+                ? "ダウンロードしたファイルの置き場所"
+                : "終了と起動の設定"}
         </h1>
         {step === "intro" && <>
           <p>BOOTH の商品と手元のファイルをまとめて管理し、持っているアバターや対応する衣装を探せるアプリです。</p>
@@ -306,6 +464,58 @@ export function SetupWizard({
             <div className="row-actions setup-actions">
               <button className="button" type="button" onClick={() => setStep("intro")}>戻る</button>
               <button className="button primary" type="button" disabled={!importReady} onClick={() => guide("library")}>次へ</button>
+            </div>
+          </>
+        )}
+        {step === "storage" && (
+          <>
+            <p>BOOTH からダウンロードしたファイルを、商品ごとのフォルダにまとめて置く場所（ライブラリのフォルダ）を選びます。</p>
+            {browserEnabled && (
+              <p className="note-strong">商品カードの「ダウンロード」でファイルを取得するには、フォルダを選んで「ライブラリへ自動整理する」にしてください。</p>
+            )}
+            <p>ライブラリのフォルダ</p>
+            <div className="inline-control setup-folder">
+              <input aria-label="ライブラリのフォルダ" value={storageFolder} placeholder="未設定" readOnly />
+              <button className="button secondary" type="button" disabled={storageBusy} onClick={() => void pickStorage()}>
+                フォルダを選ぶ
+              </button>
+            </div>
+            <p className="meta">ホームフォルダ全体やドライブの直下ではなく、アセット用のフォルダを選んでください。すでにファイルを置いているフォルダでもかまいません。</p>
+            <p>ダウンロードしたファイル</p>
+            <div className="row-actions">
+              <button
+                className={routeChoice === "on" ? "button primary" : "button secondary"}
+                type="button"
+                aria-pressed={routeChoice === "on"}
+                disabled={storageFolder.trim() === "" || storageBusy}
+                onClick={() => setRouteChoice("on")}
+              >
+                ライブラリへ自動整理する
+              </button>
+              <button
+                className={routeChoice === "off" ? "button primary" : "button secondary"}
+                type="button"
+                aria-pressed={routeChoice === "off"}
+                disabled={storageBusy}
+                onClick={() => setRouteChoice("off")}
+              >
+                ダウンロード先に置いたままにする
+              </button>
+            </div>
+            <p className="meta">
+              自動整理すると、アプリや拡張で自分でダウンロードしたファイルを、ダウンロードフォルダからこのフォルダの商品 ID 別のフォルダへ移します。ほかのファイルは移動しません。
+              {browserEnabled ? "置いたままにすると、商品カードの「ダウンロード」は使えません。" : ""}
+            </p>
+            <p className="meta">設定の「ライブラリとダウンロード」で、あとから変更できます。「あとで設定する」を選ぶと、何も変えずに次へ進みます。</p>
+            {message && <p className="note-strong" role="alert">{message}</p>}
+            <div className="row-actions setup-actions">
+              <button className="button" type="button" onClick={() => guide("files")}>戻る</button>
+              <button className="button" type="button" disabled={storageBusy} onClick={() => { setMessage(""); setStep("presence"); }}>
+                あとで設定する
+              </button>
+              <button className="button primary" type="button" disabled={routeChoice === "unset" || storageBusy} onClick={() => void finishStorage()}>
+                次へ
+              </button>
             </div>
           </>
         )}
@@ -364,7 +574,7 @@ export function SetupWizard({
             <p className="meta">設定はあとから変更できます。「あとで設定する」を選ぶと、バックグラウンド動作と自動起動をオフにして完了します。</p>
             {message && <p className="note-strong" role="alert">{message}</p>}
             <div className="row-actions setup-actions">
-              <button className="button" type="button" onClick={() => guide("files")}>戻る</button>
+              <button className="button" type="button" onClick={() => setStep("storage")}>戻る</button>
               <button className="button" type="button" onClick={() => void chooseLater()}>
                 あとで設定する
               </button>

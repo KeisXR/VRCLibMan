@@ -468,6 +468,8 @@ export interface LibraryWalkReport {
   inserted: number;
   updated: number;
   unchanged: number;
+  /** 最後まで読めたので、続けて未分類の分類を始めた。 */
+  classifying: boolean;
 }
 
 export type PurchaseGroupKind = "avatar" | "generic" | "world" | "unclassified" | "multiple" | "unset";

@@ -19,8 +19,27 @@ pub fn detail_pause(page_delay: Duration) -> Duration {
     page_delay.max(DETAIL_DELAY)
 }
 
-pub fn detail_progress_line(current: u32, total: u32) -> String {
-    format!("商品情報 {current}/{total}")
+/// 公開情報の確認の進み具合。1 件ごとに `pause` 以上あけるので、残りの件数から終わるまでの目安を添える。
+pub fn detail_progress_line(current: u32, total: u32, pause: Duration) -> String {
+    let left = total.saturating_sub(current);
+    if left == 0 {
+        return format!("商品情報を確認中 {current}/{total}");
+    }
+    let seconds = pause.as_secs_f64() * f64::from(left);
+    format!("商品情報を確認中 {current}/{total}（{}）", remaining_label(seconds))
+}
+
+/// 残り時間の目安。分の単位で切り上げ、1 時間を超えたら時間と分にする。
+fn remaining_label(seconds: f64) -> String {
+    if seconds < 60.0 {
+        return "残り1分未満".into();
+    }
+    let minutes = (seconds / 60.0).ceil() as u64;
+    match (minutes / 60, minutes % 60) {
+        (0, minutes) => format!("残り約{minutes}分"),
+        (hours, 0) => format!("残り約{hours}時間"),
+        (hours, minutes) => format!("残り約{hours}時間{minutes}分"),
+    }
 }
 
 pub fn allowed_page_delay_ms(value: u64) -> bool {
@@ -523,8 +542,12 @@ mod tests {
         assert_eq!(PAGE_DELAY_MS, 1000);
         assert_eq!(detail_pause(PAGE_DELAY), DETAIL_DELAY);
         assert_eq!(detail_pause(Duration::from_millis(250)), DETAIL_DELAY);
-        assert_eq!(detail_progress_line(1, 4), "商品情報 1/4");
-        assert!(!detail_progress_line(1, 4).contains('?'));
+        assert_eq!(detail_progress_line(1, 4, DETAIL_DELAY), "商品情報を確認中 1/4（残り1分未満）");
+        assert_eq!(detail_progress_line(4, 4, DETAIL_DELAY), "商品情報を確認中 4/4");
+        assert_eq!(detail_progress_line(1, 101, DETAIL_DELAY), "商品情報を確認中 1/101（残り約5分）");
+        assert_eq!(detail_progress_line(0, 1200, DETAIL_DELAY), "商品情報を確認中 0/1200（残り約1時間）");
+        assert_eq!(detail_progress_line(0, 1300, DETAIL_DELAY), "商品情報を確認中 0/1300（残り約1時間5分）");
+        assert!(!detail_progress_line(1, 4, DETAIL_DELAY).contains('?'));
         assert_eq!(PAGE_DELAY, Duration::from_millis(1000));
         assert_eq!(
             library_page_url("https://accounts.booth.pm/library?page=4", 1).unwrap(),

@@ -621,6 +621,8 @@ button.account-pill:hover { background: var(--hover); }
 .banner.notice { color: var(--text); }
 .banner-message { flex: 1 1 auto; min-width: 0; }
 .banner.notice > .banner-message { color: var(--good); }
+/* 通知の操作ボタン（「保存先を開く」「設定を開く」など）は、文が長くても縮めず1行に保つ。 */
+.banner.notice > .button { flex: none; white-space: nowrap; }
 .banner-close {
   flex: none;
   width: 28px;
@@ -1765,7 +1767,8 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .settings-section > header p { margin: 3px 0 0; color: var(--text-secondary); font-size: 13px; }
 .setting-row { display: grid; grid-template-columns: minmax(180px, .8fr) minmax(280px, 1.2fr); gap: var(--space-5); align-items: start; padding: 16px 24px; border-bottom: 1px solid var(--line); }
 .setting-copy { padding-top: 6px; }
-.settings-section { scroll-margin-top: 12px; }
+/* 節へ移るとき（anchorScroll.ts）、上部の sticky の帯（通知・進捗）の下に見出しが隠れないようにする。 */
+.settings-section { scroll-margin-top: calc(var(--topbar-height, 8px) + 12px); }
 .settings-layout { display: grid; grid-template-columns: 168px minmax(0, 1fr); gap: 20px; align-items: start; }
 /* 設定のカテゴリ一覧。広い幅は左の縦の列、狭い幅（下の @container 800px）は上に固定した1行の帯。
    今いるカテゴリは aria-current（SettingsNav.tsx）。詳しくは docs/design/README.md の「設定画面」。 */
@@ -2350,7 +2353,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   .settings-nav button { padding: 6px 12px; }
   .settings-nav button[aria-current] { box-shadow: none; } /* 帯では影を消し、朱の直線の下線にする（集約ブロック） */
   /* 帯の下に見出しが隠れないよう、帯の高さ（SettingsNav.tsx が測る）だけ余白を取る。 */
-  .settings-layout [id^="settings-"] { scroll-margin-top: calc(var(--settings-nav-h, 48px) + var(--space-3)); }
+  .settings-layout [id^="settings-"] { scroll-margin-top: calc(var(--settings-nav-h, 48px) + var(--topbar-height, 8px) + var(--space-3)); }
   /* 隠れた項目がある側の端に「‹」「›」とぼかしを重ねる。押すと帯の 7 割ぶん送る。 */
   .settings-nav .settings-nav-more:not([hidden]) {
     position: sticky;
@@ -2429,13 +2432,17 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 }
 
 /* The guide stays available while the app's own screens remain interactive. */
+/* 使い方ガイド。どの大きさの窓でも、左サイドバーの右（--guide-left）から、右パネルの手前（--guide-right、
+   SetupWizard.tsx が測る）までの下端に置く。右パネルのページはネイティブで、重なるとページを隠すため。
+   300px 取れないほど狭いときだけ、サイドバーに掛けてでも右パネルを避ける。 */
 .setup-guide {
   position: fixed;
   z-index: 30;
-  left: 16px;
-  bottom: 16px;
-  width: min(420px, calc(100vw - 32px));
-  max-height: min(75vh, 720px);
+  left: max(12px, min(calc(var(--guide-left, 0px) + 12px), calc(100vw - var(--guide-right, 0px) - 312px)));
+  right: calc(var(--guide-right, 0px) + 12px);
+  bottom: 12px;
+  max-width: 560px;
+  max-height: min(65vh, 600px);
   overflow: auto;
 }
 .setup-guide-card { margin: 0; padding: 20px; border-radius: var(--radius-lg); box-shadow: 0 12px 36px #0004; }
@@ -2454,21 +2461,18 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .state-chip.running { color: var(--text-secondary); }
 .state-chip.done { color: var(--good); }
 .setup-guide .setup-actions { margin-top: var(--space-2); }
-.setup-guide.collapsed .setup-guide-card { padding: 12px 16px; }
-.setup-guide.collapsed .setup-guide-card .setup-status { margin: var(--space-2) 0; }
+/* 折りたたんだ案内は細い帯にする。小さい窓（.compact）では最初から折りたたむ。 */
+.setup-guide.collapsed .setup-guide-card { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); padding: 10px 14px; }
+.setup-guide.collapsed .setup-guide-head { flex: 1 1 100%; align-items: center; }
+.setup-guide.collapsed .setup-guide-card .setup-status { flex: 1 1 200px; min-width: 0; margin: 0; }
 .setup-guide.collapsed .setup-status-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* 小さい窓: 左サイドバーを塞がず、その右の下端に細い帯で出す（最初は折りたたむ）。中身の下端には 64px の余白がある。 */
-.setup-guide.compact {
-  left: calc(var(--guide-left, 0px) + 12px);
-  bottom: 12px;
-  width: min(600px, calc(100vw - var(--guide-left, 0px) - 24px));
-  max-height: min(60vh, 520px);
-}
-.setup-guide.compact.collapsed .setup-guide-card { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); padding: 10px 14px; }
-.setup-guide.compact.collapsed .setup-guide-head { flex: 1 1 100%; align-items: center; }
-.setup-guide.compact.collapsed .setup-guide-card .setup-status { flex: 1 1 200px; min-width: 0; margin: 0; }
-.setup-guide.compact.collapsed .setup-actions { flex: 0 0 auto; margin: 0 0 0 auto; }
-.setup-guide.compact.collapsed .setup-guide-card > p[role="alert"] { flex: 1 1 100%; margin: 0; }
+.setup-guide.collapsed .setup-actions { flex: 0 0 auto; margin: 0 0 0 auto; }
+.setup-guide.collapsed .setup-guide-card > p[role="alert"] { flex: 1 1 100%; margin: 0; }
+/* 案内が出ている間は、中身の下に案内の高さぶんの余白を取り、最後の行まで案内の上へ出せるようにする。 */
+html.has-setup-guide .content { padding-bottom: calc(var(--setup-guide-height, 0px) + 24px); }
+/* ファイルの置き場所の手順で、選んだフォルダを出す欄。 */
+.setup-folder { justify-content: flex-start; margin-bottom: var(--space-2); }
+.setup-folder > input { flex: 1 1 auto; }
 
 /* ==== 切替の動き: 押して切り替わる場所の控えめな動き ====
    動かすのは opacity と transform だけ（幅・高さ・位置の計算は動かさない）。長さは 120〜160ms。

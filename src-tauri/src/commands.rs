@@ -911,8 +911,12 @@ pub async fn import_booth_library(
     app: tauri::AppHandle,
 ) -> Result<crate::browser::LibraryWalkReport, String> {
     // 移動と eval は import_library の中で dispatch_ui に渡す。
-    let report = crate::browser::import_library(app.clone()).await?;
+    let mut report = crate::browser::import_library(app.clone()).await?;
     let _ = app.emit("library-changed", ());
+    // 最後まで読めたときだけ、続けて未分類を分類する。中止・途中停止では公開情報が揃っていない。
+    if crate::auto_classify::after_walk(report.cancelled, &report.notice) {
+        report.classifying = crate::auto_classify::request(&app);
+    }
     Ok(report)
 }
 
@@ -1377,14 +1381,22 @@ pub fn classification_status(
 }
 
 #[tauri::command]
-pub async fn extract_products(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    target: String,
-) -> Result<ExtractReport, String> {
+pub async fn extract_products(app: AppHandle, target: String) -> Result<ExtractReport, String> {
+    let report = run_extract(&app, &target).await?;
+    // 取り込みのあとの分類がこの実行の間に頼まれていたら、続けて行う（中断したときは捨てる）。
+    crate::auto_classify::after_run(&app, report.cancelled);
+    Ok(report)
+}
+
+/// 分類がすでに走っているときの `run_extract` のエラー。
+pub(crate) const EXTRACT_ALREADY_RUNNING: &str = "分類はすでに実行中です";
+
+/// 分類の本体。画面の「未分類を分類」などと、取り込みのあとの自動の分類（`auto_classify`）が使う。
+pub(crate) async fn run_extract(app: &AppHandle, target: &str) -> Result<ExtractReport, String> {
+    let state = app.state::<AppState>();
     let running = Arc::clone(&state.extract_running);
     if running.swap(true, Ordering::SeqCst) {
-        return Err("分類はすでに実行中です".into());
+        return Err(EXTRACT_ALREADY_RUNNING.into());
     }
     state.cancel_extract.store(false, Ordering::SeqCst);
     let _clear = ClearRunning(running);

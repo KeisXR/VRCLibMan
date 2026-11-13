@@ -1,4 +1,5 @@
 mod asset_updates;
+mod auto_classify;
 mod booth_category;
 mod booth_detail;
 mod browser;

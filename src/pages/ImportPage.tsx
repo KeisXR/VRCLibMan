@@ -17,6 +17,7 @@ import type {
 } from "../types";
 import { errorText } from "../ui";
 import { SettingRow } from "../components/SettingRow";
+import { SettingsLink } from "../components/SettingsLink";
 import { ProductExclusions } from "../components/ProductExclusions";
 import { UnlinkedFiles } from "../components/UnlinkedFiles";
 import { ExtensionInstructions } from "../components/BoothImportSettings";
@@ -218,6 +219,9 @@ export function ImportPage() {
     }
   }
 
+  // 全取得や拡張からの受信のあとに Rust が始めた分類も、ここで中断できるようにする。
+  const extractRunning = extracting || (progress !== null && (progress.state ?? "running") === "running");
+
   async function extract(target: "unclassified" | "stale" | "all") {
     if (
       target === "all" &&
@@ -305,9 +309,9 @@ export function ImportPage() {
           </header>
           <details className="settings-details"><summary>商品を管理・除外</summary><ProductExclusions /></details>
           {integration?.mode !== "browser" && <><SettingRow label="拡張機能" help={receiverStatus}>
-            <a className="button secondary" href="#/settings">
+            <SettingsLink section="settings-booth">
               読み込み方とペアリングの設定
-            </a>
+            </SettingsLink>
           </SettingRow>
           <details className="settings-details">
             <summary>拡張機能の使い方・受信履歴</summary>
@@ -336,7 +340,7 @@ export function ImportPage() {
             <BuiltinBrowserImport />
           ) : (
             <SettingRow label="内蔵ブラウザ" help="無効です。設定で読み込み方を変更できます。">
-              <a className="button secondary" href="#/settings">読み込み方を選ぶ</a>
+              <SettingsLink section="settings-booth">読み込み方を選ぶ</SettingsLink>
             </SettingRow>
           )}
           {integration?.browserImport && (
@@ -387,7 +391,7 @@ export function ImportPage() {
               <button
                 className="button primary"
                 type="button"
-                disabled={busy || unextracted === 0}
+                disabled={busy || extractRunning || unextracted === 0}
                 onClick={() => void extract("unclassified")}
               >
                 未分類を分類
@@ -395,7 +399,7 @@ export function ImportPage() {
               <button
                 className="button"
                 type="button"
-                disabled={!extracting}
+                disabled={!extractRunning}
                 onClick={() =>
                   void api
                     .cancelExtract()
@@ -406,7 +410,7 @@ export function ImportPage() {
               </button>
             </div>
           </SettingRow>
-          {progress && (
+          {progress && extractRunning && (
             <div className="section-body" role="status">
               {progress.message}（{progress.current} / {progress.total}）
             </div>
@@ -416,7 +420,7 @@ export function ImportPage() {
               カテゴリとタグで {extractStats.boothSettled} 件、タイトルと説明で {extractStats.ruleFilled} 件
             </p>
           )}
-          <StaleReclassifyRow busy={busy} onExtract={() => void extract("stale")} />
+          <StaleReclassifyRow busy={busy || extractRunning} onExtract={() => void extract("stale")} />
           <details className="settings-details">
             <summary>すべて再分類</summary>
             <p className="note-strong">
@@ -425,7 +429,7 @@ export function ImportPage() {
             <button
               className="button secondary"
               type="button"
-              disabled={busy}
+              disabled={busy || extractRunning}
               onClick={() => void extract("all")}
             >
               すべて再分類

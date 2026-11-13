@@ -1959,7 +1959,7 @@ async function previewLibraryWalk(): Promise<LibraryWalkReport> {
       current: 1,
       total: 2,
       state: "running",
-      message: "商品情報 1/2",
+      message: "商品情報を確認中 1/2（残り1分未満）",
     });
   }
   const cancelled = previewLibraryCancel;
@@ -1974,6 +1974,8 @@ async function previewLibraryWalk(): Promise<LibraryWalkReport> {
     inserted: seen.products,
     updated: 0,
     unchanged: 0,
+    // 見本では分類を動かさない（extract_products はデスクトップアプリだけ）。
+    classifying: false,
   };
   emitPreviewProgress({
     job: "browser-library",

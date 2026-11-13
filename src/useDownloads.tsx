@@ -1,10 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { api, listenBoothFile, revealInFolder } from "./api";
+import { openSettingsSection } from "./anchorScroll";
 import {
   EMPTY_DOWNLOADS,
   activeDownloads,
   applyFileStatus,
   clearFinishedDownloads,
+  downloadBlocker,
   downloadKey,
   finishDownload,
   isDownloadActive,
@@ -12,7 +14,7 @@ import {
   type DownloadBoard,
   type DownloadTarget,
 } from "./downloads";
-import type { NoticeAction } from "./notice";
+import type { NoticeAction, NotifyOptions } from "./notice";
 import { invalidateRemoteProbe } from "./remoteProductProbe";
 import { errorText } from "./ui";
 
@@ -41,13 +43,15 @@ export function useDownloadBoard({
   fail,
   refresh,
 }: {
-  notify: (message: string, action?: NoticeAction) => void;
+  notify: (message: string, action?: NoticeAction, options?: NotifyOptions) => void;
   fail: (message: string) => void;
   refresh: () => void;
 }): DownloadsValue {
   const [board, setBoard] = useState<DownloadBoard>(EMPTY_DOWNLOADS);
   const boardRef = useRef(board);
   boardRef.current = board;
+  // 設定を確かめている間の二度押しで、同じファイルを二重に始めないため。
+  const checking = useRef(new Set<string>());
   const handlers = useRef({ notify, fail, refresh });
   handlers.current = { notify, fail, refresh };
 
@@ -74,11 +78,8 @@ export function useDownloadBoard({
     );
   }, []);
 
-  const start = useCallback(
+  const receive = useCallback(
     (target: DownloadTarget) => {
-      const key = downloadKey(target);
-      const running = boardRef.current.entries.find((entry) => entry.key === key);
-      if (running && isDownloadActive(running)) return;
       setBoard((current) => startDownload(current, target));
       void api.downloadBoothFile(target.boothId, target.variation, target.filename).then(
         (placed) => {
@@ -98,6 +99,33 @@ export function useDownloadBoard({
       );
     },
     [reveal],
+  );
+
+  // 設定が足りないときは始めず（サイドバーに失敗を残さず）、設定の該当する節へ案内する。
+  const start = useCallback(
+    (target: DownloadTarget) => {
+      const key = downloadKey(target);
+      const running = boardRef.current.entries.find((entry) => entry.key === key);
+      if ((running && isDownloadActive(running)) || checking.current.has(key)) return;
+      checking.current.add(key);
+      void api
+        .settings()
+        .then(
+          (settings) => {
+            const blocked = downloadBlocker(settings);
+            if (!blocked) {
+              receive(target);
+              return;
+            }
+            const section = settings.builtinBrowser ? "settings-library" : "settings-booth";
+            handlers.current.notify(blocked, { label: "設定を開く", run: () => openSettingsSection(section) }, { persist: true });
+          },
+          // 設定を読めないときは Rust の判定に任せる。
+          () => receive(target),
+        )
+        .finally(() => checking.current.delete(key));
+    },
+    [receive],
   );
 
   const clearFinished = useCallback(() => setBoard((current) => clearFinishedDownloads(current)), []);

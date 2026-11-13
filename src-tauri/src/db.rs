@@ -2917,6 +2917,22 @@ pub(crate) fn parse_extract_target(value: &str) -> Result<ExtractTarget, String>
 
 const EXTRACT_JOB_COLUMNS: &str = "booth_id, title, description_snippet, booth_category_id, booth_category_name, booth_category_parent";
 
+/// 「未分類を分類」の対象。除外した商品と、カテゴリとジャンルの両方を手で固定した商品は入らない。
+const UNCLASSIFIED_WHERE: &str = "(extracted_at IS NULL OR category IS NULL)
+                       AND NOT (category_locked = 1 AND genre_locked = 1)
+                       AND booth_id NOT IN (SELECT booth_id FROM product_exclusions)";
+
+/// 「未分類を分類」で分類する商品が 1 件でもあるか。取り込みのあとの自動の分類（`auto_classify`）が見る。
+pub(crate) fn has_unclassified_work(connection: &Connection) -> Result<bool, String> {
+    connection
+        .query_row(
+            &format!("SELECT EXISTS(SELECT 1 FROM products WHERE {UNCLASSIFIED_WHERE})"),
+            [],
+            |row| row.get(0),
+        )
+        .sql()
+}
+
 fn map_extract_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<ExtractJob> {
     Ok(ExtractJob {
         booth_id: row.get(0)?,
@@ -2952,9 +2968,7 @@ pub(crate) fn products_for_extract(
             let mut statement = connection
                 .prepare(&format!(
                     "SELECT {EXTRACT_JOB_COLUMNS} FROM products
-                     WHERE (extracted_at IS NULL OR category IS NULL)
-                       AND NOT (category_locked = 1 AND genre_locked = 1)
-                       AND booth_id NOT IN (SELECT booth_id FROM product_exclusions)
+                     WHERE {UNCLASSIFIED_WHERE}
                      ORDER BY imported_at ASC"
                 ))
                 .sql()?;
@@ -8377,6 +8391,21 @@ mod tests {
             assert!(!product.needs_review, "{id}");
             assert!(product.user_confirmed, "{id}");
         }
+    }
+
+    #[test]
+    fn unclassified_work_matches_the_unclassified_target() {
+        let mut connection = open_memory().unwrap();
+        assert!(!has_unclassified_work(&connection).unwrap(), "an empty library has nothing to classify");
+        let json = r#"{"products":[{"boothId":"1000","title":"見本の衣装","shop":"shop","description":"説明"}]}"#;
+        import_products(&mut connection, &parse_export(json).unwrap()).unwrap();
+        assert!(has_unclassified_work(&connection).unwrap());
+        assert_eq!(products_for_extract(&connection, ExtractTarget::Unclassified).unwrap().len(), 1);
+        connection
+            .execute("INSERT INTO product_exclusions (booth_id, excluded_at) VALUES ('1000', 't')", [])
+            .unwrap();
+        assert!(!has_unclassified_work(&connection).unwrap(), "an excluded product is not classified");
+        assert!(products_for_extract(&connection, ExtractTarget::Unclassified).unwrap().is_empty());
     }
 
     #[test]

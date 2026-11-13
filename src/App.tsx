@@ -11,11 +11,12 @@ import { WorldsPage } from "./pages/WorldsPage";
 import { AssetsPage } from "./pages/AssetsPage";
 import { SearchPage } from "./pages/SearchPage";
 import { PurchasesPage } from "./pages/PurchasesPage";
-import { SetupWizard } from "./pages/SetupWizard";
+import { SetupWizard, classificationRunning, setupLanding } from "./pages/SetupWizard";
 import { GenreColumn } from "./components/GenreColumn";
 import { ResizeSeparator } from "./components/ResizeSeparator";
 import { GenreBrowseProvider } from "./genreBrowseContext";
 import { useAppLayout } from "./useAppLayout";
+import { openSettingsSection, scrollToAnchor } from "./anchorScroll";
 import { UI_GENRE_WIDTH, UI_RAIL_COLLAPSED_WIDTH, UI_RAIL_WIDTH, UI_SEPARATOR_PX } from "./uiLayout";
 import { AppUpdaterProvider, useStartupUpdateCheck } from "./useAppUpdater";
 import { SidebarAssetUpdateButton, useSidebarAssetUpdate } from "./components/SidebarAssetUpdateButton";
@@ -159,6 +160,8 @@ export default function App() {
   const topbarRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(() => setRevision((value) => value + 1), []);
+  const progressRef = useRef(progressBoard);
+  progressRef.current = progressBoard;
 
   useEffect(() => {
     const onHash = () => setHash(window.location.hash);
@@ -394,12 +397,22 @@ export default function App() {
     </div>
   );
 
-  const openAppUpdateSettings = useCallback(() => {
-    window.location.hash = "#/settings";
-    window.setTimeout(() => {
-      document.getElementById("settings-app-update")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 0);
-  }, []);
+  const openAppUpdateSettings = useCallback(() => openSettingsSection("settings-app-update"), []);
+
+  // セットアップを終えたら、ライブラリの状態に合った画面へ移る（読み込み・分類・探す画面）。
+  const finishSetup = useCallback(() => {
+    setSetupComplete(true);
+    refresh();
+    void api.stats().then(
+      (latest) => {
+        const landing = setupLanding(latest, classificationRunning(progressRef.current));
+        window.location.hash = landing.hash;
+        if (landing.section) scrollToAnchor(landing.section);
+        notify(landing.message);
+      },
+      () => undefined,
+    );
+  }, [refresh, notify]);
 
   return (
     <AppUpdaterProvider>
@@ -410,7 +423,7 @@ export default function App() {
       {setupComplete === false && (
         <SetupWizard
           onRefresh={refresh}
-          onDone={() => { setSetupComplete(true); refresh(); }}
+          onDone={finishSetup}
           stats={stats}
           progress={progressBoard}
           railInset={(collapsed ? UI_RAIL_COLLAPSED_WIDTH : layout.railWidth) + UI_SEPARATOR_PX}

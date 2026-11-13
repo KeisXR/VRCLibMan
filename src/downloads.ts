@@ -1,5 +1,23 @@
-import type { BoothFileStatus } from "./types";
+import type { BoothFileStatus, Settings } from "./types";
 import { formatBytes } from "./media";
+
+/**
+ * 商品カードの「ダウンロード」を始める前の確認。足りない設定があれば、その案内を返す。
+ * 判定の正本は Rust（`download_booth_file` も同じ条件で断る）。ここは、始めてから失敗させて
+ * サイドバーに失敗を残す前に、設定へ案内するためだけに見る。
+ */
+export function downloadBlocker(settings: Pick<Settings, "builtinBrowser" | "routeDownloads" | "libraryFolder">): string | null {
+  if (!settings.builtinBrowser) {
+    return "商品カードからのダウンロードには内蔵ブラウザを使います。設定の「BOOTH の読み込み方」で内蔵ブラウザを選んでください";
+  }
+  if (!settings.libraryFolder.trim()) {
+    return "ダウンロードするには、ライブラリのフォルダを選んで「ダウンロードを自動整理」をオンにしてください";
+  }
+  if (!settings.routeDownloads) {
+    return "ダウンロードするには、設定の「ダウンロードを自動整理」をオンにしてください";
+  }
+  return null;
+}
 
 /**
  * 内蔵ブラウザで受け取るファイルの一覧（サイドバーの「ダウンロード」）。
