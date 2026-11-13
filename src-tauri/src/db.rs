@@ -12,7 +12,7 @@ use crate::model::{
 use crate::resolve::{ResolveInput, resolve_product};
 use crate::scan::ScanOutcome;
 use crate::view::Snapshot;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -153,10 +153,16 @@ fn finish_open(mut connection: Connection, wal: bool) -> Result<Connection, Stri
         let _ = connection.execute_batch("PRAGMA journal_mode = WAL;");
     }
     migrate(&mut connection)?;
-    let seeded = ensure_ready(&connection)?;
-    let added = merge_catalog(&connection)?;
+    // One transaction. A new library gets a few thousand seed and catalog rows, and a commit per
+    // row syncs the file every time. Immediate, so a second connection waits instead of failing.
+    let tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .sql()?;
+    let seeded = ensure_ready(&tx)?;
+    let added = merge_catalog(&tx)?;
     // New seed and catalog rows are not changes. This must run before the startup settling below.
-    crate::sync_meta::baseline_missing(&connection)?;
+    crate::sync_meta::baseline_missing(&tx)?;
+    tx.commit().sql()?;
     let mut run = ClassificationRun::new(KIND_STARTUP, CLASSIFIER_CATALOG);
     observe_all(&mut connection, &mut run, |connection| {
         settle_dictionary(connection)?;
@@ -7775,6 +7781,32 @@ mod tests {
         assert!(!after_ids.contains(&"8800882"));
         assert!(after_ids.contains(&"8800886"));
         assert!(after_ids.contains(&"8800887"));
+    }
+
+    #[test]
+    fn opening_a_new_library_does_not_commit_each_seed_and_catalog_row() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let connection = Connection::open_in_memory().unwrap();
+        // The schema steps commit on their own. Only what follows them is counted.
+        migrate(&connection).unwrap();
+        let commits = Arc::new(AtomicUsize::new(0));
+        let counter = commits.clone();
+        connection
+            .commit_hook(Some(move || {
+                counter.fetch_add(1, Ordering::SeqCst);
+                false
+            }))
+            .unwrap();
+        let connection = finish_open(connection, false).unwrap();
+        let avatars: i64 = connection
+            .query_row("SELECT COUNT(*) FROM avatars", [], |row| row.get(0))
+            .unwrap();
+        assert!(avatars > 800, "{avatars}");
+        // On disk every commit syncs the file. A commit per row was about 2,900 syncs.
+        let commits = commits.load(Ordering::SeqCst);
+        assert!(commits <= 8, "{commits} commits");
     }
 
     #[test]
