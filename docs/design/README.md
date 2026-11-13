@@ -331,7 +331,7 @@ VRCLibMan の見た目の決まりを、ほかのプロジェクトへ持ち出�
 
 ### 通知・エラーの帯
 
-- `.banner`: `--surface`、角丸 `--radius-control`、`--shadow`、`padding: 10px 14px`。出るときに 4px 下りながら現れ（`banner-in`）、閉じるときは薄れながら下の内容が詰まる（`banner-out`）。速さは左サイドバーの開閉と同じ（[動き](#動き)）。
+- `.banner`: `--surface`、角丸 `--radius-control`、`--shadow`、`padding: 10px 14px`。出るときに 4px 下りながら現れ（`banner-in`）、閉じるときは薄れながら下の内容が詰まる。時間で消える通知は下端にシークバーを出す。速さは左サイドバーの開閉と同じ（[動き](#動き)）。
 - 情報の帯 `.banner.notice`: 文字 `--good`、`role="status"`。3 秒で消えます（文字数や操作ボタンの有無によらない）。マウスが乗っている間、帯の中にフォーカスがある間、画面が隠れている間は止まり、離れると最低 1.5 秒残ります。マウスが 1 秒乗り続けると消去を取り消し、×で閉じるまで残ります（`src/notice.ts`）。
 - エラーの帯 `.banner.error`: 文字 `--danger`。時間では消えず、× で閉じるまで残ります。
 - 閉じる × `.banner-close`: 28×28px、角丸 `--radius-pill`、地なし、文字 `--text-secondary`、`aria-label="閉じる"`。ホバーで `--hover`。
@@ -388,7 +388,12 @@ VRCLibMan の見た目の決まりを、ほかのプロジェクトへ持ち出�
 
 - 標準の長さは `--motion`（160ms）、`ease`。地の色・文字色・影・不透明度の変化に使います。
 - ページの切替は `rise`（4px 下から現れる）、帯は `banner-in`。
-- 帯（通知・失敗）の出入りは左サイドバーの開閉と同じ速さです。出るときは `banner-in`（`--motion-fast`、`--ease-out`、`--motion-delay` 遅れ）。閉じるとき（時間切れ・×・操作ボタン）は、帯が `banner-out-fade`（`--motion-fast`）で薄れて 4px 上がりながら、`banner-out`（`--motion-rail`）で下の内容が帯の高さ分だけ詰まります。カーブはどちらも `--ease-out`。高さは上の余白を負にして吸収し（閉じ始めに `NoticeBanner.tsx` が `--banner-top` と `--banner-height` を測る）、動いている間は押せません。`banner-out` の `animationend`（来なければ 400ms）で取り除きます。別の帯に置き換わるときは、二つが重なって動かないよう、すぐ入れ替えます。「動きを減らす」ではすぐ取り除きます。
+- 上部の帯（通知・失敗・進捗の帯）の出入りは左サイドバーの開閉と同じ速さです（`src/topbarMotion.ts`、`styles.css` の「上部の帯の出入り」）。高さは `--motion-rail`、不透明度は `--motion-fast`、カーブは `--ease-out`。
+  - 出るとき: 帯は `--motion-delay` 遅れて 4px 下りながら現れ（`banner-in`）、下の内容は帯の高さ分だけ滑らかに押し下がります（`topbar-grow`）。
+  - 閉じるとき（時間切れ・×・操作ボタン、進捗の仕事が無くなったとき）: 帯は薄れて 4px 上がり（`topbar-fade-out`）、下の内容は滑らかに詰まります（`topbar-collapse`）。進捗の帯は最後の表示のまま閉じ、途中で仕事が戻ったら作り直さずに出し直します。
+  - 高さは上の余白で吸収します（出始めと閉じ始めにフックが `--topbar-motion-top` と `--topbar-motion-height` を測る）。動いている間は押せません。`topbar-collapse` の `animationend`（来なければ 400ms）で取り除きます。別の帯に置き換わるときは、二つが重なって動かないよう、すぐ入れ替えます。「動きを減らす」ではすぐ出し入れします。
+- 時間で消える通知は、下端に消えるまでのシークバー（`.banner-timer`）を出します。2px の `--faint` の直線で、角丸に触れないよう左右を `--radius-control` 分だけ空けます。すぐ下の進捗バーと見分けるため朱にはしません。マウス・フォーカス・画面が隠れている間は一時停止し、離すと最低 1.5 秒に戻って再開します。消去を取り消した通知と、時間で消えない通知・失敗の帯には出しません。「動きを減らす」では出しません。
+- 進捗バー（`.track span`）の幅は `--motion-rail` `--ease-out` で動き、件数ごとにカクカク伸びません。
 - 小さな要素の出入りは `--motion-fast`（120ms）、カーブは `--ease-out`（`cubic-bezier(0.32, 0.72, 0, 1)`、出だしが速く終わりが柔らかい）。遅らせるときは `--motion-delay`（30ms）。
 - 左サイドバーの開閉（[左サイドバーの開閉](#左サイドバーの開閉)）:
   - 幅: `grid-template-columns` を `--motion-rail`（140ms）`--ease-out`。右パネルが開いていても動かします（パネル自体が動くときはページを隠す hold）。
@@ -399,7 +404,7 @@ VRCLibMan の見た目の決まりを、ほかのプロジェクトへ持ち出�
 - 押して切り替わる場所は、`styles.css` の「切替の動き」ブロックにまとめています。動かすのは `opacity` と `transform` だけで、幅・高さは動かしません。長さは 120〜160ms です。
   - タブ（`.tab`）・ジャンル列（`.genre-link`）・設定ナビ: 選択中の地・影は `--motion` でフェードします。朱の縦棒・下線は直線のまま、不透明度だけで現れます（`switch-fade`）。
   - ジャンルの一覧（ジャンル列・チップバーで切替）: `switch-rise`（2px 下から現れる）。要素は作り直さず、`useReplayRise` が切替のたびに付け直します。自動で決まった最初のタブでは動かしません。
-  - メニュー（`.account-popover`）: フェード＋4px（下に開くメニューは上から）120ms。ダイアログ（「Unityで開く」・取得した商品の分類）: フェード＋4px、`--motion`。背景は 120ms でフェード。
+  - メニュー（`.account-popover`）: フェード＋4px（下に開くメニューは上から）120ms。商品カードとヒーローの操作メニュー（`.product-actions-panel`、下に開く）は上から `--motion-fast` `--ease-out`。ダイアログ（「Unityで開く」・取得した商品の分類）: フェード＋4px、`--motion`、背景は 120ms でフェード。「分類を編集」: フェード＋4px、`--motion-rail` `--ease-out`、背景は `--motion-fast` でフェード。
   - 動かさないもの: 右パネルのタブ切替（ネイティブの WebView）。右パネルとそれを含む親要素には `transform` を付けません（WebView の位置がずれるため）。長い一覧の各行にも付けません。
   - 決まりは `test/switch-motion.test.mjs` で確かめます。
 - OS の「動きを減らす」（`prefers-reduced-motion: reduce`）では、すべての `animation` と `transition` を止めます。内蔵ブラウザの読み込み中の回転は止めて、半透明の輪にします。

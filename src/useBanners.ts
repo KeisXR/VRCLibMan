@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from "react";
+import { topbarMotionEnabled } from "./topbarMotion";
 import { dismissIfCurrent, leaveIfCurrent, type ErrorEntry, type NoticeAction, type NoticeEntry, type NotifyOptions } from "./notice";
 
 /** 関数だけを渡したときは、これまでどおり「元に戻す」として出す。 */
@@ -6,14 +7,6 @@ export function noticeAction(action?: NoticeAction | (() => void)): NoticeAction
   if (!action) return undefined;
   if (typeof action === "function") return { label: "元に戻す", run: action };
   return action;
-}
-
-/**
- * 帯を閉じるときに動かすか。OS の「動きを減らす」と、matchMedia の無い環境（テスト）ではすぐ取り除く。
- * CSS 側も prefers-reduced-motion で animation を止めるので、animationend を待たない。
- */
-function bannerMotion(): boolean {
-  return typeof window !== "undefined" && typeof window.matchMedia === "function" && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
 /**
@@ -38,11 +31,11 @@ export function useBanners() {
     setErrorEntry({ id: ++serial.current, message });
   }, []);
   const dismissNotice = useCallback(
-    (id: number) => setNotice((current) => (bannerMotion() ? leaveIfCurrent(current, id) : dismissIfCurrent(current, id))),
+    (id: number) => setNotice((current) => (topbarMotionEnabled() ? leaveIfCurrent(current, id) : dismissIfCurrent(current, id))),
     [],
   );
   const dismissError = useCallback(
-    (id: number) => setErrorEntry((current) => (bannerMotion() ? leaveIfCurrent(current, id) : dismissIfCurrent(current, id))),
+    (id: number) => setErrorEntry((current) => (topbarMotionEnabled() ? leaveIfCurrent(current, id) : dismissIfCurrent(current, id))),
     [],
   );
   const removeNotice = useCallback((id: number) => setNotice((current) => dismissIfCurrent(current, id)), []);

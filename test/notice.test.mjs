@@ -293,7 +293,7 @@ test("banners slide out before they are removed, unless motion is reduced", asyn
   try {
     const { useBanners } = await server.ssrLoadModule("/src/useBanners.ts");
     const { NoticeBanner, ErrorBanner } = await server.ssrLoadModule("/src/components/NoticeBanner.tsx");
-    const { BANNER_LEAVE_FALLBACK_MS } = await server.ssrLoadModule("/src/notice.ts");
+    const { TOPBAR_LEAVE_FALLBACK_MS: BANNER_LEAVE_FALLBACK_MS } = await server.ssrLoadModule("/src/topbarMotion.ts");
     let shell;
     function Harness() {
       const b = useBanners();
@@ -329,11 +329,27 @@ test("banners slide out before they are removed, unless motion is reduced", asyn
     // 時間切れでは閉じる動きに入り、animationend で取り除く。
     await act(async () => { shell.notify("保存しました"); });
     assert.equal(noticeEl().getAttribute("data-leaving"), null);
-    await advance(3000);
+    assert.equal(noticeEl().getAttribute("data-topbar-motion"), "", "the notice uses the shared topbar motion");
+    // シークバーは残り 100% から 3 秒かけて縮み、ホバーで止まり、離すと最低 1.5 秒に戻って再開する。
+    const bar = () => noticeEl().querySelector(".banner-timer");
+    assert.equal(bar().getAttribute("aria-hidden"), "true");
+    assert.equal(bar().getAttribute("data-running"), "true");
+    assert.match(bar().getAttribute("style"), /--timer-from:\s*1\b/);
+    assert.match(bar().getAttribute("style"), /animation-duration:\s*3000ms/);
+    await advance(2500);
+    await fire(noticeEl(), "mouseover", { relatedTarget: document.body });
+    assert.equal(bar().getAttribute("data-running"), null, "hover pauses the bar");
+    assert.match(bar().getAttribute("style"), /--timer-from:\s*0\.1666/);
+    assert.match(bar().getAttribute("style"), /animation-play-state:\s*paused/);
+    await fire(noticeEl(), "mouseout", { relatedTarget: document.body });
+    assert.equal(bar().getAttribute("data-running"), "true");
+    assert.match(bar().getAttribute("style"), /--timer-from:\s*0\.5\b/, "the resume floor refills the bar to 1.5s");
+    assert.match(bar().getAttribute("style"), /animation-duration:\s*1500ms/);
+    await advance(1500);
     assert.equal(noticeEl()?.getAttribute("data-leaving"), "true", "the notice starts leaving instead of vanishing");
     await fire(noticeEl(), "animationend", { animationName: "banner-in" });
-    assert.ok(noticeEl(), "only banner-out ends the leave");
-    await fire(noticeEl(), "animationend", { animationName: "banner-out" });
+    assert.ok(noticeEl(), "only topbar-collapse ends the leave");
+    await fire(noticeEl(), "animationend", { animationName: "topbar-collapse" });
     assert.equal(noticeEl(), null, "removed once the slide-out ends");
 
     // animationend が来なくても上限の時間で取り除く。
@@ -346,6 +362,19 @@ test("banners slide out before they are removed, unless motion is reduced", asyn
     assert.equal(noticeEl(), null, "the fallback removes a banner whose animation never ended");
 
     // 操作ボタンは閉じ始めてすぐ実行する。閉じる途中の帯は新しい通知にすぐ置き換わる。
+    // 1秒乗せて消去を取り消すとシークバーは消える。時間で消えない通知には出さない。
+    await act(async () => { shell.notify("取り消し"); });
+    await fire(noticeEl(), "mouseover", { relatedTarget: document.body });
+    await advance(1000);
+    assert.equal(noticeEl().querySelector(".banner-timer"), null, "a pinned notice has no countdown");
+    await fire(noticeEl().querySelector(".banner-close"), "click");
+    await advance(BANNER_LEAVE_FALLBACK_MS);
+    await act(async () => { shell.notify("残す", undefined, { persist: true }); });
+    assert.equal(noticeEl().querySelector(".banner-timer"), null, "a persistent notice has no countdown");
+    await fire(noticeEl().querySelector(".banner-close"), "click");
+    await advance(BANNER_LEAVE_FALLBACK_MS);
+    assert.equal(noticeEl(), null);
+
     let ran = 0;
     await act(async () => { shell.notify("実行の確認", { label: "保存先を開く", run: () => ran++ }); });
     await fire(noticeEl().querySelector("button.button"), "click");
@@ -361,7 +390,7 @@ test("banners slide out before they are removed, unless motion is reduced", asyn
     await act(async () => { shell.fail("保存できませんでした"); });
     await fire(errorEl().querySelector(".banner-close"), "click");
     assert.equal(errorEl()?.getAttribute("data-leaving"), "true");
-    await fire(errorEl(), "animationend", { animationName: "banner-out" });
+    await fire(errorEl(), "animationend", { animationName: "topbar-collapse" });
     assert.equal(errorEl(), null);
 
     // 動きを減らす設定ではすぐ取り除く。
@@ -386,15 +415,21 @@ test("failures that go through notify are marked to stay", () => {
   assert.match(unity, /"Unity が見つかりませんでした", undefined, \{ persist: true \}/);
   const css = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
   assert.match(css, /prefers-reduced-motion: reduce\)\s*\{\s*\*, \*::before, \*::after \{\s*animation: none !important;/);
-  // 閉じる動きは JS の上限より短く、押せない状態で動く。
-  const leave = css.match(/\.banner\[data-leaving\]\s*\{([^}]*)\}/);
+  // 上部の帯の出入りは、押せない状態で、左サイドバーの開閉と同じ速さ（高さ = --motion-rail、フェード = --motion-fast、--ease-out）。
+  const leave = css.match(/:is\(\.banner, \.progress\)\[data-topbar-motion\]\[data-leaving\]\s*\{([^}]*)\}/);
   assert.ok(leave, "banners have a leaving rule");
   assert.match(leave[1], /pointer-events: none/);
-  // 速さは左サイドバーの開閉に合わせる（幅 = --motion-rail、フェード = --motion-fast、カーブ = --ease-out）。
-  assert.match(leave[1], /banner-out-fade var\(--motion-fast\) var\(--ease-out\)/);
-  assert.match(leave[1], /banner-out var\(--motion-rail\) var\(--ease-out\)/);
-  assert.match(css, /animation: banner-in var\(--motion-fast\) var\(--ease-out\) var\(--motion-delay\) both;/);
+  assert.match(leave[1], /topbar-fade-out var\(--motion-fast\) var\(--ease-out\)/);
+  assert.match(leave[1], /topbar-collapse var\(--motion-rail\) var\(--ease-out\)/);
+  const enter = css.match(/:is\(\.banner, \.progress\)\[data-topbar-motion\]\s*\{([^}]*)\}/);
+  assert.match(enter[1], /banner-in var\(--motion-fast\) var\(--ease-out\) var\(--motion-delay\) both/);
+  assert.match(enter[1], /topbar-grow var\(--motion-rail\) var\(--ease-out\) backwards/, "grow must not hold the margin after it ends");
+  assert.match(css, /@keyframes topbar-collapse \{[\s\S]*?margin-top: calc\(-1 \* var\(--topbar-motion-height/);
   const rail = Number(css.match(/--motion-rail:\s*(\d+)ms/)[1]);
   assert.ok(rail < 400, "the leave ends before the JS fallback");
-  assert.match(css, /@keyframes banner-out \{[\s\S]*?margin-top: calc\(-1 \* var\(--banner-height/);
+  // シークバーは朱にせず、角丸の分だけ内側の直線。動きを減らす設定では出さない。
+  const timer = css.match(/\.banner-timer \{([^}]*)\}/)[1];
+  assert.match(timer, /left: var\(--radius-control\);\s*right: var\(--radius-control\);/);
+  assert.doesNotMatch(timer, /accent/);
+  assert.match(css, /prefers-reduced-motion: reduce\) \{\s*\.banner-timer \{ display: none; \}/);
 });

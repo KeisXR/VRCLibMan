@@ -27,7 +27,6 @@ import {
   EMPTY_PROGRESS,
   applyProgress,
   nextPruneDelay,
-  othersLabel,
   progressStrip,
   pruneProgress,
   workInProgress as anyWorkInProgress,
@@ -43,9 +42,10 @@ import {
 import { SidebarClassificationHint } from "./components/SidebarClassificationHint";
 import { BrandMark, NavIcon, SidebarToggleIcon, type NavIconName } from "./components/navIcons";
 import { RightPanelColumn, RightPanelLauncher, RightPanelProvider, useRightPanelState } from "./components/RightPanel";
-import { ProgressTrack, errorText } from "./ui";
+import { errorText } from "./ui";
 import { BrowserAutoClassification } from "./components/BrowserAutoClassification";
 import { ErrorBanner, NoticeBanner } from "./components/NoticeBanner";
+import { ProgressStripBar } from "./components/ProgressStripBar";
 import type { NoticeAction, NotifyOptions } from "./notice";
 import { noticeAction, useBanners } from "./useBanners";
 
@@ -352,24 +352,7 @@ export default function App() {
         <RightPanelLauncher panel={rightPanel} />
         {error && <ErrorBanner key={error.id} error={error} onDismiss={dismissError} onRemoved={removeError} />}
         {notice && <NoticeBanner key={notice.id} notice={notice} onDismiss={dismissNotice} onAction={runNoticeAction} onRemoved={removeNotice} />}
-        {strip && (
-          <div className="progress">
-            {strip.others > 0 ? (
-              <div className="progress-head">
-                <p>{strip.entry.message}</p>
-                <span className="progress-more">{othersLabel(strip.others)}</span>
-              </div>
-            ) : (
-              <p>{strip.entry.message}</p>
-            )}
-            <ProgressTrack
-              current={strip.entry.current}
-              total={strip.entry.total}
-              state={strip.entry.state}
-              label={strip.entry.message}
-            />
-          </div>
-        )}
+        <ProgressStripBar strip={strip} />
       </div>
       <main className={`content ${density}`}>
         {route.page === "avatars" && <AvatarsPage />}

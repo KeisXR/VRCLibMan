@@ -33,9 +33,6 @@ export interface NotifyOptions {
   persist?: boolean;
 }
 
-/** 閉じる動き（`banner-out`）が終わらないときに取り除くまでの上限。CSS の長さより長くする。 */
-export const BANNER_LEAVE_FALLBACK_MS = 400;
-
 /** 通知を出しておく時間（ミリ秒）。文字数や操作ボタンの有無によらず同じ。 */
 export const NOTICE_DURATION_MS = 3000;
 /** マウスがこの時間乗り続けたら、時間で消すのをやめる。 */
@@ -93,6 +90,20 @@ export function releaseNoticeClock(clock: NoticeClock, hold: NoticeHold, now: nu
 export function pinNoticeClock(clock: NoticeClock, now: number): NoticeClock {
   if (clock.pinned) return clock;
   return { ...clock, remaining: noticeRemaining(clock, now), runningSince: null, pinned: true };
+}
+
+/** 消えるまでのシークバー。`from` は通知を出しておく時間に対する残りの割合、`ms` はそこから 0 までの時間。 */
+export interface NoticeTimer {
+  from: number;
+  ms: number;
+  running: boolean;
+}
+
+/** シークバーの今の状態。消去を取り消した通知には出さない。 */
+export function noticeTimer(clock: NoticeClock, now: number, duration: number = NOTICE_DURATION_MS): NoticeTimer | null {
+  if (clock.pinned || duration <= 0) return null;
+  const ms = noticeRemaining(clock, now);
+  return { from: Math.min(1, Math.max(0, ms / duration)), ms, running: clock.runningSince !== null };
 }
 
 /** 時間切れか。止まっている間は消さない。 */

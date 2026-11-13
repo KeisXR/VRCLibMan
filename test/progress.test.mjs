@@ -122,7 +122,7 @@ test("ProgressTrack keeps the .track markup and exposes progressbar semantics", 
 });
 
 test("screens use the shared ProgressTrack instead of duplicated markup", () => {
-  for (const file of ["src/App.tsx"]) {
+  for (const file of ["src/components/ProgressStripBar.tsx"]) {
     const source = readFileSync(file, "utf8");
     assert.match(source, /<ProgressTrack/, file);
     assert.doesNotMatch(source, /track indeterminate/, file);
@@ -159,4 +159,75 @@ test("progress wording rule: count first, name allowed, one line with ellipsis",
   const rs = readFileSync("src-tauri/src/commands.rs", "utf8");
   assert.ok(!rs.includes("分類中: "), "extract message carries the count");
   assert.ok(!rs.includes("をコピーしています"), "copy message carries the count");
+});
+
+test("the top strip slides out with its last message, and goes at once when motion is reduced", async () => {
+  const { parseHTML } = await import("linkedom");
+  const { window } = parseHTML('<html><body><div id="root"></div></body></html>');
+  for (const name of ["window", "document", "HTMLElement", "Element", "Node", "Event", "EventTarget"]) {
+    if (window[name] !== undefined) Object.defineProperty(globalThis, name, { configurable: true, writable: true, value: window[name] });
+  }
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: { userAgent: "test" } });
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const timers = new Map();
+  let nextTimer = 1;
+  window.setTimeout = (fn) => { const id = nextTimer++; timers.set(id, fn); return id; };
+  window.clearTimeout = (id) => { timers.delete(id); };
+  let reduced = false;
+  window.matchMedia = (query) => ({ matches: query.includes("reduce") && reduced, media: query });
+  const { act, createElement } = await import("react");
+  const { createRoot } = await import("react-dom/client");
+  const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  let root;
+  try {
+    const { ProgressStripBar } = await server.ssrLoadModule("/src/components/ProgressStripBar.tsx");
+    const entry = (message) => ({ entry: { id: "job", message, current: 1, total: 2, state: "running", seq: 1 }, others: 0 });
+    root = createRoot(document.getElementById("root"));
+    const render = (strip) => act(async () => { root.render(createElement(ProgressStripBar, { strip })); });
+    const strip = () => document.querySelector(".progress");
+    const fire = (name) => act(async () => {
+      const event = new window.Event("animationend", { bubbles: true });
+      event.animationName = name;
+      strip().dispatchEvent(event);
+    });
+
+    await render(entry("分類中 1 / 2"));
+    assert.equal(strip().getAttribute("data-topbar-motion"), "");
+    assert.equal(strip().getAttribute("data-leaving"), null);
+    await render(null);
+    assert.ok(strip() !== null, "the strip stays while it slides out");
+    assert.equal(strip().getAttribute("data-leaving"), "true");
+    assert.ok(strip().textContent.includes("分類中 1 / 2"), "it keeps the last message");
+    // 閉じる途中で仕事が戻ったら、作り直さずにそのまま出し直す。
+    const same = strip();
+    await render(entry("分類中 2 / 2"));
+    assert.ok(strip() === same, "the same element comes back");
+    assert.equal(strip().getAttribute("data-leaving"), null);
+    await render(null);
+    await fire("topbar-fade-out");
+    assert.ok(strip() !== null, "only the collapse ends the leave");
+    await fire("topbar-collapse");
+    assert.ok(strip() === null, "removed after the collapse");
+
+    // animationend が来なくても上限の時間で取り除く。
+    await render(entry("読み込み中"));
+    await render(null);
+    assert.ok(strip() !== null);
+    await act(async () => { for (const fn of [...timers.values()]) fn(); });
+    assert.ok(strip() === null, "the fallback removes the strip");
+
+    reduced = true;
+    await render(entry("読み込み中"));
+    await render(null);
+    assert.ok(strip() === null, "reduced motion removes the strip at once");
+  } finally {
+    if (root) await act(async () => root.unmount());
+    delete window.matchMedia;
+    await server.close();
+  }
+});
+
+test("progress bars glide instead of stepping", () => {
+  const css = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+  assert.match(css, /\.track span \{[^}]*transition: width var\(--motion-rail\) var\(--ease-out\);/);
 });
