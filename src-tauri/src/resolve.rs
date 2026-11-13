@@ -108,7 +108,7 @@ pub fn match_title<'a>(title: &str, avatars: &'a [Avatar]) -> Option<&'a Avatar>
         if !avatar_matchable(avatar) {
             continue;
         }
-        for form in name_forms(avatar) {
+        for form in text_forms(avatar) {
             let needle = crate::normalize::nfkc(&form).to_lowercase();
             if needle.chars().count() < 2 {
                 continue;
@@ -584,7 +584,7 @@ pub fn links_grounded(ids: &[String], avatars: &[Avatar], title: &str, descripti
         let Some(avatar) = avatars.iter().find(|avatar| &avatar.id == id) else {
             return false;
         };
-        name_forms(avatar).iter().any(|form| {
+        text_forms(avatar).iter().any(|form| {
             let needle = nfkc(form).to_lowercase();
             let count = needle.chars().count();
             (count >= 2 || (count == 1 && needle.chars().all(crate::normalize::is_cjk)))
@@ -600,6 +600,14 @@ fn name_forms(avatar: &Avatar) -> Vec<String> {
         forms.push(avatar.id.clone());
     }
     forms
+}
+
+/// Forms searched for inside running text. A version alias would match every "v3.6.0".
+fn text_forms(avatar: &Avatar) -> Vec<String> {
+    name_forms(avatar)
+        .into_iter()
+        .filter(|form| !crate::normalize::is_version_label(form))
+        .collect()
 }
 
 fn name_keys(avatar: &Avatar) -> Vec<String> {
@@ -620,7 +628,7 @@ pub fn known_name_in(text: &str, avatars: &[Avatar]) -> Option<String> {
         if !avatar_matchable(avatar) {
             continue;
         }
-        for form in name_forms(avatar) {
+        for form in text_forms(avatar) {
             let needle = crate::normalize::nfkc(&form).to_lowercase();
             let len = needle.chars().count();
             if len < 2 || !find_bounded(&haystack, &needle) {
@@ -641,7 +649,7 @@ pub fn known_names_in(text: &str, avatars: &[Avatar]) -> Vec<String> {
         if !avatar_matchable(avatar) {
             continue;
         }
-        for form in name_forms(avatar) {
+        for form in text_forms(avatar) {
             let needle = nfkc(&form).to_lowercase();
             if needle.chars().count() >= 2 && find_bounded(&haystack, &needle) {
                 if !found
@@ -757,6 +765,28 @@ mod tests {
             Some("真冬")
         );
         assert!(known_name_in("ショコラミントの衣装", &catalog()).is_none());
+    }
+
+    #[test]
+    fn version_aliases_do_not_match_version_numbers_in_text() {
+        let avatars = vec![
+            avatar("feilong", "フェイロン", &["Feilong", "v3"], None),
+            avatar("shirohage", "白ハゲ", &["V3"], None),
+            avatar("sapphy", "サフィー", &["Sapphy", "V2"], None),
+        ];
+        for title in [
+            "【アバター衣装変換ツール】きせった (Kisetter) V3.6.0",
+            "ライティング調節ツール For MA v2",
+            "心音キット！ v2_08 更新",
+        ] {
+            assert!(known_names_in(title, &avatars).is_empty(), "{title}");
+            assert!(known_name_in(title, &avatars).is_none(), "{title}");
+            assert!(match_title(title, &avatars).is_none(), "{title}");
+        }
+        assert!(!links_grounded(&["feilong".into()], &avatars, "ツール V3.6", ""));
+        // The names themselves still match.
+        assert_eq!(known_names_in("Feilong 対応", &avatars), ["フェイロン"]);
+        assert!(links_grounded(&["sapphy".into()], &avatars, "サフィー対応", ""));
     }
 
     #[test]

@@ -9,7 +9,7 @@
 /// avatar GPU particles, and title animations on their intended classification paths.
 /// 9: no language model. The title and description rules fill what the BOOTH category and
 /// tags leave open, and download file names suggest avatars when the description has no list.
-pub const CLASSIFIER_VERSION: i32 = 9;
+pub const CLASSIFIER_VERSION: i32 = 10;
 
 /// Stored with a rule result. Name resolution and review use their own facts. At this value
 /// a weak world hint in the description does not override the rule category.
@@ -251,7 +251,7 @@ mod tests {
             classify_listing("無関係な題", "Phone Shop", ""),
             (Category::Other, "other".into())
         );
-        assert_eq!(CLASSIFIER_VERSION, 9);
+        assert_eq!(CLASSIFIER_VERSION, 10);
     }
 
     #[test]
