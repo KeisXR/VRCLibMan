@@ -38,7 +38,7 @@ export function ClassificationFeedback() {
 
   return (
     <>
-      <SettingRow label="対象" help="「その他」はカテゴリがその他の商品です。未分類はカテゴリが決まっていない商品です。">
+      <SettingRow id="settings-classification-feedback" label="対象" help="「その他」はカテゴリがその他の商品です。未分類はカテゴリが決まっていない商品です。">
         <fieldset className="scope-choices" aria-label="書き出す対象">
           {SCOPES.map((choice) => (
             <label key={choice.value}>

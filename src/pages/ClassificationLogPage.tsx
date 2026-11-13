@@ -238,7 +238,7 @@ function UnresolvedNames() {
 
   if (names.length === 0) return null;
   return (
-    <details className="settings-details log-unresolved">
+    <details className="settings-details log-unresolved" id="classification-unresolved">
       <summary>未収録の名前 {names.length} 件</summary>
       <p className="meta">対応表に無かった名前です。対応表の欠けとして GitHub の Issue に報告するときに使えます。</p>
       <ul className="log-unresolved-list">

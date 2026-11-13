@@ -39,10 +39,10 @@ export function SyncExportSettings({
 
   return (
     <>
-      <SettingRow label="この端末の名前" help="データ移行のファイルに記録する名前です。ほかの端末から見分けるために使います。">
+      <SettingRow id="settings-device-name" label="この端末の名前" help="データ移行のファイルに記録する名前です。ほかの端末から見分けるために使います。">
         <input aria-label="この端末の名前" value={settings.deviceName} maxLength={64} onChange={(e) => onChange({ deviceName: e.target.value }, 300)} onBlur={onBlur} />
       </SettingRow>
-      <SettingRow label="データ移行" help="別の PC へ移すために、商品情報、サムネイル、ヒーロー画像、分類、対応アバター、所持アバター、ファイルとの対応、購入履歴（注文、金額、ラベル）、端末に依存しない設定を ZIP に書き出します。商品名、説明文、画像、ファイル名を含みます。パス、APIキー、ログイン情報は含みません。">
+      <SettingRow id="settings-data-export" label="データ移行" help="別の PC へ移すために、商品情報、サムネイル、ヒーロー画像、分類、対応アバター、所持アバター、ファイルとの対応、購入履歴（注文、金額、ラベル）、端末に依存しない設定を ZIP に書き出します。商品名、説明文、画像、ファイル名を含みます。パス、APIキー、ログイン情報は含みません。">
         <button className="button" type="button" disabled={busy} onClick={() => void exportData()}>エクスポート</button>
       </SettingRow>
     </>
