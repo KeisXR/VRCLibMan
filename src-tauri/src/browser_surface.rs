@@ -2,10 +2,11 @@
 //! Several hosts can be open at once. Moving a tab reparents that webview, so history and sign-in stay.
 use crate::{
     browser, browser_dark,
-    browser_tabs::{self, BrowserState, HostKind, MoveToken, TabSession, PANEL_HOST_ID},
+    browser_tabs::{self, Bookmark, BrowserState, HostKind, MoveToken, TabSession, PANEL_HOST_ID},
 };
+use std::collections::BTreeMap;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Mutex,
 };
 use tauri::{
@@ -40,7 +41,7 @@ pub const fn panel_supported() -> bool {
 /// Kept in memory only.
 static PREFER_WINDOW: AtomicBool = AtomicBool::new(false);
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SurfaceArea {
     pub left: f64,
     pub top: f64,
@@ -134,21 +135,94 @@ struct LiveHost {
     toolbar_height: f64,
 }
 
+/// Where a page was last put, so an unchanged rectangle or visibility is not sent to the
+/// native view again. Forgotten when the page moves to another window or the window resizes.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+struct Placed {
+    bounds: Option<SurfaceArea>,
+    shown: Option<bool>,
+}
+
 struct Surface {
     session: TabSession,
     live: Vec<LiveHost>,
     next_generation: u64,
+    /// The saved bookmarks, read from the database once. Bookmark commands replace it.
+    bookmarks: Option<Vec<Bookmark>>,
+    placed: BTreeMap<String, Placed>,
 }
 static SURFACE: Mutex<Surface> = Mutex::new(Surface {
     session: TabSession::new(),
     live: Vec::new(),
     next_generation: 1,
+    bookmarks: None,
+    placed: BTreeMap::new(),
 });
 fn surface() -> std::sync::MutexGuard<'static, Surface> {
     SURFACE.lock().unwrap_or_else(|error| error.into_inner())
 }
+
+/// Numbers every state handed out. Taken while the surface is locked, so a larger number is
+/// never an older state.
+static REVISION: AtomicU64 = AtomicU64::new(1);
+
+/// The state the controls show, without asking the pages or the database. None until the
+/// bookmarks have been read once.
+fn snapshot() -> Option<BrowserState> {
+    let busy = browser::library_walk_running() || browser::download_job_armed();
+    let state = surface();
+    let bookmarks = state.bookmarks.clone()?;
+    Some(BrowserState {
+        revision: REVISION.fetch_add(1, Ordering::Relaxed),
+        open: !state.session.tabs.is_empty(),
+        tabs: state.session.tabs.clone(),
+        active_id: state.session.focused_tab(),
+        hosts: state.session.host_states(),
+        bookmarks,
+        busy,
+        host: state.session.coarse_host(),
+        panel_supported: panel_supported(),
+    })
+}
+
+/// Reads the bookmarks once. Never call this while the database is locked.
+fn ensure_bookmarks(app: &AppHandle) -> Result<(), String> {
+    if surface().bookmarks.is_some() {
+        return Ok(());
+    }
+    let loaded = {
+        let app_state = app.state::<crate::AppState>();
+        let connection = app_state
+            .db
+            .lock()
+            .map_err(|_| "データベースをロックできません".to_string())?;
+        crate::db::browser_bookmarks(&connection)?
+    };
+    let mut state = surface();
+    if state.bookmarks.is_none() {
+        state.bookmarks = Some(loaded);
+    }
+    Ok(())
+}
+
+/// The bookmarks were saved. Every window gets the new list with the next state.
+pub fn set_bookmarks(app: &AppHandle, bookmarks: Vec<Bookmark>) {
+    surface().bookmarks = Some(bookmarks);
+    changed(app);
+}
+
+/// Sends the new state with the event, so no window has to ask for it again. Before the
+/// bookmarks are known the event carries nothing and the windows read the state instead.
+/// Never call this while holding the surface lock.
 fn changed(app: &AppHandle) {
-    let _ = app.emit(CHANGED, ());
+    match snapshot() {
+        Some(state) => {
+            let _ = app.emit(CHANGED, state);
+        }
+        None => {
+            let _ = app.emit(CHANGED, ());
+        }
+    }
 }
 fn mutable() -> Result<(), String> {
     if browser::library_walk_running() || browser::download_job_armed() {
@@ -429,50 +503,51 @@ fn native_history(
     }
 }
 
-pub fn state(app: &AppHandle) -> Result<BrowserState, String> {
-    let ids = surface()
+/// Pages shown in some host. A page that changed its address without loading (history.pushState)
+/// sends no event; its address is read here. Pages behind other tabs are read when they are chosen.
+fn shown_tab_ids() -> Vec<String> {
+    surface()
         .session
-        .tabs
-        .iter()
-        .map(|tab| tab.id.clone())
-        .collect::<Vec<_>>();
-    for id in ids {
+        .host_states()
+        .into_iter()
+        .filter_map(|host| host.active_id)
+        .collect()
+}
+
+/// The state with the shown pages' addresses and history read again (the controls' slow re-read).
+pub fn state(app: &AppHandle) -> Result<BrowserState, String> {
+    let mut moved = false;
+    for id in shown_tab_ids() {
         if let Some(view) = app.get_webview(&id) {
             if let Ok(url) = crate::browser_url::current_url(&view) {
-                let mut state = surface();
-                state
-                    .session
-                    .update(view.label(), |tab| tab.url = url.to_string());
-                drop(state);
+                let url = url.to_string();
+                moved |= {
+                    let mut state = surface();
+                    let before = state
+                        .session
+                        .tabs
+                        .iter()
+                        .find(|tab| tab.id == id)
+                        .map(|tab| tab.url.clone());
+                    state.session.update(view.label(), |tab| tab.url = url.clone());
+                    before.is_some_and(|before| before != url)
+                };
                 refresh_history(&view);
             }
         }
     }
-    let (tabs, active_id, hosts, coarse) = {
-        let state = surface();
-        (
-            state.session.tabs.clone(),
-            state.session.focused_tab(),
-            state.session.host_states(),
-            state.session.coarse_host(),
-        )
-    };
-    let app_state = app.state::<crate::AppState>();
-    let connection = app_state
-        .db
-        .lock()
-        .map_err(|_| "データベースをロックできません".to_string())?;
-    let bookmarks = crate::db::browser_bookmarks(&connection)?;
-    Ok(BrowserState {
-        open: !tabs.is_empty(),
-        tabs,
-        active_id,
-        hosts,
-        bookmarks,
-        busy: browser::library_walk_running() || browser::download_job_armed(),
-        host: coarse,
-        panel_supported: panel_supported(),
-    })
+    if moved {
+        // Other windows show the same address; tell them now rather than at their next read.
+        changed(app);
+    }
+    current_state(app)
+}
+
+/// The state as the app knows it, without asking the pages. For results of commands that only
+/// place pages (the right panel's rectangle), where nothing about the pages changed.
+pub fn current_state(app: &AppHandle) -> Result<BrowserState, String> {
+    ensure_bookmarks(app)?;
+    snapshot().ok_or_else(|| "ブックマークを読めません".to_string())
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -557,9 +632,10 @@ fn layout_panel(
     active: Option<&str>,
 ) -> Result<(), String> {
     if !host.visible {
+        // Hidden pages keep the panel's rectangle, so showing them again moves nothing.
         if let (Some(area), Some(active)) = (panel_content(host.area, true), active) {
             if let Some(view) = app.get_webview(active) {
-                let _ = set_view_bounds(&view, area, false, false);
+                let _ = place_view(&view, Some(area), false, false);
             }
         }
     }
@@ -583,19 +659,66 @@ fn place_tabs(
         let Some(view) = app.get_webview(&tab.id) else {
             continue;
         };
-        match content {
-            Some(content) => {
-                set_view_bounds(&view, content, false, fill_host)?;
-                if active == Some(tab.id.as_str()) {
-                    view.show().map_err(|error| error.to_string())?;
-                } else {
-                    view.hide().map_err(|error| error.to_string())?;
-                }
-            }
-            None => view.hide().map_err(|error| error.to_string())?,
-        }
+        let shown = content.is_some() && active == Some(tab.id.as_str());
+        place_view(&view, content, shown, fill_host)?;
     }
     Ok(())
+}
+
+/// What a page needs from `before` to be at `bounds` with `shown`: a new rectangle, a new
+/// visibility, both or neither. `bounds` None leaves the rectangle as it is.
+fn placement_steps(before: Placed, bounds: Option<SurfaceArea>, shown: bool) -> (Option<SurfaceArea>, Option<bool>) {
+    let move_to = bounds.filter(|bounds| before.bounds != Some(*bounds));
+    let show = (before.shown != Some(shown)).then_some(shown);
+    (move_to, show)
+}
+
+/// Puts one page at `bounds` and shows or hides it, sending only what changed since the last
+/// time. Each call into a native view is a message to its process; a panel with many tabs
+/// otherwise sends one per tab on every rectangle report. A failed step is forgotten, so the
+/// next layout sends it again.
+fn place_view(view: &Webview, bounds: Option<SurfaceArea>, shown: bool, fill_host: bool) -> Result<(), String> {
+    let id = view.label().to_string();
+    let before = surface().placed.get(&id).copied().unwrap_or_default();
+    let (move_to, show) = placement_steps(before, bounds, shown);
+    let result = (|| {
+        if let Some(bounds) = move_to {
+            set_view_bounds(view, bounds, false, fill_host)?;
+        }
+        match show {
+            Some(true) => view.show().map_err(|error| error.to_string()),
+            Some(false) => view.hide().map_err(|error| error.to_string()),
+            None => Ok(()),
+        }
+    })();
+    let mut state = surface();
+    if result.is_ok() {
+        state.placed.insert(
+            id,
+            Placed {
+                bounds: bounds.or(before.bounds),
+                shown: Some(shown),
+            },
+        );
+    } else {
+        state.placed.remove(&id);
+    }
+    result
+}
+
+/// The page moved to another window or closed: its next placement is sent in full.
+fn forget_placement(ids: &[String]) {
+    let mut state = surface();
+    for id in ids {
+        state.placed.remove(id);
+    }
+}
+
+/// Lays every page out again in full. For a resized window or a new scale factor: the native
+/// views do not follow those by themselves, and the same CSS rectangle may need a new frame.
+pub fn relayout(app: &AppHandle) -> Result<(), String> {
+    surface().placed.clear();
+    layout(app)
 }
 
 fn measured_toolbar_height(height: f64) -> Result<f64, String> {
@@ -706,6 +829,7 @@ pub fn sync_force_dark(app: &AppHandle, enabled: bool) {
 }
 
 fn close_webviews(app: &AppHandle, ids: &[String]) {
+    forget_placement(ids);
     for id in ids {
         if let Some(view) = app.get_webview(id) {
             let _ = view.close();
@@ -719,6 +843,8 @@ fn mount_tab(app: &AppHandle, host_id: &str, window: &Window, url: Url) -> Resul
         crate::browser_linux::prepare_panel(app)?;
     }
     let id = surface().session.add(host_id, &url)?;
+    // A new view starts where the builder put it, whatever an earlier page with this label had.
+    forget_placement(&[id.clone()]);
     let navigation_app = app.clone();
     let navigation_id = id.clone();
     let popup_app = app.clone();
@@ -1087,7 +1213,7 @@ fn watch_browser_window(app: &AppHandle, window: &Window, host_id: &str, generat
     let host_id = host_id.to_string();
     window.on_window_event(move |event| match event {
         tauri::WindowEvent::Resized(_) | tauri::WindowEvent::ScaleFactorChanged { .. } => {
-            let _ = layout(&handle);
+            let _ = relayout(&handle);
         }
         tauri::WindowEvent::Focused(true) => {
             surface().session.focus_host(&host_id);
@@ -1131,7 +1257,7 @@ pub fn handle_window_event(window: &Window, event: &tauri::WindowEvent) {
         // Put the last CSS rectangle back until the page measures a new one.
         // Resizing or a scale change does not close pages.
         tauri::WindowEvent::Resized(_) | tauri::WindowEvent::ScaleFactorChanged { .. } => {
-            let _ = layout(window.app_handle());
+            let _ = relayout(window.app_handle());
         }
         tauri::WindowEvent::Destroyed => {
             let ids = {
@@ -1282,6 +1408,7 @@ fn reparent_tab(app: &AppHandle, tab_id: &str, target: &Window) -> Result<(), St
     let view = app
         .get_webview(tab_id)
         .ok_or("タブが見つかりません")?;
+    forget_placement(&[tab_id.to_string()]);
     // The same webview moves, so its history and the shared data store stay.
     // Reapply the stored page zoom in case the new host reset it. Do not navigate.
     view.reparent(target)
@@ -1620,6 +1747,7 @@ pub fn close_tab(app: &AppHandle, id: &str) -> Result<(), String> {
     if let Some(view) = app.get_webview(id) {
         view.close().map_err(|error| error.to_string())?;
     }
+    forget_placement(&[id.to_string()]);
     let emptied = surface().session.remove(id)?;
     if let Some(host_id) = emptied {
         // The tab is already gone. Drop the window only when it was the last page there.
@@ -1902,7 +2030,66 @@ mod tests {
             session: TabSession::new(),
             live: Vec::new(),
             next_generation: 1,
+            bookmarks: None,
+            placed: BTreeMap::new(),
         }
+    }
+
+    fn area(left: f64, width: f64) -> SurfaceArea {
+        SurfaceArea { left, top: 40.0, width, height: 600.0 }
+    }
+
+    #[test]
+    fn a_page_already_in_place_gets_no_native_call() {
+        let placed = Placed { bounds: Some(area(800.0, 400.0)), shown: Some(true) };
+        assert_eq!(placement_steps(placed, Some(area(800.0, 400.0)), true), (None, None));
+        // A tab change only flips visibility; a new rectangle only moves.
+        assert_eq!(placement_steps(placed, Some(area(800.0, 400.0)), false), (None, Some(false)));
+        assert_eq!(
+            placement_steps(placed, Some(area(780.0, 420.0)), true),
+            (Some(area(780.0, 420.0)), None)
+        );
+        // Hiding without a rectangle keeps the old one; a page never placed gets everything.
+        assert_eq!(placement_steps(placed, None, false), (None, Some(false)));
+        assert_eq!(
+            placement_steps(Placed::default(), Some(area(800.0, 400.0)), false),
+            (Some(area(800.0, 400.0)), Some(false))
+        );
+        assert_eq!(placement_steps(Placed::default(), None, false), (None, Some(false)));
+    }
+
+    #[test]
+    fn placements_are_forgotten_when_a_page_moves_closes_or_the_window_resizes() {
+        let source = include_str!("browser_surface.rs");
+        assert!(function_body(source, "fn reparent_tab").contains("forget_placement(&[tab_id.to_string()])"));
+        assert!(function_body(source, "pub fn close_tab").contains("forget_placement(&[id.to_string()])"));
+        assert!(function_body(source, "fn close_webviews").contains("forget_placement(ids)"));
+        assert!(function_body(source, "fn mount_tab").contains("forget_placement(&[id.clone()])"));
+        assert!(function_body(source, "pub fn relayout").contains("placed.clear()"));
+        let watch = function_body(source, "fn watch_browser_window");
+        assert!(watch.contains("let _ = relayout(&handle);"));
+        let main = function_body(source, "pub fn handle_window_event");
+        assert!(main.contains("let _ = relayout(window.app_handle());"));
+        assert!(include_str!("browser_linux.rs").contains("dispatch_ui(handle, browser_surface::relayout)"));
+    }
+
+    #[test]
+    fn every_state_is_numbered_newer_than_the_last_and_carries_no_database_read() {
+        surface().bookmarks = Some(Vec::new());
+        let first = snapshot().expect("bookmarks known");
+        let second = snapshot().expect("bookmarks known");
+        assert!(second.revision > first.revision, "a later state has a larger number");
+        let source = include_str!("browser_surface.rs");
+        let snapshot_body = function_body(source, "fn snapshot");
+        assert!(!snapshot_body.contains(".db"), "the event payload never waits for the database");
+        assert!(!snapshot_body.contains("current_url"), "nor for the pages");
+        // The number is taken while the surface is locked, so it follows the order of changes.
+        let lock = snapshot_body.find("let state = surface();").expect("lock");
+        let number = snapshot_body.find("REVISION.fetch_add").expect("number");
+        assert!(lock < number);
+        assert!(function_body(source, "fn changed").contains("app.emit(CHANGED, state)"));
+        // The slow re-read asks only the pages on screen, not every tab.
+        assert!(function_body(source, "pub fn state").contains("shown_tab_ids()"));
     }
 
     #[test]

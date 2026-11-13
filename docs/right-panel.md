@@ -112,9 +112,11 @@ flowchart LR
 | 層 | 持つもの | 場所 |
 | --- | --- | --- |
 | `TabSession` | 全タブ（`BrowserTab`）。表示先（`SessionHost`：`panel` か `window-N`）ごとの `order`、`active_id`、`slot`。フォーカス中の表示先 | `src-tauri/src/browser_tabs.rs` |
-| `Surface` | `TabSession`。実際に開いている表示先（`LiveHost`：`window_label`、`toolbar_label`、`generation`、`area`、`visible`、`toolbar_height`）の一覧 | `src-tauri/src/browser_surface.rs` の `static SURFACE` |
+| `Surface` | `TabSession`。実際に開いている表示先（`LiveHost`：`window_label`、`toolbar_label`、`generation`、`area`、`visible`、`toolbar_height`）の一覧。一度読んだブックマーク（`bookmarks`）と、各ページを最後に置いた矩形と表示（`placed`） | `src-tauri/src/browser_surface.rs` の `static SURFACE` |
 | `PREFER_WINDOW` | このセッションでページを別窓へ出したか（メモリのみ） | `browser_surface.rs` |
-| React | 右パネルの開閉、幅、全面表示、タブ列（固定タブと Web タブの混在の順） | `useRightPanelState`（`RightPanel.tsx`） |
+| React（App） | 右パネルの開閉、幅、全面表示、浮かせたか。グリッドを決めるので App が持つ | `useRightPanelState`（`RightPanel.tsx`）。戻り値は `RightPanelShell` |
+| React（パネル） | タブ列（固定タブと Web タブの混在の順）とプレビューの選択 | `RightPanelProvider`（`RightPanel.tsx`）。App の子の外側に置き、タブの変更で App とページを描き直さない |
+| React（窓ごとのブラウザ状態） | 最後に受け取った `BrowserState` と読み込みの失敗 | `src/browserStore.ts`。[§2.6](#26-速さのための決まり) |
 
 `BrowserState`（`browser_state` の戻り値）の `hosts[]` には、タブを持つ表示先だけが入ります。各要素は `id`、`kind`、`tabIds`、`activeId` です。`host` は大まかな表示先で、パネルにページがあれば `"panel"`、別窓にだけあれば `"window"` です。`panelSupported` は `panel_supported()` の値です。
 
@@ -156,12 +158,15 @@ Rust 側の流れは次のとおりです。
   - `panel_rect` → `SurfaceArea::from_panel` で値を検査します。有限値でなければ拒否し、範囲は 0〜`MAX_PANEL_EDGE`（16384）に収めます。
 - **記録（`browser_surface::panel_area`）**
   - `panel` の `LiveHost` に記録します。`area` が `None` のときは前の矩形を残し、`visible` だけを false にします。
-- **配置（`layout` → `layout_panel` → `place_tabs`）**
+- **配置（`layout` → `layout_panel` → `place_tabs` → `place_view`）**
   - `panel_content` が、`visible` で幅と高さが 2 以上のときだけ矩形を返します。返らなければ、その表示先のページをすべて `hide()` します。
-  - 矩形がある場合は、全ページに `set_view_bounds` してから、選択中のページだけを `show()` し、ほかは `hide()` します。
+  - 矩形がある場合は、全ページの矩形を置いてから、選択中のページだけを `show()` し、ほかは `hide()` します。
+  - `place_view` は、各ページに最後に置いた矩形と表示（`Surface.placed`）と比べ、変わった分だけをネイティブへ送ります（`placement_steps`）。失敗した手順は忘れ、次の配置で送り直します。
+  - 戻り値は `current_state`（ページへの問い合わせなしの状態）です。`panelArea` はパネルが動くたびに届くので、ここでページのアドレスや履歴を読み直しません。
 - **再適用**
-  - メインウィンドウの `Resized` / `ScaleFactorChanged` では、`handle_window_event` が `layout` を呼び、最後の矩形を置き直します。ページは閉じません。
-  - 子 WebView の自動リサイズはパネルの矩形に追従しないからです（#105）。
+  - メインウィンドウの `Resized` / `ScaleFactorChanged` では、`handle_window_event` が `relayout` を呼び、覚えた配置を捨てて最後の矩形を置き直します。ページは閉じません。別窓の同じイベントと、Linux の別窓の描画域の大きさの変化も `relayout` です。
+  - 子 WebView の自動リサイズはパネルの矩形に追従しないからです（#105）。同じ CSS の矩形でも、窓の内容領域が変われば置き直しが要ります（macOS の `contentLayoutRect`）。
+  - 別窓との移動（`reparent_tab`）、タブを閉じたとき、新しいタブを作ったときも、そのページの覚えた配置を捨てます。
 
 単位は CSS px のまま、論理座標として渡します。画面倍率は掛けません（`SurfaceArea::rect` のコメント「CSS pixels are already logical points」）。
 
@@ -175,6 +180,35 @@ Rust 側の流れは次のとおりです。
 `toolbar_height` は、操作バー（`BrowserChrome`、`!embedded`）が `ResizeObserver` で実際の高さを測り、`toolbarHeight` で送ります。Rust は 1〜420 に収めます（`measured_toolbar_height`）。初期値は `DEFAULT_TOOLBAR_HEIGHT` = 112 です。
 
 112 は、タイトルバーを兼ねるタブ列 36、ナビゲーション 44、ツール行 32 の合計と一致します。`test/browser-panel-layout.test.mjs` が `chrome.height === 112` を確認しています。
+
+### 2.6 速さのための決まり
+
+タブの選択・並べ替え・ドラッグが、速い CPU（Ryzen 7 9800X3D）でも重かった原因と、それを繰り返さないための決まりです。どれも計算量ではなく、描き直しと UI スレッドへの往復の数が問題でした。
+
+- **タブの変更で App とページを描き直さない**
+  - App は開閉と幅（`RightPanelShell`）だけを持ちます。タブは `RightPanelProvider` が持ち、App の子は `children` として受け取ります。タブが変わっても子の要素は同じなので、React はパネルを読む部品だけを描き直します。
+  - 商品一覧（`GenreBrowser`）は `useRightPanelPreview` だけを読みます。値が変わるのはプレビュータブが出入りしたときだけで、行の選択やタブの並べ替えでは一覧を描き直しません。
+  - App は `<main>` の中身を `useMemo` で保ち、右パネルの幅のドラッグや上部の帯の出入りでページを描き直しません。
+  - 設定の保存とブラウザの操作は、タブを変えたあとに1回だけ送ります。`setState` の更新関数の中では送りません（React は更新関数を2回呼ぶことがある）。ページの並びが変わらない並べ替え（プレビューをページの間へ動かすなど）は `reorderTabs` を送りません（`sameWebOrder`）。
+- **ブラウザの状態は窓ごとに1つ**
+  - Rust は状態を渡すたびに番号（`BrowserState.revision`）を付けます。番号は `SURFACE` のロック中に取るので、大きい番号が古い状態であることはありません。
+  - `browser-state-changed` は番号付きの状態そのものを運びます。受け取った窓は読み直しません。ブックマークをまだ読んでいないときだけ空で送り、窓が読みます。
+  - 各窓は `src/browserStore.ts` の写しを1つだけ持ち、持っている番号以下の状態は捨てます。遅れて届いた読み込みの結果が、新しい操作の結果を戻すことはありません。重なった読み込みは1回にまとめます。
+  - `history.pushState` によるアドレスの変化にはイベントがないので、アドレスを表示する部品（`BrowserChrome`、`BrowserPanelTab`）がある間だけ、窓ごとに1つのタイマーで1秒ごとに読み直します。画面が隠れている間は読みません。部品ごとに読み込みやポーリングを足さないでください。
+  - 読み直し（`browser_state`）は表示中のページだけのアドレスと履歴を読みます。裏のタブは選ばれたときに読みます。アドレスが変わっていれば、ほかの窓へもすぐ送ります。
+  - ブックマークは一度だけ DB から読み、`Surface.bookmarks` に置きます。保存・削除のコマンドが置き換えます。状態を作るたびに DB のロックを取りません。
+- **UI スレッドで DB を待たない**
+  - ブラウザのコマンドが毎回確かめる内蔵ブラウザの設定は、一度読んだらメモリに置きます（`db::cached_builtin_browser`）。設定を書く関数は、DB を持ったまま書く前に消します。
+  - `update_settings` / `save_settings` は `#[tauri::command(async)]` で UI スレッドの外で動きます。順番が入れ替わり得るので、フロントは設定の読み書きを `inSettingsOrder`（`src/api.ts`）で呼んだ順に1つずつ流します。
+- **ドラッグ中は1フレームごとに測らない**
+  - ドラッグになった瞬間（`startDrag`）にタブ列と各タブの位置を1回だけ測り、`body.tab-dragging` も1回だけ付けます。同じクラスを付け直すだけでも `MutationObserver` が毎回呼ばれ、`useDockedArea` が文書全体を測り直していました。
+  - 挿入線（`.right-panel-tab-insert`）はタブ列の上に `position: absolute` で重ね、タブを押し動かしません。線は挿入位置が変わったときだけ動かします。
+- **別窓の操作バーはアプリ全体を読み込まない**
+  - `src/main.tsx` は `?browserToolbar=1` なら `BrowserChrome` だけを、ほかは `App` を動的 import します。
+- **ページの静止画は1枚ずつ**
+  - `browser_panel_snapshot` は一度に1つだけ実行し、ページの変化では最短 500ms ごと（`SNAPSHOT_MIN_MS`）にまとめます。タブ列へのポインターの進入とメニューで隠れる直前は、すぐ取ります。
+
+テストは `test/browser-store.test.mjs`、`test/right-panel.test.mjs` の描き直しとドラッグのテスト、Rust の `browser_surface.rs` の `a_page_already_in_place_gets_no_native_call` などです。Windows（WebView2）の実機での体感の確認は、まだ記録がありません（**要確認**）。
 
 ---
 
@@ -361,12 +395,12 @@ interface RightPanelTab { id: string; kind: RightPanelKind | "web"; tabId?: stri
 - **押したとき（`pointerdown`）**
   - 押したタブを `drag.current` に覚えます。**ここではポインターを捕捉しません。**
 - **動かしたとき（`pointermove`）**
-  - `TAB_DRAG_THRESHOLD_PX`（6px）を超えたら、ドラッグとして扱います。
-  - ここで初めて `.right-panel-tabs` に `setPointerCapture` し、`body.tab-dragging` を付けます。
+  - `TAB_DRAG_THRESHOLD_PX`（6px）を超えたら、ドラッグとして扱います（`startDrag`）。
+  - ここで初めて `.right-panel-tabs` に `setPointerCapture` し、タブ列と各タブの位置を1回だけ測り、`body.tab-dragging` を付けます。その後の移動ではレイアウトを読まず、クラスにも触れません（[§2.6](#26-速さのための決まり)）。
 - **閾値の前にタブ列から出たとき（`pointerleave`）**
-  - ボタンが押されたままならドラッグとして捕捉します。離されていれば破棄します。
+  - ボタンが押されたままならドラッグとして捕捉します（`startDrag`）。離されていれば破棄します。
 - **挿入位置**
-  - `insertionIndex` が、各タブの中央を基準に決めます。2px の挿入線（`.right-panel-tab-insert`）を出します。
+  - `insertionIndex` が、測っておいた各タブの中央を基準に決めます（タブ列のスクロールは足し直す）。2px の挿入線（`.right-panel-tab-insert`）を、タブ列の上に `position: absolute` で重ねます。位置は `insertMarkerLeft`（`src/tabStrip.ts`）で、タブの間の 4px の真ん中です。挿入位置が変わったときだけ描き直します。
 - **離したとき（`pointerup`）**
   - `dragOutcome` が次のどれかを返します。
     - `click`：閾値未満
@@ -556,8 +590,8 @@ interface RightPanelTab { id: string; kind: RightPanelKind | "web"; tabId?: stri
 
 | コマンド | 呼べる WebView | 内容 |
 | --- | --- | --- |
-| `browser_state` | `main` と `booth-toolbar*`（`trusted_browser_controls`） | `BrowserState` を返す |
-| `browser_action { action }` | 同上 | 下の表。戻り値は操作後の `BrowserState` |
+| `browser_state` | `main` と `booth-toolbar*`（`trusted_browser_controls`） | 表示中のページのアドレスと履歴を読み直して、番号付きの `BrowserState` を返す |
+| `browser_action { action }` | 同上 | 下の表。戻り値は操作後の `BrowserState`（`panelArea` はページへの問い合わせなしの状態） |
 | `save_browser_bookmark` / `delete_browser_bookmark` | 同上 | ブックマーク（`settings.browser_bookmarks`） |
 | `open_booth_browser` / `close_booth_browser` | — | セッションを開く、すべて閉じる（`browser.rs`）。async で、`dispatch_ui` でメインスレッドへ渡す |
 | `booth_browser_log` | — | 診断ログ（`booth-browser.log`） |
@@ -588,7 +622,7 @@ interface RightPanelTab { id: string; kind: RightPanelKind | "web"; tabId?: stri
 
 | イベント | 送り先 | 内容 | 受け取る場所 |
 | --- | --- | --- | --- |
-| `browser-state-changed` | 全体 | 状態が変わった | `listenBrowserChanged`（`useBrowserHost`、`RightPanel.tsx`） |
+| `browser-state-changed` | 全体 | 状態が変わった。payload は番号付きの `BrowserState`（ブックマークを読む前だけ `null`） | `listenBrowserChanged` → `src/browserStore.ts`（`useBrowserHost`、`BrowserChrome`、`RightPanel.tsx` が読む） |
 | `browser-panel-requested` | `main` だけ（`emit_to`） | payload の tabId を右パネルで出してほしい | `listenBrowserPanelRequested` → パネルを開いてタブを選ぶ |
 | `browser-focus-address` | その操作バー | Ctrl+L / Ctrl+T の後でアドレス欄にフォーカス | `listenBrowserControlEvents` |
 | `browser-operation-error` | 全体 | ショートカットや履歴操作の失敗の文言 | 同上 |
@@ -719,7 +753,7 @@ ChatGPT アプリのサイドパネルにならい、タブ列はアプリの地
   - 通常のカード `.panel` と同じクラス名なので、打ち消しが必要です（#100、#113、#118）。
 - `.browser-panel-viewport`
   - `flex: 1`、`--surface`、`padding: var(--space-4)`、`overflow: hidden` です。
-  - メニューやダイアログが重なってネイティブ WebView を一時的に隠している間も、直前に取得したページの静止画（`.browser-panel-snapshot`、`browser_panel_snapshot` コマンド。macOS は `WKWebView` の `takeSnapshotWithConfiguration:`、見本画面は SVG）を同じ矩形に敷き、メニューの背後にページが見え続けるようにします。メモリ上だけで扱い、DB や設定には保存しません。静止画がまだないときだけ案内文を出します。
+  - メニューやダイアログが重なってネイティブ WebView を一時的に隠している間も、直前に取得したページの静止画（`.browser-panel-snapshot`、`browser_panel_snapshot` コマンド。macOS は `WKWebView` の `takeSnapshotWithConfiguration:`、見本画面は SVG）を同じ矩形に敷き、メニューの背後にページが見え続けるようにします。メモリ上だけで扱い、DB や設定には保存しません。静止画がまだないときだけ案内文を出します。取るのは一度に1枚で、ページの変化では最短 500ms ごとにまとめます（[§2.6](#26-速さのための決まり)）。
 - 幅への対応は container query です（`.browser-chrome { container-type: inline-size }`）。
   - 520px 以下：「インポート」と、ホームのアイコン（`.browser-home`）を隠す
   - 460px 以下：アドレス欄を 2 行目の全幅に置く（`.browser-navigation` を折り返す）。既定幅 300px のパネルでは、1 行目に並べると文字の見える幅が 55px しかなく、`https://a` 程度しか読めなかった。ページの矩形は操作バーの実測から決めるので、行が増えてもずれない
@@ -1006,14 +1040,15 @@ Rust のテストの例（`browser_surface.rs` の `mod tests`）は次のとお
 | ファイル | 役割 |
 | --- | --- |
 | `src/rightPanel.ts` | タブの種類、純粋なロジック、幅の上限、ショートカットの判定 |
-| `src/components/RightPanel.tsx` | 状態（`useRightPanelState`）、ヘッダー、タブ列、ドラッグ、浮かぶパネル（`FloatingPanel`）、列 |
+| `src/components/RightPanel.tsx` | 開閉と幅（`useRightPanelState`）、タブの状態（`RightPanelProvider`）、ヘッダー、タブ列、ドラッグ、浮かぶパネル（`FloatingPanel`）、列 |
+| `src/browserStore.ts` | 窓ごとのブラウザ状態の写し。番号の古い状態を捨て、読み込みとポーリングをまとめる |
 | `src/floatingPanel.ts` | 浮かぶパネルの位置と大きさ（窓に収める、移動、辺からのリサイズ） |
 | `src/components/rightPanelRegistry.tsx` | 種類と描画部品の対応 |
 | `src/components/PreviewPane.tsx`、`src/previewPane.ts` | プレビュータブ |
 | `src/components/FilesTab.tsx`、`src/fileBrowser.ts`、`src-tauri/src/file_browser.rs` | ファイルタブ |
 | `src/components/BrowserPanel.tsx` | ページのタブ。表示域を測って送る（`useDockedArea`） |
 | `src/browserPanel.ts` | 丸め、重なり、ドラッグで隠す判定 |
-| `src/tabStrip.ts` | ドラッグの閾値、挿入位置、結果の判定 |
+| `src/tabStrip.ts` | ドラッグの閾値、挿入位置と挿入線の位置、結果の判定 |
 | `src/components/BrowserChrome.tsx`、`src/components/BrowserTitleBar.tsx` | 操作バー（右パネル内と別窓）、別窓のタイトルバー |
 | `src/useAppLayout.tsx`、`src/uiLayout.ts`、`src/components/ResizeSeparator.tsx` | グリッド、幅、区切り |
 | `src/api.ts`、`src/types.ts`、`src/preview/browser.ts` | IPC、型、見本 |

@@ -346,14 +346,11 @@ export default function App() {
     { href: "#/settings", label: "設定", icon: "settings", active: route.page === "settings" },
   ];
 
-  const mainPane = (
-    <div className="main" ref={contentRef} hidden={layout.panelMaximized}>
-      <div className="topbar" ref={topbarRef}>
-        <RightPanelLauncher panel={rightPanel} />
-        {error && <ErrorBanner key={error.id} error={error} onDismiss={dismissError} onRemoved={removeError} />}
-        {notice && <NoticeBanner key={notice.id} notice={notice} onDismiss={dismissNotice} onAction={runNoticeAction} onRemoved={removeNotice} />}
-        <ProgressStripBar strip={strip} />
-      </div>
+  // Pages read the shell and the panel through context. Dragging the right panel's edge or a
+  // notice in the top bar draws the app shell again, but not the page itself.
+  const acknowledgeAssetUpdate = assetUpdate.refresh;
+  const routeContent = useMemo(
+    () => (
       <main className={`content ${density}`}>
         {route.page === "avatars" && <AvatarsPage />}
         {route.page === "avatar" && route.id && (
@@ -370,10 +367,23 @@ export default function App() {
           </a>
         </nav>}
         {route.page === "classification-log" && <ClassificationLogPage boothId={route.id} />}
-        {route.page === "asset-update-log" && <AssetUpdateLogPage onAcknowledge={assetUpdate.refresh} />}
+        {route.page === "asset-update-log" && <AssetUpdateLogPage onAcknowledge={acknowledgeAssetUpdate} />}
         {route.page === "import" && <ImportPage />}
         {route.page === "settings" && <SettingsPage />}
       </main>
+    ),
+    [route, density, pendingAssetUpdates, pendingUpdateLabel, acknowledgeAssetUpdate],
+  );
+
+  const mainPane = (
+    <div className="main" ref={contentRef} hidden={layout.panelMaximized}>
+      <div className="topbar" ref={topbarRef}>
+        <RightPanelLauncher panel={rightPanel} />
+        {error && <ErrorBanner key={error.id} error={error} onDismiss={dismissError} onRemoved={removeError} />}
+        {notice && <NoticeBanner key={notice.id} notice={notice} onDismiss={dismissNotice} onAction={runNoticeAction} onRemoved={removeNotice} />}
+        <ProgressStripBar strip={strip} />
+      </div>
+      {routeContent}
     </div>
   );
 

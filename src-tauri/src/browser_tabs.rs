@@ -203,6 +203,9 @@ pub struct HostState {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowserState {
+    /// Increases with every state handed out. The controls drop a state older than one they
+    /// already have (src/browserStore.ts), so a slow read cannot undo a newer change.
+    pub revision: u64,
     pub open: bool,
     pub tabs: Vec<BrowserTab>,
     /// Active tab of the focused host. Each host also has its own `hosts[].activeId`.

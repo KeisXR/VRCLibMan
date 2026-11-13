@@ -14,6 +14,25 @@ export function insertionIndex(pointerX: number, rects: { left: number; width: n
   return rects.length;
 }
 
+/** Gap between tabs in the strip (CSS `gap`). */
+export const TAB_GAP_PX = 4;
+
+/**
+ * Left edge of the 2px insert line for gap `index`, in the same coordinates as `rects`: centred in
+ * the gap before tab `index`, or just after the last tab. It is drawn over the strip, so showing it
+ * does not move the tabs.
+ */
+export function insertMarkerLeft(index: number, rects: { left: number; width: number }[], width = 2): number {
+  const before = rects[index - 1];
+  const after = rects[index];
+  let edge: number;
+  if (before && after) edge = (before.left + before.width + after.left) / 2;
+  else if (after) edge = after.left - TAB_GAP_PX / 2;
+  else if (before) edge = before.left + before.width + TAB_GAP_PX / 2;
+  else return 0;
+  return Math.max(0, Math.round(edge - width / 2));
+}
+
 export type DragOutcome = "click" | "cancel" | "reorder" | "detach";
 
 /**
