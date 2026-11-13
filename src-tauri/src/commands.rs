@@ -2073,7 +2073,7 @@ pub async fn register_existing_import(view: tauri::Webview, app: AppHandle, path
 mod settings_thread_tests {
     #[test]
     fn settings_saves_run_off_the_ui_thread_but_change_the_tray_on_it() {
-        let source = include_str!("commands.rs");
+        let source = include_str!("commands.rs").replace("\r\n", "\n");
         for name in ["pub fn save_settings(", "pub fn update_settings("] {
             let at = source.find(name).unwrap();
             assert!(source[..at].trim_end().ends_with("#[tauri::command(async)]"), "{name} runs off the UI thread");

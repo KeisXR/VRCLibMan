@@ -11959,18 +11959,18 @@ mod builtin_browser_cache_tests {
         assert_eq!(cached_builtin_browser(), None);
 
         // Both writers clear it before writing, while they hold the connection.
-        let source = include_str!("db.rs");
+        let source = include_str!("db.rs").replace("\r\n", "\n");
         let save = &source[source.find("fn save_settings_values(").unwrap()..];
         let save = &save[..save.find("\n}\n").unwrap()];
         let forget = save.find("forget_builtin_browser();").expect("settings save clears the flag");
         let write = save.find("\"builtin_browser\",").expect("settings save writes the flag");
         assert!(forget < write);
-        let integration = include_str!("integration.rs");
+        let integration = include_str!("integration.rs").replace("\r\n", "\n");
         let mode = &integration[integration.find("pub fn set_mode(").unwrap()..];
         let mode = &mode[..mode.find("\n}\n").unwrap()];
         assert!(mode.find("forget_builtin_browser();").unwrap() < mode.find("\"builtin_browser\",").unwrap());
         // The browser commands use the kept value.
-        let browser = include_str!("browser.rs");
+        let browser = include_str!("browser.rs").replace("\r\n", "\n");
         let enabled = &browser[browser.find("pub(crate) fn browser_enabled(").unwrap()..];
         assert!(enabled[..enabled.find("\n}\n").unwrap()].contains("db::cached_builtin_browser()"));
     }
