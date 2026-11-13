@@ -331,7 +331,7 @@ VRCLibMan の見た目の決まりを、ほかのプロジェクトへ持ち出�
 
 ### 通知・エラーの帯
 
-- `.banner`: `--surface`、角丸 `--radius-control`、`--shadow`、`padding: 10px 14px`。出るときに 160ms で 4px 下りながら現れる（`banner-in`）。
+- `.banner`: `--surface`、角丸 `--radius-control`、`--shadow`、`padding: 10px 14px`。出るときに 4px 下りながら現れ（`banner-in`）、閉じるときは薄れながら下の内容が詰まる（`banner-out`）。速さは左サイドバーの開閉と同じ（[動き](#動き)）。
 - 情報の帯 `.banner.notice`: 文字 `--good`、`role="status"`。3 秒で消えます（文字数や操作ボタンの有無によらない）。マウスが乗っている間、帯の中にフォーカスがある間、画面が隠れている間は止まり、離れると最低 1.5 秒残ります。マウスが 1 秒乗り続けると消去を取り消し、×で閉じるまで残ります（`src/notice.ts`）。
 - エラーの帯 `.banner.error`: 文字 `--danger`。時間では消えず、× で閉じるまで残ります。
 - 閉じる × `.banner-close`: 28×28px、角丸 `--radius-pill`、地なし、文字 `--text-secondary`、`aria-label="閉じる"`。ホバーで `--hover`。
@@ -388,7 +388,7 @@ VRCLibMan の見た目の決まりを、ほかのプロジェクトへ持ち出�
 
 - 標準の長さは `--motion`（160ms）、`ease`。地の色・文字色・影・不透明度の変化に使います。
 - ページの切替は `rise`（4px 下から現れる）、帯は `banner-in`。
-- 帯（通知・失敗）を閉じるとき（時間切れ・×・操作ボタン）は `banner-out`（260ms、`ease`）。最初の 35% で帯がその場で薄れて 4px 上がり、残りで下の内容が帯の高さ分だけ滑らかに詰まります。高さは上の余白を負にして吸収し（閉じ始めに `NoticeBanner.tsx` が `--banner-top` と `--banner-height` を測る）、動いている間は押せません。`animationend`（来なければ 400ms）で取り除きます。別の帯に置き換わるときは、二つが重なって動かないよう、すぐ入れ替えます。「動きを減らす」ではすぐ取り除きます。
+- 帯（通知・失敗）の出入りは左サイドバーの開閉と同じ速さです。出るときは `banner-in`（`--motion-fast`、`--ease-out`、`--motion-delay` 遅れ）。閉じるとき（時間切れ・×・操作ボタン）は、帯が `banner-out-fade`（`--motion-fast`）で薄れて 4px 上がりながら、`banner-out`（`--motion-rail`）で下の内容が帯の高さ分だけ詰まります。カーブはどちらも `--ease-out`。高さは上の余白を負にして吸収し（閉じ始めに `NoticeBanner.tsx` が `--banner-top` と `--banner-height` を測る）、動いている間は押せません。`banner-out` の `animationend`（来なければ 400ms）で取り除きます。別の帯に置き換わるときは、二つが重なって動かないよう、すぐ入れ替えます。「動きを減らす」ではすぐ取り除きます。
 - 小さな要素の出入りは `--motion-fast`（120ms）、カーブは `--ease-out`（`cubic-bezier(0.32, 0.72, 0, 1)`、出だしが速く終わりが柔らかい）。遅らせるときは `--motion-delay`（30ms）。
 - 左サイドバーの開閉（[左サイドバーの開閉](#左サイドバーの開閉)）:
   - 幅: `grid-template-columns` を `--motion-rail`（140ms）`--ease-out`。右パネルが開いていても動かします（パネル自体が動くときはページを隠す hold）。

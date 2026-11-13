@@ -615,7 +615,7 @@ button.account-pill:hover { background: var(--hover); }
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  animation: banner-in 160ms ease-out;
+  animation: banner-in var(--motion-fast) var(--ease-out) var(--motion-delay) both;
 }
 .banner.error { color: var(--danger); }
 .banner.notice { color: var(--text); }
@@ -642,17 +642,22 @@ button.account-pill:hover { background: var(--hover); }
   from { opacity: 0; transform: translateY(-4px); }
   to { opacity: 1; transform: none; }
 }
-/* 閉じる動き。まず帯がその場で薄れて少し上がり（banner-in の逆）、続けて下の内容が帯の高さ分だけ滑らかに詰まる。
-   急に跳ね上がらないよう、高さを上の余白（負）で吸収する。--banner-top と --banner-height は閉じ始めに
-   NoticeBanner.tsx が測って置く。動いている間は押せない。prefers-reduced-motion では JS がすぐ取り除く。 */
+/* 帯の出入りの速さは左サイドバーの開閉に合わせる（出る = 文字が現れる 120ms・30ms 遅れ、閉じる = 幅 140ms とアイコンの 120ms フェードを同時に）。
+   閉じるときは帯が薄れて 4px 上がりながら、下の内容が帯の高さ分だけ詰まる。急に跳ね上がらないよう、高さを上の余白（負）で吸収する。
+   --banner-top と --banner-height は閉じ始めに NoticeBanner.tsx が測って置く。終わり（banner-out の animationend）で取り除く。
+   動いている間は押せない。prefers-reduced-motion では JS がすぐ取り除く。 */
 .banner[data-leaving] {
   pointer-events: none;
-  animation: banner-out 260ms ease forwards;
+  animation:
+    banner-out-fade var(--motion-fast) var(--ease-out) forwards,
+    banner-out var(--motion-rail) var(--ease-out) forwards;
+}
+@keyframes banner-out-fade {
+  to { opacity: 0; transform: translateY(-4px); }
 }
 @keyframes banner-out {
-  from { opacity: 1; transform: none; margin-top: var(--banner-top, 0px); }
-  35% { opacity: 0; transform: translateY(-4px); margin-top: var(--banner-top, 0px); }
-  to { opacity: 0; transform: translateY(-4px); margin-top: calc(-1 * var(--banner-height, 0px)); }
+  from { margin-top: var(--banner-top, 0px); }
+  to { margin-top: calc(-1 * var(--banner-height, 0px)); }
 }
 .progress { margin: var(--space-3) var(--space-6) 0; }
 .progress p { margin: 0 0 6px; color: var(--text-secondary); font-size: 13px; }

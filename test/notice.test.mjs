@@ -390,7 +390,11 @@ test("failures that go through notify are marked to stay", () => {
   const leave = css.match(/\.banner\[data-leaving\]\s*\{([^}]*)\}/);
   assert.ok(leave, "banners have a leaving rule");
   assert.match(leave[1], /pointer-events: none/);
-  const ms = Number(leave[1].match(/banner-out (\d+)ms/)?.[1]);
-  assert.ok(ms >= 120 && ms < 400, `banner-out ${ms}ms`);
+  // 速さは左サイドバーの開閉に合わせる（幅 = --motion-rail、フェード = --motion-fast、カーブ = --ease-out）。
+  assert.match(leave[1], /banner-out-fade var\(--motion-fast\) var\(--ease-out\)/);
+  assert.match(leave[1], /banner-out var\(--motion-rail\) var\(--ease-out\)/);
+  assert.match(css, /animation: banner-in var\(--motion-fast\) var\(--ease-out\) var\(--motion-delay\) both;/);
+  const rail = Number(css.match(/--motion-rail:\s*(\d+)ms/)[1]);
+  assert.ok(rail < 400, "the leave ends before the JS fallback");
   assert.match(css, /@keyframes banner-out \{[\s\S]*?margin-top: calc\(-1 \* var\(--banner-height/);
 });
