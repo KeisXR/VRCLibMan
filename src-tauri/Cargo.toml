@@ -72,6 +72,8 @@ strip = true
 
 [dev-dependencies]
 tauri = { version = "2", features = ["test"] }
+# Tests count commits with commit_hook. The app itself does not need the hooks API.
+rusqlite = { version = "0.40.2", features = ["hooks"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 dirs = "6"

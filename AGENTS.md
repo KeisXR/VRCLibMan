@@ -53,6 +53,7 @@ PC 間の移行は [データ移行](docs/remote-sync.md) に従う。現在は�
 - アンインストールの `src-tauri/windows/hooks.nsh` は `NSIS_HOOK_POSTUNINSTALL` で `HKCU\Software\VRCLibMan` だけを消す。アプリデータのディレクトリは消さない。
 - `user_version` が 0 のときだけ `SCHEMA` を流す。既存 DB の列を変えるときは、新しい版の移行を足す。`SCHEMA` 定数の書き換えだけでは入らない。
 - 変更系の関数は `&mut Connection`。`transaction()` が可変借用を要求するため。
+- 起動時の設定の既定値、初期データ、カタログの投入（`finish_open`）は1つのトランザクションで行う。1行ごとにコミットすると、ディスク上の DB ではそのたびにファイルを同期し、新しいライブラリを開くのに Windows で数十秒かかるため（[検証記録](docs/verification.md#新しいライブラリを開くときの同期回数2026-11-13)）。
 - DB の `MutexGuard` を `.await` の間に持たない。抽出の実行中フラグは `Arc<AtomicBool>`。
 - Tauri のコマンド引数は Rust のパラメータ名と一致させる。複数語は camelCase（`productId`、`fromId`、`intoId`）。構造体は `rename_all = "camelCase"`。
 - `tauri` の feature に `protocol-asset` が必要。`tauri.conf.json` の asset scope は `$APPDATA/**`。
