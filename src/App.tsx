@@ -346,6 +346,35 @@ export default function App() {
     { href: "#/settings", label: "設定", icon: "settings", active: route.page === "settings" },
   ];
 
+  // Pages read the shell and the panel through context. Dragging the right panel's edge or a
+  // notice in the top bar draws the app shell again, but not the page itself.
+  const acknowledgeAssetUpdate = assetUpdate.refresh;
+  const routeContent = useMemo(
+    () => (
+      <main className={`content ${density}`}>
+        {route.page === "avatars" && <AvatarsPage />}
+        {route.page === "avatar" && route.id && (
+          <AvatarDetailPage id={route.id} fileBoothId={route.fileBoothId} />
+        )}
+        {route.page === "assets" && <AssetsPage />}
+        {route.page === "worlds" && <WorldsPage />}
+        {route.page === "search" && <SearchPage />}
+        {route.page === "purchases" && <PurchasesPage view={route.purchaseView ?? "history"} group={route.purchaseGroup} />}
+        {(route.page === "classification-log" || route.page === "asset-update-log") && <nav className="tabs" aria-label="記録の種類">
+          <a className={route.page === "classification-log" ? "tab active" : "tab"} href="#/classification-log" aria-current={route.page === "classification-log" ? "page" : undefined}>分類記録</a>
+          <a className={route.page === "asset-update-log" ? "tab active" : "tab"} href="#/asset-update-log" aria-current={route.page === "asset-update-log" ? "page" : undefined} aria-label={pendingUpdateLabel && `アセット更新（${pendingUpdateLabel}）`}>
+            アセット更新{pendingUpdateLabel && <span className="count" aria-hidden="true">{pendingAssetUpdates}</span>}
+          </a>
+        </nav>}
+        {route.page === "classification-log" && <ClassificationLogPage boothId={route.id} />}
+        {route.page === "asset-update-log" && <AssetUpdateLogPage onAcknowledge={acknowledgeAssetUpdate} />}
+        {route.page === "import" && <ImportPage />}
+        {route.page === "settings" && <SettingsPage />}
+      </main>
+    ),
+    [route, density, pendingAssetUpdates, pendingUpdateLabel, acknowledgeAssetUpdate],
+  );
+
   const mainPane = (
     <div className="main" ref={contentRef} hidden={layout.panelMaximized}>
       <div className="topbar" ref={topbarRef}>
@@ -371,26 +400,7 @@ export default function App() {
           </div>
         )}
       </div>
-      <main className={`content ${density}`}>
-        {route.page === "avatars" && <AvatarsPage />}
-        {route.page === "avatar" && route.id && (
-          <AvatarDetailPage id={route.id} fileBoothId={route.fileBoothId} />
-        )}
-        {route.page === "assets" && <AssetsPage />}
-        {route.page === "worlds" && <WorldsPage />}
-        {route.page === "search" && <SearchPage />}
-        {route.page === "purchases" && <PurchasesPage view={route.purchaseView ?? "history"} group={route.purchaseGroup} />}
-        {(route.page === "classification-log" || route.page === "asset-update-log") && <nav className="tabs" aria-label="記録の種類">
-          <a className={route.page === "classification-log" ? "tab active" : "tab"} href="#/classification-log" aria-current={route.page === "classification-log" ? "page" : undefined}>分類記録</a>
-          <a className={route.page === "asset-update-log" ? "tab active" : "tab"} href="#/asset-update-log" aria-current={route.page === "asset-update-log" ? "page" : undefined} aria-label={pendingUpdateLabel && `アセット更新（${pendingUpdateLabel}）`}>
-            アセット更新{pendingUpdateLabel && <span className="count" aria-hidden="true">{pendingAssetUpdates}</span>}
-          </a>
-        </nav>}
-        {route.page === "classification-log" && <ClassificationLogPage boothId={route.id} />}
-        {route.page === "asset-update-log" && <AssetUpdateLogPage onAcknowledge={assetUpdate.refresh} />}
-        {route.page === "import" && <ImportPage />}
-        {route.page === "settings" && <SettingsPage />}
-      </main>
+      {routeContent}
     </div>
   );
 

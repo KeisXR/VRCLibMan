@@ -6,7 +6,7 @@ import { filterItems, selectedGenre } from "../genreBrowseUtils";
 import { useRemoteProductProbe } from "../remoteProductProbe";
 import { isPreviewMoveKey, nextPreviewId, previewKeysBlocked } from "../previewPane";
 import { GenreChipBar } from "./GenreChipBar";
-import { useRightPanel } from "./RightPanel";
+import { useRightPanelPreview } from "./RightPanel";
 import { useReplayRise } from "../useReplayRise";
 
 const NOUN: Record<string, string> = { asset: "アセット", world: "ワールド" };
@@ -16,7 +16,8 @@ export { filterItems, genreHref, selectedGenre } from "../genreBrowseUtils";
 export function GenreBrowser({ title, lede }: { title: string; lede?: string }) {
   const { kind, routeGenre, selected, focusId, data, error, genreBar, reload, setDraggingId } = useGenreBrowse();
   const [filter, setFilter] = useState("");
-  const panel = useRightPanel();
+  // Only the preview part of the panel: selecting a row or changing tabs does not draw the list again.
+  const panel = useRightPanelPreview();
   const { publishPreview } = panel;
   // Rows are selectable while the right panel shows its preview tab.
   const previewOpen = panel.previewActive;

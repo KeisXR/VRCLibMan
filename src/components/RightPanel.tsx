@@ -1,7 +1,8 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { api, listenBrowserChanged, listenBrowserPanelRequested } from "../api";
+import { api, listenBrowserPanelRequested } from "../api";
+import { applyBrowserState, getBrowserSnapshot, subscribeBrowserState } from "../browserStore";
 import {
   FLOAT_PANEL_EDGES,
   FLOAT_PANEL_MOVED_EVENT,
@@ -13,7 +14,7 @@ import {
   resizeFloatRect,
 } from "../floatingPanel";
 import type { FloatEdge, FloatRect } from "../floatingPanel";
-import { dragOutcome, insertionIndex, pointerInsideWindow, TAB_DRAG_THRESHOLD_PX } from "../tabStrip";
+import { dragOutcome, insertionIndex, insertMarkerLeft, pointerInsideWindow, TAB_DRAG_THRESHOLD_PX } from "../tabStrip";
 import { horizontalWheelDelta, overflowEdges, revealScrollLeft } from "../scrollEdges";
 import { PREVIEW_PANE_WIDTH, clampStoredPreviewPaneWidth } from "../previewPane";
 import {
@@ -34,6 +35,7 @@ import {
   pageTabsAllowed,
   parseRightPanelTabs,
   placeTab,
+  sameWebOrder,
   selectTab,
   serializeRightPanelTabs,
   tabLabel,
@@ -41,7 +43,7 @@ import {
   webTabIds,
 } from "../rightPanel";
 import type { RightPanelGates, RightPanelKind, RightPanelTab, RightPanelTabs } from "../rightPanel";
-import type { BrowserState } from "../types";
+import type { BrowserAction, BrowserState } from "../types";
 import { BrowserPanelTab } from "./BrowserPanel";
 import type { ItemView } from "../types";
 import { errorText } from "../ui";
@@ -55,22 +57,39 @@ export interface PreviewSelection {
   clear: () => void;
 }
 
-export interface RightPanelValue {
+/**
+ * Whether and where the right panel is on screen. The app shell holds this because it sets the
+ * grid. The tabs live in `RightPanelProvider` instead, so choosing, moving or renaming a tab does
+ * not draw the app shell and the page beside the panel again.
+ */
+export interface RightPanelShell {
   open: boolean;
   maximized: boolean;
   /** The user chose to float the panel as a window in a wide window too. Not saved, like maximized. */
   floating: boolean;
   width: number;
-  tabs: RightPanelTabs;
   /** Settings that show or hide tab kinds (the browser needs the built-in browser). */
   gates: RightPanelGates;
+  /** Reports a failure in the app's error strip. */
+  fail: (message: string) => void;
+  setOpen: (open: boolean) => void;
+  toggle: () => void;
+  close: () => void;
+  setMaximized: (value: boolean) => void;
+  setFloating: (value: boolean) => void;
+  resize: (width: number) => void;
+  commitWidth: (width: number) => void;
+  resetWidth: () => void;
+}
+
+/** The shell and the tabs together, for the panel itself. */
+export interface RightPanelValue extends RightPanelShell {
+  tabs: RightPanelTabs;
   active: RightPanelTab | null;
   /** The preview tab is on screen, so list rows can be selected. */
   previewActive: boolean;
   preview: PreviewSelection | null;
   publishPreview: (selection: PreviewSelection | null) => void;
-  toggle: () => void;
-  close: () => void;
   /** The asset screen's preview button: show the preview tab, or hide the panel when it is already shown. */
   togglePreview: () => void;
   openKind: (kind: RightPanelKind) => void;
@@ -81,16 +100,17 @@ export interface RightPanelValue {
   /** Open a page tab in the right panel, or a separate window where the panel cannot host one. */
   openPage: () => void;
   detachPage: (tabId: string, x: number, y: number) => void;
-  setMaximized: (value: boolean) => void;
-  setFloating: (value: boolean) => void;
-  resize: (width: number) => void;
-  commitWidth: (width: number) => void;
-  resetWidth: () => void;
+}
+
+/** What a product list needs from the panel. It changes only when the preview tab comes or goes. */
+export interface RightPanelPreview {
+  previewActive: boolean;
+  publishPreview: (selection: PreviewSelection | null) => void;
+  togglePreview: () => void;
 }
 
 const RightPanelContext = createContext<RightPanelValue | null>(null);
-
-export const RightPanelProvider = RightPanelContext.Provider;
+const RightPanelPreviewContext = createContext<RightPanelPreview | null>(null);
 
 export function useRightPanel(): RightPanelValue {
   const value = useContext(RightPanelContext);
@@ -98,36 +118,44 @@ export function useRightPanel(): RightPanelValue {
   return value;
 }
 
-/** Panel state lives in the app shell, so it survives page changes. */
-export function useRightPanelState(fail: (message: string) => void, gates: RightPanelGates = {}): RightPanelValue {
+/** For the product lists. Selecting a row or changing tabs does not draw the list again. */
+export function useRightPanelPreview(): RightPanelPreview {
+  const value = useContext(RightPanelPreviewContext);
+  if (!value) throw new Error("right panel missing");
+  return value;
+}
+
+/** Runs a browser command and keeps its (numbered) result as the window's browser state. */
+function browserAction(action: BrowserAction): Promise<void> {
+  return api.browserAction(action).then(applyBrowserState);
+}
+
+/** Open state, width and the panel shortcut. Lives in the app shell, so it survives page changes. */
+export function useRightPanelState(fail: (message: string) => void, gates: RightPanelGates = {}): RightPanelShell {
   const builtinBrowser = gates.builtinBrowser === true;
   const stableGates = useMemo<RightPanelGates>(() => ({ builtinBrowser }), [builtinBrowser]);
-  const [open, setOpen] = useState(false);
+  const [open, setOpenState] = useState(false);
   const [maximized, setMaximized] = useState(false);
   const [floating, setFloatingState] = useState(false);
   const [width, setWidth] = useState<number>(PREVIEW_PANE_WIDTH.default);
-  const [tabs, setTabs] = useState<RightPanelTabs>(defaultRightPanelTabs);
-  const [preview, setPreview] = useState<PreviewSelection | null>(null);
-  const dirty = useRef({ open: false, width: false, tabs: false });
+  const dirty = useRef({ open: false, width: false });
+  const openRef = useRef(open);
+  openRef.current = open;
   const failRef = useRef(fail);
   failRef.current = fail;
+  const failStable = useCallback((message: string) => failRef.current(message), []);
+  const report = useCallback((err: unknown) => failRef.current(errorText(err)), []);
 
   useEffect(() => {
     let alive = true;
     void api.settings().then(
       (settings) => {
         if (!alive) return;
-        if (!dirty.current.open) setOpen(settings.previewPane);
+        if (!dirty.current.open) {
+          openRef.current = settings.previewPane;
+          setOpenState(settings.previewPane);
+        }
         if (!dirty.current.width) setWidth(clampStoredPreviewPaneWidth(settings.previewPaneWidth));
-        setTabs((current) => {
-          if (dirty.current.tabs) return current;
-          const pages = current.tabs.flatMap((tab) =>
-            tab.kind === "web" && tab.tabId ? [{ tabId: tab.tabId, title: tab.title ?? "ページ" }] : [],
-          );
-          const restored = mergePanelWebTabs(parseRightPanelTabs(settings.rightPanelTabs), pages);
-          const selected = current.tabs.find((tab) => tab.id === current.activeId && tab.kind === "web");
-          return selected ? selectTab(restored, selected.id) : restored;
-        });
       },
       () => undefined,
     );
@@ -136,32 +164,22 @@ export function useRightPanelState(fail: (message: string) => void, gates: Right
     };
   }, []);
 
-  const report = useCallback((err: unknown) => failRef.current(errorText(err)), []);
-
-  const saveOpen = useCallback(
+  const setOpen = useCallback(
     (next: boolean) => {
       dirty.current.open = true;
-      setOpen(next);
+      openRef.current = next;
+      setOpenState(next);
       if (!next) setMaximized(false);
       void api.updateSettings({ previewPane: next }).catch(report);
     },
     [report],
   );
-
-  const saveTabs = useCallback(
-    (update: (current: RightPanelTabs) => RightPanelTabs) => {
-      dirty.current.tabs = true;
-      setTabs((current) => {
-        const next = update(current);
-        if (next === current) return current;
-        const before = serializeRightPanelTabs(current);
-        const after = serializeRightPanelTabs(next);
-        if (before !== after) void api.updateSettings({ rightPanelTabs: after }).catch(report);
-        return next;
-      });
-    },
-    [report],
-  );
+  const toggle = useCallback(() => setOpen(!openRef.current), [setOpen]);
+  const close = useCallback(() => setOpen(false), [setOpen]);
+  const setFloating = useCallback((next: boolean) => {
+    setFloatingState(next);
+    if (next) setMaximized(false);
+  }, []);
 
   const publishWidth = useCallback(
     (next: number, persist: boolean) => {
@@ -172,116 +190,9 @@ export function useRightPanelState(fail: (message: string) => void, gates: Right
     },
     [report],
   );
-
-  const active = activeTab(tabs, stableGates);
-  const previewActive = open && active?.kind === "preview";
-
-  const toggle = useCallback(() => saveOpen(!open), [open, saveOpen]);
-
-  const openKind = useCallback(
-    (kind: RightPanelKind) => {
-      saveTabs((current) => openTab(current, kind));
-      if (!open) saveOpen(true);
-    },
-    [open, saveOpen, saveTabs],
-  );
-
-  const openRef = useRef(open);
-  openRef.current = open;
-  const saveOpenRef = useRef(saveOpen);
-  saveOpenRef.current = saveOpen;
-
-  const panelCanDock = useRef(true);
-  const applyBrowser = useCallback((state: BrowserState) => {
-    panelCanDock.current = state.panelSupported;
-    const host = state.hosts.find((item) => item.id === "panel");
-    const pages = (host?.tabIds ?? []).map((tabId) => ({
-      tabId,
-      title: state.tabs.find((tab) => tab.id === tabId)?.title || "ページ",
-    }));
-    setTabs((current) => mergePanelWebTabs(current, pages));
-  }, []);
-
-  useEffect(() => {
-    if (!builtinBrowser) {
-      setTabs((current) => mergePanelWebTabs(current, []));
-      return;
-    }
-    let alive = true;
-    let stopChanged = () => {};
-    let stopRequested = () => {};
-    const load = () => {
-      void api.browserState().then(
-        (state) => {
-          if (alive) applyBrowser(state);
-        },
-        () => undefined,
-      );
-    };
-    load();
-    void listenBrowserChanged(() => {
-      if (alive) load();
-    }).then(
-      (unlisten) => {
-        if (alive) stopChanged = unlisten;
-        else unlisten();
-      },
-      () => undefined,
-    );
-    // A page was opened in the panel. Show that tab without closing the others.
-    void listenBrowserPanelRequested((tabId) => {
-      if (!openRef.current) saveOpenRef.current(true);
-      if (tabId) setTabs((current) => focusWebTab(current, tabId));
-    }).then(
-      (unlisten) => {
-        if (alive) stopRequested = unlisten;
-        else unlisten();
-      },
-      () => undefined,
-    );
-    return () => {
-      alive = false;
-      stopChanged();
-      stopRequested();
-    };
-  }, [applyBrowser, builtinBrowser]);
-
-  const syncWebOrder = useCallback(
-    (next: RightPanelTabs) => {
-      const tabIds = webTabIds(next);
-      if (!tabIds.length) return;
-      void api.browserAction({ kind: "reorderTabs", hostId: "panel", tabIds }).catch(report);
-    },
-    [report],
-  );
-
-  const closeTabById = useCallback(
-    (id: string) => {
-      saveTabs((current) => {
-        const tab = current.tabs.find((item) => item.id === id);
-        const next = closeTab(current, id);
-        if (tab?.kind === "web" && tab.tabId) {
-          const selected = next.tabs.find((item) => item.id === next.activeId);
-          void api
-            .browserAction({ kind: "closeTab", tabId: tab.tabId })
-            .then(() => {
-              if (selected?.kind === "web" && selected.tabId) {
-                return api.browserAction({ kind: "selectTab", tabId: selected.tabId });
-              }
-              return undefined;
-            })
-            .catch(report);
-        }
-        return next;
-      });
-    },
-    [report, saveTabs],
-  );
-
-  const togglePreview = useCallback(() => {
-    if (previewActive) saveOpen(false);
-    else openKind("preview");
-  }, [openKind, previewActive, saveOpen]);
+  const resize = useCallback((next: number) => publishWidth(next, false), [publishWidth]);
+  const commitWidth = useCallback((next: number) => publishWidth(next, true), [publishWidth]);
+  const resetWidth = useCallback(() => publishWidth(PREVIEW_PANE_WIDTH.default, true), [publishWidth]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -293,6 +204,220 @@ export function useRightPanelState(fail: (message: string) => void, gates: Right
     return () => window.removeEventListener("keydown", onKey);
   }, [toggle]);
 
+  return useMemo(
+    () => ({
+      open,
+      maximized,
+      floating,
+      width,
+      gates: stableGates,
+      fail: failStable,
+      setOpen,
+      toggle,
+      close,
+      setMaximized,
+      setFloating,
+      resize,
+      commitWidth,
+      resetWidth,
+    }),
+    [open, maximized, floating, width, stableGates, failStable, setOpen, toggle, close, setFloating, resize, commitWidth, resetWidth],
+  );
+}
+
+/**
+ * The tabs and the preview selection. Every change goes through `commit`, which keeps the latest
+ * tabs in a ref; settings writes and browser commands run after the change, never inside a
+ * state updater (React may run an updater twice).
+ */
+function useRightPanelTabs(shell: RightPanelShell): RightPanelValue {
+  const { gates, open, setOpen, fail } = shell;
+  const builtinBrowser = gates.builtinBrowser === true;
+  const [tabs, setTabs] = useState<RightPanelTabs>(defaultRightPanelTabs);
+  const tabsRef = useRef(tabs);
+  const [preview, setPreview] = useState<PreviewSelection | null>(null);
+  const dirty = useRef(false);
+  const openRef = useRef(open);
+  openRef.current = open;
+  const setOpenRef = useRef(setOpen);
+  setOpenRef.current = setOpen;
+  const failRef = useRef(fail);
+  failRef.current = fail;
+  const report = useCallback((err: unknown) => failRef.current(errorText(err)), []);
+
+  const commit = useCallback((next: RightPanelTabs) => {
+    if (next === tabsRef.current) return false;
+    tabsRef.current = next;
+    setTabs(next);
+    return true;
+  }, []);
+
+  /** A change the user made. Saves the fixed tabs when their kinds, order or selection changed. */
+  const saveTabs = useCallback(
+    (update: (current: RightPanelTabs) => RightPanelTabs) => {
+      dirty.current = true;
+      const before = tabsRef.current;
+      const after = update(before);
+      if (!commit(after)) return { before, after: before };
+      const saved = serializeRightPanelTabs(after);
+      if (serializeRightPanelTabs(before) !== saved) void api.updateSettings({ rightPanelTabs: saved }).catch(report);
+      return { before, after };
+    },
+    [commit, report],
+  );
+
+  useEffect(() => {
+    let alive = true;
+    void api.settings().then(
+      (settings) => {
+        if (!alive || dirty.current) return;
+        const current = tabsRef.current;
+        const pages = current.tabs.flatMap((tab) =>
+          tab.kind === "web" && tab.tabId ? [{ tabId: tab.tabId, title: tab.title ?? "ページ" }] : [],
+        );
+        const restored = mergePanelWebTabs(parseRightPanelTabs(settings.rightPanelTabs), pages);
+        const selected = current.tabs.find((tab) => tab.id === current.activeId && tab.kind === "web");
+        commit(selected ? selectTab(restored, selected.id) : restored);
+      },
+      () => undefined,
+    );
+    return () => {
+      alive = false;
+    };
+  }, [commit]);
+
+  const panelCanDock = useRef(true);
+  const applyBrowser = useCallback(
+    (state: BrowserState) => {
+      panelCanDock.current = state.panelSupported;
+      const host = state.hosts.find((item) => item.id === "panel");
+      const pages = (host?.tabIds ?? []).map((tabId) => ({
+        tabId,
+        title: state.tabs.find((tab) => tab.id === tabId)?.title || "ページ",
+      }));
+      commit(mergePanelWebTabs(tabsRef.current, pages));
+    },
+    [commit],
+  );
+
+  useEffect(() => {
+    if (!builtinBrowser) {
+      commit(mergePanelWebTabs(tabsRef.current, []));
+      return;
+    }
+    let alive = true;
+    let stopRequested = () => {};
+    // The shared browser state of this window (src/browserStore.ts). Page titles change often;
+    // mergePanelWebTabs keeps the same tabs object when nothing on the strip changed.
+    const sync = () => {
+      const { state } = getBrowserSnapshot();
+      if (alive && state) applyBrowser(state);
+    };
+    const stopState = subscribeBrowserState(sync);
+    sync();
+    // A page was opened in the panel. Show that tab without closing the others.
+    void listenBrowserPanelRequested((tabId) => {
+      if (!alive) return;
+      if (!openRef.current) setOpenRef.current(true);
+      if (tabId) commit(focusWebTab(tabsRef.current, tabId));
+    }).then(
+      (unlisten) => {
+        if (alive) stopRequested = unlisten;
+        else unlisten();
+      },
+      () => undefined,
+    );
+    return () => {
+      alive = false;
+      stopState();
+      stopRequested();
+    };
+  }, [applyBrowser, builtinBrowser, commit]);
+
+  /** Tells the app the new page order. Moving a preview or file tab between pages changes nothing there. */
+  const syncWebOrder = useCallback(
+    (before: RightPanelTabs, after: RightPanelTabs) => {
+      if (sameWebOrder(before, after)) return;
+      const tabIds = webTabIds(after);
+      if (!tabIds.length) return;
+      void browserAction({ kind: "reorderTabs", hostId: "panel", tabIds }).catch(report);
+    },
+    [report],
+  );
+
+  const select = useCallback(
+    (id: string) => {
+      const tab = tabsRef.current.tabs.find((item) => item.id === id);
+      saveTabs((current) => selectTab(current, id));
+      if (tab?.kind === "web" && tab.tabId) void browserAction({ kind: "selectTab", tabId: tab.tabId }).catch(report);
+    },
+    [report, saveTabs],
+  );
+
+  const closeTabById = useCallback(
+    (id: string) => {
+      const tab = tabsRef.current.tabs.find((item) => item.id === id);
+      const { after } = saveTabs((current) => closeTab(current, id));
+      if (tab?.kind !== "web" || !tab.tabId) return;
+      const selected = after.tabs.find((item) => item.id === after.activeId);
+      void browserAction({ kind: "closeTab", tabId: tab.tabId })
+        .then(() => {
+          if (selected?.kind === "web" && selected.tabId) return browserAction({ kind: "selectTab", tabId: selected.tabId });
+          return undefined;
+        })
+        .catch(report);
+    },
+    [report, saveTabs],
+  );
+
+  const move = useCallback(
+    (id: string, offset: number) => {
+      const { before, after } = saveTabs((current) => moveTab(current, id, offset));
+      syncWebOrder(before, after);
+    },
+    [saveTabs, syncWebOrder],
+  );
+
+  const arrange = useCallback(
+    (id: string, index: number) => {
+      const { before, after } = saveTabs((current) => placeTab(current, id, index));
+      syncWebOrder(before, after);
+    },
+    [saveTabs, syncWebOrder],
+  );
+
+  const openKind = useCallback(
+    (kind: RightPanelKind) => {
+      saveTabs((current) => openTab(current, kind));
+      if (!openRef.current) setOpenRef.current(true);
+    },
+    [saveTabs],
+  );
+
+  const openPage = useCallback(() => {
+    const hostId = panelCanDock.current ? "panel" : undefined;
+    void browserAction({ kind: "newTab", hostId })
+      .then(() => {
+        if (!openRef.current) setOpenRef.current(true);
+      })
+      .catch(report);
+  }, [report]);
+
+  const detachPage = useCallback(
+    (tabId: string, x: number, y: number) => {
+      void browserAction({ kind: "detachTab", tabId, x, y }).catch(report);
+    },
+    [report],
+  );
+
+  const active = activeTab(tabs, gates);
+  const previewActive = open && active?.kind === "preview";
+
+  const togglePreview = useCallback(() => {
+    if (previewActive) setOpenRef.current(false);
+    else openKind("preview");
+  }, [openKind, previewActive]);
+
   const publishPreview = useCallback((selection: PreviewSelection | null) => {
     setPreview((current) => {
       if (current === selection) return current;
@@ -303,64 +428,40 @@ export function useRightPanelState(fail: (message: string) => void, gates: Right
 
   return useMemo(
     () => ({
-      open,
-      maximized,
-      floating,
-      width,
+      ...shell,
       tabs,
-      gates: stableGates,
       active,
       previewActive,
       preview,
       publishPreview,
-      toggle,
-      close: () => saveOpen(false),
       togglePreview,
       openKind,
-      select: (id: string) =>
-        saveTabs((current) => {
-          const next = selectTab(current, id);
-          const tab = current.tabs.find((item) => item.id === id);
-          if (tab?.kind === "web" && tab.tabId) {
-            void api.browserAction({ kind: "selectTab", tabId: tab.tabId }).catch(report);
-          }
-          return next;
-        }),
+      select,
       closeTabById,
-      move: (id: string, offset: number) =>
-        saveTabs((current) => {
-          const next = moveTab(current, id, offset);
-          if (next !== current) syncWebOrder(next);
-          return next;
-        }),
-      arrange: (id: string, index: number) =>
-        saveTabs((current) => {
-          const next = placeTab(current, id, index);
-          if (next !== current) syncWebOrder(next);
-          return next;
-        }),
-      openPage: () => {
-        const hostId = panelCanDock.current ? "panel" : undefined;
-        void api
-          .browserAction({ kind: "newTab", hostId })
-          .then(() => {
-            if (!openRef.current) saveOpenRef.current(true);
-          })
-          .catch(report);
-      },
-      detachPage: (tabId: string, x: number, y: number) => {
-        void api.browserAction({ kind: "detachTab", tabId, x, y }).catch(report);
-      },
-      setMaximized,
-      setFloating: (next: boolean) => {
-        setFloatingState(next);
-        if (next) setMaximized(false);
-      },
-      resize: (next: number) => publishWidth(next, false),
-      commitWidth: (next: number) => publishWidth(next, true),
-      resetWidth: () => publishWidth(PREVIEW_PANE_WIDTH.default, true),
+      move,
+      arrange,
+      openPage,
+      detachPage,
     }),
-    [open, maximized, floating, width, tabs, stableGates, active, previewActive, preview, publishPreview, toggle, saveOpen, togglePreview, openKind, closeTabById, saveTabs, publishWidth, syncWebOrder, report],
+    [shell, tabs, active, previewActive, preview, publishPreview, togglePreview, openKind, select, closeTabById, move, arrange, openPage, detachPage],
+  );
+}
+
+/**
+ * Owns the tabs and gives them to the panel. `children` are drawn by the app shell, so a tab
+ * change here draws only the components that read the panel, not the pages.
+ */
+export function RightPanelProvider({ value: shell, children }: { value: RightPanelShell; children?: ReactNode }) {
+  const panel = useRightPanelTabs(shell);
+  const { previewActive, publishPreview, togglePreview } = panel;
+  const preview = useMemo<RightPanelPreview>(
+    () => ({ previewActive, publishPreview, togglePreview }),
+    [previewActive, publishPreview, togglePreview],
+  );
+  return (
+    <RightPanelContext.Provider value={panel}>
+      <RightPanelPreviewContext.Provider value={preview}>{children}</RightPanelPreviewContext.Provider>
+    </RightPanelContext.Provider>
   );
 }
 
@@ -422,10 +523,12 @@ function PanelGlyph() {
 /**
  * While the right panel is closed, a button in the top-right corner of the page opens it again.
  * The panel mark says what it opens; the small number in its corner is how many tabs it holds.
+ * `panel` is the app shell's handle (open and toggle); the tabs come from `RightPanelProvider`.
  */
-export function RightPanelLauncher({ panel }: { panel: RightPanelValue }) {
+export function RightPanelLauncher({ panel }: { panel: RightPanelShell }) {
+  const { tabs, gates } = useRightPanel();
   if (panel.open) return null;
-  const count = visibleTabs(panel.tabs, panel.gates).length;
+  const count = visibleTabs(tabs, gates).length;
   return (
     <button
       className="right-panel-launcher"
@@ -438,7 +541,7 @@ export function RightPanelLauncher({ panel }: { panel: RightPanelValue }) {
       <PanelGlyph />
       {count > 0 && (
         <span className="right-panel-launcher-count" aria-hidden="true">
-          {launcherCountLabel(panel.tabs, panel.gates)}
+          {launcherCountLabel(tabs, gates)}
         </span>
       )}
     </button>
@@ -553,8 +656,12 @@ function PanelHeader({
     cancelled: boolean;
     pointerId: number;
     insertAt: number | null;
+    /** The strip's left edge on screen and each tab in its scrolled content, measured once when the press becomes a drag. */
+    origin: number;
+    edges: { left: number; width: number }[];
   } | null>(null);
-  const [insertAt, setInsertAt] = useState<number | null>(null);
+  // Where the 2px insert line goes. It is drawn over the strip and does not move the tabs.
+  const [insert, setInsert] = useState<{ index: number; left: number } | null>(null);
 
   // タブは最低幅を持つので、狭いパネルでは横にあふれる。あふれた分は横スクロールで出し、
   // ホイールでも動かせるようにする。選んだタブは帯の中に見える位置へ寄せる。
@@ -608,7 +715,7 @@ function PanelHeader({
       event.stopPropagation();
       drag.current.cancelled = true;
       drag.current = null;
-      setInsertAt(null);
+      setInsert(null);
       document.body.classList.remove("tab-dragging");
     };
     // A native dragend is not a drop outside the window.
@@ -625,7 +732,7 @@ function PanelHeader({
 
   function clearDrag() {
     drag.current = null;
-    setInsertAt(null);
+    setInsert(null);
     document.body.classList.remove("tab-dragging");
   }
 
@@ -647,6 +754,8 @@ function PanelHeader({
       cancelled: false,
       pointerId: event.pointerId,
       insertAt: null,
+      origin: 0,
+      edges: [],
     };
     // Capture only once the press becomes a drag. Chromium (WebView2) sends the click of a
     // captured press to the capturing tab list instead of the tab button, so capturing here
@@ -661,39 +770,50 @@ function PanelHeader({
     }
   }
 
+  /**
+   * The press became a drag. Everything a move needs is measured here once: a move then reads
+   * no layout, and the body class (which hides the native page) is added once, not per move.
+   */
+  function startDrag(current: NonNullable<typeof drag.current>, pointerId: number) {
+    capture(pointerId);
+    current.moved = true;
+    const list = listRef.current;
+    if (list) {
+      const box = list.getBoundingClientRect();
+      current.origin = box.left;
+      current.edges = [...list.querySelectorAll<HTMLElement>(".right-panel-tab")].map((node) => {
+        const rect = node.getBoundingClientRect();
+        return { left: rect.left - box.left + list.scrollLeft, width: rect.width };
+      });
+    }
+    document.body.classList.add("tab-dragging");
+  }
+
+  function showInsert(current: NonNullable<typeof drag.current>, at: number | null) {
+    if (current.insertAt === at) return;
+    current.insertAt = at;
+    setInsert(at === null ? null : { index: at, left: insertMarkerLeft(at, current.edges) });
+  }
+
   function onPointerLeave(event: ReactPointerEvent<HTMLDivElement>) {
     const current = drag.current;
     if (!current || current.moved || event.pointerId !== current.pointerId) return;
     // Leaving the strip while pressed is a drag even below the threshold; keep following it.
-    if (event.buttons & 1) {
-      current.moved = true;
-      document.body.classList.add("tab-dragging");
-      capture(event.pointerId);
-    } else {
-      clearDrag();
-    }
+    if (event.buttons & 1) startDrag(current, event.pointerId);
+    else clearDrag();
   }
 
   function onPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
     const current = drag.current;
     if (!current || event.pointerId !== current.pointerId) return;
     if (!current.moved && Math.hypot(event.clientX - current.startX, event.clientY - current.startY) < TAB_DRAG_THRESHOLD_PX) return;
-    if (!current.moved) capture(event.pointerId);
-    current.moved = true;
-    document.body.classList.add("tab-dragging");
-    const inside = pointerInsideWindow(event.clientX, event.clientY, window.innerWidth, window.innerHeight);
-    if (!inside) {
-      current.insertAt = null;
-      setInsertAt(null);
+    if (!current.moved) startDrag(current, event.pointerId);
+    if (!pointerInsideWindow(event.clientX, event.clientY, window.innerWidth, window.innerHeight)) {
+      showInsert(current, null);
       return;
     }
-    const rects = [...(listRef.current?.querySelectorAll<HTMLElement>(".right-panel-tab") ?? [])].map((node) => {
-      const box = node.getBoundingClientRect();
-      return { left: box.left, width: box.width };
-    });
-    const at = insertionIndex(event.clientX, rects);
-    current.insertAt = at;
-    setInsertAt(at);
+    const scroll = listRef.current?.scrollLeft ?? 0;
+    showInsert(current, insertionIndex(event.clientX - current.origin + scroll, current.edges));
   }
 
   function onPointerUp(event: ReactPointerEvent<HTMLDivElement>) {
@@ -742,9 +862,7 @@ function PanelHeader({
           const label = tabLabel(tab);
           const selected = tab.id === activeId;
           return (
-            <div className="right-panel-tab-slot" key={tab.id} style={{ display: "contents" }}>
-              {insertAt === index && <span className="right-panel-tab-insert" aria-hidden="true" />}
-              <div className={selected ? "right-panel-tab active" : "right-panel-tab"} data-tab-id={tab.id}>
+            <div className={selected ? "right-panel-tab active" : "right-panel-tab"} data-tab-id={tab.id} key={tab.id}>
               <button
                 type="button"
                 role="tab"
@@ -783,11 +901,10 @@ function PanelHeader({
               >
                 <CloseGlyph />
               </button>
-              </div>
             </div>
           );
         })}
-        {insertAt === shown.length && <span className="right-panel-tab-insert" aria-hidden="true" />}
+        {insert && <span className="right-panel-tab-insert" aria-hidden="true" style={{ left: insert.left }} />}
       </div>
       <AddTabMenu panel={panel} />
       <div className="right-panel-actions">
@@ -879,7 +996,8 @@ function PanelBody({ panel, floating }: { panel: RightPanelValue; floating: bool
   );
 }
 
-function PanelSurface({
+/** Skipped while the floating panel moves or resizes: only its frame changes then. */
+const PanelSurface = memo(function PanelSurface({
   panel,
   floating,
   dockable = false,
@@ -902,7 +1020,7 @@ function PanelSurface({
       <PanelBody panel={panel} floating={floating} />
     </aside>
   );
-}
+});
 
 /** The viewport of the app window, or a common size where there is none to measure (DOM stubs). */
 function viewportSize() {
@@ -1033,17 +1151,23 @@ function FloatingPanel({ panel, dockable }: { panel: RightPanelValue; dockable: 
     );
   }
 
-  const grip = (
-    <button
-      className="right-panel-icon right-panel-float-grip"
-      type="button"
-      aria-label="右パネルを移動"
-      title="ドラッグで移動。矢印キーで移動、Shift+矢印キーで大きさを変更、ダブルクリックか Home で右上に戻す"
-      onPointerDown={(event) => begin("move", event)}
-      onKeyDown={onGripKey}
-    >
-      <GripGlyph />
-    </button>
+  // The same grip element on every move keeps PanelSurface (memo) from drawing the tabs again.
+  const handlers = useRef({ begin, onGripKey });
+  handlers.current = { begin, onGripKey };
+  const grip = useMemo(
+    () => (
+      <button
+        className="right-panel-icon right-panel-float-grip"
+        type="button"
+        aria-label="右パネルを移動"
+        title="ドラッグで移動。矢印キーで移動、Shift+矢印キーで大きさを変更、ダブルクリックか Home で右上に戻す"
+        onPointerDown={(event) => handlers.current.begin("move", event)}
+        onKeyDown={(event) => handlers.current.onGripKey(event)}
+      >
+        <GripGlyph />
+      </button>
+    ),
+    [],
   );
 
   if (typeof document === "undefined") return null;
@@ -1077,22 +1201,24 @@ function FloatingPanel({ panel, dockable }: { panel: RightPanelValue; dockable: 
 /**
  * Right column of the app grid. Wide windows dock it with a resize handle unless the user floats
  * it; narrow windows always float it over the page as a movable window. The list stays usable.
+ * `panel` is the app shell's handle; the tabs come from `RightPanelProvider`.
  */
 export function RightPanelColumn({
-  panel,
+  panel: shell,
   docked,
   canDock = false,
   width,
   maxWidth,
 }: {
-  panel: RightPanelValue;
+  panel: RightPanelShell;
   docked: boolean;
   /** The window is wide enough for the column, so a floating panel offers to go back. */
   canDock?: boolean;
   width: number;
   maxWidth: number;
 }) {
-  if (!panel.open) return null;
+  const panel = useRightPanel();
+  if (!shell.open) return null;
   if (!docked) return <FloatingPanel panel={panel} dockable={canDock} />;
   return (
     <>
@@ -1103,9 +1229,9 @@ export function RightPanelColumn({
           min={PREVIEW_PANE_WIDTH.min}
           max={maxWidth}
           grows="left"
-          onChange={panel.resize}
-          onCommit={panel.commitWidth}
-          onReset={panel.resetWidth}
+          onChange={shell.resize}
+          onCommit={shell.commitWidth}
+          onReset={shell.resetWidth}
         />
       )}
       <PanelSurface panel={panel} floating={false} onDismiss={panel.close} />

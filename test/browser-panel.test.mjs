@@ -321,8 +321,10 @@ test("the docked browser keeps BOOTH addresses out of settings and follows the b
   assert.match(readFileSync("src/tabStrip.ts", "utf8"), /TAB_DRAG_THRESHOLD_PX = 6/);
   assert.match(
     panel,
-    /< TAB_DRAG_THRESHOLD_PX\) return;\s*if \(!current\.moved\) capture\(event\.pointerId\)/,
+    /< TAB_DRAG_THRESHOLD_PX\) return;\s*if \(!current\.moved\) startDrag\(current, event\.pointerId\)/,
   );
+  const startDrag = panel.slice(panel.indexOf("function startDrag("), panel.indexOf("function showInsert("));
+  assert.match(startDrag, /^function startDrag\([^)]*\) \{\s*capture\(pointerId\);/, "the drag captures the pointer when it starts");
 });
 
 test("stored browser tabs are fixed kinds only, and old browser entries are dropped", async () => {

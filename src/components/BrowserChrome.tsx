@@ -3,9 +3,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
   isTauri,
-  listenBrowserChanged,
   listenBrowserControlEvents,
 } from "../api";
+import { applyBrowserState, useBrowserSnapshot } from "../browserStore";
 import type { BrowserAction, BrowserBookmark, BrowserState } from "../types";
 import { errorText } from "../ui";
 import { tabKeyTarget } from "../keyboard";
@@ -59,7 +59,9 @@ export function BrowserChrome({
   onImported?: () => void;
 }) {
   const embedded = embeddedProp || panel;
-  const [state, setState] = useState(emptyState);
+  // One shared, numbered copy per window (src/browserStore.ts): no separate polling per control.
+  const { state: stored, error: loadError } = useBrowserSnapshot({ poll: true });
+  const state = stored ?? emptyState;
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -75,8 +77,6 @@ export function BrowserChrome({
   // 矢印キーで選んだタブ。選択の反映で並びが描き直されても、そのタブにフォーカスを戻す。
   const focusTab = useRef<string | null>(null);
   const activeId = useRef<string | null>(null);
-  const epoch = useRef(0);
-  const reading = useRef(false);
   const alive = useRef(false);
   const scopedHost = hostId ?? new URLSearchParams(window.location.search).get("browserHost") ?? undefined;
   const host = scopedHost ? state.hosts.find((item) => item.id === scopedHost) : undefined;
@@ -85,7 +85,7 @@ export function BrowserChrome({
   const active = pageTabs.find((tab) => tab.id === selectedId) ?? state.tabs.find((tab) => tab.id === selectedId);
   const disabled = working || state.busy;
   const zoom = active?.zoomFactor ?? 1;
-  const statusMessage = error || message || (state.busy
+  const statusMessage = error || message || loadError || (state.busy
     ? "インポートまたはダウンロード中"
     : active?.loading ? "読み込み中…"
       : !state.open ? "ブラウザを開くか、URLを入力してください" : "");
@@ -104,29 +104,9 @@ export function BrowserChrome({
     }
   })();
 
-  const load = useCallback(async () => {
-    if (reading.current) return;
-    reading.current = true;
-    const ticket = epoch.current;
-    try {
-      const next = await api.browserState();
-      if (alive.current && ticket === epoch.current) setState(next);
-    } catch (err) {
-      if (alive.current) setError(errorText(err));
-    } finally {
-      reading.current = false;
-    }
-  }, []);
-
   useEffect(() => {
     alive.current = true;
     let cancelled = false;
-    void load();
-    let stop = () => {};
-    void listenBrowserChanged(() => void load()).then((unlisten) => {
-      if (!cancelled) stop = unlisten;
-      else unlisten();
-    });
     let stopControls = () => {};
     if (!embedded)
       void listenBrowserControlEvents(() => {
@@ -136,17 +116,14 @@ export function BrowserChrome({
         if (!cancelled) stopControls = stop;
         else stop();
       });
-    const poll = window.setInterval(() => void load(), 1000);
     if (!embedded) document.body.classList.add("browser-toolbar-window");
     return () => {
       cancelled = true;
       alive.current = false;
-      window.clearInterval(poll);
-      stop();
       stopControls();
       if (!embedded) document.body.classList.remove("browser-toolbar-window");
     };
-  }, [embedded, load]);
+  }, [embedded]);
 
   useEffect(() => {
     const switched = activeId.current !== (active?.id ?? null);
@@ -223,14 +200,13 @@ export function BrowserChrome({
       targeted = { ...command, hostId: command.hostId ?? hostIdForCommand, tabId: command.tabId ?? tabId };
     else if (command.kind === "toolbarHeight" || command.kind === "dock")
       targeted = { ...command, hostId: command.hostId ?? hostIdForCommand };
-    epoch.current++;
     setWorking(true);
     setError("");
     setMessage("");
     try {
-      const next = await api.browserAction(targeted);
+      // The result is numbered like every state, so a slower read cannot put the old one back.
+      applyBrowserState(await api.browserAction(targeted));
       if (alive.current) {
-        setState(next);
         if (command.kind === "newTab")
           window.setTimeout(() => {
             input.current?.focus();
@@ -279,11 +255,10 @@ export function BrowserChrome({
 
   async function saveBookmark() {
     if (!edit) return;
-    epoch.current++;
     setWorking(true);
     setError("");
     try {
-      setState(
+      applyBrowserState(
         await api.saveBrowserBookmark(edit.originalUrl, edit.title, edit.url),
       );
       setEdit(null);
@@ -296,11 +271,10 @@ export function BrowserChrome({
   }
   async function deleteBookmark() {
     if (!edit?.originalUrl) return;
-    epoch.current++;
     setWorking(true);
     setError("");
     try {
-      setState(await api.deleteBrowserBookmark(edit.originalUrl));
+      applyBrowserState(await api.deleteBrowserBookmark(edit.originalUrl));
       setEdit(null);
       setMessage("ブックマークを削除しました");
     } catch (err) {

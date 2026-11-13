@@ -456,7 +456,9 @@ pub fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
     db::settings(&mut connection)
 }
 
-#[tauri::command]
+/// Off the UI thread: a save waits for the database and the disk, and the native pages in the
+/// right panel are placed on the UI thread. The frontend keeps settings calls in order (`inSettingsOrder`).
+#[tauri::command(async)]
 pub fn save_settings(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -470,11 +472,28 @@ pub fn save_settings(
     crate::browser_surface::sync_force_dark(&app, saved.browser_force_dark);
     crate::remote_sync::wake(&app);
     crate::presence::remember_background(&app, saved.background_mode);
-    crate::presence::apply_presence(&app, saved.background_mode, saved.launch_at_login)?;
+    apply_presence_on_ui(&app, saved.background_mode, saved.launch_at_login)?;
     Ok(())
 }
 
-#[tauri::command]
+/// The tray icon and the main window belong to the UI thread (on Windows a tray icon can only be
+/// removed by the thread that made it), so the settings commands, which run off it, hand this
+/// step back and wait. Never call this while holding the database lock: a command running on the
+/// UI thread may be waiting for that lock.
+fn apply_presence_on_ui(app: &AppHandle, background_mode: bool, launch_at_login: bool) -> Result<(), String> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let _ = sender.send(crate::presence::apply_presence(&handle, background_mode, launch_at_login));
+    })
+    .map_err(|err| format!("画面の処理を予約できません: {err}"))?;
+    receiver
+        .recv()
+        .map_err(|_| "画面の処理を完了できませんでした。もう一度お試しください".to_string())?
+}
+
+/// Off the UI thread like `save_settings`; the right panel saves its tabs and width here.
+#[tauri::command(async)]
 pub fn update_settings(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -495,24 +514,20 @@ pub fn update_settings(
         crate::remote_sync::wake(&app);
     }
     if presence_changed {
-        if let Err(error) =
-            crate::presence::apply_presence(&app, saved.background_mode, saved.launch_at_login)
-        {
-            let connection = db(&state)?;
-            db::update_settings(
-                &connection,
-                &crate::model::SettingsPatch {
-                    background_mode: Some(before.background_mode),
-                    launch_at_login: Some(before.launch_at_login),
-                    ..Default::default()
-                },
-            )?;
+        if let Err(error) = apply_presence_on_ui(&app, saved.background_mode, saved.launch_at_login) {
+            {
+                let connection = db(&state)?;
+                db::update_settings(
+                    &connection,
+                    &crate::model::SettingsPatch {
+                        background_mode: Some(before.background_mode),
+                        launch_at_login: Some(before.launch_at_login),
+                        ..Default::default()
+                    },
+                )?;
+            }
             crate::presence::remember_background(&app, before.background_mode);
-            let _ = crate::presence::apply_presence(
-                &app,
-                before.background_mode,
-                before.launch_at_login,
-            );
+            let _ = apply_presence_on_ui(&app, before.background_mode, before.launch_at_login);
             return Err(error);
         }
         crate::presence::remember_background(&app, saved.background_mode);
@@ -1889,6 +1904,9 @@ pub async fn browser_action(
             BrowserAction::PanelArea { area, visible } => {
                 main_window_only(&label)?;
                 surface::panel_area(handle, panel_rect(area)?, visible)?;
+                // Only placement changed. Sent on every move of the panel, so the pages are not
+                // asked for their address and history here.
+                return surface::current_state(handle);
             }
             BrowserAction::ReorderTabs { host_id, tab_ids } => {
                 surface::reorder(handle, &host_id, &tab_ids)?;
@@ -1912,15 +1930,16 @@ pub async fn save_browser_bookmark(
 ) -> Result<crate::browser_tabs::BrowserState, String> {
     trusted_browser_controls(&webview)?;
     crate::browser::dispatch_ui(app, move |handle| {
-        {
+        let bookmarks = {
             let state = handle.state::<AppState>();
             let connection = state
                 .db
                 .lock()
                 .map_err(|_| "データベースをロックできません".to_string())?;
             db::save_browser_bookmark(&connection, originalUrl.as_deref(), &title, &url)?;
-        }
-        let _ = handle.emit("browser-state-changed", ());
+            db::browser_bookmarks(&connection)?
+        };
+        crate::browser_surface::set_bookmarks(handle, bookmarks);
         crate::browser_surface::state(handle)
     })
     .await
@@ -1934,15 +1953,16 @@ pub async fn delete_browser_bookmark(
 ) -> Result<crate::browser_tabs::BrowserState, String> {
     trusted_browser_controls(&webview)?;
     crate::browser::dispatch_ui(app, move |handle| {
-        {
+        let bookmarks = {
             let state = handle.state::<AppState>();
             let connection = state
                 .db
                 .lock()
                 .map_err(|_| "データベースをロックできません".to_string())?;
             db::delete_browser_bookmark(&connection, &url)?;
-        }
-        let _ = handle.emit("browser-state-changed", ());
+            db::browser_bookmarks(&connection)?
+        };
+        crate::browser_surface::set_bookmarks(handle, bookmarks);
         crate::browser_surface::state(handle)
     })
     .await
@@ -2047,4 +2067,22 @@ pub async fn preview_existing_import(view: tauri::Webview, app: AppHandle, path:
 pub async fn register_existing_import(view: tauri::Webview, app: AppHandle, path: String, selections: Vec<crate::existing_import::Selection>, copy: bool) -> Result<crate::existing_import::Report, String> {
     trusted_updater(&view)?;
     tauri::async_runtime::spawn_blocking(move || crate::existing_import::register(&app,Path::new(&path),selections,copy)).await.map_err(|_|"取り込みを実行できません")?
+}
+
+#[cfg(test)]
+mod settings_thread_tests {
+    #[test]
+    fn settings_saves_run_off_the_ui_thread_but_change_the_tray_on_it() {
+        let source = include_str!("commands.rs");
+        for name in ["pub fn save_settings(", "pub fn update_settings("] {
+            let at = source.find(name).unwrap();
+            assert!(source[..at].trim_end().ends_with("#[tauri::command(async)]"), "{name} runs off the UI thread");
+            let body = &source[at..];
+            let body = &body[..body.find("\n}\n").unwrap()];
+            assert!(!body.contains("crate::presence::apply_presence("), "{name} changes the tray on the UI thread");
+            assert!(body.contains("apply_presence_on_ui("), "{name}");
+        }
+        let helper = &source[source.find("fn apply_presence_on_ui(").unwrap()..];
+        assert!(helper[..helper.find("\n}\n").unwrap()].contains("run_on_main_thread"));
+    }
 }

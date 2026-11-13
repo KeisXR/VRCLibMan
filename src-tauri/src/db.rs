@@ -639,6 +639,7 @@ fn save_settings_values(
     )?;
     set_setting(connection, "browser_auto_register", if input.browser_auto_register { "1" } else { "0" })?;
     set_setting(connection, "library_folder", input.library_folder.trim())?;
+    forget_builtin_browser();
     set_setting(
         connection,
         "builtin_browser",
@@ -853,6 +854,33 @@ pub(crate) fn regenerate_extension_token(connection: &Connection) -> Result<Stri
         .execute("DELETE FROM settings WHERE key = 'extension_origin'", [])
         .sql()?;
     Ok(token)
+}
+
+/// `builtin_browser` in memory: 0 not read yet, 1 off, 2 on. It is stored and cleared only while
+/// the database connection is held (every write clears it before its transaction ends), so a read
+/// can never keep a value older than the last write.
+static BUILTIN_BROWSER: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// The built-in browser setting if it was read since the last write.
+pub(crate) fn cached_builtin_browser() -> Option<bool> {
+    match BUILTIN_BROWSER.load(std::sync::atomic::Ordering::SeqCst) {
+        1 => Some(false),
+        2 => Some(true),
+        _ => None,
+    }
+}
+
+/// Reads `builtin_browser` and keeps it for `cached_builtin_browser`. Call with the app's
+/// connection locked.
+pub(crate) fn builtin_browser(connection: &Connection) -> Result<bool, String> {
+    let enabled = setting(connection, "builtin_browser")?.as_deref() == Some("1");
+    BUILTIN_BROWSER.store(if enabled { 2 } else { 1 }, std::sync::atomic::Ordering::SeqCst);
+    Ok(enabled)
+}
+
+/// A write of `builtin_browser` is coming. Call before the write, with the connection held.
+pub(crate) fn forget_builtin_browser() {
+    BUILTIN_BROWSER.store(0, std::sync::atomic::Ordering::SeqCst);
 }
 
 pub(crate) fn setting(connection: &Connection, key: &str) -> Result<Option<String>, String> {
@@ -11910,5 +11938,40 @@ mod browser_auto_tests {
         assert!(browser_auto_pending(&c).unwrap().is_empty());
         set_setting(&c, "browser_auto_register", "1").unwrap();
         assert_eq!(browser_auto_pending(&c).unwrap().len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod builtin_browser_cache_tests {
+    use super::*;
+
+    #[test]
+    fn the_browser_flag_is_kept_in_memory_and_cleared_by_every_write() {
+        let connection = open_memory().unwrap();
+        set_setting(&connection, "builtin_browser", "1").unwrap();
+        assert!(builtin_browser(&connection).unwrap());
+        // Other tests may save settings at the same time, which clears the value; it never flips.
+        assert_ne!(cached_builtin_browser(), Some(false));
+        set_setting(&connection, "builtin_browser", "0").unwrap();
+        assert!(!builtin_browser(&connection).unwrap());
+        assert_ne!(cached_builtin_browser(), Some(true));
+        forget_builtin_browser();
+        assert_eq!(cached_builtin_browser(), None);
+
+        // Both writers clear it before writing, while they hold the connection.
+        let source = include_str!("db.rs");
+        let save = &source[source.find("fn save_settings_values(").unwrap()..];
+        let save = &save[..save.find("\n}\n").unwrap()];
+        let forget = save.find("forget_builtin_browser();").expect("settings save clears the flag");
+        let write = save.find("\"builtin_browser\",").expect("settings save writes the flag");
+        assert!(forget < write);
+        let integration = include_str!("integration.rs");
+        let mode = &integration[integration.find("pub fn set_mode(").unwrap()..];
+        let mode = &mode[..mode.find("\n}\n").unwrap()];
+        assert!(mode.find("forget_builtin_browser();").unwrap() < mode.find("\"builtin_browser\",").unwrap());
+        // The browser commands use the kept value.
+        let browser = include_str!("browser.rs");
+        let enabled = &browser[browser.find("pub(crate) fn browser_enabled(").unwrap()..];
+        assert!(enabled[..enabled.find("\n}\n").unwrap()].contains("db::cached_builtin_browser()"));
     }
 }

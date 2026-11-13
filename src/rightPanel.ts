@@ -290,3 +290,10 @@ export function placeTab(state: RightPanelTabs, id: string, index: number): Righ
 export function webTabIds(state: RightPanelTabs): string[] {
   return state.tabs.flatMap((tab) => (tab.kind === "web" && tab.tabId ? [tab.tabId] : []));
 }
+
+/** The page tabs keep their order. Moving a preview or file tab between pages leaves it as it was. */
+export function sameWebOrder(a: RightPanelTabs, b: RightPanelTabs): boolean {
+  const before = webTabIds(a);
+  const after = webTabIds(b);
+  return before.length === after.length && before.every((id, index) => id === after[index]);
+}

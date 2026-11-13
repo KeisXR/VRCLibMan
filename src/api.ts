@@ -122,6 +122,18 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
   return invoke<T>(command, args);
 }
 
+/**
+ * Saving settings runs off the app's UI thread, where two calls may start in either order. Settings
+ * calls from this window therefore run one after another, in the order they were made, so a quick
+ * second change of the same setting cannot be overwritten by the first.
+ */
+let settingsQueue: Promise<unknown> = Promise.resolve();
+export function inSettingsOrder<T>(run: () => Promise<T>): Promise<T> {
+  const next = settingsQueue.then(run);
+  settingsQueue = next.catch(() => undefined);
+  return next;
+}
+
 export const reportBrowserPanel = createPanelReporter((report) =>
   call<BrowserState>("browser_action", { action: { kind: "panelArea", ...report } }),
 );
@@ -183,7 +195,7 @@ export const api = {
   setProductExcluded: (boothId: string, excluded: boolean) => call<void>("set_product_excluded", { boothId, excluded }),
   productOptions: () => call<ProductOption[]>("list_product_options"),
   knowledge: () => call<Knowledge>("list_knowledge"),
-  settings: () => call<Settings>("get_settings"),
+  settings: () => inSettingsOrder(() => call<Settings>("get_settings")),
   remoteSyncStatus: () => call<RemoteSyncStatus>("remote_sync_status"),
   /** 自動同期のワーカーを今すぐ起こす。2 本目は作らない。 */
   retryRemoteSync: () => call<void>("retry_remote_sync"),
@@ -194,12 +206,9 @@ export const api = {
   extensionLink: () => call<ExtensionLink>("extension_link"),
   regenerateExtensionToken: () => call<ExtensionLink>("regenerate_extension_token"),
   saveSettings: async (settings: Settings) => {
-    await call<void>("save_settings", { settings });
+    await inSettingsOrder(() => call<void>("save_settings", { settings }));
   },
-  updateSettings: async (patch: Partial<Settings>) => {
-    const saved = await call<Settings>("update_settings", { patch });
-    return saved;
-  },
+  updateSettings: (patch: Partial<Settings>) => inSettingsOrder(() => call<Settings>("update_settings", { patch })),
   boothPageInterval: () => call<number>("get_booth_page_interval"),
   setBoothPageInterval: (intervalMs: number) => call<void>("set_booth_page_interval", { intervalMs }),
   browserState: () => readWithTimeout(() => call<BrowserState>("browser_state"), "ブラウザの状態"),
@@ -468,9 +477,15 @@ export async function openLocal(path: string): Promise<void> {
   await call<void>("open_local_path", { path });
 }
 
-export function listenBrowserChanged(onChanged: () => void): Promise<() => void> {
-  if (!isTauri()) return import("./preview/browser").then(({ onPreviewBrowserChanged }) => onPreviewBrowserChanged(onChanged));
-  return import("@tauri-apps/api/event").then(({ listen }) => listen("browser-state-changed", onChanged));
+/**
+ * The built-in browser changed. The app sends the new numbered state with the event; `null` means
+ * "read it again" (the browser preview, or a state the app could not build). Use `src/browserStore.ts`.
+ */
+export function listenBrowserChanged(onChanged: (state: BrowserState | null) => void): Promise<() => void> {
+  if (!isTauri()) return import("./preview/browser").then(({ onPreviewBrowserChanged }) => onPreviewBrowserChanged(() => onChanged(null)));
+  return import("@tauri-apps/api/event").then(({ listen }) =>
+    listen<BrowserState | null>("browser-state-changed", (event) => onChanged(event.payload ?? null)),
+  );
 }
 
 /** The app moved the browser into the right panel (or opened it there) and wants the tab shown. */

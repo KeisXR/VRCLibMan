@@ -71,6 +71,7 @@ pub fn set_mode(connection: &mut Connection, mode: &str) -> Result<(), String> {
         return Err("BOOTH の読み込み方が不正です".into());
     }
     let tx = connection.transaction().map_err(|err| err.to_string())?;
+    crate::db::forget_builtin_browser();
     write(&tx, "booth_import_mode", mode)?;
     write(
         &tx,
