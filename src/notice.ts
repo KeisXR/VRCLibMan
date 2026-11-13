@@ -16,12 +16,16 @@ export interface NoticeEntry {
   action?: NoticeAction;
   /** 失敗や注意を含む通知。時間では消さず、×で閉じるまで残す。 */
   persist?: boolean;
+  /** 閉じる動きの途中。動きが終わったら取り除く。 */
+  leaving?: boolean;
 }
 
 /** 失敗の帯。時間では消さない。 */
 export interface ErrorEntry {
   id: number;
   message: string;
+  /** 閉じる動きの途中。動きが終わったら取り除く。 */
+  leaving?: boolean;
 }
 
 export interface NotifyOptions {
@@ -88,6 +92,20 @@ export function pinNoticeClock(clock: NoticeClock, now: number): NoticeClock {
   return { ...clock, remaining: noticeRemaining(clock, now), runningSince: null, pinned: true };
 }
 
+/** 消えるまでのシークバー。`from` は通知を出しておく時間に対する残りの割合、`ms` はそこから 0 までの時間。 */
+export interface NoticeTimer {
+  from: number;
+  ms: number;
+  running: boolean;
+}
+
+/** シークバーの今の状態。消去を取り消した通知には出さない。 */
+export function noticeTimer(clock: NoticeClock, now: number, duration: number = NOTICE_DURATION_MS): NoticeTimer | null {
+  if (clock.pinned || duration <= 0) return null;
+  const ms = noticeRemaining(clock, now);
+  return { from: Math.min(1, Math.max(0, ms / duration)), ms, running: clock.runningSince !== null };
+}
+
 /** 時間切れか。止まっている間は消さない。 */
 export function noticeExpired(clock: NoticeClock, now: number): boolean {
   return !clock.pinned && clock.runningSince !== null && noticeRemaining(clock, now) <= 0;
@@ -100,4 +118,9 @@ export interface Numbered {
 
 export function dismissIfCurrent<T extends Numbered>(current: T | null, id: number): T | null {
   return current && current.id === id ? null : current;
+}
+
+/** 閉じる動きを始める。番号が違う・既に閉じ始めているときはそのまま。 */
+export function leaveIfCurrent<T extends Numbered & { leaving?: boolean }>(current: T | null, id: number): T | null {
+  return current && current.id === id && !current.leaving ? { ...current, leaving: true } : current;
 }

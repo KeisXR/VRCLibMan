@@ -53,7 +53,7 @@ export function AssetUpdateLogPage({ onAcknowledge }: { onAcknowledge: () => voi
       <p className="meta">VRCLibManが差分を見つけた日時を表示します。BOOTHでの公開日時とは異なります。</p></div></div>
     {status?.running && <p role="status">アセットの更新を確認中… {status.progress ? `${status.progress.done} / ${status.progress.total} 件` : "確認の準備中です。"}</p>}
     {error && <div className="banner error" role="alert">{error} <button className="button" type="button" onClick={() => setReload(n => n + 1)}>再読み込み</button></div>}
-    {candidates.length > 0 && <details open>
+    {candidates.length > 0 && <details open id="asset-update-pending">
       <summary>未確認の更新（{candidates.length}件）</summary>
       <ul className="log-entries">{candidates.map(row => <li className="log-entry" key={row.boothId}>
         <strong>{row.title}</strong><p className="meta">{row.changes.join("・")}</p>
@@ -61,7 +61,7 @@ export function AssetUpdateLogPage({ onAcknowledge }: { onAcknowledge: () => voi
           <button type="button" className="button" disabled={saving || status?.running} onClick={() => void acknowledge(row.boothId)}>確認済みにする</button></div>
       </li>)}</ul>
     </details>}
-    <h2>検出履歴</h2>
+    <h2 id="asset-update-history">検出履歴</h2>
     {records === null && !error && <p role="status">読み込み中…</p>}
     {records?.length === 0 && <p className="meta">更新記録はまだありません。以前の候補は上の一覧で確認できます。</p>}
     <ul className="log-entries">{records?.map((record, index) => <li className="log-entry" key={`${record.boothId}:${record.detectedAt}:${index}`}>

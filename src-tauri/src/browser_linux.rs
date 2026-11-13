@@ -313,7 +313,7 @@ pub fn set_view_bounds(
                     if previous.replace(size) != size {
                         let handle = handle.clone();
                         tauri::async_runtime::spawn(async move {
-                            let _ = browser::dispatch_ui(handle, browser_surface::layout).await;
+                            let _ = browser::dispatch_ui(handle, browser_surface::relayout).await;
                         });
                     }
                 });

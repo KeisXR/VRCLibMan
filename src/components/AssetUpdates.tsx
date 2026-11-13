@@ -72,15 +72,15 @@ export function AssetUpdates() {
     <header><h2>アセットの更新設定</h2><p>公開情報を比較して変更を確認します。有料ファイルの更新や、同じ名前・番号のファイル差し替えは検出できません。</p></header>
     <div className="section-body asset-updates">
       <p>「今すぐ確認」では、内蔵ブラウザが有効なら BOOTH ライブラリから最新のファイル情報も読み直して商品カードへ反映し、あわせて商品説明と無料ファイル一覧を比較します。ファイルの自動ダウンロードや適用は行いません。</p>
-      <label className="switch-label"><input type="checkbox" checked={status?.allProducts ?? false} disabled={!status || pending} onChange={(e) => void configure({ allProducts: e.target.checked })} />全商品をまとめて確認対象にする（今後追加する商品も含む）</label>
+      <label className="switch-label" id="settings-asset-updates-all"><input type="checkbox" checked={status?.allProducts ?? false} disabled={!status || pending} onChange={(e) => void configure({ allProducts: e.target.checked })} />全商品をまとめて確認対象にする（今後追加する商品も含む）</label>
       <p>登録済み {status?.totalProducts ?? 0} 件中、{status?.rows.filter((r) => r.enabled).length ?? 0} 件が確認対象です。個別のチェックで対象から外せます。全体をオフにすると全商品の許可を解除します。</p>
-      <label className="switch-label"><input type="checkbox" checked={status?.automatic ?? false} disabled={!status || pending} onChange={(e) => void configure({ automatic: e.target.checked })} />アプリ起動中、許可した商品を1日1回自動確認する</label>
-      <div className="inline-control">
+      <label className="switch-label" id="settings-asset-updates-auto"><input type="checkbox" checked={status?.automatic ?? false} disabled={!status || pending} onChange={(e) => void configure({ automatic: e.target.checked })} />アプリ起動中、許可した商品を1日1回自動確認する</label>
+      <div className="inline-control" id="settings-asset-updates-add">
         <input aria-label="更新確認する商品を検索" placeholder="商品名・BOOTH ID で検索" value={query} onChange={(e) => { setQuery(e.target.value); setSelected(""); }} />
         <select aria-label="更新確認する商品" value={selected} onChange={(e) => setSelected(e.target.value)}><option value="">登録済みの商品を選択</option>{options.map((p) => <option key={p.boothId} value={p.boothId}>{p.title}</option>)}</select>
         <button type="button" className="button" disabled={!selected || pending || !status} onClick={() => { void configure({ boothId: selected, enabled: true }); setSelected(""); }}>確認対象に追加</button>
       </div>
-      <div className="inline-control">
+      <div className="inline-control" id="settings-asset-updates-check">
         <button type="button" className="button" disabled={pending || checking || status?.running || !status?.rows.some((r) => r.enabled)} onClick={() => void check()}>{checking || status?.running ? "確認中…" : "今すぐ確認"}</button>
         {(checking || status?.running) && <button type="button" className="button" disabled={pending} onClick={() => void configure({ automatic: false })}>自動確認をオフ</button>}
       </div>

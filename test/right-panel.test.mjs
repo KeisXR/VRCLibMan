@@ -164,7 +164,7 @@ test("panel settings load independently of browser synchronization", async (t) =
   try {
     const { api } = await server.ssrLoadModule("/src/api.ts");
     const preview = await server.ssrLoadModule("/src/preview/browser.ts");
-    const { useRightPanelState } = await server.ssrLoadModule("/src/components/RightPanel.tsx");
+    const { RightPanelProvider, useRightPanel, useRightPanelState } = await server.ssrLoadModule("/src/components/RightPanel.tsx");
     const settings = { ...(await api.settings()), previewPane: true, rightPanelTabs: '{"tabs":["files","preview"],"active":0}' };
     const kinds = (panel) => panel.tabs.tabs.map((tab) => tab.kind);
 
@@ -179,9 +179,14 @@ test("panel settings load independently of browser synchronization", async (t) =
         api.updateSettings = async (patch) => { writes.push(patch); return { ...settings, ...patch }; };
         const failures = [];
         let panel;
-        function Harness() {
-          panel = useRightPanelState((message) => failures.push(message), { builtinBrowser: scenario === "page opened before settings" });
+        function Probe() {
+          panel = useRightPanel();
           return null;
+        }
+        // The app shell holds open/width; the provider owns the tabs.
+        function Harness() {
+          const shell = useRightPanelState((message) => failures.push(message), { builtinBrowser: scenario === "page opened before settings" });
+          return createElement(RightPanelProvider, { value: shell }, createElement(Probe));
         }
         const root = createRoot(document.getElementById("root"));
         try {
@@ -234,7 +239,7 @@ test("narrow windows float the panel and keep the list usable on every tab", asy
   try {
     const { api } = await server.ssrLoadModule("/src/api.ts");
     const { ShellProvider } = await server.ssrLoadModule("/src/App.tsx");
-    const { RightPanelColumn, useRightPanelState } = await server.ssrLoadModule("/src/components/RightPanel.tsx");
+    const { RightPanelColumn, RightPanelProvider, useRightPanelState } = await server.ssrLoadModule("/src/components/RightPanel.tsx");
     const { RIGHT_PANEL_KIND_INFO } = await server.ssrLoadModule("/src/rightPanel.ts");
     const settings = { ...(await api.settings()), previewPane: true, rightPanelTabs: '{"tabs":["preview"],"active":0}' };
     api.settings = async () => settings;
@@ -244,7 +249,11 @@ test("narrow windows float the panel and keep the list usable on every tab", asy
     const shell = { revision: 0, refresh() {}, notify() {}, fail: (message) => failures.push(message), builtinBrowser: true, refreshAccount() {}, workInProgress: false };
     function Harness() {
       const panel = useRightPanelState(shell.fail, { builtinBrowser: true });
-      return createElement(ShellProvider, { value: shell }, createElement(RightPanelColumn, { panel, docked: false, width: 0, maxWidth: 240 }));
+      return createElement(
+        ShellProvider,
+        { value: shell },
+        createElement(RightPanelProvider, { value: panel }, createElement(RightPanelColumn, { panel, docked: false, width: 0, maxWidth: 240 })),
+      );
     }
     const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
     const wait = async (check) => {
@@ -280,6 +289,103 @@ test("narrow windows float the panel and keep the list usable on every tab", asy
     assert.deepEqual(failures, []);
   } finally {
     if (root) await act(async () => root.unmount());
+    await server.close();
+  }
+});
+
+test("changing tabs or the preview selection does not draw the page beside the panel again", async () => {
+  const { parseHTML } = await import("linkedom");
+  const { window } = parseHTML('<html><body><div id="root"></div></body></html>');
+  window.location = new URL("http://localhost:1420/");
+  for (const name of ["window", "document", "location", "HTMLElement", "HTMLInputElement", "Element", "Event", "CustomEvent", "EventTarget"]) {
+    Object.defineProperty(globalThis, name, { configurable: true, writable: true, value: window[name] });
+  }
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: { userAgent: "test" } });
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const { act, createElement } = await import("react");
+  const { createRoot } = await import("react-dom/client");
+  const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
+  let root;
+  try {
+    const { api } = await server.ssrLoadModule("/src/api.ts");
+    const { RightPanelProvider, useRightPanel, useRightPanelPreview, useRightPanelState } = await server.ssrLoadModule("/src/components/RightPanel.tsx");
+    const settings = { ...(await api.settings()), previewPane: true, rightPanelTabs: '{"tabs":["preview","files"],"active":0}' };
+    api.settings = async () => settings;
+    const writes = [];
+    api.updateSettings = async (patch) => { writes.push(patch); return Object.assign(settings, patch); };
+    const renders = { page: 0, list: 0 };
+    let panel;
+    let preview;
+    function Page() { renders.page += 1; return null; }
+    function List() { renders.list += 1; preview = useRightPanelPreview(); return null; }
+    function Probe() { panel = useRightPanel(); return null; }
+    // Like App: the shell owns open/width and draws the page; the provider owns the tabs.
+    function Shell() {
+      const shell = useRightPanelState(() => {}, {});
+      return createElement(RightPanelProvider, { value: shell }, createElement(Page), createElement(List), createElement(Probe));
+    }
+    root = createRoot(document.getElementById("root"));
+    await act(async () => { root.render(createElement(Shell)); await tick(); });
+    assert.equal(panel.active?.kind, "preview");
+    assert.equal(preview.previewActive, true);
+    const before = { ...renders };
+
+    const files = panel.tabs.tabs.find((tab) => tab.kind === "files");
+    await act(async () => { panel.move(files.id, -1); await tick(); });
+    assert.deepEqual(panel.tabs.tabs.map((tab) => tab.kind), ["files", "preview"]);
+    assert.deepEqual(renders, before, "reordering tabs draws neither the page nor the list");
+    assert.equal(writes.length, 1, "the fixed tabs are saved once, outside a state updater");
+
+    await act(async () => { preview.publishPreview({ item: { boothId: "1" }, clear() {} }); await tick(); });
+    assert.equal(panel.preview?.item.boothId, "1");
+    assert.deepEqual(renders, before, "selecting a row draws neither the page nor the list");
+
+    await act(async () => { panel.select(files.id); await tick(); });
+    assert.equal(renders.page, before.page, "choosing a tab does not draw the page");
+    assert.equal(renders.list, before.list + 1, "the list draws once: rows stop being selectable");
+    assert.equal(preview.previewActive, false);
+  } finally {
+    if (root) await act(async () => root.unmount());
+    await server.close();
+  }
+});
+
+test("a tab drag measures once, draws its insert line over the strip, and hides the page once", async () => {
+  const source = readFileSync("src/components/RightPanel.tsx", "utf8");
+  const move = source.slice(source.indexOf("function onPointerMove("), source.indexOf("function onPointerUp("));
+  assert.doesNotMatch(move, /getBoundingClientRect|querySelectorAll|classList/, "a pointer move reads no layout and touches no class");
+  assert.equal(source.match(/classList\.add\("tab-dragging"\)/g)?.length, 1, "the body class is added once, when the drag starts");
+  assert.match(source, /function startDrag\([^)]*\) \{\s*capture\(pointerId\);[\s\S]*?getBoundingClientRect[\s\S]*?classList\.add\("tab-dragging"\);/);
+  assert.match(source, /if \(current\.insertAt === at\) return;/, "the line moves only when its gap changes");
+  const css = readFileSync("src/styles.css", "utf8");
+  assert.match(css, /\.right-panel-tabs \{\s*position: relative;/);
+  assert.match(css, /\.right-panel-tab-insert \{[^}]*position: absolute;[^}]*pointer-events: none;/);
+  // The browser commands and settings writes run after the change, not inside setState updaters.
+  const state = source.slice(source.indexOf("function useRightPanelTabs("), source.indexOf("export function RightPanelProvider("));
+  for (const [, body] of state.matchAll(/setTabs\(\(current\) => \{([\s\S]*?)\}\);/g)) {
+    assert.doesNotMatch(body, /api\.|browserAction/);
+  }
+  assert.doesNotMatch(state, /setTabs\(\(/, "every change goes through commit()");
+
+  const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  try {
+    const strip = await server.ssrLoadModule("/src/tabStrip.ts");
+    const tabs = [{ left: 0, width: 100 }, { left: 104, width: 80 }, { left: 188, width: 120 }];
+    assert.equal(strip.insertMarkerLeft(0, tabs), 0, "before the first tab, kept inside the strip");
+    assert.equal(strip.insertMarkerLeft(1, tabs), 101, "centred in the 4px gap");
+    assert.equal(strip.insertMarkerLeft(2, tabs), 185);
+    assert.equal(strip.insertMarkerLeft(3, tabs), 309, "after the last tab");
+    assert.equal(strip.insertMarkerLeft(0, []), 0);
+    const panel = await server.ssrLoadModule("/src/rightPanel.ts");
+    let state = panel.parseRightPanelTabs('{"tabs":["preview","files"],"active":0}');
+    state = panel.focusWebTab(state, "booth-tab-1", "a");
+    state = panel.focusWebTab(state, "booth-tab-2", "b");
+    const fixedMoved = panel.moveTab(state, state.tabs[0].id, 1);
+    assert.equal(panel.sameWebOrder(state, fixedMoved), true, "moving the preview between pages sends no page order");
+    const pageMoved = panel.moveTab(state, state.tabs[3].id, -1);
+    assert.equal(panel.sameWebOrder(state, pageMoved), false);
+  } finally {
     await server.close();
   }
 });

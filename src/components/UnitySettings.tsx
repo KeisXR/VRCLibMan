@@ -69,7 +69,7 @@ export function UnitySettings({ onNotify, onFail }: { onNotify: (message: string
 
   return (
     <>
-      <SettingRow label="既定の Unity" help="VRChat のプロジェクトで使っているバージョンを選んでください。">
+      <SettingRow id="settings-unity-editor" label="既定の Unity" help="VRChat のプロジェクトで使っているバージョンを選んでください。">
         <select value={selected} disabled={busy || status == null} aria-label="既定の Unity" onChange={(e) => void select(e.target.value)}>
           <option value="">未設定</option>
           {status?.selectedMissing && <option value={selected}>見つかりません（{selected}）</option>}
@@ -77,7 +77,7 @@ export function UnitySettings({ onNotify, onFail }: { onNotify: (message: string
         </select>
         {selected && <p className={status?.selectedMissing ? "meta warn-text unity-path" : "meta unity-path"}>{status?.selectedMissing ? "保存した Unity が見つかりません。選び直してください。" : selected}</p>}
       </SettingRow>
-      <SettingRow label="Unity を探す" help="Unity Hub の記録と、既定のインストール先を調べます。見つからないときは「参照…」で Unity 本体を選びます。">
+      <SettingRow id="settings-unity-detect" label="Unity を探す" help="Unity Hub の記録と、既定のインストール先を調べます。見つからないときは「参照…」で Unity 本体を選びます。">
         <div className="inline-control">
           <span className="meta" role="status">{summary}</span>
           <button className="button" type="button" disabled={busy} onClick={() => void detect(true)}>再検出</button>

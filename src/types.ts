@@ -774,6 +774,11 @@ export interface BrowserHostState {
   activeId: string | null;
 }
 export interface BrowserState {
+  /**
+   * Increases with every state the app hands out, so an older state can be told apart and dropped
+   * (`src/browserStore.ts`). The browser preview leaves it out.
+   */
+  revision?: number;
   open: boolean;
   tabs: BrowserTab[];
   /** Active page of the focused host. Each host also has `hosts[].activeId`. */

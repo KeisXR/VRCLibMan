@@ -72,7 +72,7 @@ export function BuiltinBrowserImport() {
 
   return (
     <>
-      <SettingRow label="内蔵ブラウザ" note="BOOTH へのログインと年齢確認は、開いたブラウザで行います。">
+      <SettingRow id="import-builtin-browser" label="内蔵ブラウザ" note="BOOTH へのログインと年齢確認は、開いたブラウザで行います。">
         <div className="row-actions">
           <button className="button secondary" type="button" disabled={busy} onClick={() => void run(() => api.openBoothBrowser())}>
             ブラウザを開く
@@ -83,6 +83,7 @@ export function BuiltinBrowserImport() {
         </div>
       </SettingRow>
       <SettingRow
+        id="import-library-walk"
         label="商品情報を取得"
         help={WALK_HELP}
         note="ファイルはダウンロードしません。"
@@ -183,7 +184,7 @@ export function BuiltinBrowserAccessSettings() {
         インポート画面の「ライブラリ全取得」はライブラリ、ギフト、無料ダウンロードの商品情報を読み込みます。ファイルはダウンロードしません。
         公開の商品情報は1件ずつ、3秒以上あけて確認します。年齢制限の商品は確認しません。
       </p>
-      <label className="field" style={{ maxWidth: 300, marginBottom: 8 }}>
+      <label className="field" id="settings-booth-interval" style={{ maxWidth: 300, marginBottom: 8 }}>
         <span>BOOTHへのアクセス間隔（ライブラリ全取得・購入履歴）</span>
         <select
           value={intervalMs}
@@ -196,7 +197,7 @@ export function BuiltinBrowserAccessSettings() {
         </select>
       </label>
       <p className="meta">短い間隔はアクセス制限やアカウントへの影響の可能性があります。高速設定でも制限を回避するものではありません。</p>
-      <details className="settings-details" onToggle={(event) => { if (event.currentTarget.open) void refreshLog(); }}>
+      <details className="settings-details" id="settings-browser-troubleshooting" onToggle={(event) => { if (event.currentTarget.open) void refreshLog(); }}>
         <summary>内蔵ブラウザのトラブルシューティング</summary>
         <div className="row-actions" style={{ marginTop: 12 }}>
           <button className="button" type="button" onClick={() => void refreshLog()}>

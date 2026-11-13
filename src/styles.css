@@ -615,7 +615,7 @@ button.account-pill:hover { background: var(--hover); }
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  animation: banner-in 160ms ease-out;
+  animation: banner-in var(--motion-fast) var(--ease-out) var(--motion-delay) both;
 }
 .banner.error { color: var(--danger); }
 .banner.notice { color: var(--text); }
@@ -644,6 +644,59 @@ button.account-pill:hover { background: var(--hover); }
   from { opacity: 0; transform: translateY(-4px); }
   to { opacity: 1; transform: none; }
 }
+/* ==== 上部の帯の出入り（通知・失敗・進捗。src/topbarMotion.ts） ====
+   速さは左サイドバーの開閉と同じ: 高さ = --motion-rail（幅と同じ）、不透明度 = --motion-fast（文字・アイコンと同じ）、カーブ = --ease-out。
+   出るときは文字と同じく --motion-delay 遅れて現れる。高さは上の余白で吸収し、下の内容を急に押し下げたり跳ね上げたりしない。
+   --topbar-motion-top / --topbar-motion-height は出始めと閉じ始めにフックが測って置く。閉じた帯は topbar-collapse の終わりで取り除く。
+   動いている間は押せない。prefers-reduced-motion では JS がすぐ出し入れし、先頭の規則で動きも止まる。 */
+:is(.banner, .progress)[data-topbar-motion] {
+  animation:
+    banner-in var(--motion-fast) var(--ease-out) var(--motion-delay) both,
+    topbar-grow var(--motion-rail) var(--ease-out) backwards;
+}
+:is(.banner, .progress)[data-topbar-motion][data-leaving] {
+  pointer-events: none;
+  animation:
+    topbar-fade-out var(--motion-fast) var(--ease-out) forwards,
+    topbar-collapse var(--motion-rail) var(--ease-out) forwards;
+}
+@keyframes topbar-grow {
+  from { margin-top: calc(-1 * var(--topbar-motion-height, 0px)); }
+  to { margin-top: var(--topbar-motion-top, 0px); }
+}
+@keyframes topbar-fade-out {
+  to { opacity: 0; transform: translateY(-4px); }
+}
+@keyframes topbar-collapse {
+  from { margin-top: var(--topbar-motion-top, 0px); }
+  to { margin-top: calc(-1 * var(--topbar-motion-height, 0px)); }
+}
+/* 消えるまでのシークバー。朱にはしない（すぐ下の進捗バーと見分けるため）。角丸に触れないよう左右を角丸の分だけ空けた直線。
+   止まっている間は JS が animation-play-state を paused にする。動きを減らす設定では出さない。 */
+.banner.notice { position: relative; }
+.banner-timer {
+  position: absolute;
+  left: var(--radius-control);
+  right: var(--radius-control);
+  bottom: 0;
+  height: 2px;
+  background: var(--faint);
+  opacity: 0.6;
+  pointer-events: none;
+  transform-origin: left center;
+  transform: scaleX(var(--timer-from, 1));
+  animation-name: banner-timer;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+@keyframes banner-timer {
+  from { transform: scaleX(var(--timer-from, 1)); }
+  to { transform: scaleX(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .banner-timer { display: none; }
+}
+/* ==== 上部の帯の出入りここまで ==== */
 .progress { margin: var(--space-3) var(--space-6) 0; }
 .progress p { margin: 0 0 6px; color: var(--text-secondary); font-size: 13px; }
 /* 「ほか N 件」は文言と同じ行の右端に置き、帯の高さを変えない（右パネルの配置がずれないように）。 */
@@ -661,6 +714,8 @@ button.account-pill:hover { background: var(--hover); }
   height: 100%;
   background: var(--button);
   width: 0;
+  /* 件数ごとにカクカク伸びないよう、幅だけ左サイドバーの幅と同じ速さで動かす */
+  transition: width var(--motion-rail) var(--ease-out);
 }
 .track.indeterminate span {
   width: 40%;
@@ -998,6 +1053,32 @@ button.account-pill:hover { background: var(--hover); }
 .search-page-input { width: 100%; min-width: 0; margin-bottom: var(--space-3); }
 .search-group { margin-top: var(--space-4); }
 .search-group > h2 { margin-bottom: var(--space-2); }
+/* 検索の「画面と設定」: 移動先の行。題・場所・（今は出ない項目なら）注記の3段。 */
+.app-search-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
+  gap: var(--space-2);
+}
+.app-search-link {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  height: 100%;
+  padding: 10px var(--space-3);
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  text-decoration: none;
+  transition: background-color var(--motion) ease;
+}
+.app-search-link:hover { background: var(--hover); text-decoration: none; }
+.app-search-title { font-weight: 650; overflow-wrap: anywhere; }
+.app-search-path, .app-search-note { font-size: 12px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.app-search-more { margin-top: var(--space-2); }
 .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: var(--space-3); }
 .field span { color: var(--text-secondary); font-size: 13px; }
 /* 欄の見出しのすぐ下の説明。行の間は .field の gap で取る。 */
@@ -1272,6 +1353,7 @@ a.tab { display: inline-flex; align-items: center; gap: 6px; text-decoration: no
   container-type: inline-size;
 }
 .right-panel-tabs {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -1284,13 +1366,15 @@ a.tab { display: inline-flex; align-items: center; gap: 6px; text-decoration: no
 .right-panel-tabs[data-more-start] { mask-image: linear-gradient(to right, transparent, #000 24px); }
 .right-panel-tabs[data-more-end] { mask-image: linear-gradient(to left, transparent, #000 24px); }
 .right-panel-tabs[data-more-start][data-more-end] { mask-image: linear-gradient(to right, transparent, #000 24px, #000 calc(100% - 24px), transparent); }
+/* ドラッグ中の挿入線。タブ列の上に重ねて描き、タブを押し動かさない（RightPanel.tsx が left を置く）。 */
 .right-panel-tab-insert {
-  flex: 0 0 2px;
-  align-self: stretch;
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
   width: 2px;
-  margin: 6px 0;
   border-radius: 1px;
   background: var(--button);
+  pointer-events: none;
 }
 .right-panel-tab {
   position: relative;
@@ -2271,6 +2355,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   outline-offset: 2px;
 }
 .choice-row:has(input:checked), .scope-choices label:has(input:checked) { border-color: var(--line-selection); }
+/* 検索の結果から移った先を一瞬だけ示す（src/appSearchJump.ts が 2 秒で外す）。親に切られないよう内側に描く。 */
+.search-jump-target { outline: 2px solid var(--line-selection); outline-offset: -2px; }
 
 /* 部品2: 直線の縦棒（端の丸み --accent-cap は曲線に含めない） */
 .nav-link, .genre-link, .settings-nav button { position: relative; }
@@ -2514,6 +2600,10 @@ html.has-setup-guide .content { padding-bottom: calc(var(--setup-guide-height, 0
 .unity-open-overlay { animation: switch-fade 120ms ease-out; }
 .panel.unity-open-dialog { animation: switch-pop var(--motion) ease-out; }
 .browser-auto-dialog[open] { animation: switch-pop var(--motion) ease-out; }
+/* 商品カード・ヒーローの操作メニュー（下に開く）と「分類を編集」は、ほかのメニュー・ダイアログと揃え、速さは左サイドバーの開閉に合わせる */
+.product-actions-panel { animation: switch-pop-down var(--motion-fast) var(--ease-out); }
+.product-edit-dialog[open] { animation: switch-pop var(--motion-rail) var(--ease-out); }
+.product-edit-dialog[open]::backdrop { animation: switch-fade var(--motion-fast) var(--ease-out); }
 /* ==== 切替の動きここまで ==== */
 
 /* 分類記録 */

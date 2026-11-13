@@ -28,7 +28,6 @@ import {
   EMPTY_PROGRESS,
   applyProgress,
   nextPruneDelay,
-  othersLabel,
   progressStrip,
   pruneProgress,
   workInProgress as anyWorkInProgress,
@@ -44,9 +43,10 @@ import {
 import { SidebarClassificationHint } from "./components/SidebarClassificationHint";
 import { BrandMark, NavIcon, SidebarToggleIcon, type NavIconName } from "./components/navIcons";
 import { RightPanelColumn, RightPanelLauncher, RightPanelProvider, useRightPanelState } from "./components/RightPanel";
-import { ProgressTrack, errorText } from "./ui";
+import { errorText } from "./ui";
 import { BrowserAutoClassification } from "./components/BrowserAutoClassification";
 import { ErrorBanner, NoticeBanner } from "./components/NoticeBanner";
+import { ProgressStripBar } from "./components/ProgressStripBar";
 import type { NoticeAction, NotifyOptions } from "./notice";
 import { noticeAction, useBanners } from "./useBanners";
 
@@ -139,7 +139,7 @@ export default function App() {
   const [hash, setHash] = useState(window.location.hash);
   const [stats, setStats] = useState<LibraryStats | null>(null);
   const [progressBoard, setProgressBoard] = useState<ProgressBoard>(EMPTY_PROGRESS);
-  const { notice, error, notify, fail, setError, dismissNotice, dismissError, runNoticeAction } = useBanners();
+  const { notice, error, notify, fail, setError, dismissNotice, dismissError, removeNotice, removeError, runNoticeAction } = useBanners();
   useAssetUpdateNotice(notify);
   const assetUpdate = useSidebarAssetUpdate(notify, fail);
   const pendingAssetUpdates = assetUpdate.status?.rows.filter((row) => row.enabled && row.changes.length > 0).length ?? 0;
@@ -349,31 +349,11 @@ export default function App() {
     { href: "#/settings", label: "設定", icon: "settings", active: route.page === "settings" },
   ];
 
-  const mainPane = (
-    <div className="main" ref={contentRef} hidden={layout.panelMaximized}>
-      <div className="topbar" ref={topbarRef}>
-        <RightPanelLauncher panel={rightPanel} />
-        {error && <ErrorBanner key={error.id} error={error} onDismiss={dismissError} />}
-        {notice && <NoticeBanner key={notice.id} notice={notice} onDismiss={dismissNotice} onAction={runNoticeAction} />}
-        {strip && (
-          <div className="progress">
-            {strip.others > 0 ? (
-              <div className="progress-head">
-                <p>{strip.entry.message}</p>
-                <span className="progress-more">{othersLabel(strip.others)}</span>
-              </div>
-            ) : (
-              <p>{strip.entry.message}</p>
-            )}
-            <ProgressTrack
-              current={strip.entry.current}
-              total={strip.entry.total}
-              state={strip.entry.state}
-              label={strip.entry.message}
-            />
-          </div>
-        )}
-      </div>
+  // Pages read the shell and the panel through context. Dragging the right panel's edge or a
+  // notice in the top bar draws the app shell again, but not the page itself.
+  const acknowledgeAssetUpdate = assetUpdate.refresh;
+  const routeContent = useMemo(
+    () => (
       <main className={`content ${density}`}>
         {route.page === "avatars" && <AvatarsPage />}
         {route.page === "avatar" && route.id && (
@@ -390,10 +370,23 @@ export default function App() {
           </a>
         </nav>}
         {route.page === "classification-log" && <ClassificationLogPage boothId={route.id} />}
-        {route.page === "asset-update-log" && <AssetUpdateLogPage onAcknowledge={assetUpdate.refresh} />}
+        {route.page === "asset-update-log" && <AssetUpdateLogPage onAcknowledge={acknowledgeAssetUpdate} />}
         {route.page === "import" && <ImportPage />}
         {route.page === "settings" && <SettingsPage />}
       </main>
+    ),
+    [route, density, pendingAssetUpdates, pendingUpdateLabel, acknowledgeAssetUpdate],
+  );
+
+  const mainPane = (
+    <div className="main" ref={contentRef} hidden={layout.panelMaximized}>
+      <div className="topbar" ref={topbarRef}>
+        <RightPanelLauncher panel={rightPanel} />
+        {error && <ErrorBanner key={error.id} error={error} onDismiss={dismissError} onRemoved={removeError} />}
+        {notice && <NoticeBanner key={notice.id} notice={notice} onDismiss={dismissNotice} onAction={runNoticeAction} onRemoved={removeNotice} />}
+        <ProgressStripBar strip={strip} />
+      </div>
+      {routeContent}
     </div>
   );
 
@@ -461,8 +454,8 @@ export default function App() {
               <input
                 className="search"
                 type="search"
-                aria-label="ライブラリを検索"
-                placeholder="ライブラリを検索"
+                aria-label="ライブラリ・設定を検索"
+                placeholder="ライブラリ・設定を検索"
                 value={searchQuery}
                 onChange={(event) => {
                   setSearchQuery(event.target.value);

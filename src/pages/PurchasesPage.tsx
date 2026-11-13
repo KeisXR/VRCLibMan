@@ -359,7 +359,7 @@ function LabelManager({ labels, onChanged }: { labels: PurchaseLabel[]; onChange
   }
 
   return (
-    <details className="settings-details purchase-labels">
+    <details className="settings-details purchase-labels" id="purchase-labels">
       <summary>ラベルを管理（{labels.length}）</summary>
       <p className="meta">ラベルは商品ごとに付けます。「{GIFT_LABEL}」は注文ごとの印で、各注文の右上で切り替えます。</p>
       {labels.length > 0 && (
@@ -467,7 +467,7 @@ function PurchaseHistoryView({
   const activeFilters = [labelFilter, group, year].filter(Boolean).length;
   return (
     <div className="purchase-history" ref={top}>
-      <div className="purchase-filters purchase-search-row">
+      <div className="purchase-filters purchase-search-row" id="purchase-search">
         <input
           className="search"
           type="search"
@@ -748,14 +748,14 @@ export function PurchasesPage({ view, group }: { view: PurchaseView; group?: str
         </div>
         <div className="row-actions">
           {status && !empty && (
-            <label className="switch-label purchase-price-toggle">
+            <label className="switch-label purchase-price-toggle" id="purchase-show-prices">
               <input type="checkbox" checked={status.showPrices} onChange={(event) => void togglePrices(event.target.checked)} />
               <span>金額を表示</span>
             </label>
           )}
           {builtinBrowser && (
             // 読み込み済みなら閲覧が主役なので、読み込みは副操作の見た目にする。
-            <button className={empty ? "button primary" : "button secondary"} type="button" disabled={running} onClick={() => void read()}>
+            <button id="purchase-read" className={empty ? "button primary" : "button secondary"} type="button" disabled={running} onClick={() => void read()}>
               購入履歴を読み込む
             </button>
           )}

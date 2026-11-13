@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
-import { api, listenBrowserChanged, reportBrowserPanel } from "../api";
+import { api, reportBrowserPanel } from "../api";
 import { useShell } from "../App";
 import { browserPanelVisible, coveringRects, panelRect } from "../browserPanel";
+import { refreshBrowserState, subscribeBrowserState, useBrowserSelection } from "../browserStore";
+import type { BrowserSnapshot } from "../browserStore";
 import { FLOAT_PANEL_MOVED_EVENT } from "../floatingPanel";
 import type { BrowserState } from "../types";
 import { errorText } from "../ui";
@@ -11,47 +13,99 @@ import type { RightPanelValue } from "./RightPanel";
 
 type HostInfo = Pick<BrowserState, "open" | "host" | "panelSupported">;
 
-/** Where the browser is shown. Only the host and the OS support are read, never page addresses. */
+type HostView = { info: HostInfo | null; error: string };
+
+function selectHost({ state, error }: BrowserSnapshot): HostView {
+  // A failed re-read keeps the last known host, so a passing error does not unmount the page.
+  if (state) return { info: { open: state.open, host: state.host, panelSupported: state.panelSupported }, error: "" };
+  return { info: null, error };
+}
+
+function sameHost(a: HostView, b: HostView): boolean {
+  if (a.error !== b.error) return false;
+  if (!a.info || !b.info) return a.info === b.info;
+  return a.info.open === b.info.open && a.info.host === b.info.host && a.info.panelSupported === b.info.panelSupported;
+}
+
+/**
+ * Where the browser is shown. Only the host and the OS support are read, never page addresses.
+ * Title and loading changes do not draw this tab again. The separate window can also be closed
+ * from the OS; the shared slow re-read keeps this in step.
+ */
 function useBrowserHost() {
-  const [info, setInfo] = useState<HostInfo | null>(null);
-  const [error, setError] = useState("");
-  const reading = useRef(false);
-  const again = useRef(false);
-  const alive = useRef(false);
-  const load = useCallback(function load() {
-    if (reading.current) { again.current = true; return; }
-    reading.current = true;
-    void api.browserState().then(
-      (state) => { if (alive.current) { setInfo({ open: state.open, host: state.host, panelSupported: state.panelSupported }); setError(""); } },
-      (err: unknown) => { if (alive.current) { setInfo(null); setError(errorText(err)); } },
-    ).finally(() => {
-      reading.current = false;
-      if (again.current && alive.current) { again.current = false; load(); }
-    });
-  }, []);
+  const { info, error } = useBrowserSelection(selectHost, sameHost, { poll: true });
+  return { info, error, reload: refreshBrowserState };
+}
+
+/** At most one page image per this many ms while pages change (macOS draws one; elsewhere there is none). */
+export const SNAPSHOT_MIN_MS = 500;
+
+/**
+ * Pulls the page image shown while a menu covers the native page. One pull runs at a time.
+ * `now` is for the moments right before the page may be covered; `soon` follows page changes
+ * at most every SNAPSHOT_MIN_MS.
+ */
+function useSnapshotPull(docked: boolean) {
+  const [snapshot, setSnapshot] = useState<string | null>(null);
+  const puller = useRef<{ now: () => void; soon: () => void }>({ now: () => {}, soon: () => {} });
   useEffect(() => {
-    let cancelled = false;
-    alive.current = true;
-    let stop = () => {};
-    load();
-    void listenBrowserChanged(() => {
-      if (!cancelled) load();
-    }).then((unlisten) => {
-      if (!cancelled) stop = unlisten;
-      else unlisten();
-    });
-    // The separate window can also be closed from the OS; a slow re-read keeps this in step.
-    const poll = window.setInterval(() => {
-      if (!cancelled) load();
-    }, 2000);
-    return () => {
-      cancelled = true;
-      alive.current = false;
-      stop();
-      window.clearInterval(poll);
+    if (!docked) {
+      setSnapshot(null);
+      return;
+    }
+    let alive = true;
+    let running = false;
+    let queued = false;
+    let last = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const run = () => {
+      if (!alive) return;
+      if (running) {
+        queued = true;
+        return;
+      }
+      running = true;
+      last = Date.now();
+      void api
+        .browserPanelSnapshot()
+        .then(
+          (next) => {
+            if (alive && next) setSnapshot(next);
+          },
+          () => undefined,
+        )
+        .finally(() => {
+          running = false;
+          if (queued) {
+            queued = false;
+            soon();
+          }
+        });
     };
-  }, [load]);
-  return { info, error, reload: load };
+    const soon = () => {
+      if (!alive || timer !== null) return;
+      timer = setTimeout(() => {
+        timer = null;
+        run();
+      }, Math.max(0, last + SNAPSHOT_MIN_MS - Date.now()));
+    };
+    const now = () => {
+      if (timer !== null) clearTimeout(timer);
+      timer = null;
+      run();
+    };
+    puller.current = { now, soon };
+    now();
+    const stop = subscribeBrowserState(soon);
+    return () => {
+      alive = false;
+      if (timer !== null) clearTimeout(timer);
+      stop();
+      puller.current = { now: () => {}, soon: () => {} };
+    };
+  }, [docked]);
+  const pullNow = useCallback(() => puller.current.now(), []);
+  return { snapshot, pullNow };
 }
 
 /**
@@ -158,49 +212,18 @@ export function BrowserPanelTab({
   const { refresh, refreshAccount, fail } = useShell();
   const { info, error: hostError, reload } = useBrowserHost();
   const [working, setWorking] = useState(false);
-  const [snapshot, setSnapshot] = useState<string | null>(null);
   const viewport = useRef<HTMLDivElement>(null);
   const docked = info?.host === "panel";
-  const refreshSnapshot = useCallback(() => {
-    void api.browserPanelSnapshot().then(
-      (next) => {
-        if (next) setSnapshot(next);
-      },
-      () => undefined,
-    );
-  }, []);
+  const { snapshot, pullNow: refreshSnapshot } = useSnapshotPull(docked);
   useDockedArea(viewport, docked, refreshSnapshot);
 
+  // The tab strip sits above the page; a pointer there may be about to open a menu over it.
   useEffect(() => {
-    if (!docked) {
-      setSnapshot(null);
-      return;
-    }
-    let alive = true;
-    let stop = () => {};
-    const pull = () => {
-      void api.browserPanelSnapshot().then(
-        (next) => {
-          if (alive && next) setSnapshot(next);
-        },
-        () => undefined,
-      );
-    };
-    pull();
-    void listenBrowserChanged(() => {
-      if (alive) pull();
-    }).then((unlisten) => {
-      if (alive) stop = unlisten;
-      else unlisten();
-    });
+    if (!docked) return;
     const head = viewport.current?.closest(".right-panel")?.querySelector(".right-panel-head");
-    head?.addEventListener("pointerenter", pull);
-    return () => {
-      alive = false;
-      stop();
-      head?.removeEventListener("pointerenter", pull);
-    };
-  }, [docked]);
+    head?.addEventListener("pointerenter", refreshSnapshot);
+    return () => head?.removeEventListener("pointerenter", refreshSnapshot);
+  }, [docked, refreshSnapshot]);
 
   async function run(task: () => Promise<unknown>) {
     setWorking(true);

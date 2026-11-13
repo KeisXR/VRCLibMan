@@ -274,13 +274,22 @@ pub fn diagnostic(app: &AppHandle) -> Result<BrowserDiagnostic, String> {
     })
 }
 
+/// Every browser command checks this on the UI thread. The setting is kept in memory after the
+/// first read (`db::cached_builtin_browser`), so a long import holding the database does not stall
+/// tab changes, and the check reads one row rather than every setting.
 pub(crate) fn browser_enabled(app: &AppHandle) -> Result<(), String> {
-    let state = app.state::<crate::AppState>();
-    let connection = state
-        .db
-        .lock()
-        .map_err(|_| "データベースをロックできません".to_string())?;
-    if !db::settings(&connection)?.builtin_browser {
+    let enabled = match db::cached_builtin_browser() {
+        Some(enabled) => enabled,
+        None => {
+            let state = app.state::<crate::AppState>();
+            let connection = state
+                .db
+                .lock()
+                .map_err(|_| "データベースをロックできません".to_string())?;
+            db::builtin_browser(&connection)?
+        }
+    };
+    if !enabled {
         return Err("内蔵ブラウザは設定で有効にしてから使います".into());
     }
     Ok(())

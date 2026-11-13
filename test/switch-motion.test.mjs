@@ -1,5 +1,5 @@
 // 切替の動き（styles.css の「切替の動き」ブロック）の決まりを確かめる。
-// 決まり: 動かすのは opacity と transform だけ。長さは 120〜200ms。
+// 決まり: 動かすのは opacity と transform だけ。長さは 120〜200ms（--motion、左サイドバーと同じ --motion-fast / --motion-rail も可）。
 // prefers-reduced-motion では全体の animation / transition を止める。詳細は docs/design/README.md「動き」。
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -26,14 +26,14 @@ test("keyframes は opacity と transform だけを動かす", () => {
   }
 });
 
-test("animation の長さは --motion か 120〜200ms", () => {
+test("animation の長さは --motion・左サイドバーと同じ変数か 120〜200ms", () => {
   for (const [, value] of block().matchAll(/animation:\s*([^;]+);/g)) {
     const ms = value.match(/(\d+)ms/);
     if (ms) {
       const n = Number(ms[1]);
       assert.ok(n >= 120 && n <= 200, `${value} の長さ`);
     } else {
-      assert.match(value, /var\(--motion\)/, `${value} の長さ`);
+      assert.match(value, /var\(--motion(-fast|-rail)?\)/, `${value} の長さ`);
     }
   }
   assert.match(css, /--motion:\s*160ms/);

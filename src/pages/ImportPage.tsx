@@ -307,13 +307,13 @@ export function ImportPage() {
               拡張か内蔵ブラウザで商品情報を送ります。受け取った商品は、次の「分類」で整理できます。
             </p>
           </header>
-          <details className="settings-details"><summary>商品を管理・除外</summary><ProductExclusions /></details>
+          <details className="settings-details" id="import-exclusions"><summary>商品を管理・除外</summary><ProductExclusions /></details>
           {integration?.mode !== "browser" && <><SettingRow label="拡張機能" help={receiverStatus}>
             <SettingsLink section="settings-booth">
               読み込み方とペアリングの設定
             </SettingsLink>
           </SettingRow>
-          <details className="settings-details">
+          <details className="settings-details" id="import-extension-help">
             <summary>拡張機能の使い方・受信履歴</summary>
             <ExtensionInstructions />
           {integration?.extensionLastSeenAt && (
@@ -421,7 +421,7 @@ export function ImportPage() {
             </p>
           )}
           <StaleReclassifyRow busy={busy || extractRunning} onExtract={() => void extract("stale")} />
-          <details className="settings-details">
+          <details className="settings-details" id="import-reclassify-all">
             <summary>すべて再分類</summary>
             <p className="note-strong">
               既存の分類結果を上書きすることがあります。手動で固定した情報は維持します。
@@ -459,7 +459,7 @@ export function ImportPage() {
               フォルダを調べる
             </button>
           </SettingRow>
-          <SettingRow label="ダウンロード済みファイルを登録" help="Downloads や別のフォルダを選び、ZIP・Unitypackage を BOOTH の配布ファイル名と照合します。取り込むときに、元の場所のまま登録するか、ライブラリへコピーするかを選べます。" note="選んだだけではファイルは移動しません。">
+          <SettingRow id="import-register-existing" label="ダウンロード済みファイルを登録" help="Downloads や別のフォルダを選び、ZIP・Unitypackage を BOOTH の配布ファイル名と照合します。取り込むときに、元の場所のまま登録するか、ライブラリへコピーするかを選べます。" note="選んだだけではファイルは移動しません。">
             <button className="button secondary" type="button" disabled={busy} onClick={() => void findExisting()}>取り込み元を選ぶ</button>
           </SettingRow>
           {existingPreview && <div className="panel">
@@ -519,9 +519,9 @@ export function ImportPage() {
         </section>
         <section className="settings-section">
           <header>
-            <h2>その他</h2>
+            <h2 id="import-other">その他</h2>
           </header>
-          <details className="settings-details">
+          <details className="settings-details" id="import-json">
             <summary>JSON ファイルから読み込む</summary>
                         <div
               className={over ? "drop over" : "drop"}
@@ -560,7 +560,7 @@ export function ImportPage() {
               </span>
             </label>
           </details>
-          <details className="settings-details">
+          <details className="settings-details" id="import-free-product">
             <summary>ライブラリにない無料商品を追加</summary>{" "}
             <form
               className="panel"
