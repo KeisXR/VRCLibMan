@@ -681,6 +681,8 @@ pub async fn launch_unity_packages(
         match mode {
             crate::unity_import::LaunchMode::Unity => {
                 let editor = crate::unity_import::editor_from_setting(&selected)?;
+                let running = crate::unity_import::running_editor_paths();
+                crate::unity_import::require_running_editor(&editor, running.as_deref())?;
                 crate::unity_import::launch_with_editor(
                     &editor,
                     &packages,
