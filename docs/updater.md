@@ -49,11 +49,11 @@ Windows x64 の NSIS 配布版、Apple Silicon Mac の .app、Linux x86_64 / aar
 - マイナー: 一般的な機能の追加。
 - パッチ: 不具合の修正と小さな調整。
 
-1つの版に複数の種類が入るときは、いちばん大きいものに合わせます。拡張の版はこの規則と別に、拡張を変更したときに上げます。
+1つの版に複数の種類が入るときは、いちばん大きいものに合わせます。拡張の版はアプリの版と同じ番号にし、アプリと一緒に上げます。拡張はアプリに同梱され、更新後の起動でアプリのローカルデータの `browser-extension` が同じ版に置き換わり、そこから読み込んだ拡張は自分で読み込み直します。
 
 ## 版を公開する
 
-1. アプリの版を `package.json`、`package-lock.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` で揃えて上げます。拡張の版は `extension/manifest.json` で独立して管理し、拡張を変更したときに上げます。
+1. アプリの版を `package.json`、`package-lock.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` で揃えて上げます。`extension/manifest.json` の版も同じ番号に上げます。`scripts/check-release-version.mjs` が 6 か所を照合します。拡張の版は数字だけなので、`-beta` などの接尾辞は付けません。
 2. `.github/release-notes/<アプリ版>.md` にその版の利用者向け変更を記載し、main にマージします。版別ファイルがなければリリース本文の生成は失敗します。
 3. main に含まれるコミットへ `v<版>` タグを付けて push します。`.github/workflows/release.yml` が下書き Release を作り、Windows NSIS、Apple Silicon dmg、Linux の両 CPU の AppImage、拡張 zip を載せます。
 4. 全4ターゲットのビルドと最後の `publish complete updater manifest` の成功後に、インストーラ、dmg、更新用 `.app.tar.gz`、両 CPU の `.AppImage`、対応する `.sig`、拡張 zip、`latest.json` と本文を確認します。`latest.json` には `windows-x86_64`、`darwin-aarch64`、`linux-x86_64-appimage`、`linux-aarch64-appimage` が必要です。

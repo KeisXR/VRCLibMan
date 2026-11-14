@@ -133,10 +133,24 @@ pub fn integration_status(state: State<'_, AppState>) -> Result<crate::integrati
 }
 
 #[tauri::command]
+pub fn extension_package_status(app: AppHandle) -> Result<crate::extension_package::PackageStatus, String> {
+    crate::extension_package::status(&app)
+}
+
+#[tauri::command]
+pub fn install_extension_package(app: AppHandle) -> Result<crate::extension_package::PackageStatus, String> {
+    crate::extension_package::install(&app)
+}
+
+#[tauri::command]
 pub fn set_booth_import_mode(app: AppHandle, state: State<'_, AppState>, mode: String) -> Result<(), String> {
     let mut connection = db(&state)?;
     crate::integration::set_mode(&mut connection, &mode)?;
     drop(connection);
+    if mode != "browser" {
+        // 拡張を使い始めるときは、読み込ませるフォルダを先に用意しておく。失敗しても設定は保存済み。
+        let _ = crate::extension_package::refresh(&app, true);
+    }
     let _ = app.emit("library-changed", ());
     Ok(())
 }

@@ -1433,47 +1433,48 @@ test("setup, import and version flows with synthetic local data", async (t) => {
   }
 });
 
-test("extension popup displays manifest version and sends it only on local requests", async () => {
-  const { document } = parseHTML(readFileSync("extension/popup.html", "utf8"));
+test("extension settings show the manifest version, and local requests carry it", async () => {
+  const { window } = parseHTML(readFileSync("extension/options.html", "utf8"));
+  const document = window.document;
   const manifest = JSON.parse(readFileSync("extension/manifest.json", "utf8"));
-  const requests = [];
+  const sent = [];
   const context = vm.createContext({
     document,
+    Node: window.Node,
+    window: { confirm: () => true },
+    navigator: {},
     setTimeout,
     URL,
-    Blob,
+    Date,
     chrome: {
-      runtime: { getManifest: () => manifest },
+      runtime: {
+        getManifest: () => manifest,
+        sendMessage: async (message) => {
+          sent.push(message.type);
+          return { hasToken: true, status: 200, routeDownloads: false };
+        },
+      },
       storage: {
         onChanged: { addListener() {} },
         local: {
-          get: async () => ({
-            pairingToken: "DUMMY-CODE",
-            routeDownloads: false,
-            pendingDeliveries: [], downloadIntents: [], deliveryError: "",
-          }),
+          get: async (defaults) => ({ ...defaults, pairingToken: "abcd2345", lastConnection: { at: new Date().toISOString(), status: 200 } }),
           set: async () => {},
         },
       },
     },
-    fetch: async (url, options) => {
-      requests.push({ url, options });
-      return { ok: true, status: 200, json: async () => ({ enabled: false }) };
-    },
   });
-  vm.runInContext(readFileSync("extension/request-policy.js", "utf8"), context);
-  vm.runInContext(readFileSync("extension/popup.js", "utf8"), context);
-  for (let i = 0; i < 20 && requests.length < 2; i++) await delay();
-  assert.equal(
-    document.querySelector("#extension-version").textContent,
-    `拡張機能 v${manifest.version}`,
-  );
-  assert.equal(requests.length, 2);
-  for (const request of requests) {
-    assert.ok(request.url.startsWith("http://127.0.0.1:17321/"));
-    assert.equal(
-      request.options.headers["X-VRCLibMan-Extension-Version"],
-      manifest.version,
-    );
+  for (const file of ["shared.js", "request-policy.js", "ui.js", "options.js"]) {
+    vm.runInContext(readFileSync(`extension/${file}`, "utf8"), context);
   }
+  for (let i = 0; i < 20 && !sent.includes("connection"); i++) await delay();
+  await delay();
+  assert.equal(document.querySelector("#version").textContent, `拡張 ${manifest.version}`);
+  assert.equal(document.querySelector("#token").value, "ABCD-2345");
+  assert.equal(document.querySelector("#link-chip").textContent, "接続中");
+  assert.match(document.querySelector("#link-note").textContent, /最後の通信：今日/);
+  const shared = vm.runInContext("VrcLibManShared", context);
+  const headers = shared.localHeaders("DUMMY-CODE", manifest.version, true);
+  assert.equal(headers["X-VRCLibMan-Extension-Version"], manifest.version);
+  assert.equal(headers.Authorization, "Bearer DUMMY-CODE");
+  assert.ok(shared.LOCAL_BASE.startsWith("http://127.0.0.1:17321"));
 });

@@ -41,7 +41,8 @@
     "longDescription": "持っている VRChat / Booth のアバターと、同じ素体で着られる衣装・髪・ギミックを、手元の PC だけで整理します。",
     "resources": {
       "../LICENSE": "LICENSE",
-      "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md"
+      "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
+      "../extension/": "extension/"
     },
     "icon": [
       "icons/32x32.png",

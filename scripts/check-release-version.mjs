@@ -1,6 +1,6 @@
 // Checks that every place carrying the app version agrees, and (when given) that the
-// release tag is "v" + that version. The Chrome extension keeps its own version in
-// extension/manifest.json; it is only checked for a valid Chrome version format.
+// release tag is "v" + that version. The Chrome extension ships with the same version
+// number as the app (extension/manifest.json), so it is checked with the others.
 //
 // usage: node scripts/check-release-version.mjs [--tag vX.Y.Z]
 // Writes app_version / extension_version to $GITHUB_OUTPUT when it is set.
@@ -34,15 +34,15 @@ const sources = {
   "src-tauri/tauri.conf.json": readJson("src-tauri/tauri.conf.json").version,
   "src-tauri/Cargo.toml": packageSection.match(/^version\s*=\s*"([^"]+)"/m)?.[1],
   "src-tauri/Cargo.lock": lockVersion,
+  "extension/manifest.json": readJson("extension/manifest.json").version,
 };
-const extensionVersion = readJson("extension/manifest.json").version;
+const extensionVersion = sources["extension/manifest.json"];
 
 const errors = [];
 for (const [file, version] of Object.entries(sources)) {
   console.log(`${file}: ${version ?? "(not found)"}`);
   if (!version) errors.push(`${file} にアプリの版がありません`);
 }
-console.log(`extension/manifest.json: ${extensionVersion ?? "(not found)"} (拡張は独立した版。タグとは照合しない)`);
 
 const appVersion = sources["package.json"];
 const distinct = new Set(Object.values(sources).filter(Boolean));
@@ -57,7 +57,7 @@ if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(appVersion ?? "")) {
   errors.push(`アプリの版 ${appVersion} は X.Y.Z 形式ではありません`);
 }
 if (!/^\d+(?:\.\d+){0,3}$/.test(extensionVersion ?? "")) {
-  errors.push(`拡張の版 ${extensionVersion} は Chrome の版の形式（数字を . で 1〜4 個）ではありません`);
+  errors.push(`拡張の版 ${extensionVersion} は Chrome の版の形式（数字を . で 1〜4 個）ではありません。アプリの版に付ける -beta などは拡張では使えません`);
 }
 if (tag && tag !== `v${appVersion}`) {
   errors.push(`タグ ${tag} がアプリの版と一致しません。v${appVersion} を打つか、版を ${tag.replace(/^v/, "")} に上げてください`);

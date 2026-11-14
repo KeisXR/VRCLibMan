@@ -18,13 +18,34 @@
       .map(file => ({ product, file })));
     return rows.length === 1 ? rows[0] : null;
   }
+  // The first product with this ID on the page. Pages list each product once after dedupe.
+  function productById(products, id) {
+    if (!/^\d{4,12}$/.test(id || '')) return null;
+    return (products || []).find(product => product && String(product.boothId) === id) || null;
+  }
+  // Short state marks. 「所持」 means an owned variation was imported; it is not proof of a paid purchase.
+  function chips(row) {
+    if (!row?.registered) return [{ text: '未登録', tone: 'warn' }];
+    const result = [row.owned ? { text: '所持', tone: 'good' } : { text: '登録のみ', tone: '' }];
+    if (row.localRecorded) result.push({ text: '保存記録あり', tone: 'good' });
+    else result.push({ text: row.filesKnown ? '保存記録なし' : 'ファイル情報未取得', tone: '' });
+    return result;
+  }
   function labels(row) {
-    if (!row?.registered) return ['未登録'];
-    return [row.owned ? '所持確認済み' : '登録済み（所持未確認）', row.localRecorded ? '保存記録あり' : row.filesKnown ? '保存記録なし' : 'ファイル情報未取得'];
+    return chips(row).map(chip => chip.text);
+  }
+  function avatarNames(row) {
+    return (row?.avatars || []).map(avatar => avatar.name + (avatar.viaBaseBody ? '・共通素体' : ''));
+  }
+  function saved(row, downloadableId) {
+    return Boolean(row?.savedFiles?.includes(downloadableId));
   }
   function matches(row, avatar) {
     // Unknown compatibility is retained, never presented as incompatible.
     return !avatar || !row?.avatars?.length || row.avatars.some(a => a.id === avatar);
   }
-  return { boothUrl, downloadId, choose, labels, matches };
+  function isAsset(filename) {
+    return /\.(zip|unitypackage|rar|7z|vrm)$/i.test(String(filename || ''));
+  }
+  return { boothUrl, downloadId, choose, productById, chips, labels, avatarNames, saved, matches, isAsset };
 });

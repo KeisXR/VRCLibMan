@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <title>VRCLibMan の設定</title>
+    <link rel="stylesheet" href="ui.css" />
+    <style>
+      .page { max-width: 640px; margin: 24px auto; }
+      #diagnosis { width: 100%; min-height: 8em; font: 11px/1.4 ui-monospace, monospace; white-space: pre; }
+      .privacy { padding: 10px 0 0; border-top: 1px solid var(--line); }
+      .privacy summary { cursor: pointer; font-weight: 500; width: fit-content; }
+      .privacy > div { margin-top: 6px; }
+      .privacy p + p { margin-top: 6px; }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header class="head">
+        <img class="logo" src="icons/icon-32.png" alt="" width="22" height="22" />
+        <span class="name">VRCLibMan の設定</span>
+        <span class="grow"></span>
+        <span id="version" class="note num"></span>
+      </header>
+      <main class="body">
+        <section class="card" aria-labelledby="h-link">
+          <h2 id="h-link" class="h">アプリとの接続</h2>
+          <div class="setrow">
+            <label class="settext" for="token"><b>ペアリングコード</b><span class="note">アプリの「設定 → BOOTH」に出るコードです。コードを作り直したときは、ここも保存し直します。</span></label>
+            <input id="token" class="field auto num" type="text" size="11" autocomplete="off" spellcheck="false" placeholder="XXXX-XXXX" />
+            <button id="save-token" class="btn secondary" type="button">接続を確認</button>
+          </div>
+          <div class="setrow">
+            <div class="settext"><b>状態</b><span id="link-note" class="note num"></span></div>
+            <span id="link-chip" class="chip">確認中</span>
+          </div>
+        </section>
+
+        <section class="card" aria-labelledby="h-read">
+          <h2 id="h-read" class="h">読み込み</h2>
+          <div class="setrow">
+            <label class="settext" for="booth-interval"><b>BOOTH へのアクセス間隔</b><span class="note">短い間隔ほど、アクセス制限やアカウントへの影響の可能性が上がります。速くしてもアクセス制限は回避しません。</span></label>
+            <select id="booth-interval" class="field auto">
+              <option value="1000">1.0 秒（推奨）</option>
+              <option value="500">0.5 秒（やや速い）</option>
+              <option value="250">0.25 秒（高リスク）</option>
+            </select>
+          </div>
+          <div class="setrow">
+            <label class="settext" for="auto-purchase"><b>購入完了ページを自動で登録する</b><span class="note">本人が開いた購入完了ページの商品と注文番号だけを読み、アプリの分類待ちと購入履歴に入れます。購入履歴や注文詳細のページを開いたときも、そのページだけを送ります。</span></label>
+            <input id="auto-purchase" class="switch" type="checkbox" />
+          </div>
+        </section>
+
+        <section class="card" aria-labelledby="h-download">
+          <h2 id="h-download" class="h">ダウンロード</h2>
+          <div class="setrow">
+            <label class="settext" for="route-downloads"><b>ダウンロードを自動整理</b><span class="note">BOOTH で取得した Unity / VRChat 用ファイルを、ダウンロードフォルダの VRCLibMan/商品ID を経由して、アプリのライブラリフォルダへ移します。アプリに接続できないときは、そのフォルダに残ります。</span></label>
+            <input id="route-downloads" class="switch" type="checkbox" />
+          </div>
+        </section>
+
+        <section class="card" aria-labelledby="h-badges">
+          <h2 id="h-badges" class="h">BOOTH 上の表示</h2>
+          <div class="setrow">
+            <label class="settext" for="show-badges"><b>商品に所持と対応アバターを表示する</b><span class="note">アプリに登録されている商品だけに出します。購入ライブラリでは、未登録の商品に「LibMan に登録」を出します。</span></label>
+            <input id="show-badges" class="switch" type="checkbox" />
+          </div>
+        </section>
+
+        <section class="card" aria-labelledby="h-help">
+          <h2 id="h-help" class="h">困ったとき</h2>
+          <div class="setrow">
+            <div class="settext"><b>診断情報</b><span class="note">最後に使った BOOTH のタブの、ページの形だけを調べます。商品名やファイル名は含めません。</span></div>
+            <button id="diagnose" class="btn secondary" type="button">診断情報をコピー</button>
+          </div>
+          <textarea id="diagnosis" class="field" readonly hidden></textarea>
+          <details class="privacy">
+            <summary>プライバシー</summary>
+            <div>
+              <p class="note">本拡張には、利用者の情報を開発者へ送信する機能はありません。</p>
+              <p class="note">操作した BOOTH のページの商品情報・購入情報を、同じ PC の VRCLibMan に送ります。アプリへ送れない場合は JSON ファイルとして保存します。</p>
+              <p class="note">ライブラリと購入履歴の読み込みでは、ブラウザに既にある BOOTH のログインを使ってページを読みます。説明の補完は Cookie を送らずに読みます。パスワードや Cookie はアプリへ送りません。</p>
+              <p class="note">ペアリングコードと設定、取得中の商品・ファイル情報、未送信通知（保存パスを含む）、最近の取り込みの件数をブラウザ内に保存し、拡張の削除で消せます。書き出した JSON とアプリに送った情報は、拡張を削除しても残ります。</p>
+            </div>
+          </details>
+          <p id="status" class="note" role="status"></p>
+        </section>
+      </main>
+    </div>
+    <script src="shared.js"></script>
+    <script src="request-policy.js"></script>
+    <script src="ui.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>

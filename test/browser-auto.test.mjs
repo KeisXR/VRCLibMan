@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import test from 'node:test';
 import { parseHTML } from 'linkedom';
 const require = createRequire(import.meta.url);
-const { checkout, chooseDownload } = require('../src-tauri/src/browser_auto.cjs');
+const { checkout, chooseDownload } = require('../extension/auto-register.js');
 const href = 'https://checkout.booth.pm/orders/123456?uuid=example';
 function page(items, { event = 'purchased', title = 'ご注文が完了しました', order = '123456' } = {}) {
   return parseHTML(`<html><head><meta name="xrcloud:event" content="${event}"></head><body>

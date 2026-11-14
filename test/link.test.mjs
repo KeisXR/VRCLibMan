@@ -1,61 +1,18 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import test from "node:test";
 import { createContext, runInContext } from "node:vm";
 import { parseHTML } from "linkedom";
 
 const port = "17321";
 const rust = readFileSync("src-tauri/src/local_import.rs", "utf8");
-const popup = readFileSync("extension/popup.js", "utf8");
+const shared = readFileSync("extension/shared.js", "utf8");
+const background = readFileSync("extension/background.js", "utf8");
 const manifest = JSON.parse(readFileSync("extension/manifest.json", "utf8"));
+const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
 const config = JSON.parse(readFileSync("src-tauri/tauri.conf.json", "utf8"));
 const agents = readFileSync("AGENTS.md", "utf8");
-const extract = createRequire(import.meta.url)("../extension/extract.js");
-
-async function popupHarness() {
-  const { window } = parseHTML(readFileSync("extension/popup.html", "utf8"));
-  const stored = {};
-  const handlers = new Map();
-  for (const element of window.document.querySelectorAll("[id]")) {
-    element.addEventListener = (event, handler) => handlers.set(`${element.id}:${event}`, handler);
-  }
-  let request = async () => { throw new Error("not connected"); };
-  const context = createContext({
-    document: window.document,
-    DOMParser: window.DOMParser,
-    window: { confirm: () => true },
-    URL, Blob, setTimeout,
-    fetch: (...args) => request(...args),
-    chrome: {
-      runtime: { getManifest: () => manifest },
-      storage: { onChanged: { addListener() {} }, local: {
-        get: async (defaults) => typeof defaults === "string"
-          ? { [defaults]: stored[defaults] }
-          : { ...defaults, ...stored },
-        set: async (values) => Object.assign(stored, values),
-      } },
-      tabs: { query: async () => [{ id: 1, url: "https://accounts.booth.pm/library" }] },
-    },
-    VrcLibManExtract: extract,
-    VrcLibManRequestPolicy: {
-      DEFAULT_INTERVAL_MS: 1000,
-      normalizeIntervalMs: (value) => [250, 500, 1000].includes(Number(value)) ? Number(value) : 1000,
-      createPacer: () => async () => {},
-      isThrottled: (value) => value === 429 || value === 503,
-    },
-  });
-  runInContext(`${popup}\nglobalThis.popupUnderTest = { refreshLink, sendLibrary };`, context);
-  await context.popupUnderTest.refreshLink();
-  return {
-    api: context.popupUnderTest,
-    document: window.document,
-    stored,
-    handlers,
-    context,
-    setFetch: (handler) => { request = handler; },
-  };
-}
 
 test("main window keeps HTML5 drag and drop for genre moves and JSON drops", () => {
   const main = config.app.windows.find((window) => window.label === "main");
@@ -68,88 +25,138 @@ test("main window keeps HTML5 drag and drop for genre moves and JSON drops", () 
 test("extension and app share the fixed loopback port", () => {
   assert.match(rust, new RegExp(`LOCAL_IMPORT_PORT: u16 = ${port}`));
   assert.match(rust, /127\.0\.0\.1:\{LOCAL_IMPORT_PORT\}/);
-  assert.match(popup, new RegExp(`http://127\\.0\\.0\\.1:\\$\\{LOCAL_PORT\\}`));
-  assert.equal(popup.match(/const LOCAL_PORT = (\d+)/)[1], port);
+  assert.equal(shared.match(/const LOCAL_PORT = (\d+)/)[1], port);
+  assert.match(shared, /http:\/\/127\.0\.0\.1:\$\{LOCAL_PORT\}/);
   assert.deepEqual(manifest.host_permissions.filter((host) => host.startsWith("http://127.0.0.1")), [
     `http://127.0.0.1:${port}/*`,
   ]);
 });
 
-test("popup sends the export to the app and can wake it", () => {
-  assert.match(popup, /credentials:\s*"omit"/);
-  assert.match(popup, /vrclibman:\/\/import/);
-  assert.match(popup, /https:\/\/accounts\.booth\.pm\/library/);
-  assert.equal(popup.includes("chrome.cookies"), false);
-  assert.equal(manifest.permissions.includes("cookies"), false);
-  assert.match(manifest.version, /^\d+\.\d+\.\d+$/);
-  assert.match(agents, /拡張の版は `extension\/manifest\.json` を正本/);
-  assert.deepEqual(config.plugins["deep-link"].desktop.schemes, ["vrclibman"]);
-});
-
-test("popup distinguishes authenticated connections, rejected codes, and unavailable apps", async () => {
-  const harness = await popupHarness();
-  harness.stored.pairingToken = "TESTCODE";
-  for (const [status, expected] of [
-    [200, /アプリに接続しています/],
-    [401, /コードが一致しません/],
-    [403, /接続を許可されていません/],
-    [429, /少し待って/],
-    [null, /アプリに接続できません/],
-  ]) {
-    harness.setFetch(async (url) => {
-      if (url.endsWith("/route-downloads")) return { ok: true, json: async () => ({ enabled: false }) };
-      if (status === null) throw new Error("connection refused");
-      return { status, ok: status === 200 };
-    });
-    await harness.api.refreshLink();
-    assert.match(harness.document.querySelector("#link-status").textContent, expected);
-    assert.equal(harness.document.querySelector("#connection-settings").open, status !== 200);
+test("the extension wakes the app, never reads cookies and carries the app's version", () => {
+  assert.match(background, /credentials: "omit"/);
+  assert.match(shared, /vrclibman:\/\/import/);
+  assert.match(shared, /https:\/\/accounts\.booth\.pm\/library/);
+  for (const file of ["background.js", "content.js", "popup.js", "offscreen.js", "walker.js", "options.js", "sidepanel.js"]) {
+    assert.equal(readFileSync(`extension/${file}`, "utf8").includes("chrome.cookies"), false, file);
   }
+  assert.equal(manifest.permissions.includes("cookies"), false);
+  assert.equal(manifest.version, packageJson.version, "the extension shares the app's version number");
+  assert.match(agents, /拡張の版はアプリの版と同じ番号/);
+  assert.deepEqual(config.plugins["deep-link"].desktop.schemes, ["vrclibman"]);
+  assert.equal(manifest.name, "VRCLibMan");
+  for (const size of ["16", "32", "48", "128"]) assert.equal(manifest.icons[size], `icons/icon-${size}.png`);
 });
 
-test("routing connection failures keep the local choice without claiming the app is stopped", async () => {
-  const harness = await popupHarness();
-  harness.stored.pairingToken = "TESTCODE";
-  harness.document.querySelector("#route-downloads").checked = true;
-  await harness.handlers.get("route-downloads:change")();
-  assert.equal(harness.stored.routeDownloads, true);
-  assert.match(harness.document.querySelector("#status").textContent, /接続できないため.*設定を保存/);
-  assert.doesNotMatch(harness.document.querySelector("#status").textContent, /起動していない/);
+// The real popup script against a browser DOM and an in-memory extension runtime.
+test("the manifest key fixes the extension ID the app accepts, and the app ships the extension", () => {
+  const der = Buffer.from(manifest.key, "base64");
+  const id = createHash("sha256").update(der).digest("hex").slice(0, 32).replace(/[0-9a-f]/g, (digit) => "abcdefghijklmnop"[parseInt(digit, 16)]);
+  assert.equal(rust.match(/OFFICIAL_EXTENSION_ID: &str = "([a-p]{32})"/)[1], id);
+  assert.equal(config.bundle.resources["../extension/"], "extension/");
+  const packaging = readFileSync("src-tauri/src/extension_package.rs", "utf8");
+  assert.match(packaging, /"package\.json"/, "development files stay out of the managed folder");
 });
 
-test("new-purchase imports report only pages actually read and keep file metadata in details", async () => {
-  const harness = await popupHarness();
-  harness.stored.pairingToken = "TESTCODE";
-  const product = (boothId) => ({ boothId, title: "架空の服", url: `https://booth.pm/items/${boothId}`, shop: "架空の工房", descriptionSnippet: "説明".repeat(150) });
-  harness.context.VrcLibManExtract = { ...extract, extractPage: () => [product("9003"), product("9001")] };
-  const libraryRequests = [];
-  let imported;
-  harness.setFetch(async (url, options) => {
-    if (url.endsWith("/known-ids")) return { ok: true, json: async () => ({ ids: ["9001"] }) };
-    if (url.startsWith("https://accounts.booth.pm/library")) {
-      libraryRequests.push(url);
-      return { ok: true, status: 200, text: async () => '<a href="?page=10">10</a>' };
-    }
-    if (url.endsWith("/import")) {
-      imported = JSON.parse(options.body);
-      return { ok: true, json: async () => ({ inserted: 1, updated: 0, unchanged: 0, variations: 2, downloads: 3, warnings: ["一部の情報を確認してください"] }) };
-    }
-    if (url.endsWith("/health")) return { status: 200, ok: true };
-    if (url.endsWith("/route-downloads")) return { ok: true, json: async () => ({ enabled: false }) };
-    throw new Error(`unexpected request: ${url}`);
+async function popupHarness({ stored = {}, tab = { id: 1, url: "https://booth.pm/ja/items/123456", windowId: 1 }, connection = { hasToken: true, status: 200 }, products = [], statuses = [], job = null } = {}) {
+  const { window } = parseHTML(readFileSync("extension/popup.html", "utf8"));
+  const sent = [];
+  const local = { pairingToken: "ABCD-2345", routeDownloads: true, boothIntervalMs: 1000, pendingDeliveries: [], importHistory: [], ...stored };
+  const context = createContext({
+    document: window.document,
+    Node: window.Node,
+    window: { close() {} },
+    URL,
+    Date,
+    setTimeout,
+    chrome: {
+      runtime: {
+        getURL: (path) => `chrome-extension://test/${path}`,
+        openOptionsPage() {},
+        async sendMessage(message) {
+          sent.push(message);
+          if (message.type === "connection") return connection;
+          if (message.type === "product-status") return { products: statuses };
+          if (message.type === "job-start") return { ok: true, id: "job" };
+          return { ok: true };
+        },
+      },
+      storage: {
+        onChanged: { addListener() {} },
+        local: { get: async (defaults) => ({ ...defaults, ...local }), set: async (values) => Object.assign(local, values) },
+        session: { get: async () => ({ job }) },
+      },
+      tabs: { query: async () => [tab], sendMessage: async () => ({ products }), create() {} },
+    },
   });
-  await harness.api.sendLibrary(true);
-  assert.deepEqual(libraryRequests, [
-    "https://accounts.booth.pm/library?page=1",
-    "https://accounts.booth.pm/library/gifts?page=1",
-    "https://accounts.booth.pm/library/free_downloads?page=1",
-  ]);
-  assert.deepEqual(imported.products.map((item) => item.boothId), ["9003"]);
-  const status = harness.document.querySelector("#status").textContent;
-  assert.match(status, /3 ページを確認/);
-  assert.doesNotMatch(status, /10 ページ|ダウンロード|バリエーション/);
-  assert.match(status, /追加 1 件、更新 0 件/);
-  assert.match(status, /一部の情報を確認してください/);
-  assert.match(harness.document.querySelector("#result-breakdown").textContent, /ファイル情報 3 件/);
-  assert.equal(harness.document.querySelector("#result-details").hidden, false);
+  for (const file of ["shared.js", "companion.js", "ui.js", "popup.js"]) {
+    runInContext(readFileSync(`extension/${file}`, "utf8"), context, { filename: file });
+  }
+  for (let i = 0; i < 20; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+  const main = window.document.querySelector("#main");
+  return {
+    document: window.document,
+    sent,
+    local,
+    text: () => main.textContent,
+    buttons: () => [...main.querySelectorAll("button")].map((button) => button.textContent),
+    chip: () => window.document.querySelector("#link-chip").textContent,
+  };
+}
+
+test("without a code the popup only offers pairing; a rejected code says how to fix it", async () => {
+  const unpaired = await popupHarness({ stored: { pairingToken: "" }, connection: { hasToken: false, status: null } });
+  assert.equal(unpaired.chip(), "未接続");
+  assert.match(unpaired.text(), /アプリとつなぐ/);
+  assert.deepEqual(unpaired.buttons(), ["接続する"]);
+  assert.equal(unpaired.document.querySelector("#footer").hidden, true);
+  const rejected = await popupHarness({ connection: { hasToken: true, status: 401 } });
+  assert.match(rejected.text(), /コードが一致しません/);
+  assert.equal(rejected.document.querySelector("input").value, "ABCD-2345");
+});
+
+test("on an item page the popup shows the product's state, one send action and the page's files", async () => {
+  const product = { boothId: "123456", title: "見本の衣装", downloads: [
+    { downloadableId: "555555", filename: "sample_a.zip", variation: "A用" },
+    { downloadableId: "666666", filename: "sample_b.zip", variation: "B用" },
+    { downloadableId: "777777", filename: "readme.pdf", variation: "" },
+  ] };
+  const h = await popupHarness({
+    products: [product],
+    statuses: [{ boothId: "123456", registered: true, owned: true, localRecorded: true, filesKnown: true, savedFiles: ["666666"], avatars: [{ id: "a", name: "見本アバター", viaBaseBody: false }] }],
+  });
+  assert.equal(h.chip(), "接続中");
+  assert.match(h.text(), /見本の衣装/);
+  assert.match(h.text(), /所持.*保存記録あり.*見本アバター/);
+  assert.deepEqual(h.buttons(), ["この商品を送る", "取得"], "the saved file and non-asset files have no button");
+  assert.match(h.text(), /sample_b\.zip/);
+  assert.doesNotMatch(h.text(), /readme\.pdf/);
+  h.document.querySelector("#main button").dispatchEvent(new h.document.defaultView.Event("click"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(structuredClone(h.sent.find((message) => message.type === "job-start")), { type: "job-start", kind: "page", tabId: 1 });
+});
+
+test("while a walk runs, the popup shows its progress with cancel and side panel actions", async () => {
+  const h = await popupHarness({
+    tab: { id: 1, url: "https://accounts.booth.pm/library", windowId: 1 },
+    job: { id: "job", kind: "library", label: "購入ライブラリを読み込み中", state: "running", line: "購入ライブラリ 4 / 12 ページ", current: 4, total: 12, count: 182 },
+  });
+  assert.match(h.text(), /購入ライブラリを読み込み中/);
+  assert.match(h.text(), /182 件/);
+  assert.match(h.text(), /閉じても続きます/);
+  assert.deepEqual(h.buttons(), ["サイドパネルで見る", "中止"]);
+  assert.equal(h.document.querySelector("[role=progressbar]").getAttribute("aria-valuenow"), "33");
+});
+
+test("on the library the popup offers new purchases first, then the full read and the purchase history", async () => {
+  const h = await popupHarness({
+    tab: { id: 1, url: "https://accounts.booth.pm/library/gifts", windowId: 1 },
+    stored: { importHistory: [{ at: new Date().toISOString(), kind: "library-new", inserted: 3 }], pendingDeliveries: [{ id: "x" }] },
+  });
+  assert.match(h.text(), /ギフト/);
+  assert.match(h.text(), /最後の取り込み：今日 .*（追加 3 件）/);
+  assert.deepEqual(h.buttons(), ["新しい購入を送る", "すべて読み込む", "購入履歴を読み込む"]);
+  assert.equal(h.document.querySelector("#pending").hidden, false);
+  assert.equal(h.document.querySelector("#pending-count").textContent, "1");
+  const other = await popupHarness({ tab: { id: 2, url: "https://example.com/", windowId: 1 } });
+  assert.deepEqual(other.buttons(), ["購入ライブラリを開く"]);
 });

@@ -11885,6 +11885,23 @@ pub(crate) fn browser_auto_register(
     if !saved.builtin_browser || !saved.browser_auto_register {
         return Ok(None);
     }
+    auto_register(connection, product, "browser_auto_pending")
+}
+
+/// 拡張が本人の開いた購入完了ページから送った商品。内蔵ブラウザの設定によらず分類待ちに入れる
+/// （拡張側の「購入完了ページを自動で登録する」で止められる）。
+pub(crate) fn extension_auto_register(
+    connection: &mut Connection,
+    product: &serde_json::Value,
+) -> Result<Option<String>, String> {
+    auto_register(connection, product, "extension_import_pending")
+}
+
+fn auto_register(
+    connection: &mut Connection,
+    product: &serde_json::Value,
+    pending_prefix: &str,
+) -> Result<Option<String>, String> {
     let id = product
         .get("boothId")
         .and_then(|v| v.as_str())
@@ -11913,7 +11930,7 @@ pub(crate) fn browser_auto_register(
     if setting(connection, &seen)?.is_none() {
         let p = require_product(connection, id)?;
         if !p.user_confirmed && !classification_pinned(&p) {
-            set_setting(connection, &format!("browser_auto_pending:{id}"), "1")?;
+            set_setting(connection, &format!("{pending_prefix}:{id}"), "1")?;
             connection
                 .execute(
                     "UPDATE products SET needs_review = 1 WHERE booth_id = ?1",

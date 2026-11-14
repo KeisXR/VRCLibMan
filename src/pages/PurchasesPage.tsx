@@ -83,7 +83,15 @@ function PurchaseGuide({ builtinBrowser }: { builtinBrowser: boolean }) {
         </>
       ) : (
         <>
-          <p>購入履歴の読み込みには内蔵ブラウザを使います。設定の「BOOTH の読み込み方」で内蔵ブラウザを選んでから、ここに戻ってください。</p>
+          <p>
+            拡張機能を使う場合は、普段のブラウザで BOOTH にログインし、購入ライブラリか購入履歴のページで拡張のポップアップを開いて「購入履歴を読み込む」を押します。
+            購入履歴を 1 ページずつ読み、そのあと注文の詳細を 1 件ずつ読みます。ポップアップを閉じても続き、進み具合は拡張のサイドパネルに出ます。
+          </p>
+          <p>
+            アクセスの間隔は拡張の設定（初期値 1 秒）に従います。途中で止めても、次は続きから読みます。購入やファイルのダウンロードはしません。
+            このあとの購入は、拡張の設定の「購入完了ページを自動で登録する」がオンなら、購入完了ページを開いたときに記録します。
+          </p>
+          <p>保存するのは、注文番号、注文日時、金額、商品名、ショップ名、ギフトかどうかです。支払方法、住所、ギフト用 URL は保存しません。</p>
           <div className="row-actions">
             <SettingsLink section="settings-booth" className="button">
               設定を開く
@@ -795,7 +803,7 @@ export function PurchasesPage({ view, group }: { view: PurchaseView; group?: str
           {status.pendingDetails > 0 && !running && (
             <p className="meta purchase-pending">
               詳細をまだ読んでいない注文が {status.pendingDetails} 件あります。
-              {builtinBrowser ? "「購入履歴を読み込む」で読み込みます。" : "内蔵ブラウザを有効にすると読み込めます。"}
+              {builtinBrowser ? "「購入履歴を読み込む」で読み込みます。" : "拡張機能の「購入履歴を読み込む」で読み込みます。"}
             </p>
           )}
           {view === "summary" ? (

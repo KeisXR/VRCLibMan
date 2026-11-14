@@ -4,7 +4,7 @@ import test from "node:test";
 import { parseHTML } from "linkedom";
 
 const require = createRequire(import.meta.url);
-const { orderList, orderDetail, parseOrderedAt, parseYen, orderState } = require("../src-tauri/src/purchase_extract.cjs");
+const { orderList, orderDetail, parseOrderedAt, parseYen, orderState } = require("../extension/purchase-extract.js");
 
 // 実際のページの形だけをまねた見本。商品名、ショップ名、金額は架空のもの。
 function listCard(id, state, label, title, at) {

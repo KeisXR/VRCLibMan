@@ -26,6 +26,8 @@ mod remote_sync;
 mod library_walk;
 mod local_import;
 mod extension_status;
+mod extension_purchases;
+mod extension_package;
 mod extension_delivery;
 mod existing_import;
 mod matching;
@@ -201,6 +203,13 @@ pub fn run() {
             }
             crate::remote_sync::start(app.handle());
             crate::asset_updates::start(app.handle());
+            {
+                // 同梱した拡張を、拡張を使う設定か展開済みのときだけ、決まったフォルダへ用意・更新する。
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    let _ = crate::extension_package::refresh_from_settings(&handle);
+                });
+            }
             if let Ok(cache) = app.path().app_cache_dir() {
                 // 「Unityで開く」で取り出した古いパッケージを消す。名前はログに出さない。
                 std::thread::spawn(move || {
@@ -222,6 +231,8 @@ pub fn run() {
             commands::install_app_update,
             commands::import_export,
             commands::extension_link,
+            commands::extension_package_status,
+            commands::install_extension_package,
             commands::integration_status,
             commands::set_booth_import_mode,
             commands::regenerate_extension_token,

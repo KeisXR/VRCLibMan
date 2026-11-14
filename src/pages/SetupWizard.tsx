@@ -357,7 +357,7 @@ export function SetupWizard({
             <p>拡張機能を選択しています。</p>
             <ol className="setup-steps">
               <li>普段のブラウザで BOOTH のライブラリを開き、ログインします。</li>
-              <li>拡張機能の「ライブラリをすべて送る」を押します。</li>
+              <li>拡張機能のポップアップで「すべて読み込む」を押します。</li>
             </ol>
           </>}
           <p className="note-strong">購入・ギフト・無料ダウンロードの商品情報を取得します。ファイルはダウンロードしません。</p>

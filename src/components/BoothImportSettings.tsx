@@ -1,10 +1,11 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { api, openExternal } from "../api";
+import { api, openExternal, revealInFolder } from "../api";
 import { useModalFocus } from "../keyboard";
 import type {
   BoothImportMode,
   ExtensionLink,
+  ExtensionPackage,
   IntegrationStatus,
 } from "../types";
 import { errorText } from "../ui";
@@ -74,33 +75,95 @@ function BuiltinBrowserConfirm({ onAnswer }: { onAnswer: (ok: boolean) => void }
   );
 }
 
+/** 拡張機能を読み込ませるフォルダの状態と、ブラウザへの読み込み方。 */
+export function extensionFolderText(pkg: ExtensionPackage | null): string {
+  if (!pkg) return "確認しています";
+  if (!pkg.bundledVersion) return "このアプリには拡張機能が入っていません。Releases の zip を使ってください。";
+  if (!pkg.installedVersion) return "まだ用意していません。「拡張機能を用意する」を押すと、このフォルダに作ります。";
+  if (pkg.upToDate) return `v${pkg.installedVersion} を用意しています。アプリを更新すると、このフォルダも同じ版に置き換わります。`;
+  return `今は v${pkg.installedVersion} です。アプリには v${pkg.bundledVersion} があります。「用意し直す」で置き換えます。`;
+}
+
 export function ExtensionInstructions({ collapsible = false }: { collapsible?: boolean }) {
+  const [pkg, setPkg] = useState<ExtensionPackage | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void api.extensionPackage().then(
+      (value) => { if (alive) setPkg(value); },
+      (err: unknown) => { if (alive) setError(errorText(err)); },
+    );
+    return () => {
+      alive = false;
+    };
+  }, []);
+  async function prepare() {
+    setBusy(true);
+    try {
+      setPkg(await api.installExtensionPackage());
+      setError("");
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+  const installed = Boolean(pkg?.installedVersion);
   const steps = (
     <div className="extension-instructions">
+      <div className="extension-folder">
+        <span className="meta">拡張機能のフォルダ</span>
+        <code className="extension-path">{pkg?.path ?? "確認しています"}</code>
+        <p className="meta" role="status">{extensionFolderText(pkg)}</p>
+        <div className="row-actions">
+          {installed && pkg && (
+            <>
+              <button
+                className="button secondary"
+                type="button"
+                onClick={() =>
+                  void navigator.clipboard.writeText(pkg.path).then(
+                    () => setCopied(true),
+                    (err: unknown) => setError(errorText(err)),
+                  )
+                }
+              >
+                {copied ? "コピーしました" : "パスをコピー"}
+              </button>
+              <button className="button" type="button" onClick={() => void revealInFolder(pkg.path).catch((err: unknown) => setError(errorText(err)))}>
+                フォルダを開く
+              </button>
+            </>
+          )}
+          {pkg?.bundledVersion && (
+            <button className={installed ? "button" : "button secondary"} type="button" disabled={busy} onClick={() => void prepare()}>
+              {installed ? "用意し直す" : "拡張機能を用意する"}
+            </button>
+          )}
+        </div>
+        {error && <p className="note-strong" role="alert">{error}</p>}
+      </div>
       <ol className="setup-steps">
         <li>
-          GitHub Releases で拡張機能用の zip
-          をダウンロードし、残しておける場所に展開します。インストーラだけでは拡張機能は入りません。
+          Chrome は chrome://extensions、Edge は edge://extensions を開き、デベロッパーモードをオンにします。
         </li>
+        <li>以前に zip から読み込んだ VRCLibMan の拡張機能があれば「削除」します。</li>
         <li>
-          Chrome の chrome://extensions または Edge の edge://extensions
-          を開き、デベロッパーモードをオンにします。「パッケージ化されていない拡張機能を読み込む」で、展開した
-          manifest.json のあるフォルダを選びます。
+          「パッケージ化されていない拡張機能を読み込む」を押し、上のフォルダを選びます。フォルダを選ぶ画面のアドレス欄に、コピーしたパスを貼り付けると早く選べます。
         </li>
-        <li>
-          アプリのペアリングコードを拡張のポップアップに貼り、保存します。
-        </li>
-        <li>
-          「ライブラリを開く」で普段のブラウザの BOOTH
-          にログインし、拡張の「ライブラリをすべて送る」か「新しい購入だけ送る」を押します。
-        </li>
+        <li>拡張機能のアイコンを押し、ペアリングコードを貼って「接続する」を押します。</li>
       </ol>
+      <p className="meta">
+        以後はアプリを更新すると、このフォルダの拡張機能も同じ版に置き換わり、拡張機能が自分で読み込み直します。フォルダを移動・削除しないでください。
+      </p>
       <button
         className="button"
         type="button"
         onClick={() => void openExternal(EXTENSION_RELEASES_URL)}
       >
-        拡張機能の入手先
+        zip で入れる（自動では更新されません）
       </button>
     </div>
   );
