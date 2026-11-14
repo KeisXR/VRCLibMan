@@ -72,6 +72,10 @@ impl Drop for ClearRunning {
     }
 }
 
+/// Commands that only read the database for a screen run off the UI thread
+/// (`#[tauri::command(async)]`). A sync command runs on the UI thread and waits there for this
+/// lock while another command, an extraction or the sync worker holds it, and the whole window
+/// stops responding meanwhile. `read_commands_run_off_the_ui_thread` lists them.
 fn db(state: &AppState) -> Result<MutexGuard<'_, rusqlite::Connection>, String> {
     state
         .db
@@ -87,7 +91,7 @@ pub fn import_export(state: State<'_, AppState>, json: String) -> Result<ImportR
     db::import_export_json(&mut connection, &json)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn extension_link(state: State<'_, AppState>) -> Result<crate::model::ExtensionLink, String> {
     let connection = db(&state)?;
     let token = db::extension_token(&connection)?;
@@ -122,7 +126,7 @@ fn extension_link_view(state: &AppState, token: &str) -> crate::model::Extension
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn integration_status(state: State<'_, AppState>) -> Result<crate::integration::IntegrationStatus, String> {
     let connection = db(&state)?;
     crate::integration::status(&connection)
@@ -137,7 +141,7 @@ pub fn set_booth_import_mode(app: AppHandle, state: State<'_, AppState>, mode: S
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_managed_products(
     state: State<'_, AppState>,
 ) -> Result<Vec<crate::model::ManagedProduct>, String> {
@@ -160,21 +164,21 @@ pub fn set_product_excluded(
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn library_stats(state: State<'_, AppState>) -> Result<LibraryStats, String> {
     let mut connection = db(&state)?;
     let snapshot = db::load_snapshot(&mut connection)?;
     Ok(view::library_stats(&snapshot))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_avatars(state: State<'_, AppState>) -> Result<Vec<AvatarCard>, String> {
     let mut connection = db(&state)?;
     let snapshot = db::load_snapshot(&mut connection)?;
     Ok(view::avatar_cards(&snapshot))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_products_by_category(
     state: State<'_, AppState>,
     category: String,
@@ -188,7 +192,7 @@ pub fn list_products_by_category(
     Ok(view::products_by_ids(&snapshot, &ids))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_products_by_genre(state: State<'_, AppState>, kind: String, genre: Option<String>) -> Result<GenreProducts, String> {
     let mut connection = db(&state)?;
     let genres = crate::genre::kind_genres(&kind).ok_or_else(|| "ジャンルの種類が不正です".to_string())?;
@@ -271,7 +275,7 @@ fn probe_remote_products_blocking(
     Ok(crate::view::remote_product_probes(&snapshot, &probes))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_booth_page_interval(state: State<'_, AppState>) -> Result<u64, String> {
     let connection = db(&state)?;
     db::booth_page_interval_ms(&connection)
@@ -335,7 +339,7 @@ pub async fn set_unity_editor(
     .map_err(|err| format!("Unity の設定を保存できません: {err}"))?
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[allow(non_snake_case)]
 pub fn product_for_edit(
     state: State<'_, AppState>,
@@ -346,7 +350,7 @@ pub fn product_for_edit(
     view::product_edit_view(&snapshot, &boothId).ok_or_else(|| "商品が見つかりません".to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_unlinked_files(
     state: State<'_, AppState>,
     offset: u32,
@@ -357,7 +361,7 @@ pub fn list_unlinked_files(
     Ok(view::unlinked_files_page(&snapshot, offset, limit.clamp(1, 200)))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn classification_log_runs(
     state: State<'_, AppState>,
     offset: u32,
@@ -367,7 +371,7 @@ pub fn classification_log_runs(
     db::run_page(&connection, offset, limit.clamp(1, 200))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[allow(non_snake_case)]
 pub fn classification_log_entries(
     state: State<'_, AppState>,
@@ -379,7 +383,7 @@ pub fn classification_log_entries(
     db::run_entries(&connection, runId, offset, limit.clamp(1, 200))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn classification_log_search(
     state: State<'_, AppState>,
     query: String,
@@ -389,7 +393,7 @@ pub fn classification_log_search(
     db::search_entries(&connection, &query, limit.clamp(1, 200))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn classification_unresolved_names(
     state: State<'_, AppState>,
 ) -> Result<Vec<db::UnresolvedNameCount>, String> {
@@ -418,14 +422,14 @@ pub fn undo_classification_entry(
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_product_options(state: State<'_, AppState>) -> Result<Vec<ProductOption>, String> {
     let mut connection = db(&state)?;
     let snapshot = db::load_snapshot(&mut connection)?;
     Ok(view::product_options(&snapshot))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_knowledge(state: State<'_, AppState>) -> Result<Knowledge, String> {
     let mut connection = db(&state)?;
     db::knowledge(&mut connection)
@@ -444,13 +448,13 @@ pub fn retry_remote_sync(app: AppHandle) -> Result<(), String> {
 }
 
 /// Library search over each product's stored text, including the whole description.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn search_product_ids(state: State<'_, AppState>, query: String) -> Result<Vec<String>, String> {
     let connection = db(&state)?;
     crate::search::product_ids(&connection, &query)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
     let mut connection = db(&state)?;
     db::settings(&mut connection)
@@ -953,7 +957,7 @@ pub fn cancel_booth_purchases() {
     crate::browser::request_purchase_walk_cancel();
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn purchase_history(
     state: State<'_, AppState>,
     query: crate::purchases::PurchaseQuery,
@@ -962,13 +966,13 @@ pub fn purchase_history(
     crate::purchases::page(&connection, &query, crate::browser::purchase_walk_running())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn purchase_status(state: State<'_, AppState>) -> Result<crate::purchases::PurchaseStatus, String> {
     let connection = db(&state)?;
     crate::purchases::status(&connection, crate::browser::purchase_walk_running())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn purchase_summary(
     state: State<'_, AppState>,
     year: Option<i32>,
@@ -1190,7 +1194,7 @@ pub fn register_owned_body(
     db::register_manual_owned_body(&mut connection, &boothId, name.as_deref())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn classification_feedback(state: State<'_, AppState>, scope: String) -> Result<String, String> {
     let connection = db(&state)?;
     db::classification_feedback_json(&connection, &scope)
@@ -1214,7 +1218,7 @@ fn sync_export_app_version(app: &AppHandle) -> String {
 }
 
 /// The manifest alone, so every image reference is `null`. Only `save_sync_export` adds files.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_export_json(
     view: tauri::Webview,
     app: AppHandle,
@@ -1393,7 +1397,7 @@ pub async fn scan_library(
     Ok(report)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn classification_status(
     state: State<'_, crate::AppState>,
 ) -> Result<crate::model::ClassificationStatus, String> {
@@ -1545,7 +1549,7 @@ pub fn cancel_extract(state: State<'_, AppState>) {
     state.cancel_extract.store(true, Ordering::SeqCst);
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn catalog_info(state: State<'_, AppState>) -> Result<CatalogInfo, String> {
     let connection = db(&state)?;
     db::catalog_info(&connection)
@@ -1591,7 +1595,7 @@ pub async fn refresh_avatar_catalog(
     Ok(report)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn setup_status(state: State<'_, AppState>) -> Result<SetupStatus, String> {
     let connection = db(&state)?;
     db::setup_status(&connection)
@@ -2014,7 +2018,7 @@ mod browser_action_tests {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[allow(non_snake_case)]
 pub fn product_avatar_suggestions(state: State<'_, AppState>, boothId: String) -> Result<db::AvatarSuggestions, String> {
     let connection = db(&state)?;
@@ -2022,14 +2026,14 @@ pub fn product_avatar_suggestions(state: State<'_, AppState>, boothId: String) -
 }
 
 /// 「取得した商品の分類」で最初に選んでおく候補。読むだけで保存しない。
-#[tauri::command]
+#[tauri::command(async)]
 #[allow(non_snake_case)]
 pub fn product_genre_suggestion(state: State<'_, AppState>, boothId: String) -> Result<db::GenreSuggestion, String> {
     let connection = db(&state)?;
     db::product_genre_suggestion(&connection, &boothId)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn browser_auto_pending(
     state: State<'_, AppState>,
 ) -> Result<Vec<db::BrowserAutoItem>, String> {
@@ -2050,7 +2054,7 @@ pub fn browser_auto_finish(
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn asset_update_status(view: tauri::Webview, state: State<'_, AppState>) -> Result<crate::asset_updates::Status, String> {
     if view.label() != "main" {
         return Err("この画面からアセットの更新を確認する権限がありません".into());
@@ -2059,7 +2063,7 @@ pub fn asset_update_status(view: tauri::Webview, state: State<'_, AppState>) -> 
     crate::asset_updates::status(&connection)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn asset_update_history(view: tauri::Webview, state: State<'_, AppState>) -> Result<Vec<crate::asset_updates::UpdateRecord>, String> {
     trusted_updater(&view)?;
     let connection = db(&state)?;
@@ -2097,6 +2101,37 @@ pub async fn register_existing_import(view: tauri::Webview, app: AppHandle, path
 
 #[cfg(test)]
 mod settings_thread_tests {
+    /// Attributes written right above `pub fn {name}(`.
+    fn attributes<'a>(source: &'a str, name: &str) -> Vec<&'a str> {
+        let at = source.find(&format!("pub fn {name}(")).unwrap_or_else(|| panic!("{name} exists"));
+        source[..at]
+            .lines()
+            .rev()
+            .take_while(|line| line.trim_start().starts_with("#["))
+            .map(str::trim)
+            .collect()
+    }
+
+    /// The screens read these while switching pages; a sync command would wait for the database
+    /// lock on the UI thread (see `db`).
+    #[test]
+    fn read_commands_run_off_the_ui_thread() {
+        let source = include_str!("commands.rs").replace("\r\n", "\n");
+        for name in [
+            "library_stats", "list_avatars", "list_products_by_category", "list_products_by_genre",
+            "list_product_options", "list_knowledge", "product_for_edit", "list_unlinked_files",
+            "list_managed_products", "search_product_ids", "get_settings", "get_booth_page_interval",
+            "integration_status", "extension_link", "classification_status", "classification_log_runs",
+            "classification_log_entries", "classification_log_search", "classification_unresolved_names",
+            "classification_feedback", "sync_export_json", "catalog_info", "setup_status",
+            "product_avatar_suggestions", "product_genre_suggestion", "browser_auto_pending",
+            "purchase_history", "purchase_status", "purchase_summary", "asset_update_status",
+            "asset_update_history",
+        ] {
+            assert!(attributes(&source, name).contains(&"#[tauri::command(async)]"), "{name} runs off the UI thread");
+        }
+    }
+
     #[test]
     fn settings_saves_run_off_the_ui_thread_but_change_the_tray_on_it() {
         let source = include_str!("commands.rs").replace("\r\n", "\n");
