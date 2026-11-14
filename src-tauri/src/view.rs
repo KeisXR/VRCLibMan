@@ -586,6 +586,9 @@ pub fn unlinked_files_page(snapshot: &Snapshot, offset: u32, limit: u32) -> Unli
     UnlinkedFilesPage { total, files }
 }
 
+/// The counts from a whole snapshot. The app reads them with `db::library_stats`, which must
+/// give the same numbers; tests compare the two.
+#[cfg(test)]
 pub fn library_stats(snapshot: &Snapshot) -> LibraryStats {
     let unextracted = snapshot
         .products
@@ -618,6 +621,9 @@ pub fn library_stats(snapshot: &Snapshot) -> LibraryStats {
     }
 }
 
+/// The options from a whole snapshot. The app reads them with `db::product_options`, which must
+/// give the same list; tests compare the two.
+#[cfg(test)]
 pub fn product_options(snapshot: &Snapshot) -> Vec<ProductOption> {
     let mut options: Vec<ProductOption> = snapshot
         .products

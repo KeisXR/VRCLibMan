@@ -272,10 +272,8 @@ fn report(products: usize, watch: bool, runs: usize) {
     println!("    更新確認の保存値の解析        {}", ms(t_watches));
 
     // コマンド（commands.rs と同じ手順）
-    let (t_stats, stats_json) = time(runs, || {
-        let snapshot = db::load_snapshot(c).unwrap();
-        serde_json::to_string(&view::library_stats(&snapshot)).unwrap()
-    });
+    let (t_stats, stats_json) = time(runs, || serde_json::to_string(&db::library_stats(c).unwrap()).unwrap());
+    assert_eq!(stats_json, serde_json::to_string(&view::library_stats(&snapshot)).unwrap(), "counts read with SQL");
     let (t_cards_only, _) = time(runs, || view::avatar_cards(&snapshot));
     let (t_avatars, cards_json) = time(runs, || {
         let snapshot = db::load_snapshot(c).unwrap();
@@ -308,10 +306,8 @@ fn report(products: usize, watch: bool, runs: usize) {
     let (t_settings, _) = time(runs, || db::settings(c).unwrap());
     let (t_class, _) = time(runs, || db::classification_status(c).unwrap());
     let (t_knowledge, knowledge_json) = time(runs, || serde_json::to_string(&db::knowledge(c).unwrap()).unwrap());
-    let (t_options, _) = time(runs, || {
-        let snapshot = db::load_snapshot(c).unwrap();
-        serde_json::to_string(&view::product_options(&snapshot)).unwrap()
-    });
+    let (t_options, options_json) = time(runs, || serde_json::to_string(&db::product_options(c).unwrap()).unwrap());
+    assert_eq!(options_json, serde_json::to_string(&view::product_options(&snapshot)).unwrap(), "options read with SQL");
     let (t_purchase_page, _) = time(runs, || serde_json::to_string(&purchases::page(c, &purchases::PurchaseQuery::default(), false).unwrap()).unwrap());
     let (t_purchase_status, _) = time(runs, || serde_json::to_string(&purchases::status(c, false).unwrap()).unwrap());
     let (t_purchase_summary, _) = time(runs, || serde_json::to_string(&purchases::summary(c, None).unwrap()).unwrap());

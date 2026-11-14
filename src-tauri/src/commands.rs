@@ -166,9 +166,8 @@ pub fn set_product_excluded(
 
 #[tauri::command(async)]
 pub fn library_stats(state: State<'_, AppState>) -> Result<LibraryStats, String> {
-    let mut connection = db(&state)?;
-    let snapshot = db::load_snapshot(&mut connection)?;
-    Ok(view::library_stats(&snapshot))
+    let connection = db(&state)?;
+    db::library_stats(&connection)
 }
 
 #[tauri::command(async)]
@@ -424,9 +423,8 @@ pub fn undo_classification_entry(
 
 #[tauri::command(async)]
 pub fn list_product_options(state: State<'_, AppState>) -> Result<Vec<ProductOption>, String> {
-    let mut connection = db(&state)?;
-    let snapshot = db::load_snapshot(&mut connection)?;
-    Ok(view::product_options(&snapshot))
+    let connection = db(&state)?;
+    db::product_options(&connection)
 }
 
 #[tauri::command(async)]

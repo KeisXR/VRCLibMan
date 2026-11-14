@@ -236,8 +236,31 @@ fn candidate_key(row: &Row) -> Option<String> {
     Some(format!("{:016x}", hash.finish()))
 }
 
+/// Only the file lists of each row. Every row also keeps the compared descriptions, which make
+/// the stored value megabytes with every product as a target; those are skipped unread.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WatchFiles {
+    rows: Vec<RowFiles>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RowFiles {
+    booth_id: String,
+    #[serde(default)]
+    new_files: Vec<String>,
+    #[serde(default)]
+    current_files: Option<Vec<String>>,
+}
+
+/// New and current files of watched products, for the product cards. Every list the screens
+/// load reads this. Rows added for products never checked (whole-library consent) have neither,
+/// so the product list is not consulted.
 pub(crate) fn file_watches(c: &Connection) -> Result<HashMap<String, ProductFileWatch>, String> {
-    let w = load(c)?;
+    let w: WatchFiles = match db::setting(c, KEY)? {
+        Some(raw) => serde_json::from_str(&raw).map_err(|_| "更新確認の設定を読めません")?,
+        None => WatchFiles { rows: Vec::new() },
+    };
     let mut map = HashMap::new();
     for row in w.rows {
         if row.new_files.is_empty() && row.current_files.is_none() {
