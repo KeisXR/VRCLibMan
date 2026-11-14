@@ -4,6 +4,16 @@ import { useShell } from "../App";
 import { formatLogTime } from "../classificationLog";
 import type { AssetUpdateFile, AssetUpdateRecord, AssetUpdateStatus } from "../types";
 import { errorText } from "../ui";
+import { SettingsLink } from "../components/SettingsLink";
+
+/** 検出履歴が空のときの案内。確認対象が無ければ、まず対象を決める設定へ案内する。 */
+export function assetUpdateEmptyText(status: Pick<AssetUpdateStatus, "rows"> | null): { text: string; needsTargets: boolean } {
+  const watched = status?.rows.filter((row) => row.enabled).length ?? 0;
+  if (watched === 0) {
+    return { text: "更新を確認する商品がまだありません。設定の「アセットの更新」で確認対象を選ぶと、見つけた変更がここに残ります。", needsTargets: true };
+  }
+  return { text: `確認対象 ${watched} 件で、まだ変更は見つかっていません。`, needsTargets: false };
+}
 
 function Files({ files }: { files: AssetUpdateFile[] }) {
   if (!files.length) return <>なし</>;
@@ -63,7 +73,13 @@ export function AssetUpdateLogPage({ onAcknowledge }: { onAcknowledge: () => voi
     </details>}
     <h2 id="asset-update-history">検出履歴</h2>
     {records === null && !error && <p role="status">読み込み中…</p>}
-    {records?.length === 0 && <p className="meta">更新記録はまだありません。以前の候補は上の一覧で確認できます。</p>}
+    {records?.length === 0 && (() => {
+      const empty = assetUpdateEmptyText(status);
+      return <div className="empty">
+        <p>{empty.text}</p>
+        {empty.needsTargets && <SettingsLink section="settings-asset-updates">アセットの更新の設定を開く</SettingsLink>}
+      </div>;
+    })()}
     <ul className="log-entries">{records?.map((record, index) => <li className="log-entry" key={`${record.boothId}:${record.detectedAt}:${index}`}>
       <div className="log-entry-head"><strong>{titles.get(record.boothId) ?? `商品 ${record.boothId}`}</strong>
         <button className="button" type="button" onClick={() => openProduct(record.boothId)}>BOOTHで確認</button></div>

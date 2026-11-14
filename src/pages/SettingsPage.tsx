@@ -17,6 +17,7 @@ import { SyncExportSettings } from "../components/SyncExportSettings";
 import { RemoteSyncReport } from "../components/RemoteSyncReport";
 import { AVATAR_HERO_CHOICES, AVATAR_HERO_BASE, normalizeAvatarHero } from "../avatarHero";
 import { readWithTimeout } from "../ipcRecovery";
+import { HOW_TO_USE_URL } from "../helpLinks";
 
 const REPOSITORY_URL = "https://github.com/KeisXR/VRCLibMan";
 
@@ -294,9 +295,9 @@ export function SettingsPage() {
 
 
           <section className="settings-section" id="settings-design">
-            <header><h2>デザイン</h2><p>アバター詳細のヒーロー画像の高さを選びます。標準デザイン自体は1つです。</p></header>
-            <SettingRow id="settings-avatar-hero" label="アバター詳細のヒーロー" help="大・小は画像を中央で切り抜いて表示します。旧デザインは従来の文字だけの見出しです。">
-              <fieldset className="scope-choices" aria-label="アバター詳細のヒーロー">
+            <header><h2>デザイン</h2><p>アバター詳細の上に出す見出し画像の高さを選びます。</p></header>
+            <SettingRow id="settings-avatar-hero" label="アバター詳細の見出し画像" help="大・小は画像の中央を切り抜いて出します。「画像なし」は名前だけの見出しです。">
+              <fieldset className="scope-choices" aria-label="アバター詳細の見出し画像">
                 {AVATAR_HERO_CHOICES.map((choice) => (
                   <label key={choice.value} className="choice-row">
                     <input
@@ -314,9 +315,10 @@ export function SettingsPage() {
                 ))}
               </fieldset>
             </SettingRow>
-            <div className="section-body">
-              <p className="meta">基準画像は {AVATAR_HERO_BASE.width}×{AVATAR_HERO_BASE.height}（2:1）です。横長（幅/高さ ≥ 1.6）のときは拡大縮小して中央を切り抜きます。正方形・縦長は左のブロック表示になります。横長で幅がおおよそ 2000px 未満のときは粗さの注意を出します。</p>
-            </div>
+            <details className="settings-details" id="settings-avatar-hero-about">
+              <summary>見出し画像について</summary>
+              <p>画像はアバター詳細の右上の「⋯」から選べます。おすすめの大きさは {AVATAR_HERO_BASE.width}×{AVATAR_HERO_BASE.height}（横 2：縦 1）です。横長の画像は中央を切り抜いて広げます。正方形や縦長の画像は、名前の左に四角く出します。横長で幅がおよそ 2000px より小さいときは、粗く見えることを知らせます。</p>
+            </details>
           </section>
 
           <AssetUpdates />
@@ -326,7 +328,7 @@ export function SettingsPage() {
             <div className="section-body"><BoothImportSettings onFail={fail} onChange={() => refresh()} pairingId="settings-extension-pairing" /></div>
             {settings.builtinBrowser && <BuiltinBrowserAccessSettings />}
             {settings.builtinBrowser && (
-              <SettingRow id="settings-booth-link-target" label="商品ページを開くブラウザ" help="アバター詳細と確認の商品リンクに使います。取得中やエラーのときは既定のブラウザで開きます。">
+              <SettingRow id="settings-booth-link-target" label="商品ページを開くブラウザ" help="アバター詳細・分類の編集・プレビューの「BOOTH」に使います。内蔵ブラウザを開けないときは既定のブラウザで開きます。">
                 <select value={settings.boothLinkTarget === "builtin" ? "builtin" : "external"} onChange={(e) => changeSettings({ boothLinkTarget: e.target.value === "builtin" ? "builtin" : "external" })}>
                   <option value="external">既定のブラウザ</option>
                   <option value="builtin">内蔵ブラウザ</option>
@@ -361,7 +363,10 @@ export function SettingsPage() {
           </section>
 
           <section className="settings-section" id="settings-data">
-            <header><h2>バージョン情報</h2><p>バージョンと更新、ライセンス、同梱の対応表を確認します。</p></header>
+            <header><h2>アプリ情報とデータ</h2><p>使い方、バージョンと更新、ライセンス、データの書き出し、同梱の対応表です。</p></header>
+            <SettingRow id="settings-help" label="使い方" help="画面付きの使い方ガイドを開くか、初回セットアップをもう一度進めます。セットアップをやり直しても、ライブラリと設定は消えません。">
+              <div className="inline-control"><button className="button secondary" type="button" onClick={() => void openExternal(HOW_TO_USE_URL).catch((err: unknown) => fail(errorText(err)))}>使い方ガイドを開く</button><button className="button" type="button" onClick={() => void reopenSetup()}>セットアップを再表示</button></div>
+            </SettingRow>
             <SettingRow id="settings-version" label="バージョン" help="アプリと拡張機能は別のバージョン番号です。">
               <div className="version-info"><p>アプリ v{version || "確認中"}</p>
                 {integration && integration.mode !== "browser" && <>
@@ -397,7 +402,7 @@ export function SettingsPage() {
               <p>内蔵ブラウザでの閲覧やログインには、開いたサイトとの通信を行います。ログイン状態とブックマークは端末内に保存し、選択したファイルのダウンロード時には BOOTH の Cookie を利用します。</p>
               <p>各サイトのログイン状態と閲覧データは「内蔵ブラウザの閲覧データを削除」で削除できます。ライブラリ情報・設定・ブックマークは残ります。</p>
               <p>更新を確認・ダウンロードするときは GitHub と通信します。ライブラリや購入情報は送信しません。</p>
-              <p>エクスポートしたファイルには商品名、ショップ名、説明文、サムネイル、ヒーロー画像、ファイル名が含まれます。保存先の管理はご自身で行ってください。</p>
+              <p>書き出したファイルには商品名、ショップ名、説明文、サムネイル、見出し画像、ファイル名が含まれます。保存先の管理はご自身で行ってください。</p>
             </details>
           </section>
 
@@ -419,7 +424,7 @@ export function SettingsPage() {
             </summary>
             <ClassificationFeedback />
             <SettingRow id="settings-maintenance" label="メンテナンス" help="不足している初期データの追加や、商品の対応アバターの見直しを行います。通常は更新・編集時に自動で見直します。">
-              <div className="inline-control"><button className="button" type="button" onClick={() => void restore()}>初期データを追加</button><button className="button" type="button" onClick={() => void reresolve()}>対応表を再適用</button><button className="button" type="button" onClick={() => void reopenSetup()}>セットアップを再表示</button></div>
+              <div className="inline-control"><button className="button" type="button" onClick={() => void restore()}>初期データを追加</button><button className="button" type="button" onClick={() => void reresolve()}>対応表を再適用</button></div>
             </SettingRow>
           </details>
           </div>

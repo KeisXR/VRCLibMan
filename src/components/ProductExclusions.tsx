@@ -297,11 +297,25 @@ export function ExcludeProductButton({
   );
 }
 
-export function ProductExclusions() {
+export type ManagedProductFilter = "all" | "active" | "uncategorized" | "excluded";
+
+/**
+ * 商品の管理（除外と、カードの無い未分類の商品の編集）。`filter` を渡すと表示する商品を外から決められる
+ * （インポート画面の「未分類の商品を見る」）。渡さなければ自分で持つ。
+ */
+export function ProductExclusions({
+  filter: controlledFilter,
+  onFilterChange,
+}: { filter?: ManagedProductFilter; onFilterChange?: (filter: ManagedProductFilter) => void } = {}) {
   const { revision, refresh, notify, fail } = useShell();
   const [products, setProducts] = useState<ManagedProduct[] | null>(null);
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState("all");
+  const [ownFilter, setOwnFilter] = useState<ManagedProductFilter>("all");
+  const filter = controlledFilter ?? ownFilter;
+  const setFilter = (next: ManagedProductFilter) => {
+    setOwnFilter(next);
+    onFilterChange?.(next);
+  };
   const [pending, setPending] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<string | null>(null);
   const closeEditor = useCallback(() => setEditing(null), []);
@@ -371,7 +385,7 @@ export function ProductExclusions() {
           <span>表示する商品</span>
           <select
             value={filter}
-            onChange={(event) => setFilter(event.target.value)}
+            onChange={(event) => setFilter(event.target.value as ManagedProductFilter)}
           >
             <option value="all">すべて</option>
             <option value="active">対象の商品</option>

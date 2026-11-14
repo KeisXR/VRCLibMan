@@ -69,12 +69,12 @@ export function AssetUpdates() {
   const visible = matching.slice(currentPage * 50, (currentPage + 1) * 50);
   const summary = assetUpdateListSummary(status);
   return <section className="settings-section" id="settings-asset-updates">
-    <header><h2>アセットの更新設定</h2><p>公開情報を比較して変更を確認します。有料ファイルの更新や、同じ名前・番号のファイル差し替えは検出できません。</p></header>
+    <header><h2>アセットの更新</h2><p>公開情報を比較して変更を確認します。有料ファイルの更新や、同じ名前・番号のファイル差し替えは検出できません。</p></header>
     <div className="section-body asset-updates">
       <p>「今すぐ確認」では、内蔵ブラウザが有効なら BOOTH ライブラリから最新のファイル情報も読み直して商品カードへ反映し、あわせて商品説明と無料ファイル一覧を比較します。ファイルの自動ダウンロードや適用は行いません。</p>
       <label className="switch-label" id="settings-asset-updates-all"><input type="checkbox" checked={status?.allProducts ?? false} disabled={!status || pending} onChange={(e) => void configure({ allProducts: e.target.checked })} />全商品をまとめて確認対象にする（今後追加する商品も含む）</label>
-      <p>登録済み {status?.totalProducts ?? 0} 件中、{status?.rows.filter((r) => r.enabled).length ?? 0} 件が確認対象です。個別のチェックで対象から外せます。全体をオフにすると全商品の許可を解除します。</p>
-      <label className="switch-label" id="settings-asset-updates-auto"><input type="checkbox" checked={status?.automatic ?? false} disabled={!status || pending} onChange={(e) => void configure({ automatic: e.target.checked })} />アプリ起動中、許可した商品を1日1回自動確認する</label>
+      <p>登録済み {status?.totalProducts ?? 0} 件中、{status?.rows.filter((r) => r.enabled).length ?? 0} 件が確認対象です。一覧のチェックを外すと、その商品だけ対象から外せます。全体のチェックを外すと、全商品が確認対象から外れます。</p>
+      <label className="switch-label" id="settings-asset-updates-auto"><input type="checkbox" checked={status?.automatic ?? false} disabled={!status || pending} onChange={(e) => void configure({ automatic: e.target.checked })} />アプリ起動中、確認対象の商品を1日1回自動で確認する</label>
       <div className="inline-control" id="settings-asset-updates-add">
         <input aria-label="更新確認する商品を検索" placeholder="商品名・BOOTH ID で検索" value={query} onChange={(e) => { setQuery(e.target.value); setSelected(""); }} />
         <select aria-label="更新確認する商品" value={selected} onChange={(e) => setSelected(e.target.value)}><option value="">登録済みの商品を選択</option>{options.map((p) => <option key={p.boothId} value={p.boothId}>{p.title}</option>)}</select>
@@ -114,7 +114,11 @@ export function AssetUpdates() {
           <button type="button" className="button" disabled={currentPage === lastPage} onClick={() => setPage(currentPage + 1)}>次の50件</button>
         </div>}
       </div>}
-      <p className="muted">オフにすると以後の自動確認を停止します。実行中の通信は完了することがあります。ログイン・年齢確認が必要な商品は確認失敗として扱います。通信失敗時は1時間以上空けます。</p>
+      <details className="settings-details" id="settings-asset-updates-about">
+        <summary>確認のしかたについて</summary>
+        <p>自動確認をオフにすると、次からの確認は行いません。実行中の確認は、その時点で始まっていた通信だけ完了することがあります。</p>
+        <p>ログインや年齢確認が必要な商品は、確認できなかったものとして扱います。BOOTH に届かなかったときは、自動確認を1時間以上あけてから続けます。</p>
+      </details>
     </div>
   </section>;
 }

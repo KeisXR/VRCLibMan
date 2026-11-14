@@ -121,7 +121,7 @@ test("the preview lives in the app's right panel instead of a split inside the l
   assert.match(readFileSync("src/components/RightPanel.tsx", "utf8"), /unified/);
 });
 
-test("a closed panel leaves a tab-count launcher in the top bar", async () => {
+test("a closed panel leaves a labelled launcher in the top bar", async () => {
   const app = readFileSync("src/App.tsx", "utf8");
   assert.match(app, /<div className="topbar"[^>]*>\s*<RightPanelLauncher panel=\{rightPanel\} \/>/);
   const source = readFileSync("src/components/RightPanel.tsx", "utf8");
@@ -131,17 +131,18 @@ test("a closed panel leaves a tab-count launcher in the top bar", async () => {
   assert.match(css, /\.right-panel-launcher \{[^}]*position: absolute;/);
   assert.match(css, /\.topbar:has\(> \.right-panel-launcher\) > :is\(\.banner, \.progress\)/);
 
+  // 数字だけだと通知の件数に見えるので、アイコンに「パネル」と添え、タブの数は出さない。
+  assert.match(source, /<span className="right-panel-launcher-label" aria-hidden="true">パネル<\/span>/);
+  assert.match(source, /aria-label="右パネルを開く"/);
+  assert.doesNotMatch(source, /launcherCountLabel|right-panel-launcher-count/);
+
   const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
   try {
-    const panel = await server.ssrLoadModule("/src/rightPanel.ts");
-    const fixed = panel.parseRightPanelTabs('{"tabs":["preview","files"],"active":0}');
-    const withPage = panel.focusWebTab(fixed, "booth-tab-1", "page");
-    assert.equal(panel.launcherCountLabel(withPage), "2", "page tabs are not counted without the built-in browser");
-    assert.equal(panel.launcherCountLabel(withPage, { builtinBrowser: true }), "3");
-    assert.equal(panel.launcherCountLabel(panel.parseRightPanelTabs('{"tabs":[],"active":0}')), "0");
-    let many = fixed;
-    for (let index = 0; index < 120; index += 1) many = panel.focusWebTab(many, `booth-tab-${index}`, "page");
-    assert.equal(panel.launcherCountLabel(many, { builtinBrowser: true }), "99+");
+    const pane = await server.ssrLoadModule("/src/previewPane.ts");
+    // ページを初めて出したとき、既定の幅のままなら一度だけ広げる。変えた幅には触れない。
+    assert.equal(pane.widenForFirstPage(pane.PREVIEW_PANE_WIDTH.default), pane.PAGE_PANEL_WIDTH);
+    assert.equal(pane.widenForFirstPage(360), null);
+    assert.ok(pane.PAGE_PANEL_WIDTH > pane.PREVIEW_PANE_WIDTH.default);
   } finally {
     await server.close();
   }

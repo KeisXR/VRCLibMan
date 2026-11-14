@@ -44,10 +44,10 @@ const SETTINGS_SECTIONS: Record<string, { title: string; keywords: readonly stri
   "settings-library": { title: "ライブラリとダウンロード", keywords: ["保存先", "自動整理", "リモート"] },
   "settings-unity": { title: "Unity", keywords: ["unitypackage", "Unityで開く"] },
   "settings-startup": { title: "起動と常駐", keywords: ["バックグラウンド", "常駐", "トレイ", "自動起動"] },
-  "settings-design": { title: "デザイン", keywords: ["見た目", "ヒーロー"] },
-  "settings-asset-updates": { title: "アセットの更新設定", keywords: ["更新確認", "アセットの更新"] },
+  "settings-design": { title: "デザイン", keywords: ["見た目", "見出し画像", "ヒーロー"] },
+  "settings-asset-updates": { title: "アセットの更新", keywords: ["更新確認", "アセットの更新設定", "更新設定"] },
   "settings-booth": { title: "BOOTH の読み込み方", keywords: ["拡張機能", "内蔵ブラウザ", "両方", "読み込み方", "ペアリング"] },
-  "settings-data": { title: "バージョン情報", keywords: ["バージョン", "アップデート", "ライセンス", "データ移行"] },
+  "settings-data": { title: "アプリ情報とデータ", keywords: ["バージョン情報", "バージョン", "アップデート", "ライセンス", "使い方", "データの書き出し", "データ移行"] },
   "settings-knowledge": { title: "対応表を編集", keywords: ["対応表", "別名", "素体", "共通素体", "アバターを追加"] },
   "settings-debug": { title: "デバッグ", keywords: ["メンテナンス", "分類改善"] },
 };
@@ -87,7 +87,8 @@ const NAV_ENTRIES: AppSearchEntry[] = [
 
 const PAGE_ENTRIES: AppSearchEntry[] = [
   { key: "import:booth", title: "1. BOOTH から読み込む", path: [IMPORT], keywords: ["BOOTH", "読み込み", "取り込み", "受信"], href: "#/import", target: "import-booth" },
-  { key: "import:exclusions", title: "商品を管理・除外", path: [IMPORT, "1. BOOTH から読み込む"], keywords: ["除外", "除外を解除", "非表示"], href: "#/import", target: "import-exclusions", fallback: "import-booth" },
+  { key: "import:exclusions", title: "商品を管理・除外", path: [IMPORT, "商品の管理"], keywords: ["除外", "除外を解除", "非表示", "未分類の商品"], href: "#/import", target: "import-exclusions", fallback: "import-manage" },
+  { key: "import:pairing", title: "ペアリングコード（インポート）", path: [IMPORT, "1. BOOTH から読み込む"], keywords: ["ペアリング", "拡張機能", "コードをコピー"], href: "#/import", target: "import-pairing-code", fallback: "import-booth", requires: "extension" },
   { key: "import:extension", title: "拡張機能の使い方・受信履歴", path: [IMPORT, "1. BOOTH から読み込む"], keywords: ["拡張機能", "Chrome", "Edge", "受信履歴"], href: "#/import", target: "import-extension-help", fallback: "import-booth", requires: "extension" },
   { key: "import:browser", title: "内蔵ブラウザを開く", path: [IMPORT, "1. BOOTH から読み込む"], keywords: ["ブラウザを開く", "ライブラリを開く", "ログイン"], href: "#/import", target: "import-builtin-browser", fallback: "import-booth", requires: "builtinBrowser" },
   { key: "import:walk", title: "ライブラリ全取得", path: [IMPORT, "1. BOOTH から読み込む"], keywords: ["全取得", "商品情報を取得", "ギフト", "無料ダウンロード"], href: "#/import", target: "import-library-walk", fallback: "import-booth", requires: "builtinBrowser" },
@@ -143,7 +144,7 @@ const SETTING_ENTRIES: AppSearchEntry[] = [
   setting("settings-unity", "settings-unity-detect", "Unity を探す", ["Unity Hub", "参照", "検出"]),
   setting("settings-startup", "settings-background", "バックグラウンドで動作", ["常駐", "トレイ", "メニューバー", "閉じても動かす"]),
   setting("settings-startup", "settings-launch-at-login", "ログイン時に起動", ["自動起動", "スタートアップ"]),
-  setting("settings-design", "settings-avatar-hero", "アバター詳細のヒーロー", ["ヒーロー画像", "見出し", "旧デザイン"]),
+  setting("settings-design", "settings-avatar-hero", "アバター詳細の見出し画像", ["ヒーロー", "ヒーロー画像", "見出し", "画像なし", "旧デザイン"]),
   setting("settings-asset-updates", "settings-asset-updates-all", "全商品をまとめて確認対象にする", ["更新確認", "確認対象"]),
   setting("settings-asset-updates", "settings-asset-updates-auto", "1日1回の自動確認", ["自動確認", "更新確認"]),
   setting("settings-asset-updates", "settings-asset-updates-add", "確認対象に追加", ["更新確認", "商品を選択"]),
@@ -156,16 +157,17 @@ const SETTING_ENTRIES: AppSearchEntry[] = [
   setting("settings-booth", "settings-force-dark-about", "強制ダークモードについて", ["ダーク"], { requires: "builtinBrowser" }),
   setting("settings-booth", "settings-auto-register", "取得したアセットの自動登録", ["自動登録", "購入完了", "ダウンロード完了"], { requires: "builtinBrowser" }),
   setting("settings-booth", "settings-clear-browser-data", "内蔵ブラウザの閲覧データを削除", ["ログアウト", "Cookie", "閲覧データ"], { requires: "builtinBrowser" }),
+  setting("settings-data", "settings-help", "使い方", ["使い方ガイド", "ヘルプ", "セットアップを再表示", "初回セットアップ"]),
   setting("settings-data", "settings-version", "バージョン", ["版", "拡張機能のバージョン"]),
   setting("settings-data", "settings-license", "ライセンス", ["ソースコード", "MPL", "第三者のライセンス", "GitHub"]),
   setting("settings-data", "settings-check-update-on-startup", "起動時にアップデートを確認", ["アップデート", "更新"]),
   setting("settings-data", "settings-app-update", "アプリの更新", ["アップデート", "更新を確認", "再起動して更新"]),
   setting("settings-data", "settings-device-name", "この端末の名前", ["端末名", "PC の名前"]),
-  setting("settings-data", "settings-data-export", "データ移行", ["書き出し", "エクスポート", "ZIP", "別の PC", "バックアップ"]),
+  setting("settings-data", "settings-data-export", "データの書き出し", ["データ移行", "書き出し", "エクスポート", "ZIP", "別の PC", "バックアップ"]),
   setting("settings-data", "settings-catalog", "同梱の対応表", ["対応表を更新", "出典", "利用規約"]),
   setting("settings-data", "settings-privacy", "プライバシー", ["送信", "個人情報"]),
   setting("settings-debug", "settings-classification-feedback", "分類改善用データ", ["JSON", "書き出し", "その他", "未分類"]),
-  setting("settings-debug", "settings-maintenance", "メンテナンス", ["初期データを追加", "対応表を再適用", "セットアップを再表示"]),
+  setting("settings-debug", "settings-maintenance", "メンテナンス", ["初期データを追加", "対応表を再適用"]),
 ];
 
 /** 並びは同じ重みのときの順。ジャンルは「その他」「ツール」のようなありふれた名前が多いので最後にする。 */

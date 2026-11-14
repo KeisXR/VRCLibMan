@@ -144,9 +144,9 @@ export function heroTextContrast(
 }
 
 export const AVATAR_HERO_CHOICES: ReadonlyArray<{ value: AvatarHeroSize; label: string; help: string }> = [
-  { value: "small", label: "小 320px", help: "既定。ぼかし中のヒーロー。" },
-  { value: "large", label: "大 400px", help: "高めのヒーロー。" },
-  { value: "off", label: "旧デザイン", help: "画像なしの従来の見出し。" },
+  { value: "small", label: "小（320px）", help: "既定。ぼかした画像の上に名前を出します。" },
+  { value: "large", label: "大（400px）", help: "高めの見出し画像。" },
+  { value: "off", label: "画像なし", help: "名前だけの見出し。" },
 ];
 
 export const AVATAR_ASSETS_OPEN_KEY = "vrclibman.avatarDetail.assetsOpen";

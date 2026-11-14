@@ -360,7 +360,7 @@ function AvatarAssetsPanel({
                 </button>
                 <span className="row-actions">
                   {!file.isDir && isUnityOpenableName(file.filename) ? (
-                    <UnityOpenButton target={{ path: file.path, boothId: view.boothId }} notify={notify} fail={fail} />
+                    <UnityOpenButton className="button secondary" target={{ path: file.path, boothId: view.boothId }} notify={notify} fail={fail} />
                   ) : null}
                   <span>{formatBytes(file.size)}</span>
                 </span>
@@ -394,7 +394,7 @@ function FreeFileCheckButton({ boothId }: { boothId: string }) {
   }
   return (
     <div className="free-file-check">
-      <button className="button" type="button" disabled={checkingFree} onClick={() => void runFreeFileCheck()}>
+      <button className="button secondary" type="button" disabled={checkingFree} onClick={() => void runFreeFileCheck()}>
         {checkingFree ? FREE_FILE_CHECK_BUSY_LABEL : FREE_FILE_CHECK_LABEL}
       </button>
     </div>
@@ -706,12 +706,13 @@ export function ItemCard({
           </div>
         )}
         <div id={`files-${item.boothId}`}>
-          {!hideFiles && item.downloads.length === 0 && item.localFileCount === 0 && (
-            <p className="meta">ファイル情報はまだありません。再インポートするか、フォルダを調べてください</p>
+          {/* 「ファイル情報なし」は題の横の印で分かる。無料配布を探すボタンが無いときだけ、次にすることを添える。 */}
+          {!hideFiles && item.downloads.length === 0 && item.localFileCount === 0 && !offerFreeFileCheck(item, builtinBrowser) && (
+            <p className="meta">ファイル情報がまだありません。BOOTH のライブラリを読み込み直すか、インポートの「3. 手元のファイル」でフォルダを調べてください。</p>
           )}
           {!hideFiles && offerFreeFileCheck(item, builtinBrowser) && (
             <div className="free-file-check">
-              <button className="button" type="button" disabled={checkingFree} onClick={() => void checkFreeFiles()}>
+              <button className="button secondary" type="button" disabled={checkingFree} onClick={() => void checkFreeFiles()}>
                 {checkingFree ? FREE_FILE_CHECK_BUSY_LABEL : FREE_FILE_CHECK_LABEL}
               </button>
             </div>
@@ -744,7 +745,7 @@ export function ItemCard({
                   </button>
                   <span className="row-actions">
                     {!file.isDir && isUnityOpenableName(file.filename) && (
-                      <UnityOpenButton target={{ path: file.path, boothId: item.boothId }} notify={notify} fail={fail} />
+                      <UnityOpenButton className="button secondary" target={{ path: file.path, boothId: item.boothId }} notify={notify} fail={fail} />
                     )}
                     <span>{formatBytes(file.size)}</span>
                   </span>
@@ -922,6 +923,7 @@ function DownloadRow({
       <div className="row-actions">
         {offer && (
           <button
+            className="button secondary"
             type="button"
             disabled={running}
             onClick={(event) => {
@@ -934,6 +936,7 @@ function DownloadRow({
         )}
         {savedPath && (
           <button
+            className="button secondary"
             type="button"
             onClick={(event) => {
               event.stopPropagation();
@@ -944,15 +947,15 @@ function DownloadRow({
           </button>
         )}
         {file.state === "local" && file.localPath && isUnityOpenableName(file.localPath) && (
-          <UnityOpenButton target={{ path: file.localPath, boothId: item.boothId }} notify={notify} fail={fail} />
+          <UnityOpenButton className="button secondary" target={{ path: file.localPath, boothId: item.boothId }} notify={notify} fail={fail} />
         )}
         {file.state === "local" && item.remoteConfigured && item.remoteReachable && (
-          <button type="button" disabled={busy === file.filename} onClick={() => push(file)}>
+          <button className="button secondary" type="button" disabled={busy === file.filename} onClick={() => push(file)}>
             {busy === file.filename ? "コピー中" : "リモートへコピー"}
           </button>
         )}
         {file.state === "remote" && item.remoteChecked && (
-          <button type="button" disabled={busy === file.filename} onClick={() => pull(file)}>
+          <button className="button secondary" type="button" disabled={busy === file.filename} onClick={() => pull(file)}>
             {busy === file.filename ? "コピー中" : "ローカルへコピー"}
           </button>
         )}

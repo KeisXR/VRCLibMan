@@ -255,7 +255,9 @@ test("app search finds sidebar items, page items, genres and settings with AND t
     assert.ok(titles("skybox").includes("Skybox"), "a world genre");
     assert.ok(titles("ペアリング").includes("ペアリングコード"));
     assert.deepEqual(titles("インポート 再分類"), ["すべて再分類", "2. 分類"], "tokens may hit the path; title hits come first");
-    assert.deepEqual(titles("設定").slice(0, 3), ["設定", "アセットの更新設定", "ジャンル未設定"], "an exact title first, then titles with the word, genres last");
+    assert.deepEqual(titles("設定").slice(0, 2), ["設定", "ジャンル未設定"], "an exact title first, then titles with the word, genres last");
+    assert.ok(titles("更新設定").includes("アセットの更新"), "an old section name still finds the renamed section");
+    assert.ok(titles("データ移行").includes("データの書き出し"));
     assert.equal(titles("その他")[0], "その他", "an exact genre name still comes first");
     assert.deepEqual(titles(""), []);
     assert.deepEqual(titles("   "), []);

@@ -100,7 +100,9 @@ test("settings keep a design section for avatar hero only", () => {
   assert.match(nav, /id: "settings-design"/);
   const page = readFileSync("src/pages/SettingsPage.tsx", "utf8");
   assert.match(page, /id="settings-design"/);
-  assert.match(page, /基準画像は \{AVATAR_HERO_BASE\.width\}×\{AVATAR_HERO_BASE\.height\}/);
+  // 画像の大きさの説明は「見出し画像について」の折りたたみに入れ、基準の大きさは定数から出す。
+  assert.match(page, /おすすめの大きさは \{AVATAR_HERO_BASE\.width\}×\{AVATAR_HERO_BASE\.height\}/);
+  assert.match(page, /id="settings-avatar-hero-about"/);
   assert.doesNotMatch(page, /\bappearance\b|Liquid|テーマの切替|theme-liquid/);
   const types = readFileSync("src/types.ts", "utf8");
   assert.match(types, /avatarHero: "large" \| "small" \| "off"/);

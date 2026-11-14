@@ -3,6 +3,18 @@ export const PREVIEW_SETTLE_MS = 600;
 
 /** Right-hand preview column. The maximum is about half the window, and the list keeps 240px. */
 export const PREVIEW_PANE_WIDTH = { min: 240, default: 300, absoluteMax: 1600 };
+
+/**
+ * ページ（内蔵ブラウザ）を右パネルに初めて出したときの幅。300px では BOOTH のページが崩れ、操作バーの
+ * 「インポート」も「⋯」に隠れる。利用者が幅を変えていなければ（既定の 300px のままなら）一度だけこの幅に広げて保存する。
+ * 窓が狭いときは画面上の上限（窓幅の半分など）で抑えられる。
+ */
+export const PAGE_PANEL_WIDTH = 480;
+
+/** ページを初めて出したときに広げるか。保存されている幅が既定のままのときだけ。 */
+export function widenForFirstPage(storedWidth: number): number | null {
+  return storedWidth === PREVIEW_PANE_WIDTH.default ? PAGE_PANEL_WIDTH : null;
+}
 const PREVIEW_LIST_MIN = 240;
 const PREVIEW_SPLIT_GAP = 24;
 
