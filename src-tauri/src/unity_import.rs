@@ -38,6 +38,9 @@ const NO_EDITOR: &str =
     "既定の Unity が設定されていません。設定の「Unity」で選ぶか、関連付けで開いてください";
 const EDITOR_MISSING: &str =
     "設定した Unity が見つかりません。設定の「Unity」で選び直すか、関連付けで開いてください";
+const EDITOR_NOT_RUNNING: &str =
+    "Unity が起動していません。設定した Unity でプロジェクトを開いてから、もう一度押してください";
+const OTHER_EDITOR_RUNNING: &str = "起動中の Unity は、設定した Unity と別のバージョンです。設定した Unity でプロジェクトを開くか、設定の「Unity」で起動中のバージョンを選んでください";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -358,6 +361,172 @@ pub(crate) fn editor_from_setting(selected: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+/// `-openfile` は起動中のエディタにだけ届く。エディタが無いと Unity は Hub を開いて正常終了するので、
+/// 終了コードでは渡せなかったことが分からない。渡す前に、設定した Unity が起動しているかを確かめる。
+/// 起動中のプロセスを調べられなかったとき（`None`）は、確かめずに渡す。
+pub(crate) fn require_running_editor(editor: &Path, running: Option<&[PathBuf]>) -> Result<(), String> {
+    let Some(running) = running else {
+        return Ok(());
+    };
+    if running.iter().any(|path| same_editor(editor, path)) {
+        Ok(())
+    } else if running.is_empty() {
+        Err(EDITOR_NOT_RUNNING.into())
+    } else {
+        Err(OTHER_EDITOR_RUNNING.into())
+    }
+}
+
+fn same_editor(a: &Path, b: &Path) -> bool {
+    if same_file::is_same_file(a, b).unwrap_or(false) {
+        return true;
+    }
+    if cfg!(windows) {
+        let key = |path: &Path| path.to_string_lossy().replace('/', "\\").to_lowercase();
+        key(a) == key(b)
+    } else {
+        a == b
+    }
+}
+
+/// 起動中の Unity エディタ（Windows は Unity.exe、Mac と Linux は Unity）の実行ファイルのパス。
+/// 一覧を作れないときは `None`。Unity Hub は名前が違うので入らない。
+pub(crate) fn running_editor_paths() -> Option<Vec<PathBuf>> {
+    running_editors::list()
+}
+
+#[cfg(windows)]
+mod running_editors {
+    use std::ffi::c_void;
+    use std::os::windows::ffi::OsStringExt;
+    use std::path::PathBuf;
+
+    const TH32CS_SNAPPROCESS: u32 = 0x2;
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    const MAX_PATH: usize = 260;
+
+    #[repr(C)]
+    struct ProcessEntry32W {
+        size: u32,
+        usage: u32,
+        process_id: u32,
+        default_heap_id: usize,
+        module_id: u32,
+        threads: u32,
+        parent_process_id: u32,
+        priority_class_base: i32,
+        flags: u32,
+        exe_file: [u16; MAX_PATH],
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn CreateToolhelp32Snapshot(flags: u32, process_id: u32) -> *mut c_void;
+        fn Process32FirstW(snapshot: *mut c_void, entry: *mut ProcessEntry32W) -> i32;
+        fn Process32NextW(snapshot: *mut c_void, entry: *mut ProcessEntry32W) -> i32;
+        fn OpenProcess(access: u32, inherit: i32, process_id: u32) -> *mut c_void;
+        fn QueryFullProcessImageNameW(process: *mut c_void, flags: u32, name: *mut u16, size: *mut u32) -> i32;
+        fn CloseHandle(handle: *mut c_void) -> i32;
+    }
+
+    fn exe_name(entry: &ProcessEntry32W) -> String {
+        let end = entry.exe_file.iter().position(|unit| *unit == 0).unwrap_or(MAX_PATH);
+        String::from_utf16_lossy(&entry.exe_file[..end])
+    }
+
+    fn image_path(process_id: u32) -> Option<PathBuf> {
+        let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id) };
+        if process.is_null() {
+            return None;
+        }
+        let mut buffer = vec![0u16; 32_768];
+        let mut size = buffer.len() as u32;
+        let ok = unsafe { QueryFullProcessImageNameW(process, 0, buffer.as_mut_ptr(), &mut size) };
+        unsafe { CloseHandle(process) };
+        (ok != 0).then(|| PathBuf::from(std::ffi::OsString::from_wide(&buffer[..size as usize])))
+    }
+
+    pub(super) fn list() -> Option<Vec<PathBuf>> {
+        let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+        if snapshot.is_null() || snapshot as isize == -1 {
+            return None;
+        }
+        let mut entry = ProcessEntry32W {
+            size: std::mem::size_of::<ProcessEntry32W>() as u32,
+            usage: 0,
+            process_id: 0,
+            default_heap_id: 0,
+            module_id: 0,
+            threads: 0,
+            parent_process_id: 0,
+            priority_class_base: 0,
+            flags: 0,
+            exe_file: [0; MAX_PATH],
+        };
+        let mut found = Vec::new();
+        let mut more = unsafe { Process32FirstW(snapshot, &mut entry) } != 0;
+        let listed = more;
+        while more {
+            if exe_name(&entry).eq_ignore_ascii_case("unity.exe") {
+                // 権限の違いでパスを読めない Unity も、起動していることは数える。
+                found.push(image_path(entry.process_id).unwrap_or_else(|| PathBuf::from("Unity.exe")));
+            }
+            more = unsafe { Process32NextW(snapshot, &mut entry) } != 0;
+        }
+        unsafe { CloseHandle(snapshot) };
+        listed.then_some(found)
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod running_editors {
+    use std::path::PathBuf;
+
+    pub(super) fn list() -> Option<Vec<PathBuf>> {
+        let entries = std::fs::read_dir("/proc").ok()?;
+        let found = entries
+            .flatten()
+            .filter(|entry| entry.file_name().to_string_lossy().bytes().all(|byte| byte.is_ascii_digit()))
+            .filter_map(|entry| std::fs::read_link(entry.path().join("exe")).ok())
+            .filter(|exe| exe.file_name().is_some_and(|name| name == "Unity"))
+            .collect();
+        Some(found)
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod running_editors {
+    use std::path::PathBuf;
+    use std::process::{Command, Stdio};
+
+    pub(super) fn list() -> Option<Vec<PathBuf>> {
+        let output = Command::new("/bin/ps")
+            .args(["-axww", "-o", "comm="])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        Some(
+            text.lines()
+                .map(str::trim)
+                .filter(|line| line.ends_with("/Contents/MacOS/Unity"))
+                .map(PathBuf::from)
+                .collect(),
+        )
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+mod running_editors {
+    pub(super) fn list() -> Option<Vec<std::path::PathBuf>> {
+        None
+    }
+}
+
 /// `<Unity> -openfile <pkg>` の引数。シェルを通さないので、空白や記号を含むパスもそのまま渡る。
 pub(crate) fn openfile_command(editor: &Path, package: &Path) -> Command {
     let mut command = Command::new(editor);
@@ -608,6 +777,67 @@ mod tests {
         assert_eq!(LaunchMode::parse("unity"), Ok(LaunchMode::Unity));
         assert_eq!(LaunchMode::parse("system"), Ok(LaunchMode::System));
         assert!(LaunchMode::parse("sh -c").is_err());
+    }
+
+    #[test]
+    fn hands_off_only_when_the_chosen_editor_is_running() {
+        let root = temp_root("running");
+        let chosen = root.join("2022.3.22f1").join("Unity.exe");
+        let other = root.join("6000.0.33f1").join("Unity.exe");
+        for path in [&chosen, &other] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, b"x").unwrap();
+        }
+        // エディタが無いと Unity は Hub を開いて正常終了するので、渡す前に止める。
+        assert_eq!(require_running_editor(&chosen, Some(&[])).unwrap_err(), EDITOR_NOT_RUNNING);
+        assert_eq!(
+            require_running_editor(&chosen, Some(&[other.clone()])).unwrap_err(),
+            OTHER_EDITOR_RUNNING
+        );
+        assert!(require_running_editor(&chosen, Some(&[other.clone(), chosen.clone()])).is_ok());
+        // 起動中の一覧を作れないときは、これまでどおり渡す。
+        assert!(require_running_editor(&chosen, None).is_ok());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_paths_match_without_regard_to_case_or_slashes() {
+        assert!(same_editor(
+            Path::new(r"C:\Program Files\Unity\Hub\Editor\2022.3.22f1\Editor\Unity.exe"),
+            Path::new("c:/program files/unity/hub/editor/2022.3.22f1/editor/UNITY.EXE"),
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_running_unity_exe_is_found_with_its_full_path() {
+        let root = temp_root("process");
+        let fake = root.join("Unity.exe");
+        let system = std::env::var_os("SystemRoot").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+        std::fs::copy(system.join("System32").join("ping.exe"), &fake).unwrap();
+        let mut child = Command::new(&fake)
+            .args(["-n", "30", "127.0.0.1"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let found = running_editor_paths().expect("process list");
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(found.iter().any(|path| same_editor(path, &fake)), "{found:?}");
+        assert!(require_running_editor(&fake, Some(&found)).is_ok());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn the_running_process_list_can_be_read() {
+        // CI にも開発機にも Unity が起動しているとは限らないので、一覧を作れることだけを見る。
+        let listed = running_editor_paths().expect("process list");
+        assert!(listed.iter().all(|path| {
+            let name = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+            name == "unity.exe" || name == "unity"
+        }));
     }
 
     #[test]
