@@ -103,7 +103,7 @@ ZIP の中身は次のとおり。
 
 ## 未検証
 
-- Windows WebView2 と macOS WKWebView の保存ダイアログから `save_sync_export` までの経路
+- macOS WKWebView の保存ダイアログから `save_sync_export` までの経路。Windows WebView2 は 2026-11-14 に確かめた
 - Linux の配布版のダイアログと保存
 - SMB、NAS、クラウド同期フォルダへの保存。途切れた共有では、保存のスレッドが OS の応答を待ち続ける
 - 実ライブラリの規模での全件比較と書き出しの時間、ZIP の大きさ
