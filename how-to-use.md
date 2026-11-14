@@ -708,5 +708,6 @@ Hub の記録は `editors-v2.json` と旧形式の `editors.json` です。Hub �
 | Linux 版（AppImage） | 実機未検証のテスト版です。起動・各機能・アプリ内更新を確かめていません。 |
 | Unity の検出・「Unityで開く」 | Windows で確認しています。Mac と Linux は実機で確かめていません。 |
 | 強制ダークモード | Windows（WebView2）・macOS・Linux のどれも、実機での見た目を確かめていません。 |
+| ブラウザ拡張 | Windows の Chrome で、アプリのフォルダからの読み込みと、新しい版への自動の読み込み直しを、アプリの代わりの見本で確かめています。BOOTH にログインした状態での読み込み、Edge、macOS・Linux は確かめていません。 |
 
 実機での確認の記録は [検証記録](docs/verification.md) にあります。

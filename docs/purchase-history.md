@@ -47,7 +47,7 @@ Linux では右パネルが GtkOverlay への重ね合わせなので、隠し�
 
 ### 拡張機能
 
-拡張のポップアップの「購入履歴を読み込む」を押したときだけ、拡張の offscreen 文書が `https://accounts.booth.pm/orders?page=N` と `/orders/<注文番号>` を普段のブラウザのログインで 1 ページずつ読む。間隔は拡張の設定（1000 / 500 / 250ms）。一覧 1 ページごとに `POST /purchases/list` へ送り、アプリの返す「新しい注文の有無」で一覧を止めるかを決める。続けて `GET /purchases/pending` の注文を `POST /purchases/detail` へ 1 件ずつ送り、最後に `POST /purchases/finish` で一覧を最後まで読めたかを知らせる。ログイン画面など別のページへ転送されたら止める。ページの移動はしない（タブを動かさずに読む）。
+拡張のポップアップの「購入履歴を読み込む」を押したときだけ、拡張の offscreen 文書が `https://accounts.booth.pm/orders?page=N` と `/orders/<注文番号>` を普段のブラウザのログインで 1 ページずつ読む。間隔は拡張の設定（1000 / 500 / 250ms）。一覧 1 ページごとに `POST /purchases/list` へ送り、アプリの返す「新しい注文の有無」で一覧を止めるかを決める。続けて `/purchases/pending`（拡張は Origin を付けるために POST で送る）の注文を `POST /purchases/detail` へ 1 件ずつ送り、最後に `POST /purchases/finish` で一覧を最後まで読めたかを知らせる。ログイン画面など別のページへ転送されたら止める。ページの移動はしない（タブを動かさずに読む）。
 
 購入完了ページは、拡張の設定の「購入完了ページを自動で登録する」（既定オン）のとき、本人が開いたページから `auto-register.js` の `checkout` と同じ条件で商品 ID・商品名・ショップ名だけを読み、`POST /purchases/checkout` へ送る。アプリは注文を記録し、商品を分類待ち（`extension_import_pending`）に入れる。続けて拡張がその注文の詳細を 1 回だけ読む。アプリが止まっていれば拡張が未送信として持ち、起動後に送る。本人が開いた購入履歴と注文詳細のページも、同じ設定のときだけそのページを送る。
 

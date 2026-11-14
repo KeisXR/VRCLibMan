@@ -50,11 +50,13 @@ function noteSeen(status) {
   chrome.storage.local.set({ lastConnection: { at: new Date(now).toISOString(), status } }).catch(() => {});
 }
 
+// Chrome は、ホスト権限で送る拡張の GET に Origin を付けない。アプリは Origin で拡張を見分けるので、
+// 読み取りも POST で送る（本文なし）。
 async function appRequest(path, { token, body, timeoutMs } = {}) {
   let response;
   try {
     response = await fetch(`${shared.LOCAL_BASE}${path}`, {
-      method: body === undefined ? "GET" : "POST",
+      method: "POST",
       credentials: "omit",
       ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
       headers: shared.localHeaders(token, version(), body !== undefined),
@@ -81,7 +83,7 @@ let lastHealth = null;
 async function probe(token, timeoutMs = 1500) {
   try {
     const response = await fetch(`${shared.LOCAL_BASE}/health`, {
-      method: "GET",
+      method: "POST",
       credentials: "omit",
       signal: AbortSignal.timeout(timeoutMs),
       headers: shared.localHeaders(token, version(), false),
@@ -798,7 +800,7 @@ async function connection() {
   let routeDownloads = stored.routeDownloads;
   if (reachable(status)) {
     try {
-      const data = await appRequest("/route-downloads", { token: stored.pairingToken, timeoutMs: 4000 });
+      const data = await appRequest("/route-downloads/state", { token: stored.pairingToken, timeoutMs: 4000 });
       routeDownloads = data.enabled === true;
       await chrome.storage.local.set({ routeDownloads });
     } catch {

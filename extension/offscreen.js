@@ -12,8 +12,9 @@ function appRequester(token, version) {
   return async (path, body) => {
     let response;
     try {
+      // GET には Origin が付かずアプリが断るので、読み取りも POST で送る（background.js の appRequest と同じ）。
       response = await fetch(`${shared.LOCAL_BASE}${path}`, {
-        method: body === undefined ? "GET" : "POST",
+        method: "POST",
         credentials: "omit",
         headers: shared.localHeaders(token, String(version || ""), body !== undefined),
         body: body === undefined ? undefined : JSON.stringify(body),

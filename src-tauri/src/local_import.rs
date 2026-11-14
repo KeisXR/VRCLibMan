@@ -806,7 +806,10 @@ fn classify(request: RequestView<'_>, access: Access<'_>) -> Gate {
     if let Some(route) = crate::extension_purchases::route(request.method, path) {
         return Gate::Purchases(route);
     }
-    if request.method.eq_ignore_ascii_case("GET") && path == "/health" {
+    // Chrome は、ホスト権限で送る拡張の GET に Origin を付けない。今の拡張は読み取りも POST で送る。
+    // GET は Origin を付けて送る相手のために残す（Origin の無い要求は上で 403 になる）。
+    let read = request.method.eq_ignore_ascii_case("GET") || request.method.eq_ignore_ascii_case("POST");
+    if read && path == "/health" {
         return Gate::Health;
     }
     if request.method.eq_ignore_ascii_case("POST") && matches!(path, "/import" | "/import-download") {
@@ -815,13 +818,15 @@ fn classify(request: RequestView<'_>, access: Access<'_>) -> Gate {
     if request.method.eq_ignore_ascii_case("POST") && path == "/product-status" {
         return Gate::ProductStatus;
     }
-    if request.method.eq_ignore_ascii_case("GET") && path == "/known-ids" {
+    if read && path == "/known-ids" {
         return Gate::KnownIds;
     }
     if request.method.eq_ignore_ascii_case("POST") && path == "/download-finished" {
         return Gate::DownloadFinished;
     }
-    if request.method.eq_ignore_ascii_case("GET") && path == "/route-downloads" {
+    if (request.method.eq_ignore_ascii_case("GET") && path == "/route-downloads")
+        || (request.method.eq_ignore_ascii_case("POST") && path == "/route-downloads/state")
+    {
         return Gate::RouteRead;
     }
     if request.method.eq_ignore_ascii_case("POST") && path == "/route-downloads" {
@@ -1248,6 +1253,16 @@ mod tests {
             gate("GET", "/known-ids", Some(EXTENSION), None),
             Gate::Reject { status: 401, .. }
         ));
+        // The extension sends reads as POST, because Chrome leaves Origin off its GET requests.
+        for (path, expected) in [("/health", "health"), ("/known-ids", "known"), ("/route-downloads/state", "route")] {
+            let actual = gate("POST", path, Some(EXTENSION), Some("Bearer ABCD-2345"));
+            assert!(matches!((expected, &actual), ("health", Gate::Health) | ("known", Gate::KnownIds) | ("route", Gate::RouteRead)), "{path}");
+            assert!(matches!(gate("POST", path, None, Some("Bearer ABCD-2345")), Gate::Reject { status: 403, .. }), "{path} without Origin");
+        }
+        assert!(matches!(
+            gate("GET", "/route-downloads/state", Some(EXTENSION), Some("Bearer ABCD-2345")),
+            Gate::Reject { status: 404, .. }
+        ));
         assert!(token_ok(Some("Bearer ABCD-2345"), expected));
         assert!(token_ok(Some("bearer abcd2345"), expected));
         assert!(!token_ok(None, expected));
@@ -1424,6 +1439,16 @@ mod tests {
         let (status, body) = exchange(
             addr,
             "GET",
+            "/health",
+            Some(EXTENSION),
+            Some(&format!("Bearer {}", display_token(&token))),
+            "",
+        );
+        assert_eq!(status, 200, "{body}");
+        assert!(body.contains("\"ok\":true"), "{body}");
+        let (status, body) = exchange(
+            addr,
+            "POST",
             "/health",
             Some(EXTENSION),
             Some(&format!("Bearer {}", display_token(&token))),

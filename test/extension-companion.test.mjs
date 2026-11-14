@@ -65,7 +65,7 @@ test('a page download imports one product without opening a launch tab when the 
   assert.deepEqual(w.sent.map(r=>r.path),['/health','/import-download']);
   assert.deepEqual(w.sent[1].body,product);
   assert.equal(w.items.length,0);
-  for(const request of w.sent){assert.equal(request.options.credentials,'omit');assert.equal(request.options.headers.Cookie,undefined);assert.equal(request.options.headers['X-VRCLibMan-Extension-Version'],'0.8.3');}
+  for(const request of w.sent){assert.equal(request.options.credentials,'omit');assert.equal(request.options.headers.Cookie,undefined);assert.equal(request.options.headers['X-VRCLibMan-Extension-Version'],'0.8.3');assert.equal(request.options.method,'POST',`${request.path} is sent as POST so that Chrome adds Origin`);}
   assert.equal(await w.message({type:'import-download',downloadableId:'555555'},{...page(),url:'https://evil.example/'}),undefined);
 });
 

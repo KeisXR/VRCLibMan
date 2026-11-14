@@ -28,8 +28,9 @@ pub(crate) fn route(method: &str, path: &str) -> Option<Route> {
     let get = method.eq_ignore_ascii_case("GET");
     let post = method.eq_ignore_ascii_case("POST");
     match path {
-        "/purchases/state" if get => Some(Route::State),
-        "/purchases/pending" if get => Some(Route::Pending),
+        // 拡張は Origin を付けるために読み取りも POST で送る。GET も同じ検査で受ける。
+        "/purchases/state" if get || post => Some(Route::State),
+        "/purchases/pending" if get || post => Some(Route::Pending),
         "/purchases/list" if post => Some(Route::List),
         "/purchases/detail" if post => Some(Route::Detail),
         "/purchases/finish" if post => Some(Route::Finish),
@@ -250,7 +251,9 @@ mod tests {
         assert_eq!(route("GET", "/purchases/state"), Some(Route::State));
         assert_eq!(route("POST", "/purchases/list"), Some(Route::List));
         assert_eq!(route("GET", "/purchases/list"), None);
-        assert_eq!(route("POST", "/purchases/state"), None);
+        assert_eq!(route("POST", "/purchases/state"), Some(Route::State));
+        assert_eq!(route("POST", "/purchases/pending"), Some(Route::Pending));
+        assert_eq!(route("DELETE", "/purchases/state"), None);
         assert_eq!(route("POST", "/purchases/checkout"), Some(Route::Checkout));
         assert_eq!(route("POST", "/purchases/../import"), None);
         assert!(!Route::Pending.reads_body());
