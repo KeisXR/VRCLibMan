@@ -246,13 +246,14 @@ export function useRemoteProductProbe(items: ItemView[]) {
     [runProbe],
   );
 
+  const mergedById = useMemo(() => new Map(mergedItems.map((item) => [item.boothId, item])), [mergedItems]);
   const statusFor = useCallback(
     (boothId: string) => {
-      const item = mergedItems.find((row) => row.boothId === boothId);
+      const item = mergedById.get(boothId);
       if (!item) return "ok" as RemoteProbeStatus;
       return remoteProbeStatusFor(item, overlays);
     },
-    [mergedItems, overlays],
+    [mergedById, overlays],
   );
 
   return { items: mergedItems, statusFor, retryProbe };

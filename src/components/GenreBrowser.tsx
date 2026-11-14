@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ItemCard } from "../pages/AvatarDetailPage";
 import { GENRE_FREE, GENRE_LABEL, GENRE_UNSET } from "../types";
+import type { ItemView } from "../types";
 import { useGenreBrowse } from "../genreBrowseContext";
 import { filterItems, selectedGenre } from "../genreBrowseUtils";
 import { useRemoteProductProbe } from "../remoteProductProbe";
+import type { RemoteProbeStatus } from "../remoteProductProbe";
+import { chunked, chunksFor, useProgressiveCount } from "../progressiveList";
 import { isPreviewMoveKey, nextPreviewId, previewKeysBlocked } from "../previewPane";
 import { GenreChipBar } from "./GenreChipBar";
 import { useRightPanelPreview } from "./RightPanel";
@@ -12,6 +15,46 @@ import { useReplayRise } from "../useReplayRise";
 const NOUN: Record<string, string> = { asset: "アセット", world: "ワールド" };
 
 export { filterItems, genreHref, selectedGenre } from "../genreBrowseUtils";
+
+/** What every card of the list shares. One object, so a group of cards redraws only when it changes. */
+interface CardContext {
+  probed: Map<string, ItemView>;
+  statusFor: (boothId: string) => RemoteProbeStatus;
+  retryProbe: (boothIds: string[]) => void;
+  previewOpen: boolean;
+  selectedId: string | null;
+  focusId: string | null;
+  tabStopId: string | null;
+  select: (boothId: string) => void;
+  setDraggingId: (boothId: string | null) => void;
+}
+
+/**
+ * One group of cards (see progressiveList.ts). Groups already on screen are not drawn again
+ * while the next ones are added. Renders no element of its own, so the list stays flat.
+ */
+const CardGroup = memo(function CardGroup({ items, context }: { items: ItemView[]; context: CardContext }) {
+  const { probed, statusFor, retryProbe, previewOpen, selectedId, focusId, tabStopId, select, setDraggingId } = context;
+  return (
+    <>
+      {items.map((item) => (
+        <ItemCard
+          key={item.boothId}
+          item={probed.get(item.boothId) ?? item}
+          movable
+          onDragChange={setDraggingId}
+          remoteProbeStatus={statusFor(item.boothId)}
+          onRetryRemoteProbe={() => retryProbe([item.boothId])}
+          selectable={previewOpen}
+          selected={previewOpen && item.boothId === selectedId}
+          focused={item.boothId === focusId}
+          tabStop={previewOpen && item.boothId === tabStopId}
+          onSelect={previewOpen ? () => select(item.boothId) : undefined}
+        />
+      ))}
+    </>
+  );
+});
 
 export function GenreBrowser({ title, lede }: { title: string; lede?: string }) {
   const { kind, routeGenre, selected, focusId, data, error, genreBar, reload, setDraggingId } = useGenreBrowse();
@@ -36,6 +79,8 @@ export function GenreBrowser({ title, lede }: { title: string; lede?: string }) 
   const unknownGenre = routeGenre != null && routeGenre !== "" && selectedGenre(kind, routeGenre) === null;
   const selectedItem = selectedId ? probedMap.get(selectedId) ?? shown.find((item) => item.boothId === selectedId) ?? null : null;
   const tabStopId = selectedId ?? shownIds[0] ?? null;
+  // Another genre or filter is another list; a refresh of the same one keeps what is drawn.
+  const { count: drawnCount, reveal } = useProgressiveCount(`${kind}\u0000${selected ?? ""}\u0000${filter}`, shown.length);
   const clearSelection = useCallback(() => setSelectedId(null), []);
   const publishedItem = previewOpen ? selectedItem : null;
 
@@ -56,24 +101,35 @@ export function GenreBrowser({ title, lede }: { title: string; lede?: string }) 
       focusedOnce.current = null;
       return;
     }
-    if (focusedOnce.current === focusId || !shownIds.includes(focusId)) return;
+    if (focusedOnce.current === focusId) return;
+    const index = shownIds.indexOf(focusId);
+    if (index < 0) return;
+    if (index >= drawnCount) {
+      reveal(index);
+      return;
+    }
     focusedOnce.current = focusId;
     if (previewOpen) setSelectedId(focusId);
     window.requestAnimationFrame(() => {
       document.getElementById(`product-${focusId}`)?.scrollIntoView({ block: "center" });
     });
-  }, [focusId, shownIds, previewOpen]);
+  }, [focusId, shownIds, previewOpen, drawnCount, reveal]);
   const focusMissing = Boolean(focusId && current && !current.items.some((item) => item.boothId === focusId));
 
   useEffect(() => {
     if (!keyboardMove.current || !selectedId) return;
+    const index = shownIds.indexOf(selectedId);
+    if (index >= drawnCount) {
+      reveal(index);
+      return;
+    }
     keyboardMove.current = false;
     const node = document.getElementById(`product-${selectedId}`);
     if (node instanceof HTMLElement) {
       node.focus();
       node.scrollIntoView({ block: "nearest" });
     }
-  }, [selectedId]);
+  }, [selectedId, shownIds, drawnCount, reveal]);
 
   useEffect(() => {
     if (!previewOpen) return;
@@ -96,27 +152,26 @@ export function GenreBrowser({ title, lede }: { title: string; lede?: string }) 
 
   const listRef = useRef<HTMLDivElement>(null);
   useReplayRise(listRef, selected);
+  const groups = useMemo(() => chunked(shown), [shown]);
+  const cardContext = useMemo<CardContext>(
+    () => ({
+      probed: probedMap,
+      statusFor,
+      retryProbe,
+      previewOpen,
+      selectedId,
+      focusId,
+      tabStopId,
+      select: setSelectedId,
+      setDraggingId,
+    }),
+    [probedMap, statusFor, retryProbe, previewOpen, selectedId, focusId, tabStopId, setDraggingId],
+  );
   const list = (
     <div className="stack" ref={listRef}>
-      {shown.map((item) => {
-        const resolved = probedMap.get(item.boothId) ?? item;
-        const isSelected = previewOpen && item.boothId === selectedId;
-        return (
-          <ItemCard
-            key={item.boothId}
-            item={resolved}
-            movable
-            onDragChange={setDraggingId}
-            remoteProbeStatus={statusFor(item.boothId)}
-            onRetryRemoteProbe={() => retryProbe([item.boothId])}
-            selectable={previewOpen}
-            selected={isSelected}
-            focused={item.boothId === focusId}
-            tabStop={previewOpen && item.boothId === tabStopId}
-            onSelect={previewOpen ? () => setSelectedId(item.boothId) : undefined}
-          />
-        );
-      })}
+      {groups.slice(0, chunksFor(drawnCount)).map((items, index) => (
+        <CardGroup key={index} items={items} context={cardContext} />
+      ))}
     </div>
   );
 
