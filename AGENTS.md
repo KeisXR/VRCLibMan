@@ -55,6 +55,7 @@ PC 間の移行は [データ移行](docs/remote-sync.md) に従う。現在は�
 - 変更系の関数は `&mut Connection`。`transaction()` が可変借用を要求するため。
 - 起動時の設定の既定値、初期データ、カタログの投入（`finish_open`）は1つのトランザクションで行う。1行ごとにコミットすると、ディスク上の DB ではそのたびにファイルを同期し、新しいライブラリを開くのに Windows で数十秒かかるため（[検証記録](docs/verification.md#新しいライブラリを開くときの同期回数2026-11-13)）。
 - DB の `MutexGuard` を `.await` の間に持たない。抽出の実行中フラグは `Arc<AtomicBool>`。
+- 画面が DB を読むだけのコマンドは `#[tauri::command(async)]` にする。同期コマンドは UI スレッドで DB のロックを待ち、その間アプリ全体が止まるため（`commands.rs` の `read_commands_run_off_the_ui_thread`）。
 - Tauri のコマンド引数は Rust のパラメータ名と一致させる。複数語は camelCase（`productId`、`fromId`、`intoId`）。構造体は `rename_all = "camelCase"`。
 - `tauri` の feature に `protocol-asset` が必要。`tauri.conf.json` の asset scope は `$APPDATA/**`。
 - 画面遷移はハッシュ（`#/` `#/avatar/{id}` `#/classification-log` `#/import` `#/settings`）。ルータライブラリは無い。
@@ -404,6 +405,7 @@ Mac の内蔵ブラウザは `data_directory` を使わない。固定の 16 バ
 | `src-tauri/src/matching.rs` | ファイル名スコア |
 | `src-tauri/src/scan.rs` | フォルダ走査の上限と拒否 |
 | `src-tauri/src/search.rs` | 検索画面の全文一致（説明の全文まで） |
+| `src-tauri/src/nav_bench.rs` | 画面の読み込みの計測（`#[ignore]`、[開発ガイド](docs/development.md#画面の読み込みの計測)） |
 | `src-tauri/src/classifier.rs` | タイトルと説明の規則分類（`rule_extraction`）と分類器の版 |
 | `src-tauri/src/retired_classifier.rs` | 使わなくなった分類器の設定と APIキーの後始末 |
 | `src-tauri/src/booth_category.rs` | BOOTH カテゴリとタグで即決するか、規則へ回すか |

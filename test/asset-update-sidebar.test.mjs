@@ -47,7 +47,7 @@ test("sidebar asset update button runs the configured check and reports a quiet 
   try {
     const { act, createElement } = await import("react");
     const { createRoot } = await import("react-dom/client");
-    const { assetUpdates } = await server.ssrLoadModule("/src/api.ts");
+    const { assetUpdates, notifyAssetUpdatesConfigured } = await server.ssrLoadModule("/src/api.ts");
     const { ShellProvider } = await server.ssrLoadModule("/src/App.tsx");
     const { SidebarAssetUpdateButton, useSidebarAssetUpdate } = await server.ssrLoadModule("/src/components/SidebarAssetUpdateButton.tsx");
     const { AssetUpdateLogPage } = await server.ssrLoadModule("/src/pages/AssetUpdateLogPage.tsx");
@@ -104,12 +104,18 @@ test("sidebar asset update button runs the configured check and reports a quiet 
     assert.equal(failure.options?.persist, true, "failure notice persists");
 
     // Enabling the first target in settings surfaces the button without a reload:
-    // the mounted button re-reads its status when the screen changes.
+    // the settings call announces the change and the mounted button re-reads its status.
+    // Changing pages alone does not read the status again.
     assetUpdates.status = async () => status([row("1", { enabled: false })]);
     await render();
     assert.equal(document.querySelector(".sidebar-asset-update"), null, "hidden again with no targets");
-    assetUpdates.status = async () => status([row("1")]);
+    let reads = 0;
+    assetUpdates.status = async () => { reads++; return status([row("1")]); };
     await act(async () => { window.dispatchEvent(new window.Event("hashchange")); await tick(); });
+    assert.equal(reads, 0, "a page change does not re-read the status");
+    assert.equal(document.querySelector(".sidebar-asset-update"), null);
+    await act(async () => { notifyAssetUpdatesConfigured(); await tick(); });
+    assert.equal(reads, 1);
     assert.ok(document.querySelector(".sidebar-asset-update"), "button appears after the settings change");
 
     // Collapsed rail: an icon button with the same action.
@@ -122,7 +128,7 @@ test("sidebar asset update button runs the configured check and reports a quiet 
     assert.doesNotMatch(document.querySelector(".sidebar-asset-update").textContent, /159/);
     assert.match(document.querySelector(".sidebar-asset-progress").textContent, /7 \/ 159 件/);
     assetUpdates.status = async () => status([row("424242", { changes: ["新しいファイルの追加"] })]);
-    await act(async () => { window.dispatchEvent(new window.Event("hashchange")); await tick(); });
+    await act(async () => { notifyAssetUpdatesConfigured(); await tick(); });
     assert.equal(document.querySelector(".sidebar-asset-update").disabled, false);
 
     assetUpdates.history = async () => [{ boothId: "424242", detectedAt: "2026-11-05T00:00:00.000Z", source: "library", descriptionChanged: false,

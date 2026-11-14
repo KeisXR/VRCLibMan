@@ -81,10 +81,30 @@ export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+const assetUpdateBus = new EventTarget();
+
+/**
+ * The update-check targets changed in this window (settings, the update log). The Rust side
+ * sends no event for a configuration change, so the sidebar button listens here instead of
+ * reading the status again on every page change.
+ */
+export function notifyAssetUpdatesConfigured(): void {
+  assetUpdateBus.dispatchEvent(new Event("configured"));
+}
+
+export function onAssetUpdatesConfigured(listener: () => void): () => void {
+  assetUpdateBus.addEventListener("configured", listener);
+  return () => assetUpdateBus.removeEventListener("configured", listener);
+}
+
 export const assetUpdates = {
   status: () => readWithTimeout(() => call<AssetUpdateStatus>("asset_update_status"), "アセット更新の状態"),
   history: () => readWithTimeout(() => call<AssetUpdateRecord[]>("asset_update_history"), "アセット更新の記録"),
-  configure: (input: AssetUpdateConfigure) => call<AssetUpdateStatus>("configure_asset_updates", { input }),
+  configure: (input: AssetUpdateConfigure) =>
+    call<AssetUpdateStatus>("configure_asset_updates", { input }).then((status) => {
+      notifyAssetUpdatesConfigured();
+      return status;
+    }),
   check: () => call<AssetUpdateStatus>("check_asset_updates"),
 };
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { assetUpdates, isTauri } from "../api";
+import { assetUpdates, isTauri, onAssetUpdatesConfigured } from "../api";
 import { assetUpdateListSummary } from "../assetUpdatesUi";
 import type { AssetUpdateStatus } from "../types";
 import { errorText, ProgressTrack } from "../ui";
@@ -33,12 +33,13 @@ export function useSidebarAssetUpdate(
   useEffect(() => {
     let alive = true;
     refresh();
-    // Configuration changes in the settings screen do not emit an event, so the
-    // mounted button also refreshes when the screen changes and once a minute;
-    // otherwise the first target enabled in settings would not surface here
-    // until some check happened to run.
+    // A configuration change in the settings screen emits no event from Rust; the
+    // settings call announces it in this window (onAssetUpdatesConfigured), so the
+    // first target enabled there surfaces here at once. Changing pages does not
+    // read the status again: with every product as a target it is a large read.
+    // Once a minute stays as a fallback.
     const timer = window.setInterval(refresh, 60000);
-    window.addEventListener("hashchange", refresh);
+    const stopConfigured = onAssetUpdatesConfigured(refresh);
     let stop = () => {};
     if (isTauri()) {
       void import("@tauri-apps/api/event")
@@ -49,7 +50,7 @@ export function useSidebarAssetUpdate(
       alive = false;
       readSequence.current++;
       window.clearInterval(timer);
-      window.removeEventListener("hashchange", refresh);
+      stopConfigured();
       stop();
     };
   }, [refresh]);

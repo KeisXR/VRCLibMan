@@ -51,6 +51,8 @@ mod view;
 mod unity;
 mod unity_import;
 mod updater;
+#[cfg(test)]
+mod nav_bench;
 
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};

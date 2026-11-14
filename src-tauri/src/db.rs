@@ -5,7 +5,7 @@ use crate::model::{
     Avatar, AvatarInput, BaseBody, BaseBodyInput, CatalogInfo, CatalogRefresh,
     Category, ClassificationSnapshot, DownloadFact, DownloadFinished, Extraction, ImportReport,
     OwnedAvatarRestore, RegisterOwnedBodyResult, SnapshotLink,
-    IncomingDownload, IncomingProduct, IncomingVariation, Knowledge, Link, LocalFile, Product,
+    IncomingDownload, IncomingProduct, IncomingVariation, Knowledge, LibraryStats, Link, LocalFile, Product,
     ProductFlag, ProductUpdate, ManagedProduct, Settings, SettingsInput, SettingsPatch, SetupStatus,
     VariationFact, now_iso,
 };
@@ -3368,6 +3368,86 @@ pub(crate) fn load_snapshot(connection: &Connection) -> Result<Snapshot, String>
     })
 }
 
+/// The library counts (`LibraryStats`) without reading the whole library. The app shell, the
+/// avatar list and the import page ask for them on every refresh; the snapshot took tens to
+/// hundreds of ms. Same numbers as `view::library_stats` on a snapshot (a test compares them).
+pub(crate) fn library_stats(connection: &Connection) -> Result<LibraryStats, String> {
+    // A category the app does not know reads as none (`Category::parse`), so it counts as unclassified.
+    let known = [
+        Category::Avatar,
+        Category::Outfit,
+        Category::Hair,
+        Category::Accessory,
+        Category::Texture,
+        Category::Gimmick,
+        Category::World,
+        Category::Other,
+    ]
+    .iter()
+    .map(|category| format!("'{}'", category.as_str()))
+    .collect::<Vec<_>>()
+    .join(", ");
+    let sql = format!(
+        "SELECT
+            (SELECT COUNT(*) FROM products
+              WHERE booth_id NOT IN (SELECT booth_id FROM product_exclusions)),
+            (SELECT COUNT(*) FROM avatars a
+              WHERE a.owned != 0 AND EXISTS (
+                SELECT 1 FROM product_avatars l JOIN products p ON p.booth_id = l.product_id
+                 WHERE l.avatar_id = a.id AND p.category = 'avatar'
+                   AND p.booth_id NOT IN (SELECT booth_id FROM product_exclusions))),
+            (SELECT COUNT(*) FROM products
+              WHERE (category IS NULL OR category NOT IN ({known}))
+                AND booth_id NOT IN (SELECT booth_id FROM product_exclusions)),
+            (SELECT COUNT(*) FROM local_files
+              WHERE linked_product_id IS NULL
+                AND (candidate_product_id IS NULL
+                     OR candidate_product_id NOT IN (SELECT booth_id FROM product_exclusions))),
+            (SELECT COUNT(*) FROM local_files
+              WHERE is_dir = 0 AND linked_product_id IS NOT NULL
+                AND linked_product_id NOT IN (SELECT booth_id FROM product_exclusions))
+            + (SELECT COUNT(*) FROM product_files WHERE local_path IS NOT NULL AND local_path != '')"
+    );
+    connection
+        .query_row(&sql, [], |row| {
+            Ok(LibraryStats {
+                products: row.get(0)?,
+                owned_avatars: row.get(1)?,
+                unextracted: row.get(2)?,
+                unlinked_files: row.get(3)?,
+                registered_files: row.get(4)?,
+            })
+        })
+        .sql()
+}
+
+/// Products to pick from (adding an item to an avatar, linking a file, the update targets),
+/// without reading the whole library. Same rows and order as `view::product_options` on a
+/// snapshot: the snapshot's product order, then by title.
+pub(crate) fn product_options(connection: &Connection) -> Result<Vec<crate::view::ProductOption>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT booth_id, title, shop, category FROM products
+             WHERE booth_id NOT IN (SELECT booth_id FROM product_exclusions)",
+        )
+        .sql()?;
+    let mut options = statement
+        .query_map([], |row| {
+            let category: Option<String> = row.get(3)?;
+            Ok(crate::view::ProductOption {
+                booth_id: row.get(0)?,
+                title: row.get(1)?,
+                shop: row.get(2)?,
+                category: category.as_deref().and_then(Category::parse),
+            })
+        })
+        .sql()?
+        .collect::<Result<Vec<_>, _>>()
+        .sql()?;
+    options.sort_by(|left, right| left.title.cmp(&right.title));
+    Ok(options)
+}
+
 pub(crate) fn product_excluded(connection: &Connection, booth_id: &str) -> Result<bool, String> {
     connection
         .query_row(
@@ -6592,6 +6672,66 @@ mod tests {
             original.category
         );
         assert!(set_product_excluded(&mut connection, "9999", true).is_err());
+    }
+
+    /// The counts and the options are read with SQL; they must match the snapshot's versions,
+    /// including excluded products, an unknown category, unlinked candidates and recorded files.
+    #[test]
+    fn library_counts_and_options_read_with_sql_match_the_snapshot() {
+        let mut connection = open_memory().unwrap();
+        import_products(&mut connection, &parse_export(SAMPLE).unwrap()).unwrap();
+        mark_owned_body(&mut connection, "1001").unwrap();
+        apply_extraction(&mut connection, "1004", &extraction(Category::Outfit, &["ライム"], false, 0.99), 0.6).unwrap();
+        let same = |connection: &Connection| {
+            let snapshot = load_snapshot(connection).unwrap();
+            assert_eq!(
+                serde_json::to_value(library_stats(connection).unwrap()).unwrap(),
+                serde_json::to_value(crate::view::library_stats(&snapshot)).unwrap()
+            );
+            assert_eq!(
+                serde_json::to_value(product_options(connection).unwrap()).unwrap(),
+                serde_json::to_value(crate::view::product_options(&snapshot)).unwrap()
+            );
+        };
+        same(&connection);
+        let now = now_iso();
+        for (path, is_dir, linked, candidate) in [
+            ("/lib/a.zip", 0, Some("1004"), None),
+            ("/lib/dir", 1, Some("1004"), None),
+            ("/lib/b.zip", 0, Some("1002"), None),
+            ("/lib/c.zip", 0, None, Some("1002")),
+            ("/lib/d.zip", 0, None, Some("1003")),
+            ("/lib/e.zip", 0, None, None),
+        ] {
+            connection
+                .execute(
+                    "INSERT INTO local_files (path, filename, is_dir, size, linked_product_id, candidate_product_id, match_score, scanned_at)
+                     VALUES (?1, ?1, ?2, 1, ?3, ?4, 0.5, ?5)",
+                    params![path, is_dir, linked, candidate, now],
+                )
+                .unwrap();
+        }
+        connection
+            .execute(
+                "INSERT INTO product_files (booth_id, variation, filename, downloaded, local_path) VALUES ('1003', '', 'x.zip', 1, '/lib/x.zip'), ('1003', '', 'y.zip', 0, '')",
+                [],
+            )
+            .unwrap();
+        connection.execute("UPDATE products SET category = 'retired' WHERE booth_id = '1005'", []).unwrap();
+        same(&connection);
+        let before = library_stats(&connection).unwrap();
+        assert!(before.owned_avatars >= 1);
+        assert_eq!(before.unlinked_files, 3);
+        assert_eq!(before.registered_files, 3);
+        // An excluded product leaves the counts, its files and its body ownership with it.
+        set_product_excluded(&mut connection, "1002", true).unwrap();
+        set_product_excluded(&mut connection, "1001", true).unwrap();
+        same(&connection);
+        let after = library_stats(&connection).unwrap();
+        assert_eq!(after.products, before.products - 2);
+        assert_eq!(after.owned_avatars, before.owned_avatars - 1);
+        assert_eq!(after.unlinked_files, 2);
+        assert_eq!(after.registered_files, 2);
     }
 
     #[test]
