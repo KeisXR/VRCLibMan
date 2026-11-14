@@ -1331,7 +1331,10 @@ fn walk_page_script() -> String {
     script
 }
 
-const PROBE_JS: &str = "(function () {\n  try {\n    return { ok: true, href: String(location.href || \"\"), ready: String(document.readyState || \"\") };\n  } catch (error) {\n    return { ok: false, error: String(error && error.message ? error.message : error) };\n  }\n})()";
+const PROBE_JS: &str = "(function () {\n  try {\n    return { ok: true, href: String(location.href || \"\"), ready: String(document.readyState || \"\"), stale: window.__vrclibmanWalkLeft === true };\n  } catch (error) {\n    return { ok: false, error: String(error && error.message ? error.message : error) };\n  }\n})()";
+
+/// 移動を頼む前の文書に付ける印。印の残る文書は移動前のものなので、着いたページとして読まない。
+const LEAVE_MARK_JS: &str = "(function () {\n  try {\n    window.__vrclibmanWalkLeft = true;\n    return { ok: true };\n  } catch (error) {\n    return { ok: false, error: String(error && error.message ? error.message : error) };\n  }\n})()";
 
 fn unwrap_eval_json(raw: &str) -> Result<serde_json::Value, String> {
     let mut value: serde_json::Value =
@@ -1376,7 +1379,14 @@ fn parse_walk_snapshot(raw: &str) -> Result<PageSnapshot, String> {
     })
 }
 
-fn parse_probe(raw: &str) -> Result<(String, String), String> {
+struct PageProbe {
+    href: String,
+    ready: String,
+    /// 移動を頼む前の文書がまだ表示されている。
+    stale: bool,
+}
+
+fn parse_probe(raw: &str) -> Result<PageProbe, String> {
     let value = unwrap_eval_json(raw)?;
     let href = value
         .get("href")
@@ -1388,7 +1398,30 @@ fn parse_probe(raw: &str) -> Result<(String, String), String> {
         .and_then(|item| item.as_str())
         .unwrap_or("")
         .to_string();
-    Ok((href, ready))
+    let stale = value.get("stale").and_then(|item| item.as_bool()).unwrap_or(false);
+    Ok(PageProbe { href, ready, stale })
+}
+
+/// 移動先の文書が読み終わっていて、目的のページか止めるべきページなら、その URL。
+/// 移動前の文書は、URL が止めるべきページに見えても着いたことにしない。
+fn arrived_href(
+    probe: PageProbe,
+    target: &url::Url,
+    same: fn(&str, &url::Url) -> bool,
+    stop: fn(&str) -> Option<WalkStop>,
+) -> Option<String> {
+    if probe.stale || probe.ready != "complete" {
+        return None;
+    }
+    (same(&probe.href, target) || stop(&probe.href).is_some()).then_some(probe.href)
+}
+
+/// 移動を頼む直前に、今の文書へ印を付ける。読めないページなら印は付けずに進める。
+async fn mark_walk_page_left(app: &AppHandle) {
+    let Ok(label) = pinned_walk_tab(app) else {
+        return;
+    };
+    let _ = eval_label_within(app, &label, LEAVE_MARK_JS.to_string(), Duration::from_secs(3)).await;
 }
 
 fn emit_walk_progress(progress: &ProgressGuard, current: u32, total: u32, message: &str) {
@@ -1720,8 +1753,7 @@ async fn wait_until_page(
             return Err("ページの読み込みがタイムアウトしました。もう一度お試しください".into());
         }
         let raw = eval_booth(app, PROBE_JS.to_string()).await?;
-        let (href, ready) = parse_probe(&raw)?;
-        if ready == "complete" && (same(&href, target) || stop(&href).is_some()) {
+        if let Some(href) = arrived_href(parse_probe(&raw)?, target, same, stop) {
             return Ok(href);
         }
         pause_for(Duration::from_millis(200)).await;
@@ -1735,6 +1767,7 @@ async fn read_library_page(
     if walk_cancel_requested() {
         return Err(WALK_CANCELLED.into());
     }
+    mark_walk_page_left(app).await;
     navigate_booth(app, planned.url.clone(), planned.section, planned.page).await?;
     let href = wait_until_settled(app, &planned.url).await?;
     if walk_cancel_requested() {
@@ -2020,6 +2053,7 @@ async fn read_purchase_page(
     if walk_cancel_requested() {
         return Err(WALK_CANCELLED.into());
     }
+    mark_walk_page_left(app).await;
     navigate_walk_tab(app, url.clone(), label).await?;
     let href = wait_until_page(app, url, same_orders_page, purchase_settled_stop).await?;
     if walk_cancel_requested() {
@@ -2301,7 +2335,7 @@ async fn read_order_reader(
             return Err("ページの読み込みがタイムアウトしました".into());
         }
         let raw = eval_label_within(app, ORDER_READER_LABEL, PROBE_JS.to_string(), Duration::from_secs(3)).await?;
-        let (href, ready) = parse_probe(&raw)?;
+        let PageProbe { href, ready, .. } = parse_probe(&raw)?;
         if ready == "complete" {
             if purchase_block_reason(&href).is_some() {
                 return Err(purchase_walk::LOGIN_NOTICE.into());
@@ -2427,6 +2461,77 @@ async fn fill_public_details(app: &AppHandle, progress: &ProgressGuard) -> Resul
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    fn probe(href: &str, ready: &str, stale: bool) -> PageProbe {
+        PageProbe {
+            href: href.into(),
+            ready: ready.into(),
+            stale,
+        }
+    }
+
+    #[test]
+    fn the_page_left_behind_is_not_taken_for_the_destination() {
+        let orders = url::Url::parse(purchase_walk::ORDERS_PAGE).unwrap();
+        let library = url::Url::parse("https://accounts.booth.pm/library?page=1").unwrap();
+        // 移動を頼んだ直前の BOOTH のトップは、読み終わっていてもログイン切れとして止めない。
+        let left = || probe("https://booth.pm/ja", "complete", true);
+        assert_eq!(arrived_href(left(), &orders, same_orders_page, purchase_settled_stop), None);
+        assert_eq!(arrived_href(left(), &library, same_library_page, settled_stop), None);
+        // 同じ URL を読み直すときも、前の文書は読まない。
+        assert_eq!(
+            arrived_href(
+                probe(purchase_walk::ORDERS_PAGE, "complete", true),
+                &orders,
+                same_orders_page,
+                purchase_settled_stop
+            ),
+            None
+        );
+        // 新しい文書なら、目的のページでも止めるべきページでも着いたことにする。
+        assert_eq!(
+            arrived_href(
+                probe(purchase_walk::ORDERS_PAGE, "complete", false),
+                &orders,
+                same_orders_page,
+                purchase_settled_stop
+            )
+            .as_deref(),
+            Some(purchase_walk::ORDERS_PAGE)
+        );
+        assert_eq!(
+            arrived_href(
+                probe("https://accounts.booth.pm/users/sign_in", "complete", false),
+                &orders,
+                same_orders_page,
+                purchase_settled_stop
+            )
+            .as_deref(),
+            Some("https://accounts.booth.pm/users/sign_in")
+        );
+        assert_eq!(
+            arrived_href(
+                probe(purchase_walk::ORDERS_PAGE, "interactive", false),
+                &orders,
+                same_orders_page,
+                purchase_settled_stop
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn walks_mark_the_current_page_before_moving() {
+        let production = include_str!("browser.rs").split("mod tests").next().unwrap();
+        for reader in ["async fn read_library_page", "async fn read_purchase_page"] {
+            let body = &production[production.find(reader).expect(reader)..];
+            let mark = body.find("mark_walk_page_left(app).await").expect("mark");
+            let navigate = body.find("navigate_").expect("navigate");
+            assert!(mark < navigate, "{reader} must mark the old page before navigating");
+        }
+        assert!(PROBE_JS.contains("__vrclibmanWalkLeft"));
+        assert!(LEAVE_MARK_JS.contains("__vrclibmanWalkLeft = true"));
+    }
 
     #[test]
     fn only_the_open_library_page_can_be_imported() {
