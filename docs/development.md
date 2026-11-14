@@ -119,6 +119,20 @@ npm run test:tab-click
 
 ヘッドレスの Chromium に実際のポインター入力を送り、固定タブとページタブのクリック切替、閾値未満の揺れ、ドラッグ後のクリックを確認します。WebView2 と同じエンジンのクリックの宛先を検証します。
 
+## 画面の読み込みの計測
+
+サイドバーから画面を開くと、各画面が Rust のコマンドで一覧や件数を読みます。この読み込みの時間は、合成したライブラリで測れます（`src-tauri/src/nav_bench.rs`、ふだんの `cargo test` では走りません）。
+
+```sh
+cargo test --release --manifest-path src-tauri/Cargo.toml --lib navigation_timing -- --ignored --nocapture
+```
+
+- 同梱の辞書が入った新しい一時 DB に、架空の商品・対応アバター・バリエーション・ファイル・購入履歴を入れます。乱数の種は商品数だけで決まるので、同じ商品数なら毎回同じ中身です。
+- `NAV_BENCH_SIZES` で商品数（既定 `300,1000,2000`）を変えられます。`NAV_BENCH_PLAIN=1` を付けると、アセット更新の対象なしの組も測ります（既定は全商品を対象にした組だけ）。`NAV_BENCH_RUNS` は各計測の回数で、中央値を出します。
+- `NAV_BENCH_DUMP=<フォルダ>` を付けると、各コマンドの出力 JSON を書き出します。一時フォルダのパスは `<tmp>` に置き換わるので、変更の前後で書き出して突き合わせれば、表示する内容が変わっていないことを確かめられます。
+- 件数と商品の選択肢は SQL で読み、スナップショットから作った結果と一致することをこの計測の中でも確かめます。
+- 合成データで測った時間は、実際のライブラリや Windows の WebView2 での体感とは別です。Windows 配布版と同じ設定で測るときは `CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16` と `CARGO_PROFILE_RELEASE_LTO=thin` を付けます。
+
 ## macOSのネイティブ配置テスト
 
 MacのWKWebViewは、通常のタイトルバーでもDOMの原点と親NSViewの原点が異なります。右パネルの配置を変えたら、次も実行します（RustとSwiftが必要です）。

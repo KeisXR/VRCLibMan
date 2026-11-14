@@ -405,6 +405,7 @@ Mac の内蔵ブラウザは `data_directory` を使わない。固定の 16 バ
 | `src-tauri/src/matching.rs` | ファイル名スコア |
 | `src-tauri/src/scan.rs` | フォルダ走査の上限と拒否 |
 | `src-tauri/src/search.rs` | 検索画面の全文一致（説明の全文まで） |
+| `src-tauri/src/nav_bench.rs` | 画面の読み込みの計測（`#[ignore]`、[開発ガイド](docs/development.md#画面の読み込みの計測)） |
 | `src-tauri/src/classifier.rs` | タイトルと説明の規則分類（`rule_extraction`）と分類器の版 |
 | `src-tauri/src/retired_classifier.rs` | 使わなくなった分類器の設定と APIキーの後始末 |
 | `src-tauri/src/booth_category.rs` | BOOTH カテゴリとタグで即決するか、規則へ回すか |
