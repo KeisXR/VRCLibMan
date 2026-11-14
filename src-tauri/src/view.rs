@@ -110,13 +110,14 @@ pub fn remote_product_probes(
     snapshot: &Snapshot,
     probes: &[crate::library_files::ProductRemoteProbe],
 ) -> Vec<RemoteProductProbe> {
+    let lookup = Lookup::new(snapshot);
     probes
         .iter()
         .map(|probe| RemoteProductProbe {
             booth_id: probe.booth_id.clone(),
             remote_checked: probe.remote_checked,
             remote_reachable: probe.remote_reachable,
-            downloads: download_views(snapshot, &probe.booth_id),
+            downloads: download_views(snapshot, &lookup, &probe.booth_id),
         })
         .collect()
 }
@@ -227,22 +228,127 @@ pub struct ProductOption {
     pub category: Option<Category>,
 }
 
-struct Classified {
-    thumbnail_path: Option<String>,
-    thumbnail_url: Option<String>,
-    owned: Vec<ItemView>,
-    sections: Vec<Section>,
-    generic: Vec<ItemView>,
-    unset: Vec<ItemView>,
+/// What lands on an avatar's page, as products. Cards only count them; the detail page turns
+/// them into `ItemView`s.
+struct Classified<'s> {
+    owned: Vec<&'s Product>,
+    /// Category key → products and whether each one comes through the shared base body.
+    sections: Vec<(&'static str, Vec<(&'s Product, bool)>)>,
+    generic: Vec<&'s Product>,
+    unset: Vec<&'s Product>,
+}
+
+impl Classified<'_> {
+    fn thumbnail_path(&self) -> Option<String> {
+        self.owned.iter().find_map(|body| body.thumbnail_path.clone())
+    }
+
+    fn thumbnail_url(&self) -> Option<String> {
+        self.owned.iter().find_map(|body| body.thumbnail_url.clone())
+    }
+
+    fn section_len(&self, key: &str) -> u32 {
+        self.sections
+            .iter()
+            .find(|(category, _)| *category == key)
+            .map(|(_, items)| items.len() as u32)
+            .unwrap_or(0)
+    }
+}
+
+/// The snapshot's rows grouped by product (and links by avatar), built once per command.
+///
+/// The views used to scan every row of the snapshot for each product, and every product for
+/// each avatar, which grew with the square (the avatar list took seconds on a large library).
+/// Each group keeps the snapshot's order, so every view comes out the same as from the scans.
+struct Lookup<'s> {
+    products: HashMap<&'s str, &'s Product>,
+    /// Position in `snapshot.products`, the order the pages list products in.
+    positions: HashMap<&'s str, usize>,
+    avatars_of: HashMap<&'s str, Vec<&'s str>>,
+    products_of: HashMap<&'s str, Vec<&'s str>>,
+    files_of: HashMap<&'s str, Vec<&'s LocalFile>>,
+    placed_of: HashMap<&'s str, Vec<&'s PlacedDownload>>,
+    rows_of: HashMap<&'s str, Vec<&'s DownloadFact>>,
+    variations_of: HashMap<&'s str, Vec<&'s VariationFact>>,
+    /// The first flag row of each product, as `find` would return.
+    flags: HashMap<&'s str, &'s ProductFlag>,
+    /// Generic products without any compatible avatar, by position.
+    generic_unlinked: Vec<usize>,
+}
+
+impl<'s> Lookup<'s> {
+    fn new(snapshot: &'s Snapshot) -> Self {
+        fn group<'s, T>(rows: &'s [T], key: impl Fn(&'s T) -> Option<&'s str>) -> HashMap<&'s str, Vec<&'s T>> {
+            let mut grouped: HashMap<&str, Vec<&T>> = HashMap::new();
+            for row in rows {
+                if let Some(key) = key(row) {
+                    grouped.entry(key).or_default().push(row);
+                }
+            }
+            grouped
+        }
+        let mut avatars_of: HashMap<&str, Vec<&str>> = HashMap::new();
+        let mut products_of: HashMap<&str, Vec<&str>> = HashMap::new();
+        for link in &snapshot.links {
+            avatars_of.entry(link.product_id.as_str()).or_default().push(link.avatar_id.as_str());
+            products_of.entry(link.avatar_id.as_str()).or_default().push(link.product_id.as_str());
+        }
+        let mut flags = HashMap::new();
+        for flag in &snapshot.product_flags {
+            flags.entry(flag.booth_id.as_str()).or_insert(flag);
+        }
+        let generic_unlinked = snapshot
+            .products
+            .iter()
+            .enumerate()
+            .filter(|(_, product)| product.is_generic && !avatars_of.contains_key(product.booth_id.as_str()))
+            .map(|(position, _)| position)
+            .collect();
+        Self {
+            products: snapshot.products.iter().map(|product| (product.booth_id.as_str(), product)).collect(),
+            positions: snapshot
+                .products
+                .iter()
+                .enumerate()
+                .map(|(position, product)| (product.booth_id.as_str(), position))
+                .collect(),
+            avatars_of,
+            products_of,
+            files_of: group(&snapshot.files, |file| file.linked_product_id.as_deref()),
+            placed_of: group(&snapshot.placed_downloads, |row| Some(row.booth_id.as_str())),
+            rows_of: group(&snapshot.download_rows, |row| Some(row.booth_id.as_str())),
+            variations_of: group(&snapshot.variations, |row| Some(row.booth_id.as_str())),
+            flags,
+            generic_unlinked,
+        }
+    }
+
+    fn avatars_of(&self, booth_id: &str) -> &[&'s str] {
+        self.avatars_of.get(booth_id).map(Vec::as_slice).unwrap_or_default()
+    }
+
+    fn files_of(&self, booth_id: &str) -> &[&'s LocalFile] {
+        self.files_of.get(booth_id).map(Vec::as_slice).unwrap_or_default()
+    }
+
+    fn placed_of(&self, booth_id: &str) -> &[&'s PlacedDownload] {
+        self.placed_of.get(booth_id).map(Vec::as_slice).unwrap_or_default()
+    }
+
+    fn rows_of(&self, booth_id: &str) -> &[&'s DownloadFact] {
+        self.rows_of.get(booth_id).map(Vec::as_slice).unwrap_or_default()
+    }
 }
 
 pub fn avatar_cards(snapshot: &Snapshot) -> Vec<AvatarCard> {
+    let lookup = Lookup::new(snapshot);
     let mut cards = Vec::new();
     for avatar in &snapshot.avatars {
-        if !avatar.owned && !referenced_only(snapshot, &avatar.id) {
+        if !avatar.owned && !referenced_only(&lookup, &avatar.id) {
             continue;
         }
-        let classified = classify(snapshot, avatar);
+        let classified = classify(snapshot, &lookup, avatar);
         cards.push(AvatarCard {
             id: avatar.id.clone(),
             display_name: avatar.display_name.clone(),
@@ -252,11 +358,11 @@ pub fn avatar_cards(snapshot: &Snapshot) -> Vec<AvatarCard> {
             is_builtin: avatar.is_builtin,
             is_placeholder: avatar.id.starts_with("owned-"),
             owned: avatar.owned,
-            thumbnail_path: classified.thumbnail_path,
-            thumbnail_url: classified.thumbnail_url,
-            outfit_count: section_len(&classified.sections, "outfit"),
-            hair_count: section_len(&classified.sections, "hair"),
-            gimmick_count: section_len(&classified.sections, "gimmick"),
+            thumbnail_path: classified.thumbnail_path(),
+            thumbnail_url: classified.thumbnail_url(),
+            outfit_count: classified.section_len("outfit"),
+            hair_count: classified.section_len("hair"),
+            gimmick_count: classified.section_len("gimmick"),
             generic_count: classified.generic.len() as u32,
         });
     }
@@ -265,7 +371,11 @@ pub fn avatar_cards(snapshot: &Snapshot) -> Vec<AvatarCard> {
 
 pub fn avatar_detail(snapshot: &Snapshot, id: &str) -> Option<AvatarDetail> {
     let avatar = snapshot.avatars.iter().find(|avatar| avatar.id == id)?;
-    let classified = classify(snapshot, avatar);
+    let lookup = Lookup::new(snapshot);
+    let classified = classify(snapshot, &lookup, avatar);
+    let views = |products: &[&Product]| -> Vec<ItemView> {
+        products.iter().map(|product| item_view(snapshot, &lookup, product, false)).collect()
+    };
     let mut siblings: Vec<Sibling> = snapshot
         .avatars
         .iter()
@@ -290,28 +400,37 @@ pub fn avatar_detail(snapshot: &Snapshot, id: &str) -> Option<AvatarDetail> {
         is_builtin: avatar.is_builtin,
         is_placeholder: avatar.id.starts_with("owned-"),
         owned: avatar.owned,
-        thumbnail_path: classified.thumbnail_path,
-        thumbnail_url: classified.thumbnail_url,
+        thumbnail_path: classified.thumbnail_path(),
+        thumbnail_url: classified.thumbnail_url(),
         hero_image_path: avatar.hero_image_path.clone(),
         hero_image_version: None,
         siblings,
-        owned_products: classified.owned,
-        sections: classified.sections,
-        generic_items: classified.generic,
-        unsupported_outfits: outfits_for_adjustment(snapshot, avatar),
-        unset_edition_items: classified.unset,
+        owned_products: views(&classified.owned),
+        sections: classified
+            .sections
+            .iter()
+            .map(|(category, items)| Section {
+                category: category.to_string(),
+                items: items
+                    .iter()
+                    .map(|(product, via_base_body)| item_view(snapshot, &lookup, product, *via_base_body))
+                    .collect(),
+            })
+            .collect(),
+        generic_items: views(&classified.generic),
+        unsupported_outfits: outfits_for_adjustment(snapshot, &lookup, avatar),
+        unset_edition_items: views(&classified.unset),
     })
 }
 
 pub fn products_by_ids(snapshot: &Snapshot, ids: &[String]) -> Vec<ItemView> {
+    items_by_ids(snapshot, &Lookup::new(snapshot), ids)
+}
+
+fn items_by_ids(snapshot: &Snapshot, lookup: &Lookup<'_>, ids: &[String]) -> Vec<ItemView> {
     ids.iter()
-        .filter_map(|id| {
-            snapshot
-                .products
-                .iter()
-                .find(|product| product.booth_id == *id)
-        })
-        .map(|product| item_view(snapshot, product, false))
+        .filter_map(|id| lookup.products.get(id.as_str()))
+        .map(|product| item_view(snapshot, lookup, product, false))
         .collect()
 }
 
@@ -326,6 +445,7 @@ pub fn genre_products(
     all_ids: &[String],
     selected: Option<&str>,
 ) -> GenreProducts {
+    let lookup = Lookup::new(snapshot);
     let wanted: HashSet<&str> = all_ids.iter().map(String::as_str).collect();
     let mut counts: HashMap<String, u32> = HashMap::new();
     let mut buckets: HashMap<&str, String> = HashMap::new();
@@ -336,7 +456,7 @@ pub fn genre_products(
         .filter(|product| wanted.contains(product.booth_id.as_str()))
     {
         total += 1;
-        let key = browse_bucket(snapshot, product, genres);
+        let key = browse_bucket(snapshot, &lookup, product, genres);
         *counts.entry(key.clone()).or_insert(0) += 1;
         buckets.insert(product.booth_id.as_str(), key);
     }
@@ -349,14 +469,14 @@ pub fn genre_products(
         .cloned()
         .collect();
     GenreProducts {
-        items: products_by_ids(snapshot, &ids),
+        items: items_by_ids(snapshot, &lookup, &ids),
         counts,
         total,
     }
 }
 
-fn browse_bucket(snapshot: &Snapshot, product: &Product, genres: &[(&str, &str)]) -> String {
-    if free_shelf(snapshot, product) {
+fn browse_bucket(snapshot: &Snapshot, lookup: &Lookup<'_>, product: &Product, genres: &[(&str, &str)]) -> String {
+    if free_shelf(snapshot, lookup, product) {
         return crate::genre::FREE.to_string();
     }
     product
@@ -369,45 +489,41 @@ fn browse_bucket(snapshot: &Snapshot, product: &Product, genres: &[(&str, &str)]
 
 /// Free products stay out of the ordinary genres until a local copy exists.
 /// A manual placement (both locks) keeps the genre the user chose.
-fn free_shelf(snapshot: &Snapshot, product: &Product) -> bool {
+fn free_shelf(snapshot: &Snapshot, lookup: &Lookup<'_>, product: &Product) -> bool {
     if product.category_locked && product.genre_locked {
         return false;
     }
-    let free = snapshot
-        .product_flags
-        .iter()
-        .find(|flag| flag.booth_id == product.booth_id)
+    let free = lookup
+        .flags
+        .get(product.booth_id.as_str())
         .and_then(|flag| flag.is_free)
         .unwrap_or(false);
-    free && !product_has_local_copy(snapshot, &product.booth_id)
+    free && !product_has_local_copy(snapshot, lookup, &product.booth_id)
 }
 
 /// Same local signal the item card uses: a download placed locally, a linked
 /// file that is not one of those downloads, or the stored downloaded flag
 /// when placement has not been filled in yet.
-fn product_has_local_copy(snapshot: &Snapshot, booth_id: &str) -> bool {
-    let downloads = download_views(snapshot, booth_id);
+fn product_has_local_copy(snapshot: &Snapshot, lookup: &Lookup<'_>, booth_id: &str) -> bool {
+    let downloads = download_views(snapshot, lookup, booth_id);
     if downloads.iter().any(|row| row.state == FilePlace::Local) {
         return true;
     }
     let names: HashSet<&str> = downloads.iter().map(|row| row.filename.as_str()).collect();
-    if snapshot.files.iter().any(|file| {
-        file.linked_product_id.as_deref() == Some(booth_id)
-            && !names.contains(file.filename.as_str())
-    }) {
+    if lookup
+        .files_of(booth_id)
+        .iter()
+        .any(|file| !names.contains(file.filename.as_str()))
+    {
         return true;
     }
-    let placed = snapshot
-        .placed_downloads
-        .iter()
-        .any(|row| row.booth_id == booth_id);
-    if placed {
+    if !lookup.placed_of(booth_id).is_empty() {
         return false;
     }
-    snapshot
-        .download_rows
+    lookup
+        .rows_of(booth_id)
         .iter()
-        .any(|row| row.booth_id == booth_id && (row.downloaded || row.local_path.is_some()))
+        .any(|row| row.downloaded || row.local_path.is_some())
 }
 
 pub fn product_edit_view(snapshot: &Snapshot, booth_id: &str) -> Option<ProductEditView> {
@@ -517,22 +633,28 @@ pub fn product_options(snapshot: &Snapshot) -> Vec<ProductOption> {
     options
 }
 
-fn classify(snapshot: &Snapshot, avatar: &Avatar) -> Classified {
+fn classify<'s>(snapshot: &'s Snapshot, lookup: &Lookup<'s>, avatar: &Avatar) -> Classified<'s> {
     let family = family_ids(snapshot, avatar);
     let mut unset = Vec::new();
-    let mut specific: Vec<(String, ItemView)> = Vec::new();
+    let mut specific: Vec<(&'static str, &'s Product, bool)> = Vec::new();
     let mut generic = Vec::new();
     let mut owned = Vec::new();
-    for product in &snapshot.products {
+    // Only products linked to this avatar or one of its family, and generic products without
+    // any link, can land on the page. Taken in the snapshot's order, as a full scan would.
+    let mut candidates: Vec<usize> = family
+        .iter()
+        .filter_map(|id| lookup.products_of.get(id.as_str()))
+        .flatten()
+        .filter_map(|product_id| lookup.positions.get(product_id).copied())
+        .chain(lookup.generic_unlinked.iter().copied())
+        .collect();
+    candidates.sort_unstable();
+    candidates.dedup();
+    for product in candidates.into_iter().map(|position| &snapshot.products[position]) {
         if product.category == Some(Category::World) {
             continue;
         }
-        let linked: HashSet<&str> = snapshot
-            .links
-            .iter()
-            .filter(|link| link.product_id == product.booth_id)
-            .map(|link| link.avatar_id.as_str())
-            .collect();
+        let linked: HashSet<&str> = lookup.avatars_of(&product.booth_id).iter().copied().collect();
         let compatibility_linked = linked.contains(avatar.id.as_str());
         let scope = snapshot.purchased_editions.get(&product.booth_id);
         let purchased: HashSet<&str> = scope.map(|s| s.avatar_ids.iter().map(String::as_str).collect()).unwrap_or_default();
@@ -540,12 +662,12 @@ fn classify(snapshot: &Snapshot, avatar: &Avatar) -> Classified {
         let directly_linked = linked.contains(avatar.id.as_str());
         if product.category == Some(Category::Avatar) {
             if directly_linked {
-                owned.push(item_view(snapshot, product, false));
+                owned.push(product);
             }
             continue;
         }
         if scope.is_none_or(|s| s.mode == "unknown") && compatibility_linked {
-            unset.push(item_view(snapshot, product, false));
+            unset.push(product);
             continue;
         }
         let directly_linked = compatibility_linked && purchased.contains(avatar.id.as_str());
@@ -554,14 +676,10 @@ fn classify(snapshot: &Snapshot, avatar: &Avatar) -> Classified {
             let key = product
                 .category
                 .map(Category::as_str)
-                .unwrap_or("uncategorized")
-                .to_string();
-            specific.push((
-                key,
-                item_view(snapshot, product, !directly_linked),
-            ));
+                .unwrap_or("uncategorized");
+            specific.push((key, product, !directly_linked));
         } else if product.is_generic && linked.is_empty() {
-            generic.push(item_view(snapshot, product, false));
+            generic.push(product);
         }
     }
     specific.sort_by(|left, right| {
@@ -571,8 +689,6 @@ fn classify(snapshot: &Snapshot, avatar: &Avatar) -> Classified {
             .then_with(|| left.1.booth_id.cmp(&right.1.booth_id))
     });
     generic.sort_by(|left, right| left.title.cmp(&right.title));
-    let thumbnail_path = owned.iter().find_map(|body| body.thumbnail_path.clone());
-    let thumbnail_url = owned.iter().find_map(|body| body.thumbnail_url.clone());
     let mut sections = Vec::new();
     for key in [
         "outfit",
@@ -583,21 +699,16 @@ fn classify(snapshot: &Snapshot, avatar: &Avatar) -> Classified {
         "other",
         "uncategorized",
     ] {
-        let items: Vec<ItemView> = specific
+        let items: Vec<(&Product, bool)> = specific
             .iter()
-            .filter(|(category, _)| category == key)
-            .map(|(_, item)| item.clone())
+            .filter(|(category, _, _)| *category == key)
+            .map(|(_, product, via_base_body)| (*product, *via_base_body))
             .collect();
         if !items.is_empty() {
-            sections.push(Section {
-                category: key.to_string(),
-                items,
-            });
+            sections.push((key, items));
         }
     }
     Classified {
-        thumbnail_path,
-        thumbnail_url,
         owned,
         sections,
         generic,
@@ -605,7 +716,7 @@ fn classify(snapshot: &Snapshot, avatar: &Avatar) -> Classified {
     }
 }
 
-fn outfits_for_adjustment(snapshot: &Snapshot, avatar: &Avatar) -> Vec<ItemView> {
+fn outfits_for_adjustment(snapshot: &Snapshot, lookup: &Lookup<'_>, avatar: &Avatar) -> Vec<ItemView> {
     let family = family_ids(snapshot, avatar);
     let linked: HashSet<&str> = snapshot
         .links
@@ -626,7 +737,7 @@ fn outfits_for_adjustment(snapshot: &Snapshot, avatar: &Avatar) -> Vec<ItemView>
                 && !supported.contains(product.booth_id.as_str())
                 && !(product.is_generic && !linked.contains(product.booth_id.as_str()))
         })
-        .map(|product| item_view(snapshot, product, false))
+        .map(|product| item_view(snapshot, lookup, product, false))
         .collect();
     outfits.sort_by(|left, right| {
         left.title
@@ -641,11 +752,10 @@ fn edition_unset(product: &Product, scope: Option<&crate::purchased_editions::Ch
     product.category != Some(Category::Avatar) && linked && scope.is_none_or(|choice| choice.mode == "unknown")
 }
 
-fn item_view(snapshot: &Snapshot, product: &Product, via_base_body: bool) -> ItemView {
-    let mut files: Vec<FileBrief> = snapshot
-        .files
+fn item_view(snapshot: &Snapshot, lookup: &Lookup<'_>, product: &Product, via_base_body: bool) -> ItemView {
+    let mut files: Vec<FileBrief> = lookup
+        .files_of(&product.booth_id)
         .iter()
-        .filter(|file| file.linked_product_id.as_deref() == Some(product.booth_id.as_str()))
         .map(|file| FileBrief {
             path: file.path.clone(),
             filename: file.filename.clone(),
@@ -654,7 +764,7 @@ fn item_view(snapshot: &Snapshot, product: &Product, via_base_body: bool) -> Ite
             match_score: file.match_score,
         })
         .collect();
-    let downloads = download_views(snapshot, &product.booth_id);
+    let downloads = download_views(snapshot, lookup, &product.booth_id);
     let download_names: HashSet<&str> = downloads
         .iter()
         .map(|file| file.filename.as_str())
@@ -662,12 +772,9 @@ fn item_view(snapshot: &Snapshot, product: &Product, via_base_body: bool) -> Ite
     files.retain(|file| !download_names.contains(file.filename.as_str()));
     let local_file_count = files.len() as u32;
     files.truncate(8);
-    let flag = snapshot
-        .product_flags
-        .iter()
-        .find(|flag| flag.booth_id == product.booth_id);
+    let flag = lookup.flags.get(product.booth_id.as_str()).copied();
     let scope = snapshot.purchased_editions.get(&product.booth_id);
-    let edition_unset = edition_unset(product, scope, snapshot.links.iter().any(|link| link.product_id == product.booth_id));
+    let edition_unset = edition_unset(product, scope, !lookup.avatars_of(&product.booth_id).is_empty());
     ItemView {
         purchased_editions: scope.cloned().unwrap_or_else(crate::purchased_editions::Choice::unknown),
         edition_unset,
@@ -686,7 +793,7 @@ fn item_view(snapshot: &Snapshot, product: &Product, via_base_body: bool) -> Ite
         via_base_body,
         local_files: files,
         local_file_count,
-        variations: variation_views(snapshot, &product.booth_id),
+        variations: variation_views(lookup, &product.booth_id),
         downloads,
         is_free: flag.and_then(|flag| flag.is_free).unwrap_or(false),
         is_adult: flag.and_then(|flag| flag.is_adult).unwrap_or(false),
@@ -697,11 +804,13 @@ fn item_view(snapshot: &Snapshot, product: &Product, via_base_body: bool) -> Ite
     }
 }
 
-fn variation_views(snapshot: &Snapshot, booth_id: &str) -> Vec<VariationView> {
-    let mut rows: Vec<VariationView> = snapshot
-        .variations
+fn variation_views(lookup: &Lookup<'_>, booth_id: &str) -> Vec<VariationView> {
+    let mut rows: Vec<VariationView> = lookup
+        .variations_of
+        .get(booth_id)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
         .iter()
-        .filter(|row| row.booth_id == booth_id)
         .map(|row| VariationView {
             name: row.name.clone(),
             owned: row.owned,
@@ -761,12 +870,11 @@ fn build_download_view(
     }
 }
 
-fn download_views(snapshot: &Snapshot, booth_id: &str) -> Vec<DownloadView> {
+fn download_views(snapshot: &Snapshot, lookup: &Lookup<'_>, booth_id: &str) -> Vec<DownloadView> {
     let watch = snapshot.file_watches.get(booth_id);
-    let mut rows: Vec<DownloadView> = snapshot
-        .placed_downloads
+    let mut rows: Vec<DownloadView> = lookup
+        .placed_of(booth_id)
         .iter()
-        .filter(|row| row.booth_id == booth_id)
         .map(|row| {
             build_download_view(
                 watch,
@@ -781,10 +889,9 @@ fn download_views(snapshot: &Snapshot, booth_id: &str) -> Vec<DownloadView> {
         })
         .collect();
     if rows.is_empty() {
-        rows = snapshot
-            .download_rows
+        rows = lookup
+            .rows_of(booth_id)
             .iter()
-            .filter(|row| row.booth_id == booth_id)
             .map(|row| {
                 build_download_view(
                     watch,
@@ -832,13 +939,13 @@ fn family_ids(snapshot: &Snapshot, avatar: &Avatar) -> HashSet<String> {
     ids
 }
 
-fn referenced_only(snapshot: &Snapshot, avatar_id: &str) -> bool {
-    snapshot.links.iter().any(|link| {
-        link.avatar_id == avatar_id
-            && snapshot.products.iter().any(|product| {
-                product.booth_id == link.product_id
-                    && !matches!(product.category, Some(Category::Avatar | Category::World))
+fn referenced_only(lookup: &Lookup<'_>, avatar_id: &str) -> bool {
+    lookup.products_of.get(avatar_id).is_some_and(|products| {
+        products.iter().any(|product_id| {
+            lookup.products.get(product_id).is_some_and(|product| {
+                !matches!(product.category, Some(Category::Avatar | Category::World))
             })
+        })
     })
 }
 
@@ -858,13 +965,6 @@ fn base_name(snapshot: &Snapshot, id: Option<&str>) -> Option<String> {
         .map(|body| body.display_name.clone())
 }
 
-fn section_len(sections: &[Section], key: &str) -> u32 {
-    sections
-        .iter()
-        .find(|section| section.category == key)
-        .map(|section| section.items.len() as u32)
-        .unwrap_or(0)
-}
 
 #[cfg(test)]
 mod tests {
@@ -977,7 +1077,7 @@ mod tests {
         let snapshot = sample();
         let item = |id: &str, snapshot: &Snapshot| {
             let product = snapshot.products.iter().find(|product| product.booth_id == id).unwrap();
-            item_view(snapshot, product, false)
+            item_view(snapshot, &Lookup::new(snapshot), product, false)
         };
         // 対応先のある衣装で、対応版を判定できないもの（scope が無い）だけに付ける。
         assert!(item("4", &snapshot).edition_unset);
@@ -1547,7 +1647,7 @@ mod tests {
                 current_files: Some(HashSet::from(["9992758".into(), "10050000".into()])),
             },
         );
-        let rows = download_views(&snapshot, "1");
+        let rows = download_views(&snapshot, &Lookup::new(&snapshot), "1");
         assert_eq!(
             rows.iter().map(|r| r.filename.as_str()).collect::<Vec<_>>(),
             vec!["MochiFitter75r.zip", "MochiFitter74r.zip", "MochiFitter73r.zip"]
