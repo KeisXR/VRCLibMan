@@ -1,4 +1,5 @@
 use crate::model::{Avatar, Category};
+use std::collections::HashMap;
 use crate::normalize::{
     adjacent_reading, is_blocked_avatar_label, is_boundary_char, is_cjk, is_name_alias,
     is_promo_name, is_script_boundary, label_variants, nfkc, normalize_label, paren_pieces,
@@ -47,41 +48,97 @@ pub struct ResolveOutput {
 }
 
 pub fn resolve_name<'a>(raw: &str, avatars: &'a [Avatar]) -> Option<&'a Avatar> {
-    let single_cjk = raw.chars().count() == 1 && raw.chars().all(is_cjk);
-    // NSFW や素体は属性であって名前ではない。ただし同名のアバターが登録されていれば、そのアバターとして解決する。
-    let attribute = crate::normalize::is_attribute_label(raw);
-    if raw.trim().is_empty() || (is_blocked_avatar_label(raw) && !single_cjk && !attribute) {
+    if !resolvable_label(raw) {
         return None;
     }
-    let mut hits = Vec::new();
-    consider_key(&normalize_label(raw), avatars, &mut hits);
-    if hits.len() == 1 {
-        return Some(hits[0]);
-    }
-    if hits.len() > 1 {
-        return None;
-    }
-    for variant in label_variants(raw) {
-        if is_blocked_avatar_label(&variant) && !crate::normalize::is_attribute_label(&variant) {
-            continue;
-        }
-        consider_key(&normalize_label(&variant), avatars, &mut hits);
-    }
-    if hits.len() == 1 { Some(hits[0]) } else { None }
+    NameIndex::new(avatars).resolve(avatars, raw, |_| true)
 }
 
-fn consider_key<'a>(key: &str, avatars: &'a [Avatar], hits: &mut Vec<&'a Avatar>) {
-    if key.chars().count() < 2 && !key.chars().any(is_cjk) {
-        return;
-    }
-    for avatar in avatars {
-        if !avatar_matchable(avatar) {
-            continue;
+/// NSFW や素体は属性であって名前ではない。ただし同名のアバターが登録されていれば、そのアバターとして解決する。
+fn resolvable_label(raw: &str) -> bool {
+    let single_cjk = raw.chars().count() == 1 && raw.chars().all(is_cjk);
+    let attribute = crate::normalize::is_attribute_label(raw);
+    !(raw.trim().is_empty() || (is_blocked_avatar_label(raw) && !single_cjk && !attribute))
+}
+
+/// The comparison keys (`name_keys`) of every matchable avatar, computed once.
+///
+/// Normalizing every name and alias of the whole dictionary took a few ms per lookup, and the
+/// purchased-edition check looks up a few labels for each product on every list the screens
+/// load. Callers that look up many labels against the same avatars keep one index;
+/// `resolve_name` builds one for a single lookup. The rule itself lives only in `resolve`.
+pub struct NameIndex {
+    /// Key → positions of the avatars that have it, in slice order, each avatar once.
+    by_key: HashMap<String, Vec<usize>>,
+    len: usize,
+}
+
+impl NameIndex {
+    pub fn new(avatars: &[Avatar]) -> Self {
+        let mut by_key: HashMap<String, Vec<usize>> = HashMap::new();
+        for (index, avatar) in avatars.iter().enumerate() {
+            if !avatar_matchable(avatar) {
+                continue;
+            }
+            for key in name_keys(avatar) {
+                let slots = by_key.entry(key).or_default();
+                if slots.last() != Some(&index) {
+                    slots.push(index);
+                }
+            }
         }
-        if name_keys(avatar).iter().any(|candidate| candidate == key)
-            && !hits.iter().any(|hit| hit.id == avatar.id)
-        {
-            hits.push(avatar);
+        Self { by_key, len: avatars.len() }
+    }
+
+    /// `avatars` must be the slice the index was built from. `allow` narrows the candidates
+    /// (for example to a product's compatible avatars) with the same result as resolving
+    /// against that narrower slice: an exact key first, then the label's variants, and a name
+    /// that fits more than one allowed avatar stays unresolved.
+    pub fn resolve<'a>(
+        &self,
+        avatars: &'a [Avatar],
+        raw: &str,
+        allow: impl Fn(&Avatar) -> bool,
+    ) -> Option<&'a Avatar> {
+        debug_assert_eq!(avatars.len(), self.len, "the index belongs to another avatar list");
+        if !resolvable_label(raw) {
+            return None;
+        }
+        let mut hits = Vec::new();
+        self.consider_key(&normalize_label(raw), avatars, &allow, &mut hits);
+        if hits.len() == 1 {
+            return Some(hits[0]);
+        }
+        if hits.len() > 1 {
+            return None;
+        }
+        for variant in label_variants(raw) {
+            if is_blocked_avatar_label(&variant) && !crate::normalize::is_attribute_label(&variant) {
+                continue;
+            }
+            self.consider_key(&normalize_label(&variant), avatars, &allow, &mut hits);
+        }
+        if hits.len() == 1 { Some(hits[0]) } else { None }
+    }
+
+    fn consider_key<'a>(
+        &self,
+        key: &str,
+        avatars: &'a [Avatar],
+        allow: &impl Fn(&Avatar) -> bool,
+        hits: &mut Vec<&'a Avatar>,
+    ) {
+        if key.chars().count() < 2 && !key.chars().any(is_cjk) {
+            return;
+        }
+        let Some(slots) = self.by_key.get(key) else {
+            return;
+        };
+        for &index in slots {
+            let avatar = &avatars[index];
+            if allow(avatar) && !hits.iter().any(|hit| hit.id == avatar.id) {
+                hits.push(avatar);
+            }
         }
     }
 }
@@ -726,6 +783,119 @@ mod tests {
             owned: false,
             notes: String::new(),
             hero_image_path: None,
+        }
+    }
+
+    /// The pre-index `resolve_name`: every avatar of the slice is scanned for each key. The keys
+    /// of each matchable avatar (`name_keys` and `avatar_matchable`, pure functions) are passed
+    /// in so the test stays fast; `None` marks an avatar that is not matchable.
+    fn scan_keys(avatars: &[Avatar]) -> Vec<Option<Vec<String>>> {
+        avatars.iter().map(|avatar| avatar_matchable(avatar).then(|| name_keys(avatar))).collect()
+    }
+
+    fn resolve_name_by_scan<'a>(raw: &str, avatars: &'a [Avatar], keys: &[Option<Vec<String>>]) -> Option<&'a Avatar> {
+        let consider = |key: &str, hits: &mut Vec<&'a Avatar>| {
+            if key.chars().count() < 2 && !key.chars().any(is_cjk) {
+                return;
+            }
+            for (avatar, own) in avatars.iter().zip(keys) {
+                let Some(own) = own else {
+                    continue;
+                };
+                if own.iter().any(|candidate| candidate == key) && !hits.iter().any(|hit| hit.id == avatar.id) {
+                    hits.push(avatar);
+                }
+            }
+        };
+        let single_cjk = raw.chars().count() == 1 && raw.chars().all(is_cjk);
+        let attribute = crate::normalize::is_attribute_label(raw);
+        if raw.trim().is_empty() || (is_blocked_avatar_label(raw) && !single_cjk && !attribute) {
+            return None;
+        }
+        let mut hits = Vec::new();
+        consider(&normalize_label(raw), &mut hits);
+        if hits.len() == 1 {
+            return Some(hits[0]);
+        }
+        if hits.len() > 1 {
+            return None;
+        }
+        for variant in label_variants(raw) {
+            if is_blocked_avatar_label(&variant) && !crate::normalize::is_attribute_label(&variant) {
+                continue;
+            }
+            consider(&normalize_label(&variant), &mut hits);
+        }
+        if hits.len() == 1 { Some(hits[0]) } else { None }
+    }
+
+    /// The index gives the same answer as scanning, for the whole bundled dictionary and for
+    /// narrower sets of avatars (a product's compatible avatars).
+    #[test]
+    fn name_index_matches_scanning_the_dictionary() {
+        let connection = crate::db::open_memory().unwrap();
+        let avatars = crate::db::load_avatars(&connection).unwrap();
+        assert!(avatars.len() > 500, "the bundled dictionary is loaded");
+        let index = NameIndex::new(&avatars);
+        let mut labels: Vec<String> = [
+            "Black", "White", "フルセット", "Full Set", "V2", "v3", "ver1.0.8", "Re", "半額セール", "新作",
+            "対応", "専用", "猫", "萌", "", "  ", "PB", "PhysBone", "Quest版", "PC版", "NSFW", "素体", "Mao", "mao",
+            "ショコラ -Chocolat-", "シフォン(Chiffon)", "真冬 Mafuyu", "manuka-マヌカ", "エルキュナ２(Eruqyuna2",
+            "ライム / プラム", "ライム・プラム", "Lime & Plum", "【ライム専用】", "萌(Moe)", "Chocolate",
+        ]
+        .iter()
+        .map(|label| label.to_string())
+        .collect();
+        // Every name as written; the written-out variations for a sample of the dictionary.
+        for (position, avatar) in avatars.iter().enumerate() {
+            let mut names = vec![avatar.display_name.clone(), avatar.id.clone()];
+            names.extend(avatar.aliases.iter().cloned());
+            labels.extend(names.iter().cloned());
+            if position % 9 != 0 {
+                continue;
+            }
+            for name in &names {
+                labels.push(format!("{name}版"));
+                labels.push(format!("{name}対応"));
+                labels.push(format!("【{name}専用】"));
+                labels.push(format!("{name}ちゃん"));
+                labels.push(format!("{name} ver2"));
+                labels.push(name.to_uppercase());
+            }
+            if let Some(alias) = avatar.aliases.first() {
+                labels.push(format!("{} -{alias}-", avatar.display_name));
+                labels.push(format!("{}({alias})", avatar.display_name));
+                labels.push(format!("{} / {alias}", avatar.display_name));
+            }
+        }
+        let keys = scan_keys(&avatars);
+        let every_third: Vec<Avatar> = avatars.iter().step_by(3).cloned().collect();
+        let every_third_keys = scan_keys(&every_third);
+        let every_third_ids: std::collections::HashSet<&str> = every_third.iter().map(|a| a.id.as_str()).collect();
+        let id_of = |hit: Option<&Avatar>| hit.map(|avatar| avatar.id.clone());
+        for (position, label) in labels.iter().enumerate() {
+            assert_eq!(
+                id_of(index.resolve(&avatars, label, |_| true)),
+                id_of(resolve_name_by_scan(label, &avatars, &keys)),
+                "whole dictionary: {label:?}"
+            );
+            if position % 97 == 0 {
+                assert_eq!(id_of(resolve_name(label, &avatars)), id_of(resolve_name_by_scan(label, &avatars, &keys)), "{label:?}");
+            }
+            assert_eq!(
+                id_of(index.resolve(&avatars, label, |a| every_third_ids.contains(a.id.as_str()))),
+                id_of(resolve_name_by_scan(label, &every_third, &every_third_keys)),
+                "every third avatar: {label:?}"
+            );
+            // A few neighbours in dictionary order, like the compatible avatars of one product.
+            let start = position % avatars.len();
+            let near: Vec<Avatar> = avatars.iter().cycle().skip(start).take(4).cloned().collect();
+            let near_ids: std::collections::HashSet<&str> = near.iter().map(|a| a.id.as_str()).collect();
+            assert_eq!(
+                id_of(index.resolve(&avatars, label, |a| near_ids.contains(a.id.as_str()))),
+                id_of(resolve_name_by_scan(label, &near, &scan_keys(&near))),
+                "neighbours: {label:?}"
+            );
         }
     }
 

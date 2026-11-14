@@ -30,6 +30,8 @@ impl Choice {
 }
 pub struct Catalog {
     avatars: Vec<Avatar>,
+    /// Name keys of `avatars`, computed once: every product's variation names are looked up.
+    names_index: crate::resolve::NameIndex,
     links: HashMap<String, Vec<String>>,
     unresolved: HashSet<String>,
     titles: HashMap<String, String>,
@@ -116,8 +118,10 @@ fn is_full_set_label(name: &str) -> bool {
 }
 impl Catalog {
     pub fn load(c: &Connection) -> Result<Self, String> {
+        let avatars = db::load_avatars(c)?;
         let mut result = Self {
-            avatars: db::load_avatars(c)?,
+            names_index: crate::resolve::NameIndex::new(&avatars),
+            avatars,
             links: HashMap::new(),
             unresolved: HashSet::new(),
             titles: HashMap::new(),
@@ -328,6 +332,17 @@ impl Catalog {
             .collect()
     }
 
+    /// `resolve::resolve_name` against every avatar, or only against `linked` (the product's
+    /// compatible avatars, taken from `self.avatars` in the same order).
+    fn resolve_label(&self, label: &str, linked: Option<&[Avatar]>) -> Option<&Avatar> {
+        match linked {
+            Some(linked) => self.names_index.resolve(&self.avatars, label, |avatar| {
+                linked.iter().any(|other| other.id == avatar.id)
+            }),
+            None => self.names_index.resolve(&self.avatars, label, |_| true),
+        }
+    }
+
     fn resolve_piece(&self, piece: &str, linked: &[Avatar]) -> Option<String> {
         let piece = piece.trim();
         if piece.is_empty() {
@@ -336,11 +351,11 @@ impl Catalog {
         let stripped = piece.strip_suffix('版').map(str::trim_end);
         for candidate in [Some(piece), stripped].into_iter().flatten() {
             if !linked.is_empty() {
-                if let Some(avatar) = crate::resolve::resolve_name(candidate, linked) {
+                if let Some(avatar) = self.resolve_label(candidate, Some(linked)) {
                     return Some(avatar.id.clone());
                 }
             }
-            if let Some(avatar) = crate::resolve::resolve_name(candidate, &self.avatars) {
+            if let Some(avatar) = self.resolve_label(candidate, None) {
                 return Some(avatar.id.clone());
             }
         }
@@ -352,18 +367,14 @@ impl Catalog {
         if let Some(single) = self.resolve_piece(name, &linked) {
             return vec![single];
         }
-        let pool = if linked.is_empty() {
-            self.avatars.as_slice()
-        } else {
-            linked.as_slice()
-        };
+        let pool = if linked.is_empty() { None } else { Some(linked.as_slice()) };
         let mut found = Vec::new();
         for part in name.split([
             '/', '／', '&', '＆', '・', '･', ',', '、', '+', '＋', '(', ')', '（', '）', '[',
             ']', '【', '】', '✿', '💭', '-',
         ]) {
             let part = part.trim().trim_end_matches('版').trim_end();
-            if let Some(avatar) = crate::resolve::resolve_name(part, pool) {
+            if let Some(avatar) = self.resolve_label(part, pool) {
                 found.push(avatar.id.clone());
             }
         }
