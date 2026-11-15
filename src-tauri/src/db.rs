@@ -379,6 +379,20 @@ fn migrate(connection: &Connection) -> Result<(), String> {
         tx.execute_batch("PRAGMA user_version = 13;").sql()?;
         tx.commit().sql()?;
     }
+    // v14 marks products read from the library gifts section and keeps their current BOOTH prices
+    // (local cache, outside the sync export). Older libraries learn both on the next full read.
+    if version < 14 {
+        let tx = connection.unchecked_transaction().sql()?;
+        ensure_column(
+            &tx,
+            "products",
+            "received_gift",
+            "ALTER TABLE products ADD COLUMN received_gift INTEGER",
+        )?;
+        tx.execute_batch(crate::received_gifts::TABLES).sql()?;
+        tx.execute_batch("PRAGMA user_version = 14;").sql()?;
+        tx.commit().sql()?;
+    }
     Ok(())
 }
 
@@ -1195,6 +1209,9 @@ fn merge_library_facts(
         "unpublished",
         incoming.unpublished,
     )?;
+    if incoming.received_gift == Some(true) {
+        changed |= merge_flag(connection, &incoming.booth_id, "received_gift", Some(true))?;
+    }
     for variation in &incoming.variations {
         changed |= merge_variation(connection, &incoming.booth_id, variation)?;
     }
@@ -1300,6 +1317,9 @@ fn merge_flag(
         }
         "unpublished" => {
             "UPDATE products SET unpublished = ?1 WHERE booth_id = ?2 AND (unpublished IS NOT ?1)"
+        }
+        "received_gift" => {
+            "UPDATE products SET received_gift = ?1 WHERE booth_id = ?2 AND (received_gift IS NOT ?1)"
         }
         _ => return Err("不明な項目です".into()),
     };
@@ -3207,6 +3227,7 @@ fn store_booth_detail_unlogged(
                 is_free: item.is_free,
                 is_adult: item.is_adult,
                 unpublished: None,
+                received_gift: None,
                 booth_category,
                 booth_tags: Some(item.tags.clone()),
             };
@@ -3685,6 +3706,7 @@ pub(crate) fn add_free_product(connection: &mut Connection, url: &str) -> Result
         is_free: Some(true),
         is_adult: None,
         unpublished: None,
+        received_gift: None,
         booth_category: None,
         booth_tags: None,
     };
@@ -3729,6 +3751,7 @@ pub(crate) fn store_free_files(
         is_free,
         is_adult: if is_adult == Some(true) { Some(true) } else { None },
         unpublished: None,
+        received_gift: None,
         booth_category: None,
         booth_tags: None,
     };
@@ -3827,6 +3850,7 @@ pub(crate) fn prepare_download(
                 None
             },
             unpublished: None,
+            received_gift: None,
             booth_category: None,
             booth_tags: None,
         };
@@ -6548,7 +6572,7 @@ mod tests {
             connection
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
-            13
+            14
         );
         let detail_at: Option<String> = connection
             .query_row(
@@ -7367,7 +7391,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 13);
+        assert_eq!(version, 14);
         let json = r#"{
             "products": [
                 {
@@ -7994,7 +8018,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 13);
+        assert_eq!(version, 14);
         let report = import_products(&mut connection, &parsed).unwrap();
         assert_eq!(report.inserted, 7);
         assert_eq!(report.skipped, 0);
@@ -8271,7 +8295,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 13);
+        assert_eq!(version, 14);
         assert!(!settings(&connection).unwrap().ui_rail_collapsed);
         let saved = update_settings(
             &connection,
@@ -8340,7 +8364,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 13);
+        assert_eq!(version, 14);
         assert!(!settings(&connection).unwrap().preview_pane);
         assert_eq!(settings(&connection).unwrap().preview_pane_width, 300);
         let saved = update_settings(
@@ -8388,7 +8412,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 13);
+        assert_eq!(version, 14);
     }
 
     #[test]
@@ -8397,7 +8421,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 13);
+        assert_eq!(version, 14);
         assert!(!settings(&connection).unwrap().browser_force_dark);
         connection
             .execute("DELETE FROM settings WHERE key = 'browser_force_dark'", [])
@@ -8444,7 +8468,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 13);
+        assert_eq!(version, 14);
     }
 
     #[test]
@@ -8524,7 +8548,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 13);
+        assert_eq!(version, 14);
     }
 
     #[test]

@@ -1050,6 +1050,7 @@ mod tests {
             is_free: None,
             is_adult: None,
             unpublished: None,
+            received_gift: None,
             booth_category: None,
             booth_tags: None,
         }];

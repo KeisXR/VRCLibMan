@@ -173,6 +173,22 @@ test("a product missing from both the page and json is marked unpublished", () =
   assert.equal(hidden.unpublished, true);
 });
 
+test("gifts tab marks products as received gifts and the library does not", () => {
+  const html = `<!doctype html><body>
+    <div class="bg-white">
+      <a href="https://booth.pm/ja/items/424242">
+        <img class="l-library-item-thumbnail" alt="" src="https://booth.pximg.net/c/72x72/dummy/items/424242/i/dummy.jpg" />
+      </a>
+      <a class="text-text-default" href="https://booth.pm/items/424242">ダミー衣装</a>
+    </div>
+  </body>`;
+  const gifts = extractPage(parseHTML(html).document, "https://accounts.booth.pm/library/gifts?page=1");
+  assert.equal(gifts.length, 1);
+  assert.equal(gifts[0].receivedGift, true);
+  const library = extractPage(parseHTML(html).document, "https://accounts.booth.pm/library?page=1");
+  assert.equal(library[0].receivedGift, undefined);
+});
+
 test("free downloads tab marks null isFree and keeps unpublished cards", () => {
   const page1 = `<!doctype html><body>
     <div class="bg-white">

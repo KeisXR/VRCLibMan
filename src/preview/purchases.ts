@@ -1,6 +1,7 @@
 // 見本の購入履歴。分類の決め方、検索、ページ分け、集計は Rust（purchases.rs）の複製で、
 // Rust を直しても自動では追従しない。注文番号、商品、金額はすべて架空のもの。
 import type {
+  GiftPriceReport,
   JobProgress,
   PurchaseGroup,
   PurchaseItemView,
@@ -70,6 +71,25 @@ interface StoredItem {
   labelIds: number[];
 }
 
+/** 見本のもらったギフト（ライブラリの「ギフト」）。価格は BOOTH の今の価格の見本。 */
+interface ReceivedSample {
+  boothId: string;
+  group: PurchaseGroup;
+  /** 今の価格。null は年齢制限・公開終了などで決まらない。 */
+  priceYen: number | null;
+  checked: boolean;
+}
+
+const RECEIVED: ReceivedSample[] = [
+  { boothId: "8800201", group: avatar("lime", "ライム"), priceYen: 1500, checked: false },
+  { boothId: "8800202", group: avatar("lime", "ライム"), priceYen: 2000, checked: true },
+  { boothId: "8800203", group: avatar("manuka", "マヌカ"), priceYen: 2200, checked: true },
+  { boothId: "8800204", group: avatar("plum", "プラム"), priceYen: null, checked: true },
+  { boothId: "8800205", group: avatar("shinano", "しなの"), priceYen: 3000, checked: true },
+  { boothId: "8800206", group: GENERIC, priceYen: 600, checked: false },
+  { boothId: "8800207", group: { key: "multiple", kind: "multiple", label: "複数アバター対応", avatarId: null, body: false }, priceYen: 4500, checked: true },
+];
+
 interface StoredOrder {
   orderId: string;
   orderedAt: string | null;
@@ -84,14 +104,17 @@ interface StoredOrder {
 }
 
 const state = {
-  complete: false,
+  // 見本は読み込み済みから始め、アバター別の集計（もらったギフトを含む）をすぐ見られるようにする。
+  complete: true,
   lastReadAt: null as string | null,
-  showPrices: false,
+  showPrices: true,
   running: false,
   cancel: false,
   nextLabel: 1,
   labels: [] as { id: number; name: string }[],
-  orders: [] as StoredOrder[],
+  orders: buildOrders(),
+  received: RECEIVED.map((gift) => ({ ...gift })),
+  receivedRunning: false,
 };
 
 function jst(time: number): string {
@@ -256,6 +279,12 @@ function summary(year: number | null): PurchaseSummary {
     unknownAmountItems: 0,
     giftItems: 0,
     giftYen: 0,
+    receivedIncluded: year == null,
+    receivedItems: 0,
+    receivedYen: 0,
+    receivedUnknownItems: 0,
+    receivedUncheckedItems: 0,
+    receivedRunning: state.receivedRunning,
     groups: [],
     showPrices: state.showPrices,
   };
@@ -282,6 +311,9 @@ function summary(year: number | null): PurchaseSummary {
           bodyItems: 0,
           amountYen: 0,
           unknownAmountItems: 0,
+          receivedItems: 0,
+          receivedYen: 0,
+          receivedUnknownItems: 0,
         };
         entry.items += 1;
         if (group.body) entry.bodyItems += 1;
@@ -292,6 +324,34 @@ function summary(year: number | null): PurchaseSummary {
     }
   }
   const rank = (kind: string) => (kind === "avatar" ? 0 : kind === "generic" ? 1 : 2);
+  if (year == null) {
+    for (const gift of state.received) {
+      result.receivedItems += 1;
+      const price = gift.checked ? gift.priceYen : null;
+      if (!gift.checked) result.receivedUncheckedItems += 1;
+      else if (price == null) result.receivedUnknownItems += 1;
+      else result.receivedYen += price;
+      const group = gift.group;
+      const entry = groups.get(group.key) ?? {
+        key: group.key,
+        kind: group.kind,
+        label: group.label,
+        avatarId: group.avatarId,
+        owned: group.avatarId != null && OWNED.has(group.avatarId),
+        items: 0,
+        bodyItems: 0,
+        amountYen: 0,
+        unknownAmountItems: 0,
+        receivedItems: 0,
+        receivedYen: 0,
+        receivedUnknownItems: 0,
+      };
+      entry.receivedItems += 1;
+      if (price == null) entry.receivedUnknownItems += 1;
+      else entry.receivedYen += price;
+      groups.set(group.key, entry);
+    }
+  }
   result.groups = [...groups.values()].sort((a, b) => rank(a.kind) - rank(b.kind) || b.amountYen - a.amountYen || b.items - a.items || a.label.localeCompare(b.label, "ja"));
   return result;
 }
@@ -313,6 +373,27 @@ function findItem(id: number): StoredItem {
 }
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function fetchReceivedPrices(refresh: boolean, context: PreviewPurchaseContext): Promise<GiftPriceReport> {
+  if (state.receivedRunning) throw new Error("もらったギフトの価格はすでに取得中です");
+  state.receivedRunning = true;
+  const job = "gift-prices";
+  const report: GiftPriceReport = { checked: 0, unknown: 0, failed: 0, notice: "" };
+  try {
+    const targets = state.received.filter((gift) => refresh || !gift.checked);
+    for (const [index, gift] of targets.entries()) {
+      context.emitProgress({ job, current: index, total: targets.length, message: `もらったギフトの価格を確認しています (${index + 1}/${targets.length})`, state: "running" });
+      await wait(400);
+      gift.checked = true;
+      report.checked += 1;
+      if (gift.priceYen == null) report.unknown += 1;
+    }
+    context.emitProgress({ job, current: targets.length, total: targets.length, message: `もらったギフト ${report.checked} 件の価格を確認しました`, state: "done" });
+    return report;
+  } finally {
+    state.receivedRunning = false;
+  }
+}
 
 async function walk(context: PreviewPurchaseContext): Promise<PurchaseWalkReport> {
   if (!context.builtinBrowser) throw new Error("内蔵ブラウザは設定で有効にしてから使います");
@@ -365,6 +446,8 @@ export async function previewPurchaseDispatch(
       return { handled: true, value: page((args.query ?? {}) as PurchaseQuery) };
     case "purchase_summary":
       return { handled: true, value: summary((args.year as number | null) ?? null) };
+    case "fetch_received_gift_prices":
+      return { handled: true, value: await fetchReceivedPrices(Boolean(args.refresh), context) };
     case "purchase_status":
       return { handled: true, value: status() };
     case "import_booth_purchases":

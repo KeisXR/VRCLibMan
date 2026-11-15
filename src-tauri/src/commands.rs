@@ -1001,6 +1001,19 @@ pub fn set_purchase_show_prices(state: State<'_, AppState>, show: bool) -> Resul
     crate::purchases::set_show_prices(&connection, show)
 }
 
+/// もらったギフトの今の価格を公開の商品情報から読む。`refresh` が偽なら未取得の商品だけ。
+#[tauri::command]
+pub async fn fetch_received_gift_prices(
+    view: tauri::Webview,
+    app: AppHandle,
+    refresh: bool,
+) -> Result<crate::received_gifts::GiftPriceReport, String> {
+    if view.label() != "main" {
+        return Err("この画面から価格は取得できません".into());
+    }
+    crate::received_gifts::fetch(&app, refresh).await
+}
+
 #[tauri::command]
 pub fn create_purchase_label(
     state: State<'_, AppState>,

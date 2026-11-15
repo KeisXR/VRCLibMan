@@ -29,6 +29,7 @@ import type {
 import { Pager, Thumb, errorText } from "../ui";
 
 const JOB = "browser-purchases";
+const GIFT_PRICE_JOB = "gift-prices";
 
 /** ラベルの一覧より下の部分（余白・新規入力）の高さの目安。 */
 const LABEL_PANEL_CHROME = 76;
@@ -575,10 +576,13 @@ function PurchaseHistoryView({
 }
 
 function PurchaseSummaryView({ changes }: { changes: number }) {
-  const { fail } = useShell();
+  const { fail, notify } = useShell();
   const [year, setYear] = useState<number | null>(null);
   const [summary, setSummary] = useState<PurchaseSummary | null>(null);
   const [includeUnowned, setIncludeUnowned] = useState(false);
+  const [reload, setReload] = useState(0);
+  const [fetching, setFetching] = useState(false);
+  const [fetchMessage, setFetchMessage] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -593,10 +597,45 @@ function PurchaseSummaryView({ changes }: { changes: number }) {
     return () => {
       alive = false;
     };
-  }, [year, changes, fail]);
+  }, [year, changes, reload, fail]);
+
+  useEffect(() => {
+    let alive = true;
+    let stop = () => {};
+    void listenProgress((progress) => {
+      if (alive && progress.job === GIFT_PRICE_JOB) setFetchMessage(progress.message);
+    }).then((unlisten) => {
+      if (!alive) unlisten();
+      else stop = unlisten;
+    });
+    return () => {
+      alive = false;
+      stop();
+    };
+  }, []);
+
+  async function fetchGiftPrices(refresh: boolean) {
+    setFetching(true);
+    setFetchMessage("");
+    try {
+      const report = await api.fetchReceivedGiftPrices(refresh);
+      const parts = [`${report.checked} 件の価格を確認しました`];
+      if (report.unknown > 0) parts.push(`${report.unknown} 件は年齢制限か公開終了で価格が分かりません`);
+      if (report.failed > 0) parts.push(`${report.failed} 件は読めませんでした`);
+      if (report.notice) fail(`${parts.join("。")}。${report.notice}`);
+      else notify(`もらったギフトの${parts.join("。")}`);
+    } catch (err) {
+      fail(errorText(err));
+    } finally {
+      setFetching(false);
+      setReload((value) => value + 1);
+    }
+  }
 
   if (!summary) return <p className="meta">読み込み中</p>;
   const prices = summary.showPrices;
+  const received = summary.receivedIncluded && summary.receivedItems > 0;
+  const busy = fetching || summary.receivedRunning;
   const largest = Math.max(1, ...summary.groups.map((group) => (prices ? group.amountYen : group.items)));
   return (
     <div className="purchase-summary">
@@ -638,7 +677,36 @@ function PurchaseSummaryView({ changes }: { changes: number }) {
             </dd>
           </div>
         )}
+        {received && (
+          <div>
+            <dt>もらったギフト（今の価格）</dt>
+            <dd>
+              {summary.receivedItems} 件{prices ? `・${formatYen(summary.receivedYen)}` : ""}
+            </dd>
+          </div>
+        )}
       </dl>
+      {received && prices && (
+        <div className="purchase-received">
+          <p className="meta">
+            もらったギフトは贈り主が払った額が分からないため、BOOTH の今の価格で数え、上の購入額には足しません。
+            {summary.receivedUncheckedItems > 0 && ` 価格をまだ確認していない商品が ${summary.receivedUncheckedItems} 件あります。`}
+            {summary.receivedUnknownItems > 0 && ` 年齢制限・公開終了・バリエーションが決まらないため価格が分からない商品が ${summary.receivedUnknownItems} 件あります。`}
+          </p>
+          <div className="row-actions">
+            {summary.receivedUncheckedItems > 0 && (
+              <button className="button primary" type="button" disabled={busy} onClick={() => void fetchGiftPrices(false)}>
+                今の価格を取得
+              </button>
+            )}
+            <button className="button secondary" type="button" disabled={busy} onClick={() => void fetchGiftPrices(true)}>
+              価格を取り直す
+            </button>
+          </div>
+          {busy && <p className="meta purchase-progress">{fetchMessage || "もらったギフトの価格を確認しています"}</p>}
+        </div>
+      )}
+      {!summary.receivedIncluded && <p className="meta">もらったギフトは受け取った日が分からないため、全期間のときだけ数えます。</p>}
       {summary.groups.length === 0 ? (
         <p className="empty">この期間の購入はありません。</p>
       ) : (
@@ -648,6 +716,8 @@ function PurchaseSummaryView({ changes }: { changes: number }) {
               <th scope="col">アバター</th>
               <th scope="col">商品</th>
               {prices && <th scope="col">金額</th>}
+              {received && <th scope="col">もらったギフト</th>}
+              {received && prices && <th scope="col">今の価格</th>}
             </tr>
           </thead>
           <tbody>
@@ -656,18 +726,29 @@ function PurchaseSummaryView({ changes }: { changes: number }) {
               return (
                 <tr key={group.key}>
                   <th scope="row">
-                    <a href={purchasesHref("history", group.key)} title="この枠の購入を履歴で見る">
-                      {group.label}
-                    </a>
+                    {group.items > 0 ? (
+                      <a href={purchasesHref("history", group.key)} title="この枠の購入を履歴で見る">
+                        {group.label}
+                      </a>
+                    ) : (
+                      group.label
+                    )}
                     {group.kind === "avatar" && !group.owned && <span className="meta">（未所持）</span>}
                     {group.bodyItems > 0 && <span className="meta">（本体を含む）</span>}
                     <span className="purchase-bar" aria-hidden="true" style={{ width: `${Math.round((value / largest) * 100)}%` }} />
                   </th>
-                  <td>{group.items} 件</td>
+                  <td>{group.items > 0 ? `${group.items} 件` : "—"}</td>
                   {prices && (
                     <td>
-                      {formatYen(group.amountYen)}
+                      {group.items > 0 ? formatYen(group.amountYen) : "—"}
                       {group.unknownAmountItems > 0 && <span className="meta">（金額不明 {group.unknownAmountItems} 件）</span>}
+                    </td>
+                  )}
+                  {received && <td>{group.receivedItems > 0 ? `${group.receivedItems} 件` : "—"}</td>}
+                  {received && prices && (
+                    <td>
+                      {group.receivedItems > group.receivedUnknownItems ? formatYen(group.receivedYen) : "—"}
+                      {group.receivedUnknownItems > 0 && <span className="meta">（価格不明 {group.receivedUnknownItems} 件）</span>}
                     </td>
                   )}
                 </tr>
@@ -681,6 +762,8 @@ function PurchaseSummaryView({ changes }: { changes: number }) {
         「分類なし」はアバター別の集計先が決まっていない商品です。分類を直すと集計も変わります。
         贈ったギフトはアバター別に入れません。送料と手数料は含みません。
         {summary.unknownAmountItems > 0 && prices && ` 金額がまだ分からない商品が ${summary.unknownAmountItems} 件あります。`}
+        {summary.receivedIncluded && summary.receivedItems === 0 &&
+          " BOOTH のライブラリの「ギフト」にある商品は、ライブラリを「すべて読み込む」で読み直すと、もらったギフトとして数えます。"}
       </p>
     </div>
   );

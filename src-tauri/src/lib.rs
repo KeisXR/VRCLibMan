@@ -42,6 +42,7 @@ mod purchase_walk;
 mod purchases;
 mod purchased_editions;
 mod quiet;
+mod received_gifts;
 mod resolve;
 mod retired_classifier;
 mod scan;
@@ -321,6 +322,7 @@ pub fn run() {
             commands::purchase_history,
             commands::purchase_status,
             commands::purchase_summary,
+            commands::fetch_received_gift_prices,
             commands::set_purchase_show_prices,
             commands::create_purchase_label,
             commands::rename_purchase_label,

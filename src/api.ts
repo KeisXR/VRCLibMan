@@ -33,6 +33,7 @@ import type {
   PurchaseQuery,
   PurchaseStatus,
   PurchaseSummary,
+  GiftPriceReport,
   PurchaseWalkReport,
   BoothFileStatus,
   FreeFilesReport,
@@ -255,6 +256,7 @@ export const api = {
   purchaseSummary: (year: number | null) =>
     readWithTimeout(() => call<PurchaseSummary>("purchase_summary", { year }), "購入履歴の集計"),
   setPurchaseShowPrices: (show: boolean) => call<void>("set_purchase_show_prices", { show }),
+  fetchReceivedGiftPrices: (refresh: boolean) => call<GiftPriceReport>("fetch_received_gift_prices", { refresh }),
   createPurchaseLabel: (name: string) => call<PurchaseLabel>("create_purchase_label", { name }),
   renamePurchaseLabel: (id: number, name: string) => call<void>("rename_purchase_label", { id, name }),
   deletePurchaseLabel: (id: number) => call<void>("delete_purchase_label", { id }),

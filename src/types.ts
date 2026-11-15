@@ -587,6 +587,9 @@ export interface PurchaseSummaryGroup {
   bodyItems: number;
   amountYen: number;
   unknownAmountItems: number;
+  receivedItems: number;
+  receivedYen: number;
+  receivedUnknownItems: number;
 }
 
 export interface PurchaseSummary {
@@ -598,8 +601,21 @@ export interface PurchaseSummary {
   unknownAmountItems: number;
   giftItems: number;
   giftYen: number;
+  receivedIncluded: boolean;
+  receivedItems: number;
+  receivedYen: number;
+  receivedUnknownItems: number;
+  receivedUncheckedItems: number;
+  receivedRunning: boolean;
   groups: PurchaseSummaryGroup[];
   showPrices: boolean;
+}
+
+export interface GiftPriceReport {
+  checked: number;
+  unknown: number;
+  failed: number;
+  notice: string;
 }
 
 export interface PurchaseWalkReport {
