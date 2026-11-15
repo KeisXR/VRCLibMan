@@ -121,6 +121,7 @@ fn parse_one(value: &Value) -> Result<IncomingProduct, String> {
         is_free: optional_bool(map, &["isFree", "is_free"]),
         is_adult,
         unpublished: optional_bool(map, &["unpublished"]),
+        received_gift: optional_bool(map, &["receivedGift"]).filter(|gift| *gift),
         booth_category,
         booth_tags,
     })

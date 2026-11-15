@@ -945,6 +945,15 @@
     }
   }
 
+  function isGiftsPath(href) {
+    try {
+      const path = new URL(href, "https://accounts.booth.pm").pathname.replace(/\/+$/, "");
+      return path === "/library/gifts";
+    } catch {
+      return false;
+    }
+  }
+
   function titledAnchor(scope, boothId, baseHref) {
     if (!scope || !scope.querySelectorAll) return "";
     for (const link of scope.querySelectorAll("a[href*='/items/']")) {
@@ -1056,6 +1065,9 @@
       for (const product of products) {
         if (product.isFree == null) product.isFree = true;
       }
+    }
+    if (isGiftsPath(href)) {
+      for (const product of products) product.receivedGift = true;
     }
     return products;
   }

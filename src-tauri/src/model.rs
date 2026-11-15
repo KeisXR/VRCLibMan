@@ -158,6 +158,9 @@ pub struct IncomingProduct {
     /// Library card badge「非公開」. Missing must not clear a stored flag.
     /// This is not「公開終了」 and must not force category other.
     pub unpublished: Option<bool>,
+    /// Read from the library gifts section (/library/gifts). Only Some(true) arrives; a product
+    /// once seen there stays marked.
+    pub received_gift: Option<bool>,
     /// Missing means this payload does not know. It must not clear a stored category.
     pub booth_category: Option<BoothCategoryInput>,
     /// Missing means this payload does not know. An empty list is a known empty tag list.

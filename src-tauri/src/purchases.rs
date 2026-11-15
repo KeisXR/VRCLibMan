@@ -443,7 +443,7 @@ fn load_library(connection: &Connection) -> Result<Library, String> {
             "SELECT booth_id, title, thumbnail_path, thumbnail_url, is_generic, category,
                     booth_id IN (SELECT booth_id FROM product_exclusions)
              FROM products
-             WHERE booth_id IN (SELECT booth_id FROM purchase_items)",
+             WHERE booth_id IN (SELECT booth_id FROM purchase_items UNION SELECT booth_id FROM products WHERE received_gift = 1)",
         ))?;
         let rows = sql(statement.query_map([], |row| {
             Ok((
@@ -468,7 +468,7 @@ fn load_library(connection: &Connection) -> Result<Library, String> {
         let mut statement = sql(connection.prepare(
             "SELECT pa.product_id, a.id, a.display_name, a.owned
              FROM product_avatars pa JOIN avatars a ON a.id = pa.avatar_id
-             WHERE pa.product_id IN (SELECT booth_id FROM purchase_items)
+             WHERE pa.product_id IN (SELECT booth_id FROM purchase_items UNION SELECT booth_id FROM products WHERE received_gift = 1)
              ORDER BY pa.product_id, a.display_name, a.id",
         ))?;
         let rows = sql(statement.query_map([], |row| {
@@ -491,7 +491,7 @@ fn load_library(connection: &Connection) -> Result<Library, String> {
         let mut statement = sql(connection.prepare(
             "SELECT s.booth_id, a.id, a.display_name, a.owned
              FROM avatar_sources s JOIN avatars a ON a.id = s.avatar_id
-             WHERE s.booth_id IN (SELECT booth_id FROM purchase_items)",
+             WHERE s.booth_id IN (SELECT booth_id FROM purchase_items UNION SELECT booth_id FROM products WHERE received_gift = 1)",
         ))?;
         let rows = sql(statement.query_map([], |row| {
             Ok((
@@ -542,6 +542,26 @@ fn body_for<'a>(library: &'a Library, booth_id: &str) -> Option<&'a AvatarRef> {
 /// 購入版か、アバター別に分けない商品の分類で集計する。
 /// 同じ素体のほかのアバターには広げない。
 fn groups_for(library: &Library, booth_id: &str, name: &str) -> (Vec<PurchaseGroup>, Vec<bool>) {
+    groups_with(library, booth_id, |product| {
+        let hint = product.and_then(|p| variation_of(name, &p.title));
+        let title_only = product.is_some_and(|p| {
+            name.trim() == p.title.trim()
+                || nfkc(name).trim() == nfkc(&p.title).trim()
+        });
+        library.editions.order_scope(booth_id, hint.as_deref(), title_only)
+    })
+}
+
+/// ライブラリにある商品を、ライブラリで持っている対応版で分ける（もらったギフト）。
+fn groups_for_library(library: &Library, booth_id: &str) -> (Vec<PurchaseGroup>, Vec<bool>) {
+    groups_with(library, booth_id, |_| library.editions.scope(booth_id))
+}
+
+fn groups_with(
+    library: &Library,
+    booth_id: &str,
+    scope: impl FnOnce(Option<&LibraryProduct>) -> crate::purchased_editions::Choice,
+) -> (Vec<PurchaseGroup>, Vec<bool>) {
     let special = |key: &'static str, label: &str| {
         (vec![PurchaseGroup {
             key: key.into(), kind: key, label: label.into(), avatar_id: None, body: false,
@@ -563,12 +583,7 @@ fn groups_for(library: &Library, booth_id: &str, name: &str) -> (Vec<PurchaseGro
             vec![avatar.owned],
         );
     }
-    let hint = product.and_then(|p| variation_of(name, &p.title));
-    let title_only = product.is_some_and(|p| {
-        name.trim() == p.title.trim()
-            || nfkc(name).trim() == nfkc(&p.title).trim()
-    });
-    let scope = library.editions.order_scope(booth_id, hint.as_deref(), title_only);
+    let scope = scope(product);
     if !scope.avatar_ids.is_empty() || library.links.contains_key(booth_id) {
         let avatars: Vec<_> = scope.avatar_ids.iter().filter_map(|id| library.avatars.get(id)).collect();
         if avatars.len() != 1 {
@@ -939,6 +954,11 @@ pub struct SummaryGroup {
     pub body_items: u32,
     pub amount_yen: i64,
     pub unknown_amount_items: u32,
+    /// もらったギフト（ライブラリの「ギフト」）。金額は今の価格で、購入額には足さない。
+    pub received_items: u32,
+    pub received_yen: i64,
+    /// 価格が未取得か、取得しても決まらなかった件数。
+    pub received_unknown_items: u32,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -953,12 +973,22 @@ pub struct PurchaseSummary {
     pub unknown_amount_items: u32,
     pub gift_items: u32,
     pub gift_yen: i64,
+    /// もらったギフトを集計に入れたか。日付が無いので、年で絞ったときは入れない。
+    pub received_included: bool,
+    pub received_items: u32,
+    /// もらったギフトの今の価格の合計。
+    pub received_yen: i64,
+    /// 価格を確かめたが決まらなかった件数（年齢制限、公開終了、バリエーションが決まらない）。
+    pub received_unknown_items: u32,
+    /// 価格をまだ確かめていない件数。
+    pub received_unchecked_items: u32,
+    pub received_running: bool,
     pub groups: Vec<SummaryGroup>,
     pub show_prices: bool,
 }
 
 /// 購入した対応版ごとの集計。複数アバター対応は専用の枠に一度だけ数える。
-/// 贈ったギフトは枠に入れない。
+/// 贈ったギフトは枠に入れない。もらったギフトは今の価格で別の列に数える。
 pub(crate) fn summary(connection: &Connection, year: Option<i32>) -> Result<PurchaseSummary, String> {
     let library = load_library(connection)?;
     let orders = load_orders(connection)?;
@@ -972,10 +1002,36 @@ pub(crate) fn summary(connection: &Connection, year: Option<i32>) -> Result<Purc
         unknown_amount_items: 0,
         gift_items: 0,
         gift_yen: 0,
+        received_included: year.is_none(),
+        received_items: 0,
+        received_yen: 0,
+        received_unknown_items: 0,
+        received_unchecked_items: 0,
+        received_running: crate::received_gifts::running(),
         groups: Vec::new(),
         show_prices: show_prices(connection)?,
     };
     let mut groups: HashMap<String, SummaryGroup> = HashMap::new();
+    fn entry_for<'a>(
+        groups: &'a mut HashMap<String, SummaryGroup>,
+        group: &PurchaseGroup,
+        owned: bool,
+    ) -> &'a mut SummaryGroup {
+        groups.entry(group.key.clone()).or_insert_with(|| SummaryGroup {
+            key: group.key.clone(),
+            kind: group.kind,
+            label: group.label.clone(),
+            avatar_id: group.avatar_id.clone(),
+            owned,
+            items: 0,
+            body_items: 0,
+            amount_yen: 0,
+            unknown_amount_items: 0,
+            received_items: 0,
+            received_yen: 0,
+            received_unknown_items: 0,
+        })
+    }
     for order in orders.iter().filter(|order| year.is_none() || order.year() == year) {
         summary.orders += 1;
         for item in &order.items {
@@ -992,17 +1048,7 @@ pub(crate) fn summary(connection: &Connection, year: Option<i32>) -> Result<Purc
             }
             let (item_groups, owned) = groups_for(&library, &item.booth_id, &item.name);
             for (group, owned) in item_groups.into_iter().zip(owned) {
-                let entry = groups.entry(group.key.clone()).or_insert_with(|| SummaryGroup {
-                    key: group.key.clone(),
-                    kind: group.kind,
-                    label: group.label.clone(),
-                    avatar_id: group.avatar_id.clone(),
-                    owned,
-                    items: 0,
-                    body_items: 0,
-                    amount_yen: 0,
-                    unknown_amount_items: 0,
-                });
+                let entry = entry_for(&mut groups, &group, owned);
                 entry.items += 1;
                 if group.body {
                     entry.body_items += 1;
@@ -1010,6 +1056,43 @@ pub(crate) fn summary(connection: &Connection, year: Option<i32>) -> Result<Purc
                 match value {
                     Some(value) => entry.amount_yen += value,
                     None => entry.unknown_amount_items += 1,
+                }
+            }
+        }
+    }
+    if year.is_none() {
+        // 自分で買った注文にある商品は、もらったギフトに数えない。
+        let bought: HashSet<&str> = orders
+            .iter()
+            .filter(|order| !order.gift())
+            .flat_map(|order| order.items.iter().map(|item| item.booth_id.as_str()))
+            .collect();
+        for gift in crate::received_gifts::load(connection)? {
+            if bought.contains(gift.booth_id.as_str()) {
+                continue;
+            }
+            summary.received_items += 1;
+            let price = match gift.price {
+                crate::received_gifts::GiftPrice::Known(price) => {
+                    summary.received_yen += price;
+                    Some(price)
+                }
+                crate::received_gifts::GiftPrice::Unknown => {
+                    summary.received_unknown_items += 1;
+                    None
+                }
+                crate::received_gifts::GiftPrice::Unchecked => {
+                    summary.received_unchecked_items += 1;
+                    None
+                }
+            };
+            let (item_groups, owned) = groups_for_library(&library, &gift.booth_id);
+            for (group, owned) in item_groups.into_iter().zip(owned) {
+                let entry = entry_for(&mut groups, &group, owned);
+                entry.received_items += 1;
+                match price {
+                    Some(price) => entry.received_yen += price,
+                    None => entry.received_unknown_items += 1,
                 }
             }
         }
@@ -1434,6 +1517,35 @@ mod tests {
         set_gift_override(&connection, "1003", None).unwrap();
         assert_eq!(summary(&connection, None).unwrap().gift_items, 1);
         assert!(set_gift_override(&connection, "9999", Some(true)).is_err());
+    }
+
+    #[test]
+    fn received_gifts_count_at_the_current_price_beside_purchases() {
+        let mut c = db();
+        for (id, title) in [("7001", "もらった衣装"), ("7002", "価格未取得の衣装"), ("7003", "自分でも買った衣装")] {
+            product(&c, id, title, false);
+            c.execute("UPDATE products SET category = 'outfit', received_gift = 1 WHERE booth_id = ?1", [id]).unwrap();
+            link(&c, id, "lime");
+        }
+        c.execute(
+            "INSERT INTO product_prices (booth_id, outcome, variations_json, checked_at) VALUES ('7001', 'ok', ?1, 't')",
+            [r#"[{"name":"","priceYen":1200}]"#],
+        )
+        .unwrap();
+        apply_detail(&mut c, &detail("1001", "2026-01-01T00:00:00+09:00", false, vec![item("7003", "自分でも買った衣装", Some(900), None)])).unwrap();
+
+        let all = summary(&c, None).unwrap();
+        assert!(all.received_included);
+        assert_eq!((all.received_items, all.received_yen, all.received_unchecked_items), (2, 1200, 1));
+        assert_eq!(all.total_yen, 900);
+        let lime = all.groups.iter().find(|g| g.key == "avatar:lime").unwrap();
+        assert_eq!((lime.items, lime.amount_yen), (1, 900));
+        assert_eq!((lime.received_items, lime.received_yen, lime.received_unknown_items), (2, 1200, 1));
+
+        let year = summary(&c, Some(2026)).unwrap();
+        assert!(!year.received_included);
+        assert_eq!(year.received_items, 0);
+        assert_eq!(year.groups.iter().map(|g| g.received_items).sum::<u32>(), 0);
     }
 
     #[test]
