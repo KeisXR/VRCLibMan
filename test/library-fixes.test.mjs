@@ -58,9 +58,11 @@ test("irreversible library actions confirm, and exclusion can be undone", async 
   const merge = detail.slice(detail.indexOf("async function merge()"), detail.indexOf("const linkedIds"));
   assert.match(merge, /window\.confirm\(mergeConfirmText/);
   assert.match(detail, /item\.editionUnset && <span className="badge" title=\{EDITION_UNSET_HINT\}>/, "the badge follows the Rust flag");
-  const settings = readFileSync("src/pages/SettingsPage.tsx", "utf8");
+  const knowledge = readFileSync("src/components/KnowledgeEditor.tsx", "utf8");
   for (const name of ["removeAvatar", "removeBody"]) {
-    const body = settings.slice(settings.indexOf(`async function ${name}()`), settings.indexOf("try {", settings.indexOf(`async function ${name}()`)));
+    const start = knowledge.indexOf(`function ${name}()`);
+    assert.ok(start >= 0, `${name} exists`);
+    const body = knowledge.slice(start, knowledge.indexOf("void run(", start));
     assert.match(body, /window\.confirm\(/, `${name} asks first`);
   }
   const exclusions = readFileSync("src/components/ProductExclusions.tsx", "utf8");

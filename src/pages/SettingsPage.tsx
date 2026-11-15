@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { api, appVersion, chooseFolder, openExternal } from "../api";
 import { useShell } from "../App";
-import type { AvatarRecord, BaseBody, CatalogInfo, IntegrationStatus, Knowledge, RemoteSyncStatus } from "../types";
+import type { CatalogInfo, IntegrationStatus, Knowledge, RemoteSyncStatus } from "../types";
+import { KnowledgeEditor } from "../components/KnowledgeEditor";
 import { errorText } from "../ui";
 import { SettingRow } from "../components/SettingRow";
 import { BoothImportSettings } from "../components/BoothImportSettings";
@@ -21,15 +22,6 @@ import { HOW_TO_USE_URL } from "../helpLinks";
 
 const REPOSITORY_URL = "https://github.com/KeisXR/VRCLibMan";
 
-const emptyAvatar = {
-  id: "",
-  displayName: "",
-  baseBody: "",
-  aliases: "",
-  notes: "",
-  builtin: false,
-};
-
 export function SettingsPage() {
   const { revision, refresh, notify, fail, workInProgress } = useShell();
   const lastScannedFolder = useRef<string | null>(null);
@@ -44,9 +36,6 @@ export function SettingsPage() {
     }
   });
   const [knowledge, setKnowledge] = useState<Knowledge | null>(null);
-  const [avatar, setAvatar] = useState(emptyAvatar);
-  const [body, setBody] = useState({ id: "", displayName: "", note: "" });
-  const [filter, setFilter] = useState("");
   const [status, setStatus] = useState("");
   const [integration, setIntegration] = useState<IntegrationStatus | null>(null);
   const [version, setVersion] = useState("");
@@ -119,77 +108,6 @@ export function SettingsPage() {
     } else changeSettings({ routeDownloads: enabled });
   }
 
-  function selectAvatar(record: AvatarRecord) {
-    setAvatar({
-      id: record.id,
-      displayName: record.displayName,
-      baseBody: record.baseBody ?? "",
-      aliases: record.aliases.join(", "),
-      notes: record.notes,
-      builtin: record.isBuiltin,
-    });
-  }
-
-  async function saveAvatar() {
-    try {
-      const aliases = avatar.aliases
-        .split(/[,、\n]/)
-        .map((item) => item.trim())
-        .filter(Boolean);
-      await api.saveAvatar({
-        id: avatar.id || null,
-        displayName: avatar.displayName,
-        baseBody: avatar.baseBody || null,
-        aliases,
-        notes: avatar.notes,
-      });
-      notify("対応表を保存し、紐づけを再計算しました");
-      refresh();
-    } catch (err) {
-      fail(errorText(err));
-    }
-  }
-
-  async function removeAvatar() {
-    if (!avatar.id || avatar.builtin) return;
-    if (!window.confirm(`「${avatar.displayName}」を対応表から削除します。このアバターに結び付いた商品の対応は計算し直します。元に戻せません。続けますか？`)) return;
-    try {
-      await api.deleteAvatar(avatar.id);
-      setAvatar(emptyAvatar);
-      notify("アバターを削除し、紐づけを再計算しました");
-      refresh();
-    } catch (err) {
-      fail(errorText(err));
-    }
-  }
-
-  async function saveBody() {
-    try {
-      await api.saveBaseBody({
-        id: body.id || null,
-        displayName: body.displayName,
-        note: body.note,
-      });
-      notify("素体を保存しました");
-      refresh();
-    } catch (err) {
-      fail(errorText(err));
-    }
-  }
-
-  async function removeBody() {
-    if (!body.id) return;
-    if (!window.confirm(`素体「${body.displayName}」を削除します。この素体に入っているアバターは素体なしになり、共通素体を通した衣装の表示が無くなります。初期データの素体は「デバッグ → 初期データを追加」で戻せます。続けますか？`)) return;
-    try {
-      await api.deleteBaseBody(body.id);
-      setBody({ id: "", displayName: "", note: "" });
-      notify("素体を削除しました");
-      refresh();
-    } catch (err) {
-      fail(errorText(err));
-    }
-  }
-
   async function restore() {
     try {
       const added = await api.restoreSeed();
@@ -232,12 +150,6 @@ export function SettingsPage() {
     }
   }
 
-  const matched = (knowledge?.avatars ?? []).filter((record) => {
-    const needle = filter.trim().toLowerCase();
-    if (!needle) return true;
-    return [record.displayName, ...record.aliases].join(" ").toLowerCase().includes(needle);
-  });
-  const avatars = matched.slice(0, 80);
 
   return (
     <section className="settings-page">
@@ -408,13 +320,7 @@ export function SettingsPage() {
 
           <section className="settings-section knowledge-section" id="settings-knowledge">
             <header><h2>対応表を編集</h2><p>アバターの別名と共通素体を編集します。</p></header>
-            {knowledge ? <div className="knowledge">
-              <div><input className="search" value={filter} placeholder="対応表を検索" onChange={(e) => setFilter(e.target.value)} /><p className="meta">{knowledge?.avatars.length ?? 0} 件中 {avatars.length} 件を表示</p><div className="list">{avatars.map((record) => <button key={record.id} className={record.id === avatar.id ? "selected" : ""} type="button" onClick={() => selectAvatar(record)}>{record.displayName}{record.isBuiltin ? " ・初期" : ""}</button>)}</div><h2>素体</h2><div className="list">{(knowledge?.baseBodies ?? []).map((record) => <button key={record.id} type="button" onClick={() => setBody(record)}>{record.displayName}</button>)}</div></div>
-              <div className="stack">
-                <div className="panel"><h2>{avatar.id ? "アバターを編集" : "アバターを追加"}</h2><label className="field"><span>表示名</span><input value={avatar.displayName} onChange={(e) => setAvatar({ ...avatar, displayName: e.target.value })} /></label><label className="field"><span>別名（カンマ区切り）</span><input value={avatar.aliases} onChange={(e) => setAvatar({ ...avatar, aliases: e.target.value })} /></label><label className="field"><span>素体</span><select value={avatar.baseBody} onChange={(e) => setAvatar({ ...avatar, baseBody: e.target.value })}><option value="">なし</option>{(knowledge?.baseBodies ?? []).map((record: BaseBody) => <option key={record.id} value={record.id}>{record.displayName}</option>)}</select></label><label className="field"><span>メモ</span><textarea value={avatar.notes} onChange={(e) => setAvatar({ ...avatar, notes: e.target.value })} /></label><div className="row-actions"><button className="button primary" type="button" onClick={() => void saveAvatar()}>保存</button><button className="button" type="button" onClick={() => setAvatar(emptyAvatar)}>新規</button><button className="button danger" type="button" disabled={!avatar.id || avatar.builtin} onClick={() => void removeAvatar()}>削除</button></div></div>
-                <div className="panel"><h2>{body.id ? "素体を編集" : "素体を追加"}</h2><label className="field"><span>表示名</span><input value={body.displayName} onChange={(e) => setBody({ ...body, displayName: e.target.value })} /></label><label className="field"><span>根拠のメモ</span><textarea value={body.note} onChange={(e) => setBody({ ...body, note: e.target.value })} /></label><div className="row-actions"><button className="button primary" type="button" onClick={() => void saveBody()}>保存</button><button className="button" type="button" onClick={() => setBody({ id: "", displayName: "", note: "" })}>新規</button><button className="button danger" type="button" disabled={!body.id} onClick={() => void removeBody()}>削除</button></div></div>
-              </div>
-            </div> : <p className="section-body meta">対応表を読み込んでから編集できます。</p>}
+            {knowledge ? <KnowledgeEditor knowledge={knowledge} onChanged={refresh} notify={notify} fail={fail} /> : <p className="section-body meta">対応表を読み込んでから編集できます。</p>}
           </section>
 
           <details className="settings-section debug-section" id="settings-debug">
