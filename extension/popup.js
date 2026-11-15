@@ -17,6 +17,7 @@ const state = {
   tab: null,
   kind: "other",
   products: null,
+  pageStale: false,
   statuses: new Map(),
   connection: undefined,
   stored: { ...shared.DEFAULTS, pendingDeliveries: [], importHistory: [], extensionUpdate: null },
@@ -65,9 +66,11 @@ async function readPage() {
   try {
     const response = await chrome.tabs.sendMessage(state.tab.id, { type: "extract-page" });
     state.products = Array.isArray(response?.products) ? response.products : [];
+    state.pageStale = false;
   } catch {
-    // ページを読み込み直す前の古いタブには、拡張のスクリプトが入っていない。
+    // 拡張を入れる前・更新する前に開いたタブには、拡張のスクリプトが入っていない。
     state.products = [];
+    state.pageStale = true;
   }
   render();
   await refreshStatuses();
@@ -177,7 +180,21 @@ function jobCard() {
   );
 }
 
+function reloadPage() {
+  chrome.tabs.reload(state.tab.id);
+  window.close();
+}
+
 function itemCard() {
+  // 拡張のスクリプトが無いタブでは商品を読めないので、できる操作は再読み込みだけ。
+  if (state.pageStale) {
+    return h("section", { class: "card" },
+      h("span", { class: "label", text: "開いている商品" }),
+      h("span", { class: "title", text: "商品ページ" }),
+      h("p", { class: "note warn", text: "このページは、拡張機能を入れる前か更新する前に開いたものです。再読み込みすると送れます。" }),
+      h("button", { class: "btn primary block", type: "button", text: "ページを再読み込み", on: { click: reloadPage } }),
+    );
+  }
   const product = state.products?.[0];
   const row = product ? state.statuses.get(String(product.boothId)) : null;
   return h("section", { class: "card" },
@@ -191,6 +208,7 @@ function itemCard() {
       disabled: state.busy || !product,
       on: { click: () => startJob("page") },
     }),
+    Array.isArray(state.products) && !product ? h("p", { class: "note", text: "このページから商品を見つけられませんでした。" }) : null,
     messageLine(),
   );
 }

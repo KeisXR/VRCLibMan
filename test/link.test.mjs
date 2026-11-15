@@ -57,9 +57,10 @@ test("the manifest key fixes the extension ID the app accepts, and the app ships
   assert.match(packaging, /"package\.json"/, "development files stay out of the managed folder");
 });
 
-async function popupHarness({ stored = {}, tab = { id: 1, url: "https://booth.pm/ja/items/123456", windowId: 1 }, connection = { hasToken: true, status: 200 }, products = [], statuses = [], job = null } = {}) {
+async function popupHarness({ stored = {}, tab = { id: 1, url: "https://booth.pm/ja/items/123456", windowId: 1 }, connection = { hasToken: true, status: 200 }, products = [], statuses = [], job = null, pageMissing = false } = {}) {
   const { window } = parseHTML(readFileSync("extension/popup.html", "utf8"));
   const sent = [];
+  const reloaded = [];
   const local = { pairingToken: "ABCD-2345", routeDownloads: true, boothIntervalMs: 1000, pendingDeliveries: [], importHistory: [], ...stored };
   const context = createContext({
     document: window.document,
@@ -85,7 +86,15 @@ async function popupHarness({ stored = {}, tab = { id: 1, url: "https://booth.pm
         local: { get: async (defaults) => ({ ...defaults, ...local }), set: async (values) => Object.assign(local, values) },
         session: { get: async () => ({ job }) },
       },
-      tabs: { query: async () => [tab], sendMessage: async () => ({ products }), create() {} },
+      tabs: {
+        query: async () => [tab],
+        async sendMessage() {
+          if (pageMissing) throw new Error("Could not establish connection. Receiving end does not exist.");
+          return { products };
+        },
+        reload: (id) => reloaded.push(id),
+        create() {},
+      },
     },
   });
   for (const file of ["shared.js", "companion.js", "ui.js", "popup.js"]) {
@@ -97,6 +106,7 @@ async function popupHarness({ stored = {}, tab = { id: 1, url: "https://booth.pm
     document: window.document,
     sent,
     local,
+    reloaded,
     text: () => main.textContent,
     buttons: () => [...main.querySelectorAll("button")].map((button) => button.textContent),
     chip: () => window.document.querySelector("#link-chip").textContent,
@@ -133,6 +143,16 @@ test("on an item page the popup shows the product's state, one send action and t
   h.document.querySelector("#main button").dispatchEvent(new h.document.defaultView.Event("click"));
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(structuredClone(h.sent.find((message) => message.type === "job-start")), { type: "job-start", kind: "page", tabId: 1 });
+});
+
+test("on a tab opened before the extension was installed or updated, the popup says why and offers a reload", async () => {
+  const h = await popupHarness({ pageMissing: true });
+  assert.match(h.text(), /拡張機能を入れる前か更新する前に開いた/);
+  assert.deepEqual(h.buttons(), ["ページを再読み込み"]);
+  h.document.querySelector("#main button").dispatchEvent(new h.document.defaultView.Event("click"));
+  assert.deepEqual(h.reloaded, [1]);
+  const empty = await popupHarness();
+  assert.match(empty.text(), /このページから商品を見つけられませんでした/);
 });
 
 test("while a walk runs, the popup shows its progress with cancel and side panel actions", async () => {
