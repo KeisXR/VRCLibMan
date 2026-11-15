@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { createServer } from "vite";
 
@@ -66,6 +67,38 @@ test("finished downloads are trimmed and the detail page matches renamed rows", 
     assert.equal(page.finishedPathIn(files.entries, "4242", row("renamed.unitypackage", "local")), "/lib/4242/renamed.unitypackage");
     assert.equal(page.finishedPathIn(files.entries, "4242", row("other.zip", "missing")), null);
     assert.equal(page.finishedPathIn(files.entries, "9999", row("2336028", "missing")), null);
+  } finally {
+    await server.close();
+  }
+});
+
+test("a file BOOTH no longer has asks to update the asset once", async () => {
+  const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  try {
+    const d = await server.ssrLoadModule("/src/downloads.ts");
+    // The screen recognises the Rust message word for word.
+    const rust = readFileSync(new URL("../src-tauri/src/browser.rs", import.meta.url), "utf8");
+    assert.ok(rust.includes(`"${d.FILE_GONE_MESSAGE}"`), "browser.rs FILE_GONE_MESSAGE matches downloads.ts");
+    assert.equal(d.isFileGone(d.FILE_GONE_MESSAGE), true);
+    assert.equal(d.isFileGone("ダウンロードできませんでした。内蔵ブラウザでログインしているか確認してください"), false);
+
+    const old = { boothId: "424242", variation: "A", filename: "outfit_v1.zip", at: 10 };
+    let list = d.addVanished([], old);
+    list = d.addVanished(list, { ...old, title: "衣装", at: 20 });
+    assert.equal(list.length, 1);
+    assert.equal(list[0].title, "衣装");
+    list = d.addVanished(list, { boothId: "515151", variation: "", filename: "hair.zip", at: 30 });
+    assert.equal(list.length, 2);
+
+    // A reread that began after every failure is not repeated.
+    assert.equal(d.needsLibraryReread(list, null), true);
+    assert.equal(d.needsLibraryReread(list, 25), true);
+    assert.equal(d.needsLibraryReread(list, 31), false);
+
+    const started = [{ boothId: "424242", variation: "A", filename: "outfit_v2.zip" }];
+    assert.equal(d.updateResultMessage(list, started), "新しいファイル 1 件のダウンロードを始めました。1 件のアセットは新しいファイルが見つかりませんでした");
+    assert.equal(d.updateResultMessage(list.slice(0, 1), started), "新しいファイル 1 件のダウンロードを始めました");
+    assert.match(d.updateResultMessage(list, []), /新しいファイルは見つかりませんでした/);
   } finally {
     await server.close();
   }

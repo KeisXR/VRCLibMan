@@ -1333,6 +1333,9 @@ a.tab { display: inline-flex; align-items: center; gap: 6px; text-decoration: no
 .unity-open-choice { display: flex; gap: 6px; align-items: center; min-width: 0; }
 .unity-open-choice .download-name { min-width: 0; }
 .unity-open-dialog .row-actions { margin-top: var(--space-3); }
+/* 「このアセットを更新しますか？」（AssetUpdatePrompt.tsx）。箱は「Unityで開く」と同じ。商品名・ファイル名・バリエーションを縦に積む。 */
+.asset-update-prompt-file { display: grid; gap: 2px; margin: 0 0 var(--space-2); min-width: 0; }
+.asset-update-prompt-file .download-name { overflow-wrap: anywhere; }
 /* 読み込み方を選ぶ画面（ImportMethodWizard.tsx）。1 段目は ✓ / × の比較表、2 段目は切り替えで起きることの箇条書き。
  * 選ぶのは表の列の見出しで、選んだ列は地を --surface-secondary にする（見出しの枠は「線のアクセント」の集約ブロック）。 */
 .panel.import-wizard {

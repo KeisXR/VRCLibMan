@@ -784,7 +784,7 @@ function DownloadFiles({
   // 受け取りは App の一覧が持つ。別のファイルと並行して進み、画面を移っても続く。
   const downloads = useDownloads();
   const receive = (file: DownloadView) =>
-    downloads.start({ boothId: item.boothId, variation: file.variation, filename: file.filename });
+    downloads.start({ boothId: item.boothId, variation: file.variation, filename: file.filename, title: item.title });
 
   const present = item.downloads.filter((file) => file.state !== "missing");
   const missing = item.downloads.filter((file) => file.state === "missing" && !file.superseded);

@@ -3,6 +3,7 @@ import extensionManifest from "../../extension/manifest.json";
 import { previewListDirectory, previewListZip, previewPrepareUnityPackages, previewUnityPackages } from "./files";
 import { previewPurchaseDispatch, previewPurchaseExport } from "./purchases";
 import { filePresence } from "../media";
+import { FILE_GONE_MESSAGE } from "../downloads";
 import { GENRE_FREE, GENRE_LABEL, GENRE_UNSET, genresForKind } from "../types";
 import type { ClassificationSnapshot, OwnedAvatarRestore, RegisterOwnedBodyResult, SnapshotLink, UnityEditor, UnityStatus } from "../types";
 import type {
@@ -2568,6 +2569,8 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
         (item) => item.boothId === boothId && item.variation === variation && item.filename === filename,
       );
       if (!row) throw new Error("ダウンロード項目がありません");
+      // 見本では「以前のファイル」を、作者の差し替えで BOOTH から消えたファイルとして扱う。
+      if (row.state === "missing" && row.superseded) throw new Error(FILE_GONE_MESSAGE);
       const number = /^\d{4,12}$/.test(filename);
       if (!number && !/\.(unitypackage|zip|rar|7z|vrm)$/i.test(filename)) {
         throw new Error("この行にはダウンロード番号がありません。拡張を更新して再インポートしてください");
@@ -2580,6 +2583,24 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       store.remoteChecked = false;
       emitPreviewFile({ boothId, variation, filename, phase: "done", message: "ライブラリに移しました", path: row.localPath });
       return row.localPath as T;
+    }
+    case "asset_update_downloads": {
+      // Rust の view::update_download_targets と同じ選び方の複製。
+      const requests = (args.requests ?? []) as { boothId: string; variation: string }[];
+      const targets: { boothId: string; variation: string; filename: string; title: string }[] = [];
+      for (const request of requests) {
+        const fresh = store.downloads.filter(
+          (row) => row.boothId === request.boothId && row.isNew && row.state === "missing" && !row.superseded,
+        );
+        const sameVariation = fresh.some((row) => row.variation === request.variation);
+        const title = store.products.find((product) => product.boothId === request.boothId)?.title ?? "";
+        for (const row of fresh) {
+          if (sameVariation && row.variation !== request.variation) continue;
+          if (targets.some((t) => t.boothId === row.boothId && t.variation === row.variation && t.filename === row.filename)) continue;
+          targets.push({ boothId: row.boothId, variation: row.variation, filename: row.filename, title });
+        }
+      }
+      return targets as T;
     }
     case "open_local_path": {
       const path = String(args.path ?? "");

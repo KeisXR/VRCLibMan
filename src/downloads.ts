@@ -49,6 +49,8 @@ export interface DownloadTarget {
   boothId: string;
   variation: string;
   filename: string;
+  /** 商品名。BOOTH にファイルが無かったときの確認に出す。分からなければ省く。 */
+  title?: string;
 }
 
 export const EMPTY_DOWNLOADS: DownloadBoard = { entries: [], seq: 0 };
@@ -149,6 +151,47 @@ export function finishDownload(
 export function clearFinishedDownloads(board: DownloadBoard): DownloadBoard {
   const entries = board.entries.filter(isDownloadActive);
   return entries.length === board.entries.length ? board : { entries, seq: board.seq };
+}
+
+/**
+ * BOOTH が 404 / 410 を返したときの Rust の文言（`browser.rs` の `FILE_GONE_MESSAGE`）。
+ * 作者がファイルを差し替えて、古いダウンロード番号が無くなったときに出る。
+ */
+export const FILE_GONE_MESSAGE =
+  "BOOTH にこのファイルがありません。商品が更新されて、ファイルが差し替えられた可能性があります";
+
+export function isFileGone(message: string): boolean {
+  return message.trim() === FILE_GONE_MESSAGE;
+}
+
+/** BOOTH に無かったファイル。「このアセットを更新しますか？」で順に尋ねる。 */
+export interface VanishedFile extends DownloadTarget {
+  /** 失敗した時刻（ms）。これより後にライブラリを読み直していれば、読み直さずに探す。 */
+  at: number;
+}
+
+/** 同じファイルは 1 件にまとめ、商品名が後から分かれば埋める。 */
+export function addVanished(list: VanishedFile[], file: VanishedFile): VanishedFile[] {
+  const key = downloadKey(file);
+  const previous = list.find((item) => downloadKey(item) === key);
+  if (!previous) return [...list, file];
+  return list.map((item) => (item === previous ? { ...file, title: file.title || previous.title } : item));
+}
+
+/** ライブラリを読み直す必要があるか。どれかが最後の読み直しより後に失敗していれば読み直す。 */
+export function needsLibraryReread(files: VanishedFile[], lastReread: number | null): boolean {
+  return lastReread === null || files.some((file) => file.at >= lastReread);
+}
+
+/** 更新したあとに、新しいファイルが見つからなかった商品の案内。 */
+export function updateResultMessage(requested: VanishedFile[], started: DownloadTarget[]): string {
+  const found = new Set(started.map((target) => target.boothId));
+  const missing = new Set(requested.filter((file) => !found.has(file.boothId)).map((file) => file.boothId));
+  if (started.length === 0) {
+    return "ライブラリを読み直しましたが、新しいファイルは見つかりませんでした。BOOTH の商品ページで、まだ配布されているか確かめてください";
+  }
+  const head = `新しいファイル ${started.length} 件のダウンロードを始めました`;
+  return missing.size > 0 ? `${head}。${missing.size} 件のアセットは新しいファイルが見つかりませんでした` : head;
 }
 
 export function activeDownloads(board: DownloadBoard): number {

@@ -7,6 +7,7 @@ import type {
   AssetUpdateStatus,
   AssetUpdateRecord,
   AssetUpdateConfigure,
+  AssetUpdateTarget,
   AvatarCard,
   BrowserState,
   BrowserAction,
@@ -316,6 +317,9 @@ export const api = {
     call<CopyResult>("pull_remote_file", { boothId, variation, filename, overwrite }),
   downloadBoothFile: (boothId: string, variation: string, filename: string) =>
     call<string>("download_booth_file", { boothId, variation, filename }),
+  /** BOOTH に無かったファイルの代わりに受け取る、新しく見つかったファイル。読むだけ。 */
+  assetUpdateDownloads: (requests: { boothId: string; variation: string }[]) =>
+    call<AssetUpdateTarget[]>("asset_update_downloads", { requests }),
   fetchFreeFiles: (boothId: string) => call<FreeFilesReport>("fetch_free_files", { boothId }),
   pushRemoteFile: (boothId: string, variation: string, filename: string, overwrite = false) =>
     call<CopyResult>("push_remote_file", { boothId, variation, filename, overwrite }),

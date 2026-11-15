@@ -23,6 +23,7 @@ import { SidebarAssetUpdateButton, useSidebarAssetUpdate } from "./components/Si
 import { SidebarUpdaterBadge } from "./components/SidebarUpdaterBadge";
 import { SidebarDownloads } from "./components/SidebarDownloads";
 import { DownloadsProvider, useDownloadBoard } from "./useDownloads";
+import { AssetUpdatePrompt } from "./components/AssetUpdatePrompt";
 import type { LibraryStats } from "./types";
 import {
   EMPTY_PROGRESS,
@@ -413,6 +414,7 @@ export default function App() {
     <DownloadsProvider value={downloads}>
     <RightPanelProvider value={rightPanel}>
       <BrowserAutoClassification />
+      <AssetUpdatePrompt />
       {setupComplete === false && (
         <SetupWizard
           onRefresh={refresh}
