@@ -1,4 +1,5 @@
 mod asset_updates;
+mod arrival_notice;
 mod auto_classify;
 mod booth_category;
 mod booth_detail;
@@ -107,6 +108,7 @@ pub fn run() {
         )
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .on_window_event(|window, event| {
@@ -146,6 +148,7 @@ pub fn run() {
                 background_mode: AtomicBool::new(false),
                 staged_left: Mutex::new(Vec::new()),
             });
+            arrival_notice::init(app.handle());
             if let Some(state) = app.try_state::<AppState>() {
                 if let Ok(connection) = state.db.lock() {
                     let _ = db::extension_token(&connection);

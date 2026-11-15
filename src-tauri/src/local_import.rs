@@ -279,7 +279,7 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
                 }
                 if outcome.prompt {
                     let _ = app.emit_to("main", "browser-auto-pending", ());
-                    crate::presence::show_main_later(app);
+                    crate::arrival_notice::ask_to_classify(app);
                 }
                 cors_json(origin.as_deref(), outcome.status, outcome.body)
             }
@@ -615,6 +615,7 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
         return match recorded {
             Ok(()) => {
                 let _ = app.emit("library-changed", ());
+                crate::arrival_notice::file_added(app, &plan.booth_id);
                 cors_json(
                     origin.as_deref(),
                     200,
@@ -668,15 +669,16 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
             // 「取得した商品の分類」で本人が決めるので、ここでは分類しない。
             if !download && report.inserted + report.updated > 0 {
                 crate::auto_classify::request(app);
+                crate::arrival_notice::products_received(app, report.inserted, report.updated);
             }
             if download {
-                crate::presence::show_main_later(app);
                 let _ = app.emit_to("main", "browser-auto-pending", ());
                 if let Ok(product) = serde_json::from_str::<serde_json::Value>(&text) {
                     if let Some(id) = product.get("boothId").and_then(|v| v.as_str()) {
                         let _ = app.emit_to("main", "extension-import-prompt", id);
                     }
                 }
+                crate::arrival_notice::ask_to_classify(app);
             }
             response_for(origin.as_deref(), Gate::Import, Some(report))
         }
