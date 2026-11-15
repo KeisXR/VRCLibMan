@@ -119,7 +119,7 @@ export function AppUpdater({
           <div className="update-notes">{status.notes}</div>
         </details>
       )}
-      <p className="meta">拡張機能は別途更新してください。</p>
+      <p className="meta">アプリのフォルダから読み込んだ拡張機能は、アプリの更新に合わせて新しくなります。</p>
     </div>
   );
 }

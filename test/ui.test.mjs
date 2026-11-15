@@ -282,10 +282,10 @@ test("setup, import and version flows with synthetic local data", async (t) => {
           `v${packageJson.version}`,
         );
         assert.ok(text().includes(`アプリ v${packageJson.version}`));
-        assert.ok(text().includes(`推奨する拡張 v${manifest.version}`));
-        assert.ok(text().includes("拡張を更新してください"));
+        assert.ok(text().includes(`アプリに入っている拡張 v${manifest.version}`));
+        assert.ok(text().includes("拡張機能を読み込み直してください"));
         assert.match(extensionVersionMessage("0.1.12", "0.1.12"), /一致/);
-        assert.match(extensionVersionMessage("0.1.12", "0.1.11"), /更新/);
+        assert.match(extensionVersionMessage("0.1.12", "0.1.11"), /読み込み直/);
         assert.match(extensionVersionMessage("0.1.12", null), /未確認/);
       },
     );

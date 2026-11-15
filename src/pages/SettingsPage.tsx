@@ -367,10 +367,10 @@ export function SettingsPage() {
             <SettingRow id="settings-help" label="使い方" help="画面付きの使い方ガイドを開くか、初回セットアップをもう一度進めます。セットアップをやり直しても、ライブラリと設定は消えません。">
               <div className="inline-control"><button className="button secondary" type="button" onClick={() => void openExternal(HOW_TO_USE_URL).catch((err: unknown) => fail(errorText(err)))}>使い方ガイドを開く</button><button className="button" type="button" onClick={() => void reopenSetup()}>セットアップを再表示</button></div>
             </SettingRow>
-            <SettingRow id="settings-version" label="バージョン" help="アプリと拡張機能は別のバージョン番号です。">
+            <SettingRow id="settings-version" label="バージョン" help="拡張機能はアプリと同じバージョン番号です。アプリのフォルダから読み込んだ拡張機能は、アプリの更新に合わせて新しくなります。">
               <div className="version-info"><p>アプリ v{version || "確認中"}</p>
                 {integration && integration.mode !== "browser" && <>
-                  <details className="settings-details"><summary>拡張機能のバージョン</summary><p>推奨する拡張 v{integration.expectedExtensionVersion}</p><p>最後に通信した拡張 {integration.extensionVersion ? `v${integration.extensionVersion}` : "未確認"}</p></details>
+                  <details className="settings-details"><summary>拡張機能のバージョン</summary><p>アプリに入っている拡張 v{integration.expectedExtensionVersion}</p><p>最後に通信した拡張 {integration.extensionVersion ? `v${integration.extensionVersion}` : "未確認"}</p></details>
                   {integration.extensionVersion && integration.extensionVersion !== integration.expectedExtensionVersion && <p className="warn-text">{extensionVersionMessage(integration.expectedExtensionVersion, integration.extensionVersion)}</p>}
                 </>}
               </div>
