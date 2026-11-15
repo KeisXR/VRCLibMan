@@ -153,7 +153,7 @@ const extensionLink: ExtensionLink = {
 
 const extensionPackage: ExtensionPackage = {
   path: "C:\\Users\\example\\AppData\\Local\\app.vrclibman.desktop\\browser-extension",
-  bundledVersion: "0.8.9",
+  bundledVersion: "0.9.0",
   installedVersion: null,
   upToDate: false,
 };
