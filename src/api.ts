@@ -23,6 +23,7 @@ import type {
   ClassificationSnapshot,
   RegisterOwnedBodyResult,
   ExtensionLink,
+  ExtensionPackage,
   BrowserDiagnostic,
   BoothAccount,
   ImportReport,
@@ -225,6 +226,8 @@ export const api = {
   integrationStatus: () => call<IntegrationStatus>("integration_status"),
   setBoothImportMode: (mode: BoothImportMode) => call<void>("set_booth_import_mode", { mode }),
   extensionLink: () => call<ExtensionLink>("extension_link"),
+  extensionPackage: () => call<ExtensionPackage>("extension_package_status"),
+  installExtensionPackage: () => call<ExtensionPackage>("install_extension_package"),
   regenerateExtensionToken: () => call<ExtensionLink>("regenerate_extension_token"),
   saveSettings: async (settings: Settings) => {
     await inSettingsOrder(() => call<void>("save_settings", { settings }));

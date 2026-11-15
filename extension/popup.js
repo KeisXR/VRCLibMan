@@ -1,610 +1,396 @@
-const status = document.querySelector("#status");
-document.querySelector("#extension-version").textContent = `拡張機能 v${chrome.runtime.getManifest().version}`;
-const linkStatus = document.querySelector("#link-status");
-const connectionSettings = document.querySelector("#connection-settings");
-const resultDetails = document.querySelector("#result-details");
-const resultBreakdown = document.querySelector("#result-breakdown");
-const button = document.querySelector("#export");
-const allButton = document.querySelector("#export-all");
-const newButton = document.querySelector("#export-new");
-const saveTokenButton = document.querySelector("#save-token");
-const openLibraryButton = document.querySelector("#open-library");
-const diagnoseButton = document.querySelector("#diagnose");
-const diagnosisBox = document.querySelector("#diagnosis");
-const tokenInput = document.querySelector("#token");
+// ポップアップ。接続の状態と、開いているページでできる主な操作だけを出す。
+// 長い読み込みはサービスワーカーと offscreen 文書が受け持つので、閉じても続く。
+const shared = globalThis.VrcLibManShared;
+const companion = globalThis.VrcLibManCompanion;
+const ui = globalThis.VrcLibManUi;
+const { h } = ui;
+
+const main = document.querySelector("#main");
+const linkChip = document.querySelector("#link-chip");
 const routeInput = document.querySelector("#route-downloads");
-const intervalInput = document.querySelector("#booth-interval");
-const api = () => globalThis.VrcLibManExtract;
-const LOCAL_PORT = 17321;
-const LOCAL_BASE = `http://127.0.0.1:${LOCAL_PORT}`;
-const LIBRARY_URL = "https://accounts.booth.pm/library";
-const LIBRARY_SECTIONS = [
-  { url: "https://accounts.booth.pm/library", label: "ライブラリ" },
-  { url: "https://accounts.booth.pm/library/gifts", label: "ギフト" },
-  { url: "https://accounts.booth.pm/library/free_downloads", label: "無料ダウンロード" },
-];
-const WAKE_URL = "vrclibman://import";
-const WAKE_WAIT_MS = 8000;
+const pendingButton = document.querySelector("#pending");
+const pendingCount = document.querySelector("#pending-count");
+document.querySelector("#open-panel").append(ui.icon("panel"));
+document.querySelector("#open-settings").append(ui.icon("settings"));
 
-function setStatus(text) {
-  status.textContent = text;
+const state = {
+  tab: null,
+  kind: "other",
+  products: null,
+  pageStale: false,
+  statuses: new Map(),
+  connection: undefined,
+  stored: { ...shared.DEFAULTS, pendingDeliveries: [], importHistory: [], extensionUpdate: null },
+  job: null,
+  message: "",
+  tone: "",
+  busy: false,
+};
+
+function send(message) {
+  return chrome.runtime.sendMessage(message).catch((error) => ({ error: error.message || String(error) }));
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function hasToken() {
+  return Boolean(state.stored.pairingToken);
 }
 
-const requestPolicy = globalThis.VrcLibManRequestPolicy;
-let paceBoothRequest = requestPolicy.createPacer();
-
-// Each user-started import captures the selected pace.
-function resetPacer() {
-  paceBoothRequest = requestPolicy.createPacer(requestPolicy.normalizeIntervalMs(intervalInput.value));
+function link() {
+  return shared.connectionState(state.connection === undefined ? undefined : state.connection?.status ?? null, hasToken());
 }
 
-async function fetchWithBackoff(url, options) {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    await paceBoothRequest();
-    const response = await fetch(url, options);
-    if (!requestPolicy.isThrottled(response.status)) return response;
-    if (attempt === 1) {
-      throw new Error("BOOTH のアクセス制限が続いているため、ここまでで止めました");
-    }
-    const requested = requestPolicy.retryAfterMs(response.headers.get("retry-after"));
-    const waitMs = requested ?? requestPolicy.DEFAULT_RETRY_MS;
-    if (waitMs > requestPolicy.MAX_RETRY_MS) {
-      throw new Error("BOOTH から長い待機時間を指定されたため、再試行せずここまでで止めました");
-    }
-    setStatus(`BOOTH のアクセス制限を受けたため ${Math.ceil(waitMs / 1000)} 秒待って一度だけ再試行します`);
-    await sleep(waitMs);
-  }
-  throw new Error("BOOTH から応答が得られず、ここまでで止めました");
+function running() {
+  return state.job?.state === "running";
 }
 
-async function currentTab() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id || !tab.url || !/^https:\/\/([^/]+\.)?booth\.pm\//.test(tab.url)) {
-    throw new Error("BOOTHの商品ページかライブラリを開いてから実行してください");
-  }
-  return tab;
+function say(text, tone = "") {
+  state.message = text || "";
+  state.tone = tone;
+  render();
 }
 
-async function readTab() {
-  const tab = await currentTab();
+async function loadStored() {
+  state.stored = await chrome.storage.local.get({ ...shared.DEFAULTS, pendingDeliveries: [], importHistory: [], extensionUpdate: null });
+  state.job = (await chrome.storage.session.get({ job: null })).job;
+}
+
+async function refreshConnection() {
+  state.connection = await send({ type: "connection" });
+  if (state.connection?.error) state.connection = { status: null };
+  render();
+  await refreshStatuses();
+}
+
+async function readPage() {
+  if (!state.tab?.id || !["item", "library"].includes(state.kind)) return;
   try {
-    const response = await chrome.tabs.sendMessage(tab.id, { type: "extract-page" });
-    if (response?.error) throw new Error(response.error);
-    if (Array.isArray(response?.products)) return response.products;
+    const response = await chrome.tabs.sendMessage(state.tab.id, { type: "extract-page" });
+    state.products = Array.isArray(response?.products) ? response.products : [];
+    state.pageStale = false;
   } catch {
-    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["extract.js"] });
-    const [result] = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: () => globalThis.VrcLibManExtract.extractPage(document, location.href),
-    });
-    return Array.isArray(result?.result) ? result.result : [];
+    // 拡張を入れる前・更新する前に開いたタブには、拡張のスクリプトが入っていない。
+    state.products = [];
+    state.pageStale = true;
   }
-  return [];
+  render();
+  await refreshStatuses();
 }
 
-function parseHtml(html, href) {
-  const doc = new DOMParser().parseFromString(api().quietHtml(html), "text/html");
-  return { doc, products: api().extractPage(doc, href) };
+async function refreshStatuses() {
+  if (state.kind !== "item" || !state.products?.length || !link().reachable) return;
+  const ids = [...new Set(state.products.map((product) => String(product.boothId)))].slice(0, 100);
+  const result = await send({ type: "product-status", ids });
+  if (Array.isArray(result?.products)) {
+    state.statuses = new Map(result.products.map((row) => [row.boothId, row]));
+    render();
+  }
 }
 
-async function readLibraryPages(startUrl, knownIds, label) {
-  const sectionLabel = label || "ライブラリ";
-  const firstUrl = api().libraryPageUrl(startUrl, 1);
-  setStatus(`${sectionLabel} 1 ページ目を読んでいます`);
-  const firstResponse = await fetchWithBackoff(firstUrl, { credentials: "include" });
-  if (!firstResponse.ok) {
-    throw new Error(`${sectionLabel}を読めませんでした (${firstResponse.status})`);
-  }
-  const first = parseHtml(await firstResponse.text(), firstUrl);
-  let taken = api().takeUntilKnown(first.products, knownIds);
-  let products = api().dedupeProducts(taken.products);
-  let stopped = taken.stopped;
-  let pagesRead = 1;
-  const lastPage = api().libraryLastPage(first.doc, firstUrl);
+async function startJob(kind) {
+  if (state.busy) return;
+  state.busy = true;
+  say("");
+  const result = await send({ type: "job-start", kind, tabId: state.tab?.id });
+  state.busy = false;
+  if (result?.error) say(result.error, "warn");
+  else render();
+}
+
+function openUrl(url) {
+  chrome.tabs.create({ url });
+  window.close();
+}
+
+async function openPanel() {
   try {
-    for (let page = 2; page <= lastPage && !stopped; page += 1) {
-      setStatus(`${sectionLabel} ${page}/${lastPage} ページを読んでいます（${products.length} 件）`);
-      const pageUrl = api().libraryPageUrl(startUrl, page);
-      const response = await fetchWithBackoff(pageUrl, { credentials: "include" });
-      if (!response.ok) {
-        throw new Error(`${sectionLabel} ${page} ページ目を読めませんでした (${response.status})`);
-      }
-      const parsed = parseHtml(await response.text(), pageUrl);
-      pagesRead = page;
-      if (parsed.products.length === 0) break;
-      taken = api().takeUntilKnown(parsed.products, knownIds);
-      products = api().dedupeProducts(products.concat(taken.products));
-      stopped = taken.stopped;
+    if (chrome.sidePanel?.open && state.tab?.windowId != null) {
+      await chrome.sidePanel.open({ windowId: state.tab.windowId });
+      window.close();
+      return;
     }
-  } catch (error) {
-    error.partialProducts = products;
-    error.libraryPages = lastPage;
-    throw error;
-  }
-  return { products, pagesRead, stopped };
-}
-
-async function readAllLibrarySections(knownIds) {
-  let products = [];
-  let pagesRead = 0;
-  let stopped = false;
-  for (const section of LIBRARY_SECTIONS) {
-    try {
-      const collected = await readLibraryPages(section.url, knownIds, section.label);
-      products = api().dedupeProducts(products.concat(collected.products));
-      pagesRead += collected.pagesRead;
-      stopped = stopped || collected.stopped;
-    } catch (error) {
-      const partial = error instanceof Error && Array.isArray(error.partialProducts) ? error.partialProducts : [];
-      products = api().dedupeProducts(products.concat(partial));
-      if (error instanceof Error) error.partialProducts = products;
-      throw error;
-    }
-  }
-  return { products, pagesRead, stopped };
-}
-
-function needsDetail(product) {
-  return (product.descriptionSnippet || "").length < 200 || !product.shop;
-}
-
-async function enrich(products) {
-  const targets = products.filter(needsDetail);
-  for (let index = 0; index < targets.length; index += 1) {
-    const product = targets[index];
-    setStatus(`説明文を補完しています ${index + 1}/${targets.length} 件`);
-    let htmlStatus = 0;
-    let jsonStatus = 0;
-    try {
-      const response = await fetchWithBackoff(product.url, { credentials: "omit" });
-      htmlStatus = response.status;
-      if (response.ok) {
-        const { products: parsed } = parseHtml(await response.text(), product.url);
-        api().mergeDetail(product, parsed[0]);
-      }
-    } catch (error) {
-      if (error instanceof Error && error.message.includes("止めました")) throw error;
-    }
-    // Do not fall back to another endpoint after explicit access denial.
-    // In particular, JSON must not be used to bypass an age/login gate.
-    if (!requestPolicy.canUseJsonFallback(htmlStatus)) continue;
-    if (needsDetail(product)) {
-      try {
-        const response = await fetchWithBackoff(`https://booth.pm/ja/items/${product.boothId}.json`, {
-          credentials: "omit",
-          headers: { Accept: "application/json" },
-        });
-        jsonStatus = response.status;
-        if (response.ok) {
-          const detail = api().detailFromItemJson(await response.json(), product.boothId);
-          api().mergeDetail(product, detail);
-        }
-      } catch (error) {
-        if (error instanceof Error && error.message.includes("止めました")) throw error;
-      }
-    }
-    api().noteIfUnpublished(product, htmlStatus, jsonStatus);
-  }
-}
-
-function setBusy(busy) {
-  if (busy) {
-    resultDetails.hidden = true;
-    resultBreakdown.textContent = "";
-  }
-  button.disabled = busy;
-  allButton.disabled = busy;
-  newButton.disabled = busy;
-  intervalInput.disabled = busy;
-  saveTokenButton.disabled = busy;
-}
-
-function isUnreachable(error) {
-  return Boolean(error && error.unreachable);
-}
-
-function unreachableError() {
-  const error = new TypeError("アプリに届きません");
-  error.unreachable = true;
-  return error;
-}
-
-async function savedToken() {
-  const stored = await chrome.storage.local.get("pairingToken");
-  return String(stored.pairingToken || "").trim();
-}
-
-async function probe(token) {
-  try {
-    const response = await fetch(`${LOCAL_BASE}/health`, {
-      method: "GET",
-      credentials: "omit",
-      headers: { Authorization: `Bearer ${token}`, "X-VRCLibMan-Extension-Version": chrome.runtime.getManifest().version },
-    });
-    return response.status;
   } catch {
-    return null;
+    // サイドパネルを開けないブラウザでは、同じ画面をタブで開く。
   }
+  openUrl(chrome.runtime.getURL("sidepanel.html"));
 }
 
-async function storedRoute() {
-  const stored = await chrome.storage.local.get({ routeDownloads: false });
-  return stored.routeDownloads === true;
+function recentLine() {
+  const job = state.job;
+  if (!job || job.state === "running" || !job.finishedAt) return null;
+  if (Date.now() - Date.parse(job.finishedAt) > 15 * 60 * 1000) return null;
+  return h("p", { class: `note ${job.state === "done" ? "" : "warn"}`, role: "status", text: job.line });
 }
 
-async function refreshLink() {
-  const token = await savedToken();
-  tokenInput.value = token;
-  routeInput.checked = await storedRoute();
-  const storedInterval = await chrome.storage.local.get({ boothIntervalMs: requestPolicy.DEFAULT_INTERVAL_MS });
-  intervalInput.value = String(requestPolicy.normalizeIntervalMs(storedInterval.boothIntervalMs));
-  if (!token) {
-    linkStatus.textContent = "未ペアリング。アプリの設定に出るコードを貼ってください";
-    connectionSettings.open = true;
-    return;
-  }
-  const status = await probe(token);
-  const reachable = status !== null && status >= 200 && status < 300;
-  linkStatus.textContent = reachable
-    ? "アプリに接続しています"
-    : status === 401
-      ? "コードが一致しません。アプリの設定からコピーし直してください"
-      : status === 403
-        ? "この拡張機能は接続を許可されていません。アプリでコードを作り直してください"
-        : status === 429
-          ? "接続の試行が続いています。少し待ってから確認してください"
-          : "アプリに接続できません。アプリの起動とコードを確認してください";
-  connectionSettings.open = !reachable;
-  if (!reachable) return;
-  try {
-    const response = await fetch(`${LOCAL_BASE}/route-downloads`, {
-      method: "GET",
-      credentials: "omit",
-      headers: { Authorization: `Bearer ${token}`, "X-VRCLibMan-Extension-Version": chrome.runtime.getManifest().version },
-    });
-    if (!response.ok) return;
-    const data = await response.json();
-    const enabled = data.enabled === true;
-    routeInput.checked = enabled;
-    await chrome.storage.local.set({ routeDownloads: enabled });
-  } catch {
-    // アプリの設定が読めないときは、拡張に保存した値のままにする。
-  }
+function messageLine() {
+  if (!state.message) return recentLine();
+  return h("p", { class: `note ${state.tone}`, role: "status", text: state.message });
 }
 
-async function fetchKnownIds(token) {
-  let response;
-  try {
-    response = await fetch(`${LOCAL_BASE}/known-ids`, {
-      method: "GET",
-      credentials: "omit",
-      headers: { Authorization: `Bearer ${token}`, "X-VRCLibMan-Extension-Version": chrome.runtime.getManifest().version },
-    });
-  } catch {
-    throw unreachableError();
-  }
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(data.error || `インポート済みの確認ができませんでした (${response.status})`);
-  }
-  return new Set((Array.isArray(data.ids) ? data.ids : []).map((id) => String(id)));
+function lastImport(kinds) {
+  const entry = (state.stored.importHistory || []).find((row) => kinds.includes(row.kind));
+  if (!entry) return null;
+  const counts = entry.kind === "purchases"
+    ? `新しい注文 ${entry.added ?? 0} 件`
+    : `追加 ${entry.inserted ?? 0} 件`;
+  return h("p", { class: "note num", text: `最後の取り込み：${shared.formatTime(entry.at)}（${counts}）` });
 }
 
-async function knownIdsWithWake(token) {
-  try {
-    return await fetchKnownIds(token);
-  } catch (error) {
-    if (!isUnreachable(error)) throw error;
+function pairingCard() {
+  const status = link();
+  const input = h("input", {
+    class: "field num",
+    type: "text",
+    value: state.stored.pairingToken ? shared.displayToken(state.stored.pairingToken) : "",
+    placeholder: "XXXX-XXXX",
+    autocomplete: "off",
+    spellcheck: false,
+    "aria-label": "ペアリングコード",
+  });
+  const save = async () => {
+    await chrome.storage.local.set({ pairingToken: shared.displayToken(input.value) });
+    state.connection = undefined;
+    say("");
+    await refreshConnection();
+  };
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") save();
+  });
+  return h("section", { class: "card" },
+    h("span", { class: "title", text: "アプリとつなぐ" }),
+    h("p", { class: `note ${hasToken() ? "warn" : ""}`, text: status.message }),
+    input,
+    h("button", { class: "btn primary block", type: "button", text: "接続する", on: { click: save } }),
+    messageLine(),
+  );
+}
+
+function jobCard() {
+  const job = state.job;
+  const counts = job.total > 0 ? `${job.current} / ${job.total}` : "";
+  return h("section", { class: "card" },
+    h("span", { class: "sec", text: "実行中" }),
+    h("span", { class: "title", text: job.label }),
+    h("div", { class: "row note num" }, h("span", { class: "grow", text: job.line }), job.count ? h("span", { text: `${job.count} 件` }) : null),
+    ui.track(job.current, job.total, `${job.label} ${counts}`),
+    h("p", { class: "note", text: "ポップアップを閉じても続きます。" }),
+    h("div", { class: "row" },
+      h("button", { class: "btn secondary grow", type: "button", text: "サイドパネルで見る", on: { click: openPanel } }),
+      h("button", { class: "btn danger", type: "button", text: "中止", on: { click: () => send({ type: "job-cancel" }) } }),
+    ),
+  );
+}
+
+function reloadPage() {
+  chrome.tabs.reload(state.tab.id);
+  window.close();
+}
+
+function itemCard() {
+  // 拡張のスクリプトが無いタブでは商品を読めないので、できる操作は再読み込みだけ。
+  if (state.pageStale) {
+    return h("section", { class: "card" },
+      h("span", { class: "label", text: "開いている商品" }),
+      h("span", { class: "title", text: "商品ページ" }),
+      h("p", { class: "note warn", text: "このページは、拡張機能を入れる前か更新する前に開いたものです。再読み込みすると送れます。" }),
+      h("button", { class: "btn primary block", type: "button", text: "ページを再読み込み", on: { click: reloadPage } }),
+    );
   }
-  setStatus("アプリを起動しています");
-  await wakeApp();
-  const started = Date.now();
-  while (Date.now() - started < WAKE_WAIT_MS) {
-    await sleep(400);
-    try {
-      return await fetchKnownIds(token);
-    } catch (error) {
-      if (!isUnreachable(error)) throw error;
+  const product = state.products?.[0];
+  const row = product ? state.statuses.get(String(product.boothId)) : null;
+  return h("section", { class: "card" },
+    h("span", { class: "label", text: "開いている商品" }),
+    h("span", { class: "title", text: product?.title || "商品ページ" }),
+    row ? h("div", { class: "wrap" }, ui.statusMarks(row, companion)) : null,
+    h("button", {
+      class: "btn primary block",
+      type: "button",
+      text: "この商品を送る",
+      disabled: state.busy || !product,
+      on: { click: () => startJob("page") },
+    }),
+    Array.isArray(state.products) && !product ? h("p", { class: "note", text: "このページから商品を見つけられませんでした。" }) : null,
+    messageLine(),
+  );
+}
+
+function pageFiles() {
+  const products = state.products || [];
+  const files = [];
+  for (const product of products) {
+    for (const file of product.downloads || []) {
+      if (!companion.choose(products, file.downloadableId) || !companion.isAsset(file.filename)) continue;
+      files.push({ product, file });
     }
   }
-  throw new Error("新しい購入だけを送るには、アプリとの接続が必要です。アプリを起動してから再実行してください");
+  return files;
 }
 
-async function postImport(token, payload) {
-  let response;
-  try {
-    response = await fetch(`${LOCAL_BASE}/import`, {
-      method: "POST",
-      credentials: "omit",
-      headers: {
-        Authorization: `Bearer ${token}`, "X-VRCLibMan-Extension-Version": chrome.runtime.getManifest().version,
-        "Content-Type": "application/json",
+function filesCard() {
+  const files = pageFiles();
+  if (files.length === 0) return null;
+  const routeOn = state.stored.routeDownloads === true;
+  const rows = files.map(({ product, file }) => {
+    const saved = companion.saved(state.statuses.get(String(product.boothId)), file.downloadableId);
+    const sub = [file.variation, shared.formatBytes(file.size)].filter(Boolean).join("・");
+    let action = null;
+    if (saved) action = ui.chip("保存記録あり", "good");
+    else if (routeOn) {
+      action = h("button", {
+        class: "btn secondary small",
+        type: "button",
+        text: "取得",
+        on: {
+          click: async (event) => {
+            event.currentTarget.disabled = true;
+            const result = await send({ type: "start-download", tabId: state.tab.id, downloadableId: file.downloadableId });
+            say(result?.ok ? "ブラウザで取得を始めました。終わるとアプリへ知らせます。" : result?.error || "取得を開始できません", result?.ok ? "good" : "warn");
+          },
+        },
+      });
+    }
+    return h("div", { class: "item" },
+      h("div", { class: "file" }, h("b", { text: file.filename, title: file.filename }), sub ? h("span", { text: sub }) : null),
+      action,
+    );
+  });
+  return h("section", { class: "card" },
+    h("span", { class: "sec", text: "このページのファイル" }),
+    h("div", { class: "list files" }, rows),
+    routeOn ? null : h("p", { class: "note", text: "下の「ダウンロードを自動整理」をオンにすると、ここから取得できます。" }),
+  );
+}
+
+function libraryCard() {
+  return h("section", { class: "card" },
+    h("span", { class: "label", text: "開いているページ" }),
+    h("span", { class: "title", text: shared.librarySectionLabel(state.tab.url) }),
+    lastImport(["library", "library-new"]),
+    h("button", { class: "btn primary block", type: "button", text: "新しい購入を送る", disabled: state.busy, on: { click: () => startJob("library-new") } }),
+    h("div", { class: "row" },
+      h("button", { class: "btn secondary grow", type: "button", text: "すべて読み込む", disabled: state.busy, on: { click: () => startJob("library") } }),
+      h("button", { class: "btn secondary grow", type: "button", text: "購入履歴を読み込む", disabled: state.busy, on: { click: () => startJob("purchases") } }),
+    ),
+    messageLine(),
+  );
+}
+
+function ordersCard() {
+  return h("section", { class: "card" },
+    h("span", { class: "label", text: "開いているページ" }),
+    h("span", { class: "title", text: "購入履歴" }),
+    lastImport(["purchases"]),
+    h("button", { class: "btn primary block", type: "button", text: "購入履歴を読み込む", disabled: state.busy, on: { click: () => startJob("purchases") } }),
+    h("button", { class: "btn secondary block", type: "button", text: "購入ライブラリを開く", on: { click: () => openUrl(shared.LIBRARY_URL) } }),
+    messageLine(),
+  );
+}
+
+function otherCard() {
+  const booth = state.kind === "booth";
+  return h("section", { class: "card" },
+    h("span", { class: "title", text: booth ? "BOOTH" : "BOOTH を開くと使えます" }),
+    h("p", { class: "note", text: "商品ページか購入ライブラリを開くと、VRCLibMan へ商品情報を送れます。" }),
+    h("button", { class: "btn primary block", type: "button", text: "購入ライブラリを開く", on: { click: () => openUrl(shared.LIBRARY_URL) } }),
+    messageLine(),
+  );
+}
+
+function jsonButton() {
+  if (!["item", "library"].includes(state.kind) || !state.products?.length) return null;
+  return h("button", {
+    class: "btn block",
+    type: "button",
+    text: "このページを JSON として保存",
+    on: {
+      click: async () => {
+        const result = await send({ type: "save-page-json", tabId: state.tab.id });
+        say(result?.ok ? `商品 ${result.count} 件を JSON として保存しました。アプリのインポート画面へドロップしてください` : result?.error, result?.ok ? "good" : "warn");
       },
-      body: JSON.stringify(payload),
-    });
-  } catch {
-    throw unreachableError();
-  }
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(data.error || `アプリが受け付けませんでした (${response.status})`);
-  }
-  return data;
-}
-
-async function wakeApp() {
-  try {
-    const tab = await chrome.tabs.create({ url: WAKE_URL, active: false });
-    setTimeout(() => {
-      if (tab?.id != null) chrome.tabs.remove(tab.id).catch(() => {});
-    }, 1200);
-  } catch {
-    // プロトコルを開けないときは、再試行のあと案内する。
-  }
-}
-
-async function deliver(products, source) {
-  const token = await savedToken();
-  const payload = {
-    format: "vrclibman.booth-export",
-    version: 1,
-    exportedAt: new Date().toISOString(),
-    source,
-    products,
-  };
-  if (!token) {
-    await download(products, source);
-    return "ペアリングコードが未入力なので、JSONを保存しました";
-  }
-  try {
-    return sentText(await postImport(token, payload), products);
-  } catch (error) {
-    if (!isUnreachable(error)) throw error;
-  }
-  setStatus("アプリを起動しています");
-  await wakeApp();
-  const started = Date.now();
-  while (Date.now() - started < WAKE_WAIT_MS) {
-    await sleep(400);
-    try {
-      return sentText(await postImport(token, payload), products);
-    } catch (error) {
-      if (!isUnreachable(error)) throw error;
-    }
-  }
-  await download(products, source);
-  return "アプリに接続できませんでした。JSONを保存したので、アプリのインポート画面へドロップしてください";
-}
-
-function sentText(report, products) {
-  const parts = [
-    `商品情報を ${products.length} 件送りました。追加 ${report.inserted ?? 0} 件、更新 ${report.updated ?? 0} 件`,
-  ];
-  const details = [`変更なし ${report.unchanged ?? 0} 件`];
-  if (report.skipped) parts.push(`読み込めなかった商品 ${report.skipped} 件`);
-  if (typeof report.variations === "number" || typeof report.downloads === "number") {
-    details.push(`バリエーション ${report.variations ?? 0} 件、ファイル情報 ${report.downloads ?? 0} 件`);
-  }
-  if (report.unnamedDownloads) details.push(`ファイル名未取得 ${report.unnamedDownloads} 件`);
-  resultBreakdown.textContent = details.join("。");
-  resultDetails.hidden = false;
-  if (Array.isArray(report.warnings)) parts.push(...report.warnings);
-  return parts.join("。");
-}
-
-async function download(products, source) {
-  const payload = {
-    format: "vrclibman.booth-export",
-    version: 1,
-    exportedAt: new Date().toISOString(),
-    source,
-    products,
-  };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const stamp = new Date().toISOString().slice(0, 16).replace(/[-:]/g, "").replace("T", "-");
-  await chrome.downloads.download({
-    url,
-    filename: `vrclibman-booth-${stamp}.json`,
-    saveAs: true,
+    },
   });
 }
 
-button.addEventListener("click", async () => {
-  resetPacer();
-  setBusy(true);
-  try {
-    setStatus("ページを読んでいます");
-    const products = api().dedupeProducts(await readTab());
-    if (products.length === 0) {
-      setStatus("このページから商品を見つけられませんでした");
-      return;
-    }
-    await enrich(products);
-    setStatus(await deliver(products, "current-page"));
-    await refreshLink();
-  } catch (error) {
-    setStatus(error instanceof Error ? error.message : String(error));
-  } finally {
-    setBusy(false);
+// アプリが用意したフォルダに新しい版があるとき。読み込み直しても変わらないときは、読み込み元の変え方を案内する。
+function updateCard() {
+  const update = state.stored.extensionUpdate;
+  if (!update?.version) return null;
+  if (update.stuck) {
+    return h("section", { class: "card" },
+      h("span", { class: "title", text: `拡張機能の更新（v${update.version}）があります` }),
+      h("p", { class: "note warn", text: "この拡張機能は、アプリが用意したフォルダとは別の場所から入れられているため、自動では更新できません。アプリの「設定 → BOOTH → 拡張機能をつなぐ」に出るフォルダを、ブラウザの拡張機能の画面から入れ直してください。" }),
+    );
   }
-});
-
-async function sendLibrary(updateMode) {
-  resetPacer();
-  setBusy(true);
-  let products = [];
-  try {
-    const tab = await currentTab();
-    if (!api().isLibraryUrl(tab.url)) {
-      setStatus("ライブラリのページを開いてから実行してください");
-      return;
-    }
-    let knownIds = null;
-    if (updateMode) {
-      const token = await savedToken();
-      if (!token) {
-        setStatus("新しい購入だけを送るにはペアリングが必要です。アプリの設定のコードを貼ってください");
-        return;
-      }
-      knownIds = await knownIdsWithWake(token);
-    }
-    const collected = await readAllLibrarySections(knownIds);
-    products = collected.products;
-    if (products.length === 0) {
-      setStatus(updateMode && collected.stopped ? "新しい購入はありません" : "ライブラリから商品を見つけられませんでした");
-      return;
-    }
-    const source = updateMode ? "library-update" : "library";
-    try {
-      await enrich(products);
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      setStatus(`${await deliver(products, source)}。${reason}`);
-      await refreshLink();
-      return;
-    }
-    const stopNote = updateMode && collected.stopped ? "。インポート済みの商品があったので、そこまでで止めました" : "";
-    setStatus(`${await deliver(products, source)}（${collected.pagesRead} ページを確認）${stopNote}`);
-    await refreshLink();
-  } catch (error) {
-    const partial = error instanceof Error && Array.isArray(error.partialProducts) ? error.partialProducts : products;
-    const reason = error instanceof Error ? error.message : String(error);
-    const source = updateMode ? "library-update" : "library";
-    if (partial.length > 0) {
-      try {
-        setStatus(`${await deliver(partial, source)}。${reason}`);
-        await refreshLink();
-      } catch (sendError) {
-        setStatus(sendError instanceof Error ? sendError.message : reason);
-      }
-      return;
-    }
-    setStatus(reason);
-  } finally {
-    setBusy(false);
-  }
+  return h("section", { class: "card" },
+    h("span", { class: "title", text: `拡張機能を v${update.version} に更新できます` }),
+    h("p", { class: "note", text: "更新すると、このポップアップはいったん閉じます。" }),
+    h("button", {
+      class: "btn secondary block",
+      type: "button",
+      text: "更新する",
+      on: {
+        click: async () => {
+          const result = await send({ type: "reload-extension" });
+          if (result?.error) say(result.error, "warn");
+        },
+      },
+    }),
+  );
 }
 
-intervalInput.addEventListener("change", async () => {
-  const next = requestPolicy.normalizeIntervalMs(intervalInput.value);
-  const stored = await chrome.storage.local.get({ boothIntervalMs: requestPolicy.DEFAULT_INTERVAL_MS });
-  const old = requestPolicy.normalizeIntervalMs(stored.boothIntervalMs);
-  if (next === 250 && old !== 250 &&
-      !window.confirm("0.25秒間隔はBOOTHへのアクセス制限やアカウントへの影響が起きる可能性のある高リスク設定です。規約上の安全性は保証されません。この設定を使用しますか？")) {
-    intervalInput.value = String(old);
-    return;
+function render() {
+  const status = link();
+  linkChip.textContent = status.label;
+  linkChip.className = status.tone ? `chip ${status.tone}` : "chip";
+  routeInput.checked = state.stored.routeDownloads === true;
+  const pending = (state.stored.pendingDeliveries || []).length;
+  pendingButton.hidden = pending === 0;
+  pendingCount.textContent = String(pending);
+  document.querySelector("#footer").hidden = !status.paired;
+  document.querySelector("#open-panel").hidden = !status.paired;
+  const cards = [];
+  if (!status.paired) {
+    cards.push(pairingCard(), jsonButton());
+  } else {
+    cards.push(updateCard());
+    if (running()) cards.push(jobCard());
+    else if (state.kind === "item") cards.push(itemCard());
+    else if (state.kind === "library") cards.push(libraryCard());
+    else if (state.kind === "orders") cards.push(ordersCard());
+    else cards.push(otherCard());
+    if (state.kind === "item") cards.push(filesCard());
   }
-  await chrome.storage.local.set({ boothIntervalMs: next });
-  intervalInput.value = String(next);
-  setStatus(`BOOTHへのアクセス間隔を ${next / 1000} 秒に設定しました`);
-});
-
-allButton.addEventListener("click", () => sendLibrary(false));
-newButton.addEventListener("click", () => sendLibrary(true));
-
-saveTokenButton.addEventListener("click", async () => {
-  await chrome.storage.local.set({ pairingToken: tokenInput.value.trim() });
-  await refreshLink();
-});
-
-openLibraryButton.addEventListener("click", () => {
-  chrome.tabs.create({ url: LIBRARY_URL });
-});
-
-diagnoseButton.addEventListener("click", async () => {
-  try {
-    const tab = await currentTab();
-    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["extract.js"] });
-    const [result] = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: () => globalThis.VrcLibManExtract.diagnose(document, location.href),
-    });
-    const text = JSON.stringify(result?.result ?? {}, null, 2);
-    diagnosisBox.hidden = false;
-    diagnosisBox.value = text;
-    try {
-      await navigator.clipboard.writeText(text);
-      setStatus("診断情報をコピーしました。商品名やファイル名は含めていません");
-    } catch {
-      setStatus("診断情報を下の欄に出しました。商品名やファイル名は含めていません");
-    }
-  } catch (error) {
-    setStatus(error instanceof Error ? error.message : String(error));
-  }
-});
+  main.replaceChildren(...cards.filter(Boolean));
+}
 
 routeInput.addEventListener("change", async () => {
-  const enabled = routeInput.checked === true;
-  await chrome.storage.local.set({ routeDownloads: enabled });
-  const token = await savedToken();
-  if (!token) return;
-  try {
-    const response = await fetch(`${LOCAL_BASE}/route-downloads`, {
-      method: "POST",
-      credentials: "omit",
-      headers: {
-        Authorization: `Bearer ${token}`, "X-VRCLibMan-Extension-Version": chrome.runtime.getManifest().version,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ enabled }),
-    });
-    if (!response.ok) {
-      const data = await response.json().catch(() => ({}));
-      routeInput.checked = false;
-      await chrome.storage.local.set({ routeDownloads: false });
-      setStatus(data.error || "自動整理の設定をアプリへ保存できませんでした");
-    }
-  } catch {
-    setStatus("アプリに接続できないため、拡張機能側に設定を保存しました");
+  const result = await send({ type: "set-route", enabled: routeInput.checked });
+  if (result?.error) say(result.error, "warn");
+  else if (result?.note) say(result.note);
+  else say(result?.enabled ? "ダウンロードしたファイルを自動整理します" : "自動整理をオフにしました");
+});
+pendingButton.addEventListener("click", openPanel);
+document.querySelector("#open-panel").addEventListener("click", openPanel);
+document.querySelector("#open-settings").addEventListener("click", () => {
+  chrome.runtime.openOptionsPage();
+  window.close();
+});
+
+chrome.storage.onChanged.addListener(async (changes, area) => {
+  if (area === "session" && changes.job) state.job = changes.job.newValue || null;
+  if (area === "local") {
+    for (const [key, change] of Object.entries(changes)) state.stored[key] = change.newValue;
   }
+  render();
 });
 
-refreshLink();
-
-
-async function refreshDeliveries() {
-  const stored = await chrome.storage.local.get({ pendingDeliveries:[], downloadIntents:[], deliveryError:'', pairingToken:'' });
-  document.querySelector('#pending-count').textContent = `(${stored.pendingDeliveries.length})`;
-  const normalize = token => String(token).replace(/[\s-]/g,'').toUpperCase();
-  const previous = stored.pendingDeliveries.filter(row => row.token !== normalize(stored.pairingToken)).length;
-  document.querySelector('#delivery-status').textContent = `${stored.downloadIntents.length}件の取得を追跡中。未送信通知はアプリ起動後に再送します。${previous ? `接続先の異なる${previous}件は保留中です。` : ''}${stored.deliveryError}`;
+async function init() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  state.tab = tab || null;
+  state.kind = shared.pageKind(tab?.url || "");
+  await loadStored();
+  render();
+  await Promise.all([refreshConnection(), readPage()]);
 }
-document.querySelector('#retry-deliveries').addEventListener('click', async () => {
-  const result = await chrome.runtime.sendMessage({type:'retry-deliveries'});
-  if (result?.error) setStatus(result.error);
-  await refreshDeliveries();
-});
-chrome.storage.onChanged.addListener(() => refreshDeliveries());
-async function renderDownloadFiles() {
-  const target = document.querySelector('#download-files');
-  try {
-    const tab = await currentTab();
-    const products = await readTab();
-    let count = 0;
-    for (const product of products) for (const file of product.downloads || []) {
-      if (!globalThis.VrcLibManCompanion.choose(products,file.downloadableId)) continue;
-      if (!/\.(zip|unitypackage|rar|7z|vrm)$/i.test(file.filename)) continue;
-      const button = document.createElement('button');
-      button.type='button';button.className='secondary';
-      button.textContent=`${file.variation || product.title} · ${file.filename} を取得`;
-      button.addEventListener('click', async () => {
-        button.disabled=true;
-        try {
-          const response=await chrome.runtime.sendMessage({type:'start-download',tabId:tab.id,downloadableId:file.downloadableId});
-          if (response?.error || !response?.ok) throw new Error(response?.error || '取得を開始できません');
-          setStatus('ブラウザで取得を開始しました。完了後にアプリへ通知します。');
-        } catch(error) { setStatus(error.message); }
-        finally { button.disabled=false;await refreshDeliveries(); }
-      });
-      target.append(button);count++;
-    }
-    if (!count) target.textContent='このページに取得できる対象ファイルがありません。BOOTHで対象のダウンロード欄を開いてください。';
-  } catch { target.textContent='BOOTHの商品ページかライブラリを開いてください。'; }
-}
-renderDownloadFiles();
-refreshDeliveries();
+
+globalThis.popupUnderTest = { state, render, refreshConnection, startJob, init };
+init();

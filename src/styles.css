@@ -1333,12 +1333,67 @@ a.tab { display: inline-flex; align-items: center; gap: 6px; text-decoration: no
 .unity-open-choice { display: flex; gap: 6px; align-items: center; min-width: 0; }
 .unity-open-choice .download-name { min-width: 0; }
 .unity-open-dialog .row-actions { margin-top: var(--space-3); }
-/* 内蔵ブラウザを使う前の確認（BoothImportSettings.tsx）。項目ごとに短い見出しと箇条書き。 */
-.builtin-browser-confirm h2 { margin: 0 0 var(--space-3); font-size: 18px; }
-.builtin-browser-confirm h3 { margin: var(--space-3) 0 var(--space-1); font-size: 14px; }
-.builtin-browser-confirm ul { margin: 0; padding-left: 1.2em; }
-.builtin-browser-confirm li { margin: 2px 0; line-height: 1.6; }
-.builtin-browser-confirm > .meta { margin: var(--space-3) 0 0; }
+/* 読み込み方を選ぶ画面（ImportMethodWizard.tsx）。1 段目は ✓ / × の比較表、2 段目は切り替えで起きることの箇条書き。
+ * 選ぶのは表の列の見出しで、選んだ列は地を --surface-secondary にする（見出しの枠は「線のアクセント」の集約ブロック）。 */
+.panel.import-wizard {
+  width: min(760px, 100%);
+  max-height: calc(100dvh - 2 * var(--space-4));
+  margin-bottom: 0;
+  padding-bottom: 0;
+  overflow-y: auto;
+  box-shadow: var(--shadow);
+}
+.import-wizard h2 { margin: 0 0 var(--space-2); font-size: 18px; }
+.import-wizard > p { margin: 0 0 var(--space-3); line-height: 1.6; }
+.import-wizard > .import-wizard-step { margin: 0 0 2px; }
+.import-compare-scroll { overflow-x: auto; }
+.import-compare { width: 100%; border-collapse: collapse; font-size: 13px; }
+.import-compare th, .import-compare td { padding: 5px var(--space-2); border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
+.import-compare thead th { padding-bottom: var(--space-2); vertical-align: bottom; }
+.import-compare thead th:first-child { color: var(--text-secondary); font-size: 12px; font-weight: 600; }
+.import-compare thead th:not(:first-child) { width: 128px; }
+.import-compare tbody th[scope="row"] { font-weight: 400; line-height: 1.5; }
+.import-compare td { text-align: center; cursor: pointer; }
+.import-compare-group th { padding-top: var(--space-3); color: var(--text-secondary); font-size: 12px; font-weight: 600; }
+/* 選ぶ前に必ず見てほしい行（ログイン状態の保存）。太字にし、できないことを注意の色で示す。 */
+.import-compare tr.is-emphasis th[scope="row"] { font-size: 14px; font-weight: 650; }
+.import-compare tr.is-emphasis .import-mark.no { color: var(--warn); }
+.import-compare tr.is-emphasis td .meta { color: var(--text-note); }
+.import-compare .is-picked { background: var(--surface-secondary); }
+.import-compare-choice { display: grid; justify-items: center; gap: 2px; padding: var(--space-2) 4px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); text-align: center; cursor: pointer; }
+.import-compare-choice input { margin: 0 0 2px; accent-color: var(--button); }
+.import-compare-choice strong { font-size: 14px; }
+.import-compare-choice .meta { font-size: 11px; font-weight: 400; }
+.import-mark { display: flex; justify-content: center; line-height: 1; }
+.import-mark .glyph { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.import-mark.yes { color: var(--good); }
+.import-mark.no { color: var(--faint); }
+.import-mark.no .glyph { stroke-width: 1.6; }
+.import-compare td .meta { display: block; margin-top: 2px; font-size: 11px; line-height: 1.4; }
+.import-wizard-summary { margin: 0 0 var(--space-2); line-height: 1.6; }
+.import-wizard-notes h3 { margin: var(--space-3) 0 var(--space-1); font-size: 14px; }
+.import-wizard-notes ul { margin: 0; padding-left: 1.2em; }
+.import-wizard-notes li { margin: 2px 0; line-height: 1.6; }
+.import-wizard-notes.is-warn h3 { color: var(--warn); }
+.import-wizard-notes.is-warn li { color: var(--text-note); font-weight: 600; }
+.import-wizard > p.meta { margin: var(--space-3) 0 0; }
+/* 表が長くても、選んだものの説明と進む・戻るを表示域の下端に残す（セットアップのカードと同じ）。 */
+.import-wizard .import-wizard-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin: var(--space-3) 0 0;
+  padding: var(--space-3) 0 var(--space-4);
+  background: var(--surface);
+  box-shadow: 0 -1px 0 var(--line);
+}
+/* 設定とセットアップの「現在の読み込み方」と「変更」。 */
+.import-current { display: flex; align-items: center; gap: var(--space-3); }
+.import-current-copy { display: grid; flex: 1 1 auto; gap: 2px; min-width: 0; }
+.import-current-copy strong { font-size: 16px; }
+.import-current-copy .meta { line-height: 1.6; }
+.import-current > .button { flex: 0 0 auto; }
+.booth-import-settings > .button, .booth-import-settings > .note-strong { margin-top: var(--space-3); }
 
 /* Right panel: one tab strip for preview and later tools, docked as the app grid's last column. */
 .main[hidden] { display: none; }
@@ -1893,6 +1948,18 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .connection-state { display: flex; align-items: baseline; gap: var(--space-2); margin: 0 0 var(--space-3); color: var(--text-note); font-size: 14px; line-height: 1.5; }
 .badge.recommend { color: var(--good); font-weight: 650; }
 .extension-instructions-details { padding: 0 0 var(--space-3); }
+.extension-folder { display: flex; flex-direction: column; gap: var(--space-2); margin: 0 0 var(--space-4); }
+.extension-folder .meta { margin: 0; }
+.extension-path {
+  display: block;
+  padding: 8px 12px;
+  border-radius: var(--radius-control);
+  background: var(--surface-secondary);
+  color: var(--text);
+  font: 13px/1.45 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
 .version-info p { margin: 4px 0; overflow-wrap: anywhere; }
 .sidebar-updater {
   display: flex;
@@ -2351,7 +2418,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   outline: 2px solid var(--line-accent);
   outline-offset: 2px;
 }
-.choice-row:has(input:checked), .scope-choices label:has(input:checked) { border-color: var(--line-selection); }
+.choice-row:has(input:checked), .scope-choices label:has(input:checked), .import-compare-choice:has(input:checked) { border-color: var(--line-selection); }
 /* 検索の結果から移った先を一瞬だけ示す（src/appSearchJump.ts が 2 秒で外す）。親に切られないよう内側に描く。 */
 .search-jump-target { outline: 2px solid var(--line-selection); outline-offset: -2px; }
 

@@ -18,6 +18,7 @@ import type {
   Category,
   FileBrief,
   ExtensionLink,
+  ExtensionPackage,
   ImportReport,
   JobProgress,
   LibraryWalkReport,
@@ -147,6 +148,13 @@ const extensionLink: ExtensionLink = {
   port: 17321,
   listening: false,
   error: "見本では受信しません",
+};
+
+const extensionPackage: ExtensionPackage = {
+  path: "C:\\Users\\example\\AppData\\Local\\app.vrclibman.desktop\\browser-extension",
+  bundledVersion: "0.8.7",
+  installedVersion: null,
+  upToDate: false,
 };
 
 const store: Store = {
@@ -2279,6 +2287,12 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     }
     case "extension_link":
       return { ...extensionLink } as T;
+    case "extension_package_status":
+      return { ...extensionPackage } as T;
+    case "install_extension_package":
+      extensionPackage.installedVersion = extensionPackage.bundledVersion;
+      extensionPackage.upToDate = true;
+      return { ...extensionPackage } as T;
     case "regenerate_extension_token":
       extensionLink.token = extensionLink.token === "K7NP-4Q2M" ? "M8QR-5S3N" : "K7NP-4Q2M";
       return { ...extensionLink } as T;

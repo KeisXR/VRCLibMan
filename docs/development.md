@@ -163,15 +163,15 @@ rm -rf "$native_case"
 
 ### 拡張からの商品情報
 
-拡張は開いた商品ページと購入ライブラリを読み、`vrclibman.booth-export` version 1 の商品 JSON をアプリへ渡します。公開商品ページの説明が短い場合は、Cookie を付けない公開 HTML / JSON で補います。HTML が 401 / 403 の場合は JSON へフォールバックしません。
+拡張は開いた商品ページと購入ライブラリを読み、`vrclibman.booth-export` version 1 の商品 JSON をアプリへ渡します。長い読み込みはサービスワーカーではなく offscreen 文書（`extension/offscreen.js` と `extension/walker.js`）で動きます。拡張はアプリのリソース（`tauri.conf.json` の `../extension/`）として同梱し、`extension_package.rs` がアプリのローカルデータの `browser-extension` へ写します。`tauri dev` でリソースが無いときはソースの `extension/` を使います。`manifest.json` の `key` で拡張の ID を固定しているので、どのフォルダから読み込んでも同じ ID になります。サービスワーカーには DOM が無く、ポップアップは閉じると止まるためです。公開商品ページの説明が短い場合は、Cookie を付けない公開 HTML / JSON で補います。BOOTH のカテゴリとタグは商品ページの HTML では空の欄として返り、ページのスクリプトが埋めるので、カテゴリの無い商品は公開 JSON から読みます。HTML が 401 / 403 の場合は JSON へフォールバックしません。
 
 BOOTH へのアクセス間隔は 1000 / 500 / 250ms から選び、未知の値は 1000ms に戻します。ページも説明の補完も並列にしません。429 / 503 は Retry-After を尊重して最大 1 回再試行し、指定待機が 60 秒を超えるときは停止します。250ms の選択時は確認が必要です。
 
 アプリは `127.0.0.1:17321` だけで待ち受け、LAN やインターネットには公開しません。Chrome 拡張形式の Origin と、8 文字のペアリングコードを Bearer token として持つ要求を受け付けます。最初に成功した拡張の Origin を固定し、コードの再発行で固定を解除します。Web ページの Origin はコードが合っていても拒否し、認証失敗が続くと一時的に受信を制限します。
 
-受信する内容は到達確認、商品 JSON、インポート済み商品 ID と表示中商品の状態の照会、自動整理設定の読み書き、ダウンロード完了通知です。完了通知には保存パス・商品 ID・ファイル情報を含みます。拡張はパスワードや Cookie をアプリへ送りません。
+受信する内容は到達確認、商品 JSON、インポート済み商品 ID と表示中商品の状態の照会、自動整理設定の読み書き、ダウンロード完了通知、購入履歴（`/purchases/state`・`list`・`pending`・`detail`・`finish`）と購入完了（`/purchases/checkout`）です。購入履歴と購入完了は `extension_purchases.rs` が内蔵ブラウザと同じ `purchase_walk::parse_*` で確かめてから保存します。ライブラリ・ギフト・無料ダウンロードを最後まで読めた送信だけが `complete: true` を持ち、ファイル一覧の比較に使われます。完了通知には保存パス・商品 ID・ファイル情報を含みます。拡張はパスワードや Cookie をアプリへ送りません。
 
-拡張v0.1.16のページ表示・明示的な1件取得・通知の再送は [拡張の仕様](browser-extension.md) を参照してください。`POST /product-status` は同じOrigin固定・Bearer認証の下で100件までのIDだけを受けます。DB移行は不要です。BOOTHのファイル取得をブラウザに任せ、Cookieをアプリへ送らない構成です。
+拡張の画面、ページ表示、明示的な1件取得、通知の再送は [拡張の仕様](browser-extension.md) を参照してください。`POST /product-status` は同じOrigin固定・Bearer認証の下で100件までのIDだけを受け、保存記録のあるファイルの BOOTH ファイル ID（`savedFiles`）も返します。DB移行は不要です。BOOTHのファイル取得をブラウザに任せ、Cookieをアプリへ送らない構成です。
 
 ### 内蔵ブラウザとファイル取得
 

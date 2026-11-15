@@ -260,6 +260,14 @@ export interface ExtensionLink {
   error: string | null;
 }
 
+/** アプリが用意した拡張機能のフォルダ。版は拡張の manifest.json のもの。 */
+export interface ExtensionPackage {
+  path: string;
+  bundledVersion: string | null;
+  installedVersion: string | null;
+  upToDate: boolean;
+}
+
 export type BoothImportMode = "extension" | "browser" | "both";
 
 export interface ImportReceipt {

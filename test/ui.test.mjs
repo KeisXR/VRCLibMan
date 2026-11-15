@@ -86,6 +86,15 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       [...scope.querySelectorAll("label")]
         .find((label) => label.textContent.includes(name))
         ?.querySelector('input[type="radio"]');
+    // 読み込み方は「変更」で開く選ぶ画面で、表の列を選び、確かめる画面の最後のボタンで保存する。
+    const chooseImportMethod = async (scope, name, action) => {
+      await click(button("変更", scope) ?? button("読み込み方を選ぶ", scope));
+      await wait(() => document.querySelector(".import-wizard"));
+      await click(radio(name, document.querySelector(".import-wizard")));
+      await click(button("次へ", document.querySelector(".import-wizard")));
+      await click(button(action, document.querySelector(".import-wizard")));
+      await wait(() => !document.querySelector(".import-wizard"));
+    };
     const route = async (hash) =>
       act(async () => {
         location.hash = hash;
@@ -96,49 +105,77 @@ test("setup, import and version flows with synthetic local data", async (t) => {
     await act(async () => root.render(createElement(App)));
     await wait(() => button("はじめる", document.querySelector(".setup-screen")));
     await click(button("はじめる", document.querySelector(".setup-screen")));
-    await wait(() => radio("アプリの内蔵ブラウザ"));
+    await wait(() => button("読み込み方を選ぶ", document.querySelector(".setup-screen")));
 
     await t.test(
       "import choices persist without exposing browser-only pairing",
       async () => {
+        const setup = () => document.querySelector(".setup-screen");
+        const wizard = () => document.querySelector(".import-wizard");
         // 初回セットアップは保存値の既定（拡張）を選んだ状態で見せず、本人が選ぶまで進めない。
-        await wait(() => !document.querySelector(".setup-screen .import-methods").hasAttribute("disabled"));
+        await wait(() => !button("読み込み方を選ぶ", setup()).disabled);
+        assert.match(setup().textContent, /まだ選んでいません/);
+        assert.ok(button("次へ", setup()).disabled, "next waits for a choice");
+        // 選ぶ画面は ✓ / × の表で比べる。どの列も選んでいない状態から始め、選ぶまで次へ進めない。
+        await click(button("読み込み方を選ぶ", setup()));
+        await wait(() => wizard());
         assert.ok(
-          [...document.querySelectorAll('.setup-screen input[type="radio"]')].every((input) => !input.checked),
+          [...wizard().querySelectorAll('input[type="radio"]')].every((input) => !input.checked),
           "no method is preselected",
         );
-        assert.ok(button("次へ", document.querySelector(".setup-screen")).disabled, "next waits for a choice");
-        assert.ok(document.querySelector(".setup-screen .badge.recommend"), "the built-in browser is marked as recommended");
-        // 内蔵ブラウザを有効にする前に、アプリの中の確認を出す。キャンセルは選んだことにしない。
-        const confirmBox = () => document.querySelector(".builtin-browser-confirm");
-        await click(radio("アプリの内蔵ブラウザ"));
-        await wait(() => confirmBox());
-        assert.match(confirmBox().textContent, /保存するもの/);
-        assert.match(confirmBox().textContent, /アカウントが制限・停止されるリスク/);
-        await click(button("キャンセル", confirmBox()));
-        await wait(() => !confirmBox());
+        assert.ok(button("次へ", wizard()).disabled, "the wizard waits for a choice");
+        assert.ok(wizard().querySelector(".badge.recommend"), "the built-in browser is marked as recommended");
+        assert.ok(wizard().querySelector(".import-mark.yes") && wizard().querySelector(".import-mark.no"), "the table shows what each method can and cannot do");
+        assert.equal(wizard().querySelector(".import-mark.no").getAttribute("aria-label"), "できない", "the marks are announced, not only drawn");
+        assert.match(wizard().querySelector("tr.is-emphasis").textContent, /ログイン状態をアプリに保存しない/, "the login row is emphasized");
+        assert.ok(!wizard().textContent.includes("開いた商品ページ"));
+        // 内蔵ブラウザは、確かめる画面に保存するものと注意を出す。キャンセルは選んだことにしない。
+        await click(radio("内蔵ブラウザ", wizard()));
+        await click(button("次へ", wizard()));
+        assert.match(wizard().textContent, /内蔵ブラウザにする前に/);
+        assert.match(wizard().textContent, /保存するもの/);
+        assert.match(wizard().textContent, /アカウントが制限・停止される可能性があります/);
+        assert.match(wizard().querySelector(".import-wizard-notes.is-warn").textContent, /アカウントの安全を保証できません/);
+        await click(button("キャンセル", wizard()));
+        await wait(() => !wizard());
         assert.equal((await api.integrationStatus()).mode, "extension");
-        assert.ok(button("次へ", document.querySelector(".setup-screen")).disabled, "a declined confirmation is not a choice");
-        await click(radio("アプリの内蔵ブラウザ"));
-        await wait(() => confirmBox());
-        await click(button("内蔵ブラウザを使う", confirmBox()));
-        await wait(
-          () =>
-            !document
-              .querySelector(".setup-screen")
-              .textContent.includes("ペアリングコード"),
-        );
+        assert.ok(button("次へ", setup()).disabled, "a cancelled choice is not a choice");
+        // 「戻る」で表に戻っても、選んだ列は残る。保存は最後のボタンだけ。
+        await click(button("読み込み方を選ぶ", setup()));
+        await wait(() => wizard());
+        await click(radio("内蔵ブラウザ", wizard()));
+        await click(button("次へ", wizard()));
+        await click(button("戻る", wizard()));
+        assert.ok(radio("内蔵ブラウザ", wizard()).checked);
+        assert.equal((await api.integrationStatus()).mode, "extension");
+        await click(button("次へ", wizard()));
+        await click(button("内蔵ブラウザにする", wizard()));
+        await wait(() => !wizard());
+        await wait(() => !setup().textContent.includes("ペアリングコード"));
         assert.equal((await api.integrationStatus()).mode, "browser");
         assert.ok((await api.settings()).builtinBrowser);
         assert.ok(document.querySelector('.setup-screen a[href="#/import"]'));
-        await click(radio("両方使う"));
-        await wait(() =>
-          document
-            .querySelector(".setup-screen")
-            .textContent.includes("ペアリングコード"),
-        );
+        assert.equal(setup().querySelector(".import-current strong").textContent, "内蔵ブラウザ");
+        // 今の読み込み方は選び直しても次へ進めない。内蔵ブラウザが有効なら、両方へは確認なしで拡張の手順だけを出す。
+        await click(button("変更", setup()));
+        await wait(() => wizard());
+        assert.ok(radio("内蔵ブラウザ", wizard()).checked);
+        assert.ok(button("次へ", wizard()).disabled, "the current method is not a change");
+        await click(radio("両方", wizard()));
+        await click(button("次へ", wizard()));
+        assert.match(wizard().textContent, /このあとすること/);
+        assert.doesNotMatch(wizard().textContent, /保存するもの/, "the built-in browser is already on");
+        assert.match(wizard().querySelector(".import-wizard-notes.is-warn").textContent, /拡張機能も.*ブラウザの BOOTH のログインを使う/);
+        await click(button("両方使う", wizard()));
+        await wait(() => setup().textContent.includes("ペアリングコード"));
         assert.equal((await api.integrationStatus()).mode, "both");
-        await click(radio("Chrome / Edge の拡張機能"));
+        await click(button("変更", setup()));
+        await wait(() => wizard());
+        await click(radio("拡張機能", wizard()));
+        await click(button("次へ", wizard()));
+        assert.match(wizard().textContent, /内蔵ブラウザを閉じます/);
+        await click(button("拡張機能にする", wizard()));
+        await wait(() => !wizard());
         assert.ok(!(await api.settings()).builtinBrowser);
         await wait(() => document.querySelector(".setup-screen .connection-state"));
         assert.match(document.querySelector(".setup-screen .connection-state .state-chip").textContent, /^(受信済み|受信待ち|受信できません)$/);
@@ -282,10 +319,10 @@ test("setup, import and version flows with synthetic local data", async (t) => {
           `v${packageJson.version}`,
         );
         assert.ok(text().includes(`アプリ v${packageJson.version}`));
-        assert.ok(text().includes(`推奨する拡張 v${manifest.version}`));
-        assert.ok(text().includes("拡張を更新してください"));
+        assert.ok(text().includes(`アプリに入っている拡張 v${manifest.version}`));
+        assert.ok(text().includes("拡張機能を読み込み直してください"));
         assert.match(extensionVersionMessage("0.1.12", "0.1.12"), /一致/);
-        assert.match(extensionVersionMessage("0.1.12", "0.1.11"), /更新/);
+        assert.match(extensionVersionMessage("0.1.12", "0.1.11"), /読み込み直/);
         assert.match(extensionVersionMessage("0.1.12", null), /未確認/);
       },
     );
@@ -382,9 +419,7 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       await wait(() => text().includes("BOOTH の読み込み方"));
       assert.equal(settingRow("強制ダークモード"), undefined);
       assert.equal((await api.settings()).browserForceDark, false);
-      await click(radio("アプリの内蔵ブラウザ"));
-      await wait(() => document.querySelector(".builtin-browser-confirm"));
-      await click(button("内蔵ブラウザを使う", document.querySelector(".builtin-browser-confirm")));
+      await chooseImportMethod(document.querySelector("#settings-booth"), "内蔵ブラウザ", "内蔵ブラウザにする");
       await wait(() => settingRow("強制ダークモード"));
       const row = () => settingRow("強制ダークモード");
       const box = () => row().querySelector('input[type="checkbox"]');
@@ -421,7 +456,7 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       await setChecked(box(), false);
       await wait(async () => (await api.settings()).browserForceDark === false);
       assert.equal(box().checked, false);
-      await click(radio("Chrome / Edge の拡張機能"));
+      await chooseImportMethod(document.querySelector("#settings-booth"), "拡張機能", "拡張機能にする");
       await wait(() => settingRow("強制ダークモード") === undefined);
       assert.equal((await api.settings()).browserForceDark, false);
       assert.equal((await api.settings()).builtinBrowser, false);
@@ -1433,47 +1468,48 @@ test("setup, import and version flows with synthetic local data", async (t) => {
   }
 });
 
-test("extension popup displays manifest version and sends it only on local requests", async () => {
-  const { document } = parseHTML(readFileSync("extension/popup.html", "utf8"));
+test("extension settings show the manifest version, and local requests carry it", async () => {
+  const { window } = parseHTML(readFileSync("extension/options.html", "utf8"));
+  const document = window.document;
   const manifest = JSON.parse(readFileSync("extension/manifest.json", "utf8"));
-  const requests = [];
+  const sent = [];
   const context = vm.createContext({
     document,
+    Node: window.Node,
+    window: { confirm: () => true },
+    navigator: {},
     setTimeout,
     URL,
-    Blob,
+    Date,
     chrome: {
-      runtime: { getManifest: () => manifest },
+      runtime: {
+        getManifest: () => manifest,
+        sendMessage: async (message) => {
+          sent.push(message.type);
+          return { hasToken: true, status: 200, routeDownloads: false };
+        },
+      },
       storage: {
         onChanged: { addListener() {} },
         local: {
-          get: async () => ({
-            pairingToken: "DUMMY-CODE",
-            routeDownloads: false,
-            pendingDeliveries: [], downloadIntents: [], deliveryError: "",
-          }),
+          get: async (defaults) => ({ ...defaults, pairingToken: "abcd2345", lastConnection: { at: new Date().toISOString(), status: 200 } }),
           set: async () => {},
         },
       },
     },
-    fetch: async (url, options) => {
-      requests.push({ url, options });
-      return { ok: true, status: 200, json: async () => ({ enabled: false }) };
-    },
   });
-  vm.runInContext(readFileSync("extension/request-policy.js", "utf8"), context);
-  vm.runInContext(readFileSync("extension/popup.js", "utf8"), context);
-  for (let i = 0; i < 20 && requests.length < 2; i++) await delay();
-  assert.equal(
-    document.querySelector("#extension-version").textContent,
-    `拡張機能 v${manifest.version}`,
-  );
-  assert.equal(requests.length, 2);
-  for (const request of requests) {
-    assert.ok(request.url.startsWith("http://127.0.0.1:17321/"));
-    assert.equal(
-      request.options.headers["X-VRCLibMan-Extension-Version"],
-      manifest.version,
-    );
+  for (const file of ["shared.js", "request-policy.js", "ui.js", "options.js"]) {
+    vm.runInContext(readFileSync(`extension/${file}`, "utf8"), context);
   }
+  for (let i = 0; i < 20 && !sent.includes("connection"); i++) await delay();
+  await delay();
+  assert.equal(document.querySelector("#version").textContent, `バージョン ${manifest.version}`);
+  assert.equal(document.querySelector("#token").value, "ABCD-2345");
+  assert.equal(document.querySelector("#link-chip").textContent, "接続中");
+  assert.match(document.querySelector("#link-note").textContent, /最後の通信：今日/);
+  const shared = vm.runInContext("VrcLibManShared", context);
+  const headers = shared.localHeaders("DUMMY-CODE", manifest.version, true);
+  assert.equal(headers["X-VRCLibMan-Extension-Version"], manifest.version);
+  assert.equal(headers.Authorization, "Bearer DUMMY-CODE");
+  assert.ok(shared.LOCAL_BASE.startsWith("http://127.0.0.1:17321"));
 });

@@ -1,106 +1,108 @@
-import { useEffect, useId, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { api, openExternal } from "../api";
-import { useModalFocus } from "../keyboard";
+import { useEffect, useState } from "react";
+import { api, openExternal, revealInFolder } from "../api";
+import { importMethod } from "../importMethods";
 import type {
   BoothImportMode,
   ExtensionLink,
+  ExtensionPackage,
   IntegrationStatus,
 } from "../types";
 import { errorText } from "../ui";
+import { ImportMethodWizard } from "./ImportMethodWizard";
 
 export const EXTENSION_RELEASES_URL =
   "https://github.com/KeisXR/VRCLibMan/releases";
 export const LIBRARY_URL = "https://accounts.booth.pm/library";
-/**
- * 内蔵ブラウザを有効にする前の確認。1 段落の OS のダイアログでは読まれないので、項目ごとに分けて出す。
- * 「おすすめ」と注意が同時に出て矛盾して見えないよう、何を保存し、いつ使い、何をしないかを並べる。
- */
-export const BUILTIN_BROWSER_CONFIRM: ReadonlyArray<{ title: string; items: readonly string[] }> = [
-  {
-    title: "保存するもの",
-    items: ["内蔵ブラウザで BOOTH / pixiv にログインした状態を、この PC のアプリ専用の場所に保存します。パスワードはアプリでは扱いません。"],
-  },
-  {
-    title: "使う場面",
-    items: [
-      "「ライブラリ全取得」を押したときだけ、ライブラリのページを 1 ページずつ読みます。",
-      "ファイルの「ダウンロード」を押したときだけ、その 1 件の BOOTH への要求にログイン状態（Cookie）を使います。開発者のサーバーや別のサイトには送りません。",
-    ],
-  },
-  {
-    title: "しないこと",
-    items: ["購入、一括のダウンロード、年齢確認の自動通過はしません。"],
-  },
-  {
-    title: "注意",
-    items: ["BOOTH の非公式アプリです。ログインした状態で読み込むので、拡張機能より、アカウントが制限・停止されるリスクが高くなることがあります。"],
-  },
-];
 
-/** 内蔵ブラウザを有効にする前の確認。アプリの中のダイアログで、項目を分けて出す。 */
-function BuiltinBrowserConfirm({ onAnswer }: { onAnswer: (ok: boolean) => void }) {
-  const box = useRef<HTMLElement>(null);
-  useModalFocus(box);
-  useEffect(() => {
-    box.current?.querySelector<HTMLButtonElement>(".button.primary")?.focus();
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onAnswer(false);
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onAnswer]);
-  return createPortal(
-    <div className="preview-overlay unity-open-overlay">
-      <section ref={box} className="panel unity-open-dialog builtin-browser-confirm" role="dialog" aria-modal="true" aria-labelledby="builtin-browser-confirm-title" tabIndex={-1}>
-        <h2 id="builtin-browser-confirm-title">内蔵ブラウザを使う前に</h2>
-        {BUILTIN_BROWSER_CONFIRM.map((group) => (
-          <div key={group.title}>
-            <h3>{group.title}</h3>
-            <ul>{group.items.map((item) => <li key={item}>{item}</li>)}</ul>
-          </div>
-        ))}
-        <p className="meta">あとから「設定 → BOOTH の読み込み方」で変えられます。ログイン状態は「内蔵ブラウザの閲覧データを削除」で消せます。</p>
-        <div className="row-actions">
-          <button className="button primary" type="button" onClick={() => onAnswer(true)}>内蔵ブラウザを使う</button>
-          <button className="button" type="button" onClick={() => onAnswer(false)}>キャンセル</button>
-        </div>
-      </section>
-    </div>,
-    document.body,
-  );
+/** 拡張機能を読み込ませるフォルダの状態と、ブラウザへの読み込み方。 */
+export function extensionFolderText(pkg: ExtensionPackage | null): string {
+  if (!pkg) return "確認しています";
+  if (!pkg.bundledVersion) return "このアプリには拡張機能が入っていません。Releases の zip を使ってください。";
+  if (!pkg.installedVersion) return "まだ用意していません。「拡張機能を用意する」を押すと、このフォルダに作ります。";
+  if (pkg.upToDate) return `v${pkg.installedVersion} を用意しています。アプリを更新すると、このフォルダも同じ版に置き換わります。`;
+  return `今は v${pkg.installedVersion} です。アプリには v${pkg.bundledVersion} があります。「用意し直す」で置き換えます。`;
 }
 
 export function ExtensionInstructions({ collapsible = false }: { collapsible?: boolean }) {
+  const [pkg, setPkg] = useState<ExtensionPackage | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void api.extensionPackage().then(
+      (value) => { if (alive) setPkg(value); },
+      (err: unknown) => { if (alive) setError(errorText(err)); },
+    );
+    return () => {
+      alive = false;
+    };
+  }, []);
+  async function prepare() {
+    setBusy(true);
+    try {
+      setPkg(await api.installExtensionPackage());
+      setError("");
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+  const installed = Boolean(pkg?.installedVersion);
   const steps = (
     <div className="extension-instructions">
+      <div className="extension-folder">
+        <span className="meta">拡張機能のフォルダ</span>
+        <code className="extension-path">{pkg?.path ?? "確認しています"}</code>
+        <p className="meta" role="status">{extensionFolderText(pkg)}</p>
+        <div className="row-actions">
+          {installed && pkg && (
+            <>
+              <button
+                className="button secondary"
+                type="button"
+                onClick={() =>
+                  void navigator.clipboard.writeText(pkg.path).then(
+                    () => setCopied(true),
+                    (err: unknown) => setError(errorText(err)),
+                  )
+                }
+              >
+                {copied ? "コピーしました" : "パスをコピー"}
+              </button>
+              <button className="button" type="button" onClick={() => void revealInFolder(pkg.path).catch((err: unknown) => setError(errorText(err)))}>
+                フォルダを開く
+              </button>
+            </>
+          )}
+          {pkg?.bundledVersion && (
+            <button className={installed ? "button" : "button secondary"} type="button" disabled={busy} onClick={() => void prepare()}>
+              {installed ? "用意し直す" : "拡張機能を用意する"}
+            </button>
+          )}
+        </div>
+        {error && <p className="note-strong" role="alert">{error}</p>}
+      </div>
       <ol className="setup-steps">
         <li>
-          GitHub Releases で拡張機能用の zip
-          をダウンロードし、残しておける場所に展開します。インストーラだけでは拡張機能は入りません。
+          Chrome は chrome://extensions、Edge は edge://extensions を開き、デベロッパーモードをオンにします。
         </li>
+        <li>以前に zip から読み込んだ VRCLibMan の拡張機能があれば「削除」します。</li>
         <li>
-          Chrome の chrome://extensions または Edge の edge://extensions
-          を開き、デベロッパーモードをオンにします。「パッケージ化されていない拡張機能を読み込む」で、展開した
-          manifest.json のあるフォルダを選びます。
+          「パッケージ化されていない拡張機能を読み込む」を押し、上のフォルダを選びます。フォルダを選ぶ画面のアドレス欄に、コピーしたパスを貼り付けると早く選べます。
         </li>
-        <li>
-          アプリのペアリングコードを拡張のポップアップに貼り、保存します。
-        </li>
-        <li>
-          「ライブラリを開く」で普段のブラウザの BOOTH
-          にログインし、拡張の「ライブラリをすべて送る」か「新しい購入だけ送る」を押します。
-        </li>
+        <li>拡張機能のアイコンを押し、ペアリングコードを貼って「接続する」を押します。</li>
       </ol>
+      <p className="meta">
+        以後はアプリを更新すると、このフォルダの拡張機能も同じ版に置き換わり、拡張機能が自分で読み込み直します。フォルダを移動・削除しないでください。
+      </p>
       <button
         className="button"
         type="button"
         onClick={() => void openExternal(EXTENSION_RELEASES_URL)}
       >
-        拡張機能の入手先
+        zip で入れる（自動では更新されません）
       </button>
     </div>
   );
@@ -134,8 +136,9 @@ export function extensionReceiveText(link: ExtensionLink, state: IntegrationStat
 }
 
 /**
- * `requireChoice` は初回セットアップ用。保存値の既定（拡張機能）を選んだ状態で見せず、本人が選ぶまで
- * どれも選ばれていない形にする。拡張以外が保存されていれば、それは本人が選んだ値なので選択済みで見せる。
+ * 今の読み込み方と「変更」。選ぶのは「変更」で開く ImportMethodWizard で、そこで確定したときだけ保存する。
+ * `requireChoice` は初回セットアップ用。保存値の既定（拡張機能）を選んだものとして見せず、本人が選ぶまで
+ * 「まだ選んでいません」とする。拡張以外が保存されていれば、それは本人が選んだ値なので選択済みで見せる。
  */
 export function BoothImportSettings({
   onChange,
@@ -154,23 +157,11 @@ export function BoothImportSettings({
   /** 「拡張機能をつなぐ」の枠の id。設定画面だけが渡す（検索の移動先。セットアップと重ならないように）。 */
   pairingId?: string;
 }) {
-  const id = useId();
   const [state, setState] = useState<IntegrationStatus | null>(null);
   const [link, setLink] = useState<ExtensionLink | null>(null);
-  const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [chosen, setChosen] = useState(!requireChoice);
-  // 内蔵ブラウザを有効にする前の確認の答えを待つ。
-  const [confirming, setConfirming] = useState<{ resolve: (ok: boolean) => void } | null>(null);
-  const asking = useRef(false);
-  const askBuiltinBrowser = async () => {
-    asking.current = true;
-    try {
-      return await new Promise<boolean>((resolve) => setConfirming({ resolve }));
-    } finally {
-      asking.current = false;
-    }
-  };
+  const [choosing, setChoosing] = useState(false);
 
   async function load() {
     const next = await api.integrationStatus();
@@ -220,35 +211,28 @@ export function BoothImportSettings({
     };
   }, [waitingForExtension]);
 
-  async function choose(mode: BoothImportMode) {
-    if (!state || busy || asking.current) return;
-    if (mode === state.mode) {
-      // 保存値と同じでも、初回セットアップでは本人が選んだことを記録して進めるようにする。
-      if (!chosen) {
-        setChosen(true);
-        onChange?.(mode);
-        onReady?.(true);
-      }
-      return;
-    }
-    if (state.mode === "extension" && mode !== "extension" && !(await askBuiltinBrowser())) return;
-    setBusy(true);
+  /** 選ぶ画面で確定したとき。保存に失敗したら投げて、選ぶ画面に理由を出す。 */
+  async function apply(mode: BoothImportMode) {
+    if (!state) return;
     onReady?.(false);
-    let saved = false;
     try {
-      await api.setBoothImportMode(mode);
-      saved = true;
-      setState({ ...state, mode });
-      setChosen(true);
-      setCopied(false);
-      onChange?.(mode);
+      // 初回セットアップで保存値と同じものを選んだときは、保存せず、選んだことだけを記録する。
+      if (mode !== state.mode) await api.setBoothImportMode(mode);
+    } catch (err) {
+      onReady?.(chosen);
+      throw err;
+    }
+    setState({ ...state, mode });
+    setChosen(true);
+    setCopied(false);
+    setChoosing(false);
+    onChange?.(mode);
+    onReady?.(true);
+    try {
       if (mode === "extension") await api.closeBoothBrowser();
       if (mode !== "browser") setLink(await api.extensionLink());
     } catch (err) {
       onFail(errorText(err));
-    } finally {
-      setBusy(false);
-      onReady?.(chosen || saved);
     }
   }
 
@@ -268,16 +252,33 @@ export function BoothImportSettings({
     }
   }
 
+  const method = state && chosen ? importMethod(state.mode) : null;
   return (
     <div className="booth-import-settings">
-      {confirming && (
-        <BuiltinBrowserConfirm
-          onAnswer={(ok) => {
-            confirming.resolve(ok);
-            setConfirming(null);
-          }}
+      {choosing && state && (
+        <ImportMethodWizard
+          current={chosen ? state.mode : null}
+          onCancel={() => setChoosing(false)}
+          onConfirm={apply}
         />
       )}
+      <div className="import-current">
+        <div className="import-current-copy">
+          <span className="meta">現在の読み込み方</span>
+          <strong>{!state ? "確認しています" : method ? method.name : "まだ選んでいません"}</strong>
+          <span className="meta">
+            {method ? method.summary : "内蔵ブラウザと拡張機能のできることを比べて選びます。"}
+          </span>
+        </div>
+        <button
+          className={method ? "button secondary" : "button primary"}
+          type="button"
+          disabled={!state}
+          onClick={() => setChoosing(true)}
+        >
+          {method ? "変更" : "読み込み方を選ぶ"}
+        </button>
+      </div>
       {!state && (
         <button
           className="button"
@@ -289,51 +290,9 @@ export function BoothImportSettings({
           読み込み方を確認
         </button>
       )}
-      <fieldset className="import-methods" aria-label="BOOTH の購入情報の読み込み方" disabled={!state || busy}>
-        {(
-          [
-            [
-              "browser",
-              "アプリの内蔵ブラウザ",
-              "アプリの右パネルで BOOTH にログインします。拡張は不要で、ライブラリの全取得、購入履歴、ファイルのダウンロードもアプリの中でできます。ログイン状態はこの PC のアプリ専用の場所に保存します。",
-            ],
-            [
-              "extension",
-              "Chrome / Edge の拡張機能",
-              "普段のブラウザで BOOTH を開き、拡張のボタンでアプリへ送ります。アプリにログイン状態を置かず、クッキーもアプリへ送りません。拡張の導入とペアリングが必要です。",
-            ],
-            [
-              "both",
-              "両方使う",
-              "普段のブラウザの拡張と、アプリの内蔵ブラウザを使い分けます。それぞれのログイン状態は別に管理されます。",
-            ],
-          ] as const
-        ).map(([mode, title, help]) => (
-          <label key={mode} className="choice-row">
-            <input
-              type="radio"
-              name={id}
-              value={mode}
-              checked={chosen && state?.mode === mode}
-              onChange={() => void choose(mode)}
-            />
-            <span>
-              <strong>
-                {title}
-                {mode === "browser" && <span className="badge recommend">おすすめ</span>}
-              </strong>
-              <span className="meta">{help}</span>
-            </span>
-          </label>
-        ))}
-      </fieldset>
-      {requireChoice && !chosen ? (
+      {requireChoice && state && !chosen && (
         <p className="note-strong" role="status">
-          どれかを選ぶと次へ進めます。おすすめは内蔵ブラウザです。ログイン状態をアプリに保存するため、選ぶと確認が出ます。拡張機能はアプリにログイン情報を置かず、普段のブラウザのまま使えます。
-        </p>
-      ) : (
-        <p className="meta">
-          選択は自動保存されます。あとから変更できます。
+          「読み込み方を選ぶ」で比べて選ぶと、次へ進めます。おすすめは内蔵ブラウザです。
         </p>
       )}
       {state && chosen && state.mode !== "browser" && (
@@ -361,7 +320,6 @@ export function BoothImportSettings({
                 <button
                   className="button secondary"
                   type="button"
-                  disabled={busy}
                   onClick={() =>
                     void navigator.clipboard.writeText(link.token).then(
                       () => setCopied(true),
@@ -374,7 +332,6 @@ export function BoothImportSettings({
                 <button
                   className="button"
                   type="button"
-                  disabled={busy}
                   onClick={() => void regenerate()}
                 >
                   コードを作り直す

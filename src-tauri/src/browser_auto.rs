@@ -10,7 +10,7 @@ use std::{
 use tauri::{AppHandle, Emitter, Manager, Webview, webview::DownloadEvent};
 use url::Url;
 
-const SCRIPT: &str = include_str!("browser_auto.cjs");
+const SCRIPT: &str = include_str!("../../extension/auto-register.js");
 const EXTRACT: &str = include_str!("../../extension/extract.js");
 
 pub(crate) fn initialization_script() -> String {

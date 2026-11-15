@@ -34,7 +34,7 @@ const SESSION_DIR_NAME: &str = "booth-browser";
 pub const BOOTH_DATA_STORE_ID: [u8; 16] = *b"vrclibman-booth!";
 
 const EXTRACT_JS: &str = include_str!("../../extension/extract.js");
-const PURCHASE_JS: &str = include_str!("purchase_extract.cjs");
+const PURCHASE_JS: &str = include_str!("../../extension/purchase-extract.js");
 /// 購入完了のあと、その注文の詳細だけを読む隠した WebView。タブ一覧には入れない。
 const ORDER_READER_LABEL: &str = "booth-order-reader";
 
