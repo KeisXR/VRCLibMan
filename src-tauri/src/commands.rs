@@ -1074,6 +1074,35 @@ pub async fn download_booth_file(
     crate::browser::download_one_file(app, booth_id, variation, filename).await
 }
 
+/// 「このアセットを更新しますか？」で更新するとき、ライブラリを読み直したあとに受け取るファイル。
+/// 読むだけで、ダウンロードは画面が 1 件ずつ `download_booth_file` を呼ぶ。
+#[tauri::command(async)]
+pub fn asset_update_downloads(
+    state: State<'_, AppState>,
+    requests: Vec<view::UpdateRequest>,
+) -> Result<Vec<view::UpdateTarget>, String> {
+    if requests.len() > 500 {
+        return Err("更新するアセットが多すぎます".into());
+    }
+    let requests: Vec<view::UpdateRequest> = requests
+        .into_iter()
+        .filter(|request| crate::library_files::valid_booth_id(request.booth_id.trim()))
+        .map(|request| view::UpdateRequest { booth_id: request.booth_id.trim().to_string(), ..request })
+        .collect();
+    let (mut snapshot, remote) = {
+        let mut connection = db(&state)?;
+        let snapshot = db::load_snapshot(&mut connection)?;
+        let remote = db::settings(&mut connection)?.remote_library_folder;
+        (snapshot, remote)
+    };
+    // リモートにあるファイルは受け取り直さない。確かめるのは頼まれた商品だけ。
+    let mut ids: Vec<String> = requests.iter().map(|request| request.booth_id.clone()).collect();
+    ids.sort();
+    ids.dedup();
+    crate::library_files::probe_remote_for_products(&mut snapshot, &remote, &ids);
+    Ok(view::update_download_targets(&snapshot, &requests))
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FreeFilesReport {
@@ -2140,7 +2169,7 @@ mod settings_thread_tests {
             "classification_feedback", "sync_export_json", "catalog_info", "setup_status",
             "product_avatar_suggestions", "product_genre_suggestion", "browser_auto_pending",
             "purchase_history", "purchase_status", "purchase_summary", "asset_update_status",
-            "asset_update_history",
+            "asset_update_history", "asset_update_downloads",
         ] {
             assert!(attributes(&source, name).contains(&"#[tauri::command(async)]"), "{name} runs off the UI thread");
         }

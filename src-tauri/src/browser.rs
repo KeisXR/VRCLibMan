@@ -1100,9 +1100,14 @@ fn login_message(err: crate::quiet::QuietError) -> String {
     match err {
         crate::quiet::QuietError::Login => db::BROWSER_LOGIN_MESSAGE.to_string(),
         crate::quiet::QuietError::AgeGate => db::BROWSER_AGE_MESSAGE.to_string(),
+        crate::quiet::QuietError::Gone => FILE_GONE_MESSAGE.to_string(),
         crate::quiet::QuietError::Failed => db::BROWSER_DOWNLOAD_FAILED.to_string(),
     }
 }
+
+/// 画面はこの文言で見分けて「このアセットを更新しますか？」を出す（`src/downloads.ts` の `FILE_GONE_MESSAGE`）。
+pub(crate) const FILE_GONE_MESSAGE: &str =
+    "BOOTH にこのファイルがありません。商品が更新されて、ファイルが差し替えられた可能性があります";
 
 /// 受け取りでは、見えている窓を開いたり前面に出したりしない。
 /// WebView2 は同じ data_directory の環境を二つ作るとロックするので、
@@ -1184,6 +1189,8 @@ pub async fn download_one_file(
                     browser_log(&app, "ログインが必要です");
                 } else if err == crate::quiet::QuietError::AgeGate {
                     browser_log(&app, "年齢確認は自動では通過しません");
+                } else if err == crate::quiet::QuietError::Gone {
+                    browser_log(&app, "BOOTH にファイルがありません");
                 } else {
                     browser_log(&app, "ダウンロードに失敗しました");
                 }

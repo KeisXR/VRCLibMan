@@ -331,6 +331,7 @@ pub fn run() {
             commands::close_booth_browser,
             commands::booth_browser_log,
             commands::download_booth_file,
+            commands::asset_update_downloads,
             commands::fetch_free_files,
             commands::asset_update_status,
             commands::asset_update_history,

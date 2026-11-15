@@ -912,3 +912,11 @@ export interface AssetUpdateConfigure {
   enabled?: boolean;
   acknowledge?: boolean;
 }
+
+/** Rust の `view::UpdateTarget`。消えていたファイルの代わりに受け取るファイル。 */
+export interface AssetUpdateTarget {
+  boothId: string;
+  variation: string;
+  filename: string;
+  title: string;
+}

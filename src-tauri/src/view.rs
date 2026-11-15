@@ -2,7 +2,7 @@ use crate::model::{
     Avatar, BaseBody, Category, DownloadFact, FilePlace, LibraryStats, Link, LocalFile,
     PlacedDownload, Product, ProductFlag, VariationFact,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone)]
@@ -425,6 +425,59 @@ pub fn avatar_detail(snapshot: &Snapshot, id: &str) -> Option<AvatarDetail> {
 
 pub fn products_by_ids(snapshot: &Snapshot, ids: &[String]) -> Vec<ItemView> {
     items_by_ids(snapshot, &Lookup::new(snapshot), ids)
+}
+
+/// BOOTH に無かったファイル（本人が押して 404 / 410 になったもの）。
+/// 代わりのファイルは商品とバリエーションで探すので、ファイル名は受け取っても使わない。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateRequest {
+    pub booth_id: String,
+    pub variation: String,
+}
+
+/// 読み直したライブラリで見つかった、受け取り直すファイル。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateTarget {
+    pub booth_id: String,
+    pub variation: String,
+    pub filename: String,
+    pub title: String,
+}
+
+/// 消えていたファイルの代わりに受け取るファイル。頼まれた商品だけを見て、
+/// 新しく見つかった（`is_new`）まだ手元にもリモートにも無いファイルを返す。以前のファイルは返さない。
+/// 同じバリエーションに新しいファイルがあればそれだけにし、無ければ（バリエーション名が変わったとき）
+/// その商品の新しいファイルをすべて返す。ほかの商品の新しいファイルは足さない。
+pub fn update_download_targets(snapshot: &Snapshot, requests: &[UpdateRequest]) -> Vec<UpdateTarget> {
+    let lookup = Lookup::new(snapshot);
+    let mut targets: Vec<UpdateTarget> = Vec::new();
+    for request in requests {
+        let Some(product) = lookup.products.get(request.booth_id.as_str()) else {
+            continue;
+        };
+        let fresh: Vec<DownloadView> = download_views(snapshot, &lookup, &request.booth_id)
+            .into_iter()
+            .filter(|row| row.is_new && row.state == FilePlace::Missing && !row.superseded)
+            .collect();
+        let same_variation = fresh.iter().any(|row| row.variation == request.variation);
+        for row in fresh {
+            if same_variation && row.variation != request.variation {
+                continue;
+            }
+            let target = UpdateTarget {
+                booth_id: request.booth_id.clone(),
+                variation: row.variation,
+                filename: row.filename,
+                title: product.title.clone(),
+            };
+            if !targets.contains(&target) {
+                targets.push(target);
+            }
+        }
+    }
+    targets
 }
 
 fn items_by_ids(snapshot: &Snapshot, lookup: &Lookup<'_>, ids: &[String]) -> Vec<ItemView> {
@@ -1663,5 +1716,54 @@ mod tests {
         assert!(!rows[1].is_new);
         assert!(!rows[1].superseded);
         assert!(rows[2].superseded);
+    }
+
+    #[test]
+    fn a_vanished_file_is_replaced_by_the_new_files_of_its_product_and_variation() {
+        let fact = |variation: &str, filename: &str, id: &str| DownloadFact {
+            booth_id: "1".into(),
+            variation: variation.into(),
+            filename: filename.into(),
+            size_bytes: Some(10),
+            downloaded: false,
+            local_path: None,
+            downloadable_id: Some(id.into()),
+        };
+        let mut snapshot = sample();
+        snapshot.download_rows = vec![
+            fact("A", "Outfit_A_v1.zip", "100001"),
+            fact("A", "Outfit_A_v2.zip", "100011"),
+            fact("B", "Outfit_B_v2.zip", "100012"),
+        ];
+        snapshot.file_watches.insert(
+            "1".into(),
+            crate::asset_updates::ProductFileWatch {
+                new_files: HashSet::from(["100011".into(), "100012".into()]),
+                current_files: Some(HashSet::from(["100011".into(), "100012".into()])),
+            },
+        );
+        let request = |variation: &str, _filename: &str| UpdateRequest {
+            booth_id: "1".into(),
+            variation: variation.into(),
+        };
+        let names = |targets: Vec<UpdateTarget>| targets.into_iter().map(|t| t.filename).collect::<Vec<_>>();
+
+        assert_eq!(
+            names(update_download_targets(&snapshot, &[request("A", "Outfit_A_v1.zip")])),
+            vec!["Outfit_A_v2.zip"]
+        );
+        // The variation was renamed: every new file of the product.
+        let mut renamed = names(update_download_targets(&snapshot, &[request("旧", "Outfit_v1.zip")]));
+        renamed.sort();
+        assert_eq!(renamed, vec!["Outfit_A_v2.zip", "Outfit_B_v2.zip"]);
+        // Two requests for the same file give it once; unknown products give nothing.
+        let twice = [request("A", "Outfit_A_v1.zip"), request("A", "Outfit_A_v1.zip")];
+        assert_eq!(update_download_targets(&snapshot, &twice).len(), 1);
+        let other = UpdateRequest { booth_id: "999999".into(), variation: String::new() };
+        assert!(update_download_targets(&snapshot, &[other]).is_empty());
+
+        // Nothing new was found: nothing to receive again.
+        snapshot.file_watches.clear();
+        assert!(update_download_targets(&snapshot, &[request("A", "Outfit_A_v1.zip")]).is_empty());
     }
 }

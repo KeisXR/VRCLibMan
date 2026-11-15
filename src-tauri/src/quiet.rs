@@ -22,6 +22,8 @@ pub struct BoothAccount {
 pub enum QuietError {
     Login,
     AgeGate,
+    /// BOOTH が 404 / 410 を返した。作者がファイルを差し替えて、古いダウンロード番号が無くなったとき。
+    Gone,
     Failed,
 }
 
@@ -557,7 +559,7 @@ pub async fn fetch_staged_file<F: FnMut(u64, Option<u64>)>(
         Hop::Reject => return Err(QuietError::Failed),
     }
     if !response.status().is_success() {
-        return Err(QuietError::Failed);
+        return Err(status_error(response.status()));
     }
     let host = final_url.host_str().unwrap_or("").to_string();
     let disposition = response
@@ -634,6 +636,14 @@ fn map_request_error(err: &reqwest::Error) -> QuietError {
 
 fn is_redirect(status: reqwest::StatusCode) -> bool {
     matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308)
+}
+
+/// 成功でない応答の扱い。ファイルが無いと BOOTH が答えたときだけ、ほかの失敗と分ける。
+fn status_error(status: reqwest::StatusCode) -> QuietError {
+    match status.as_u16() {
+        404 | 410 => QuietError::Gone,
+        _ => QuietError::Failed,
+    }
 }
 
 fn download_user_agent() -> &'static str {
@@ -1028,5 +1038,13 @@ mod tests {
             .or_else(|| tail.find("\n#[cfg"))
             .unwrap_or(tail.len());
         &rest[..after + end]
+    }
+
+    #[test]
+    fn a_missing_file_is_told_apart_from_other_failures() {
+        assert_eq!(status_error(reqwest::StatusCode::NOT_FOUND), QuietError::Gone);
+        assert_eq!(status_error(reqwest::StatusCode::GONE), QuietError::Gone);
+        assert_eq!(status_error(reqwest::StatusCode::FORBIDDEN), QuietError::Failed);
+        assert_eq!(status_error(reqwest::StatusCode::INTERNAL_SERVER_ERROR), QuietError::Failed);
     }
 }
