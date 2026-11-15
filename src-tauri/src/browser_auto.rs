@@ -75,7 +75,7 @@ fn changed(app: &AppHandle, prompt: bool) {
     let _ = app.emit("library-changed", ());
     let _ = app.emit_to("main", "browser-auto-pending", ());
     if prompt {
-        crate::presence::show_main_later(app);
+        crate::arrival_notice::ask_to_classify(app);
     }
 }
 

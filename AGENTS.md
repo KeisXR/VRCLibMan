@@ -108,6 +108,7 @@ PC 間の移行は [データ移行](docs/remote-sync.md) に従う。現在は�
 - `tauri-plugin-single-instance`（`deep-link` feature）を最初のプラグインにし、既に起動しているアプリへ URL を渡す。深いリンクは既存のウィンドウを前面にするだけで、二つ目のウィンドウは作らない。
 - NSIS の `currentUser` は `vrclibman` スキームを `HKCU\Software\Classes\vrclibman` に書き、アンインストール時に、そのコマンドがこのインストールを指していれば消す。`windows/hooks.nsh` はインストール先の `HKCU\Software\VRCLibMan` だけを消し、スキームもアプリデータも消さない。
 - `npm run tauri dev` は Windows のデバッグビルドで `register_all` を呼び、スキームを開発用の実行ファイルへ付け替える。配布版を試すときはインストールし直す。
+- ブラウザから届いたファイル・商品・分類待ちは、アプリのどのウィンドウも前面にないときだけ `arrival_notice.rs` が OS の通知にまとめ、分類待ちでもウィンドウを前に出さない。Windows が前面化を拒んで気づけなかったため。Windows の通知はクリックで `vrclibman://open` を開く形にし、プラグインのクリック通知には戻さない（トーストが画面から消えると届かず、アクションセンターから開けないため）。通知に年齢制限の商品名・パス・説明を載せない（[拡張の仕様](docs/browser-extension.md#アプリが前面にないときの通知)）。
 
 ### 読み込み方と接続情報
 
