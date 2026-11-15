@@ -62,9 +62,12 @@ test("the built-in browser comes first and is confirmed in the app, not with an 
     const titles = (from, to) => switchNotes(from, to).map((group) => group.title);
     // 内蔵ブラウザを使い始めるときだけ確認を出す。初回セットアップ（null）も、保存値の拡張機能からと同じ。
     assert.deepEqual(titles(null, "browser"), ["保存するもの", "使う場面", "しないこと", "注意"]);
-    assert.deepEqual(titles(null, "extension"), ["このあとすること"]);
+    // 拡張機能を使い始めるときも注意を出す。内蔵ブラウザの注意と一緒になるときは 1 つだけ。
+    assert.deepEqual(titles(null, "extension"), ["このあとすること", "注意"]);
+    assert.deepEqual(titles(null, "both").filter((title) => title === "注意").length, 1);
+    assert.deepEqual(titles("browser", "extension"), ["このあとすること", "内蔵ブラウザについて", "注意"]);
     assert.deepEqual(titles("extension", "both"), ["保存するもの", "使う場面", "しないこと", "注意"]);
-    assert.deepEqual(titles("browser", "both"), ["このあとすること"]);
+    assert.deepEqual(titles("browser", "both"), ["このあとすること", "注意"]);
     assert.deepEqual(titles("both", "extension"), ["内蔵ブラウザについて"]);
     assert.deepEqual(titles("both", "browser"), ["拡張機能について"]);
   });

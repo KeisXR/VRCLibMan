@@ -121,6 +121,16 @@ export const BUILTIN_BROWSER_CONFIRM: readonly NoteGroup[] = [
 ];
 
 /**
+ * 拡張機能を使い始めるときの注意。拡張機能もライブラリと購入履歴はブラウザのログインで読むので、内蔵ブラウザと
+ * 同じく、アカウントの安全を保証できないことを伝える（内蔵ブラウザの注意と一緒に出るときは重ねない）。
+ */
+export const EXTENSION_CAUTION: NoteGroup = {
+  title: "注意",
+  tone: "warn",
+  items: ["VRCLibMan は BOOTH の非公式アプリです。拡張機能も、ライブラリや購入履歴を読むときはブラウザの BOOTH のログインを使うため、アカウントが制限・停止される可能性があります。アプリは、あなたのアカウントの安全を保証できません。"],
+};
+
+/**
  * 切り替えたときに起きることを、確かめる画面に出す順で返す。`from` が null なら、まだ何も選んでいない
  * （初回セットアップ。保存値は既定の拡張機能だが、本人が選んだものとしては扱わない）。
  * 受信口は読み込み方に関係なく開いているので、内蔵ブラウザだけにしても、入れてある拡張機能は動き続ける。
@@ -158,5 +168,6 @@ export function switchNotes(from: BoothImportMode | null, to: BoothImportMode): 
       ],
     });
   }
+  if (to !== "browser" && !extensionOn && !notes.some((group) => group.tone === "warn")) notes.push(EXTENSION_CAUTION);
   return notes;
 }

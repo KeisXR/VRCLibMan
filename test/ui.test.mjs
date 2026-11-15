@@ -165,6 +165,7 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         await click(button("次へ", wizard()));
         assert.match(wizard().textContent, /このあとすること/);
         assert.doesNotMatch(wizard().textContent, /保存するもの/, "the built-in browser is already on");
+        assert.match(wizard().querySelector(".import-wizard-notes.is-warn").textContent, /拡張機能も.*ブラウザの BOOTH のログインを使う/);
         await click(button("両方使う", wizard()));
         await wait(() => setup().textContent.includes("ペアリングコード"));
         assert.equal((await api.integrationStatus()).mode, "both");
