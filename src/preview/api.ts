@@ -2265,7 +2265,11 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
         .map((item) => ({ boothId: item.boothId, title: item.title, shop: item.shop, category: item.category }))
         .sort((left, right) => left.title.localeCompare(right.title, "ja")) as T;
     case "list_knowledge":
-      return { avatars: store.avatars, baseBodies: store.baseBodies } satisfies Knowledge as T;
+      // アプリは IPC で毎回新しい値を返す。見本も写しを返し、画面が古い参照を使い続けないようにする。
+      return {
+        avatars: store.avatars.map((avatar) => ({ ...avatar, aliases: [...avatar.aliases] })),
+        baseBodies: store.baseBodies.map((body) => ({ ...body })),
+      } satisfies Knowledge as T;
     case "integration_status":
       return { ...previewIntegration, mode: !store.settings.builtinBrowser ? "extension" : importMode === "browser" ? "browser" : "both" } satisfies IntegrationStatus as T;
     case "set_booth_import_mode": {
