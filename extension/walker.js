@@ -157,27 +157,36 @@
       return (product.descriptionSnippet || "").length < 200 || !product.shop;
     }
 
-    // 説明が短い商品だけ、公開ページを Cookie なしで 1 件ずつ読む。401 / 403 のあとは JSON に切り替えない。
+    // BOOTH のカテゴリとタグは、商品ページの HTML では空の欄として返り、ページのスクリプトが埋める。
+    // Cookie なしで取れるのは公開の JSON だけなので、カテゴリが無い商品は JSON も読む（年齢制限の商品は読まない）。
+    function needsCategory(product) {
+      return product.isAdult !== true && !product.category;
+    }
+
+    // 説明が短い商品は公開ページを、カテゴリが無い商品は公開の JSON を、Cookie なしで 1 件ずつ読む。
+    // 公開ページが 401 / 403 のあとは JSON に切り替えない。
     async function enrich(products) {
-      const targets = products.filter(needsDetail);
+      const targets = products.filter((product) => needsDetail(product) || needsCategory(product));
       for (let index = 0; index < targets.length; index += 1) {
         const product = targets[index];
-        progress({ line: `説明を補完 ${index + 1} / ${targets.length} 件`, current: index + 1, total: targets.length, count: products.length });
+        progress({ line: `説明とカテゴリを補完 ${index + 1} / ${targets.length} 件`, current: index + 1, total: targets.length, count: products.length });
         let htmlStatus = 0;
         let jsonStatus = 0;
-        try {
-          const response = await boothFetch(product.url, { credentials: "omit" });
-          htmlStatus = response.status;
-          if (response.ok) {
-            const doc = parse(await response.text(), product.url);
-            const parsed = extract.extractPage(doc, product.url);
-            extract.mergeDetail(product, parsed[0]);
+        if (needsDetail(product)) {
+          try {
+            const response = await boothFetch(product.url, { credentials: "omit" });
+            htmlStatus = response.status;
+            if (response.ok) {
+              const doc = parse(await response.text(), product.url);
+              const parsed = extract.extractPage(doc, product.url);
+              extract.mergeDetail(product, parsed[0]);
+            }
+          } catch (error) {
+            if (error.stopping || error.cancelled) throw error;
           }
-        } catch (error) {
-          if (error.stopping || error.cancelled) throw error;
         }
         if (!policy.canUseJsonFallback(htmlStatus)) continue;
-        if (needsDetail(product)) {
+        if (needsDetail(product) || needsCategory(product)) {
           try {
             const response = await boothFetch(`https://booth.pm/ja/items/${product.boothId}.json`, {
               credentials: "omit",

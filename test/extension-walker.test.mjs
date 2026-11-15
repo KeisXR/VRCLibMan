@@ -95,7 +95,40 @@ test("a full library walk reads every section page by page with the login and ma
 
   await h.walker.enrich(walked.products);
   const detailRequests = h.requests.slice(4);
-  assert.deepEqual(detailRequests, [{ url: "https://booth.pm/ja/items/9002", credentials: "omit" }], "a 403 page is not retried as JSON");
+  assert.deepEqual(detailRequests, [
+    { url: "https://booth.pm/ja/items/9001.json", credentials: "omit" },
+    { url: "https://booth.pm/ja/items/9002", credentials: "omit" },
+    { url: "https://booth.pm/ja/items/9003.json", credentials: "omit" },
+    { url: "https://booth.pm/ja/items/9004.json", credentials: "omit" },
+  ], "a long description skips the page but still reads the category; a 403 page is not retried as JSON");
+});
+
+test("the category comes from the public JSON, because the page leaves its category and tag lists empty", async () => {
+  const json = { id: 9001, name: "架空の服 9001", category: { id: 208, name: "3D衣装", parent: { name: "3Dモデル" } }, tags: [{ name: "VRChat" }], description: "導入" };
+  const h = harness({
+    items: {
+      "https://booth.pm/ja/items/9001": { products: [] },
+      "https://booth.pm/ja/items/9001.json": { json },
+      "https://booth.pm/ja/items/9002.json": { json: { ...json, id: 9002, is_adult: true } },
+    },
+  });
+  const short = { ...product("9001", "短い"), shop: "" };
+  const known = { ...product("9003"), category: { name: "3D衣装" } };
+  const adult = { ...product("9004"), isAdult: true };
+  const adultByJson = product("9002");
+  const products = [short, known, adult, adultByJson];
+  await h.walker.enrich(products);
+  assert.deepEqual(h.requests.map((row) => row.url), [
+    "https://booth.pm/ja/items/9001",
+    "https://booth.pm/ja/items/9001.json",
+    "https://booth.pm/ja/items/9002.json",
+  ], "a product that already has a category and an age-restricted product are not read again");
+  assert.ok(h.requests.every((row) => row.credentials === "omit"));
+  assert.deepEqual(short.category, { id: 208, name: "3D衣装", parent: { name: "3Dモデル" } });
+  assert.deepEqual(short.tags, ["VRChat"]);
+  assert.equal(adultByJson.category, undefined, "an age-restricted answer keeps no category");
+  assert.equal(adultByJson.descriptionSnippet, "", "nor its description");
+  assert.deepEqual(h.sleeps, [1000, 1000], "the JSON reads keep the same interval");
 });
 
 test("new purchases stop each list at the first imported product and are never a complete list", async () => {

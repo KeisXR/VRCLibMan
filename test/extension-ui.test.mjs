@@ -44,7 +44,7 @@ test('BOOTH page marks, unknown-preserving filter, explicit file buttons, discon
     const base=`http://127.0.0.1:${vite.httpServer.address().port}`;
     await page('Page.navigate',{url:base});await wait("document.readyState==='complete'");
     await evaluate(`(() => {
-      document.body.innerHTML='<main><ul id="grid"><li class="item-card" id="a"><a href="https://booth.pm/ja/items/123456">衣装A</a><a id="native-download" href="https://booth.pm/downloadables/555555">ダウンロード</a></li><li class="item-card" id="b"><a href="https://booth.pm/ja/items/234567">衣装B</a></li><li class="item-card" id="unknown"><a href="https://booth.pm/ja/items/345678">未登録の商品</a></li></ul></main>';
+      document.body.innerHTML='<main style="display:flex"><aside id="side" style="width:160px">絞り込み</aside><ul id="grid"><li class="item-card" id="a"><a href="https://booth.pm/ja/items/123456">衣装A</a><a id="native-download" href="https://booth.pm/downloadables/555555">ダウンロード</a></li><li class="item-card" id="b"><a href="https://booth.pm/ja/items/234567">衣装B</a></li><li class="item-card" id="unknown"><a href="https://booth.pm/ja/items/345678">未登録の商品</a></li></ul></main>';
       document.querySelector('#native-download').addEventListener('click',event=>event.preventDefault());
       window.roots=[];const attach=Element.prototype.attachShadow;Element.prototype.attachShadow=function(options){const root=attach.call(this,options);window.roots.push(root);return root;};
       window.offline=false;window.messages=[];
@@ -71,6 +71,11 @@ test('BOOTH page marks, unknown-preserving filter, explicit file buttons, discon
     assert.match(text,/所持.*保存記録あり.*見本B・共通素体/);
     assert.doesNotMatch(text,/未登録/,'unregistered products get no mark outside the library');
     assert.match(text,/所持アバターで絞り込む/);
+    // Like the purchase library, the list sits beside a filter sidebar in one row. The bar goes inside the list,
+    // before the first card, so the row keeps its two columns.
+    assert.equal(await evaluate("document.querySelector('main').children.length"),2);
+    assert.equal(await evaluate("window.roots.find(root=>root.querySelector('select')).host.parentElement.id"),'grid');
+    assert.equal(await evaluate("window.roots.find(root=>root.querySelector('select')).host.nextElementSibling.id"),'a');
     assert.ok(await evaluate("window.roots.some(root=>[...root.querySelectorAll('button')].some(b=>b.textContent==='LibMan で取得'))"));
     // Filter keeps unknown products visible.
     await evaluate("(() => {const s=window.roots.map(r=>r.querySelector('select')).find(Boolean);s.value='a';s.dispatchEvent(new Event('change'));})()");

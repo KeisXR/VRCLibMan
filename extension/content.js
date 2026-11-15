@@ -217,6 +217,27 @@
     return names;
   }
 
+  // 横並び（行方向の flex、複数列の grid）の親に足すと列が 1 つ増え、BOOTH の画面が崩れる。
+  function stacksVertically(node) {
+    const style = getComputedStyle(node);
+    if (style.display.includes("flex")) return style.flexDirection.startsWith("column");
+    if (style.display.includes("grid")) return style.gridTemplateColumns.trim().split(/\s+/).length <= 1;
+    return true;
+  }
+
+  // 帯は一覧のすぐ上に置く。一覧の外に置けないとき（購入ライブラリでは一覧の親が絞り込み欄との横並び）は、
+  // 一覧の中の先頭の商品の前に置く。どちらもだめなら、縦に積む親が見つかるまでさかのぼる。
+  function barAnchor(card) {
+    const list = card.parentElement;
+    if (!list) return card;
+    if (list.parentElement && stacksVertically(list.parentElement)) return list;
+    if (stacksVertically(list)) return card;
+    for (let node = list.parentElement; node && node.parentElement && node.parentElement !== document.documentElement; node = node.parentElement) {
+      if (stacksVertically(node.parentElement)) return node;
+    }
+    return card;
+  }
+
   function placeBar(rows) {
     const listed = rows.filter((row) => !row.after);
     const names = avatarsOnPage();
@@ -250,8 +271,7 @@
       made.root.append(box);
       bar = { ...made, select, status };
     }
-    const container = listed[0].card.parentElement;
-    const anchor = container?.parentElement ? container : listed[0].card;
+    const anchor = barAnchor(listed[0].card);
     if (bar.node.nextSibling !== anchor) anchor.parentElement?.insertBefore(bar.node, anchor);
     const options = [new Option("すべて表示", "")];
     for (const [id, name] of names) options.push(new Option(name, id));

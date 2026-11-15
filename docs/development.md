@@ -163,7 +163,7 @@ rm -rf "$native_case"
 
 ### 拡張からの商品情報
 
-拡張は開いた商品ページと購入ライブラリを読み、`vrclibman.booth-export` version 1 の商品 JSON をアプリへ渡します。長い読み込みはサービスワーカーではなく offscreen 文書（`extension/offscreen.js` と `extension/walker.js`）で動きます。拡張はアプリのリソース（`tauri.conf.json` の `../extension/`）として同梱し、`extension_package.rs` がアプリのローカルデータの `browser-extension` へ写します。`tauri dev` でリソースが無いときはソースの `extension/` を使います。`manifest.json` の `key` で拡張の ID を固定しているので、どのフォルダから読み込んでも同じ ID になります。サービスワーカーには DOM が無く、ポップアップは閉じると止まるためです。公開商品ページの説明が短い場合は、Cookie を付けない公開 HTML / JSON で補います。HTML が 401 / 403 の場合は JSON へフォールバックしません。
+拡張は開いた商品ページと購入ライブラリを読み、`vrclibman.booth-export` version 1 の商品 JSON をアプリへ渡します。長い読み込みはサービスワーカーではなく offscreen 文書（`extension/offscreen.js` と `extension/walker.js`）で動きます。拡張はアプリのリソース（`tauri.conf.json` の `../extension/`）として同梱し、`extension_package.rs` がアプリのローカルデータの `browser-extension` へ写します。`tauri dev` でリソースが無いときはソースの `extension/` を使います。`manifest.json` の `key` で拡張の ID を固定しているので、どのフォルダから読み込んでも同じ ID になります。サービスワーカーには DOM が無く、ポップアップは閉じると止まるためです。公開商品ページの説明が短い場合は、Cookie を付けない公開 HTML / JSON で補います。BOOTH のカテゴリとタグは商品ページの HTML では空の欄として返り、ページのスクリプトが埋めるので、カテゴリの無い商品は公開 JSON から読みます。HTML が 401 / 403 の場合は JSON へフォールバックしません。
 
 BOOTH へのアクセス間隔は 1000 / 500 / 250ms から選び、未知の値は 1000ms に戻します。ページも説明の補完も並列にしません。429 / 503 は Retry-After を尊重して最大 1 回再試行し、指定待機が 60 秒を超えるときは停止します。250ms の選択時は確認が必要です。
 
