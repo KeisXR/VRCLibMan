@@ -2660,6 +2660,9 @@ html.has-setup-guide .content { padding-bottom: calc(var(--setup-guide-height, 0
 .settings-nav button[aria-current]::after { animation: switch-fade var(--motion) ease; }
 /* 切り替えた下の一覧（タブの中身・ジャンルの一覧）は 2px の短い rise。JS が切替ごとに付け直す */
 .switch-rise { animation: switch-rise var(--motion) ease; }
+/* ジャンルの切替中は前の一覧を残す。読み込みが 200ms を超えたときだけ薄くする（速いときは何も変えない） */
+.genre-list { transition: opacity var(--motion) ease; }
+.genre-list[aria-busy="true"] { opacity: 0.55; transition: opacity var(--motion) ease 200ms; }
 /* メニューとダイアログ: フェード＋4px */
 .account-popover { animation: switch-pop 120ms ease-out; }
 .account-popover.right-panel-popover { animation-name: switch-pop-down; }
