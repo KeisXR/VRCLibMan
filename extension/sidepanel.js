@@ -34,7 +34,7 @@ function jobSection() {
         ),
         ui.track(job.current, job.total, job.label),
         h("div", { class: "row" },
-          h("p", { class: "note grow", text: "読んだところまでは保存します。" }),
+          h("p", { class: "note grow", text: "中止しても、読んだところまでは保存します。" }),
           h("button", { class: "btn danger small", type: "button", text: "中止", on: { click: () => send({ type: "job-cancel" }) } }),
         ),
       ),
@@ -42,7 +42,7 @@ function jobSection() {
   }
   // 成功した読み込みは「最近の取り込み」に出る。止まった・中止したものだけ理由を残す。
   if (job.state === "done" || !job.finishedAt || Date.now() - Date.parse(job.finishedAt) > 60 * 60 * 1000) return [];
-  const label = job.state === "cancelled" ? "中止" : "止まりました";
+  const label = job.state === "cancelled" ? "中止" : "途中で止まりました";
   return [
     h("span", { class: "sec", text: "最後の読み込み" }),
     h("section", { class: "card" },
@@ -87,9 +87,9 @@ function pendingRows() {
   return (state.stored.pendingDeliveries || []).map((entry) => {
     const name = entry.kind === "checkout"
       ? `購入完了ページ（商品 ${entry.checkout?.products?.length || 0} 件）`
-      : entry.notice?.filename || "ダウンロードの完了通知";
+      : entry.notice?.filename || "ダウンロードしたファイル";
     const reason = entry.token !== token
-      ? "別のペアリングコードで受けた通知です。元のコードに戻すまで送りません"
+      ? "前のペアリングコードのときの記録です。そのコードに戻すまでアプリへ送りません"
       : state.stored.deliveryError || "アプリの起動を待っています";
     return h("div", { class: "item" }, h("div", { class: "file" }, h("b", { text: name, title: name }), h("span", { text: reason })));
   });
@@ -105,7 +105,7 @@ function historyRows() {
     else counts = [entry.pages ? `${entry.pages} ページ` : "", `追加 ${entry.inserted ?? 0} 件、更新 ${entry.updated ?? 0} 件`].filter(Boolean).join("、");
     return h("div", { class: "item" },
       h("div", { class: "file" }, h("b", { text: label }), h("span", { class: "num", text: `${shared.formatTime(entry.at)}・${counts}` })),
-      entry.complete ? ui.chip("最後まで読了") : null,
+      entry.complete ? ui.chip("完了", "good") : null,
     );
   });
 }
@@ -128,13 +128,13 @@ function render() {
   const pending = pendingRows();
   if (pending.length) {
     parts.push(
-      h("span", { class: "sec num", text: `未送信の通知 ${pending.length}` }),
+      h("span", { class: "sec num", text: `アプリへ未送信 ${pending.length} 件` }),
       h("section", { class: "card" },
         h("div", { class: "list" }, pending),
         h("button", {
           class: "btn secondary block",
           type: "button",
-          text: "接続して再送する",
+          text: "アプリへ送り直す",
           on: {
             click: async () => {
               const result = await send({ type: "retry-deliveries" });

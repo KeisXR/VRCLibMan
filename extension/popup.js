@@ -298,17 +298,17 @@ function updateCard() {
   if (!update?.version) return null;
   if (update.stuck) {
     return h("section", { class: "card" },
-      h("span", { class: "title", text: `新しい拡張機能 v${update.version} があります` }),
-      h("p", { class: "note warn", text: "今の拡張は、アプリが用意したフォルダとは別の場所から読み込まれているため、自動では新しくなりません。アプリの「設定 → BOOTH → 拡張機能をつなぐ」にあるフォルダを、ブラウザの拡張機能の画面で読み込み直してください。" }),
+      h("span", { class: "title", text: `拡張機能の更新（v${update.version}）があります` }),
+      h("p", { class: "note warn", text: "この拡張機能は、アプリが用意したフォルダとは別の場所から入れられているため、自動では更新できません。アプリの「設定 → BOOTH → 拡張機能をつなぐ」に出るフォルダを、ブラウザの拡張機能の画面から入れ直してください。" }),
     );
   }
   return h("section", { class: "card" },
-    h("span", { class: "title", text: `新しい拡張機能 v${update.version} を読み込めます` }),
-    h("p", { class: "note", text: "読み込み直すと、このポップアップはいったん閉じます。" }),
+    h("span", { class: "title", text: `拡張機能を v${update.version} に更新できます` }),
+    h("p", { class: "note", text: "更新すると、このポップアップはいったん閉じます。" }),
     h("button", {
       class: "btn secondary block",
       type: "button",
-      text: "読み込み直す",
+      text: "更新する",
       on: {
         click: async () => {
           const result = await send({ type: "reload-extension" });

@@ -31,7 +31,7 @@
   };
   const HISTORY_LABELS = {
     page: "このページ",
-    library: "ライブラリ全取得",
+    library: "すべて読み込み",
     "library-new": "新しい購入",
     purchases: "購入履歴",
     checkout: "購入完了ページ",
@@ -127,9 +127,9 @@
       return { tone: "warn", label: "未接続", message: "この拡張機能は接続を許可されていません。アプリでコードを作り直してください。", paired: false };
     }
     if (status === 429) {
-      return { tone: "warn", label: "待機中", message: "接続の試行が続いています。少し待ってから確認してください。", paired: true };
+      return { tone: "warn", label: "待機中", message: "ペアリングコードの間違いが続いたため、しばらく接続できません。30 秒ほど待ってから確認してください。", paired: true };
     }
-    return { tone: "warn", label: "アプリ未起動", message: "送るときにアプリの起動を試みます。", paired: true };
+    return { tone: "warn", label: "アプリ未起動", message: "送るときにアプリを起動します。", paired: true };
   }
 
   return {

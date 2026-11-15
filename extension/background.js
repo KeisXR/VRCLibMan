@@ -71,7 +71,7 @@ async function appRequest(path, { token, body, timeoutMs } = {}) {
   if (response.ok) noteSeen(response.status);
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const failure = new Error(data.error || `アプリへの送信に失敗しました (${response.status})`);
+    const failure = new Error(data.error || `アプリへ送れませんでした（エラー ${response.status}）`);
     failure.status = response.status;
     throw failure;
   }
@@ -156,7 +156,7 @@ function reachable(status) {
 
 function connectError(status) {
   if (status === null) return new Error("アプリに接続できません。VRCLibMan を起動してもう一度お試しください");
-  return new Error(shared.connectionState(status, true).message || `接続設定を確認してください (${status})`);
+  return new Error(shared.connectionState(status, true).message || `アプリとの接続を確認してください（エラー ${status}）`);
 }
 
 // 起動しているアプリにはそのまま送る。届かないときだけ vrclibman://import でアプリを起こし、
@@ -464,7 +464,7 @@ async function onResult(message) {
     const sent = await deliver(products, SOURCES[job.kind] || "current-page", { complete: message.complete === true });
     const notes = [];
     if (job.kind !== "page" && message.pages) notes.push(`${message.pages} ページを確認`);
-    if (job.kind === "library-new" && message.stopped) notes.push("インポート済みの商品があったので、そこまでで止めました");
+    if (job.kind === "library-new" && message.stopped) notes.push("前に取り込んだ商品まで来たので、そこで止めました");
     if (message.cancelled) notes.push("中止したので、読んだところまでを送りました");
     if (message.error) notes.push(message.error);
     const report = sent.report || {};
@@ -497,7 +497,7 @@ async function importSelected(tabId, pick) {
   if (!stored.pairingToken) throw new Error("拡張の設定でペアリングコードを保存してください");
   const response = await chrome.tabs.sendMessage(tabId, { type: "extract-page" });
   const product = pick(response?.products);
-  if (!product) throw new Error("商品とファイルを一意に確認できません。ページを更新してください");
+  if (!product) throw new Error("どの商品のファイルか確かめられません。ページを再読み込みしてください");
   // The protocol carries no product data or credentials; the authenticated HTTP request does.
   const status = await ensureApp(stored.pairingToken, { active: true, keepOnFail: true });
   if (!reachable(status)) throw connectError(status);
@@ -682,7 +682,7 @@ async function handleDownload(item) {
   if (intent && intent.product.boothId !== notice.boothId) return;
   if (/^(text\/html|application\/xhtml\+xml)(?:;|$)/i.test(item.mime || "")) {
     await chrome.storage.local.set({
-      deliveryError: "取得した内容がログイン画面などのHTMLでした。BOOTHでログインを確認してください。",
+      deliveryError: "ファイルの代わりにログイン画面などが届きました。BOOTH にログインしているか確認してください。",
       downloadIntents: stored.downloadIntents.filter((row) => row.id !== intent?.id),
     });
     return;
@@ -735,11 +735,11 @@ async function startDownload(tabId, downloadableId) {
   if (!companion.boothUrl(tab.url)) throw new Error("BOOTHの商品ページかライブラリを開いてください");
   const response = await chrome.tabs.sendMessage(tab.id, { type: "extract-page" });
   const selected = companion.choose(response?.products, downloadableId);
-  if (!selected) throw new Error("ファイルとバリエーションを一意に確認できません。ページを更新してください");
-  if (!eligibleFile(selected)) throw new Error("このファイルは取得対象外です");
+  if (!selected) throw new Error("どのファイルか確かめられません。ページを再読み込みしてください");
+  if (!eligibleFile(selected)) throw new Error("このファイルはここからは取得できません");
   const { product, file } = selected;
   const stored = await settings();
-  if (!stored.pairingToken || !stored.routeDownloads) throw new Error("ペアリングと「ダウンロードを自動整理」を設定してください");
+  if (!stored.pairingToken || !stored.routeDownloads) throw new Error("アプリとの接続と「ダウンロードを自動整理」を設定してください");
   if (stored.downloadIntents.some((row) => row.file.downloadableId === file.downloadableId)) {
     throw new Error("このファイルはすでに取得待ちです。ブラウザのダウンロード一覧を確認してください");
   }
@@ -888,7 +888,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
         // Tokens and app responses never pass through page messages.
         return answer(exclusive(() => productStatus(message.ids)), respond, "アプリに接続できません");
       case "remember-download":
-        return answer(exclusive(() => rememberDownload(tabId, message.downloadableId)), respond, "ファイルの対応を記録できません");
+        return answer(exclusive(() => rememberDownload(tabId, message.downloadableId)), respond, "どのファイルを取得したかを記録できません");
       case "import-download":
         return answer(importSelected(tabId, (products) => companion.choose(products, message.downloadableId)?.product), respond);
       case "import-product":
@@ -918,7 +918,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       case "start-download":
         return answer(exclusive(() => startDownload(message.tabId, message.downloadableId)), respond);
       case "retry-deliveries":
-        return answer(exclusive(reconcile), respond, "再送できませんでした");
+        return answer(exclusive(reconcile), respond, "送り直せませんでした");
       case "set-route":
         return answer(setRoute(message.enabled === true), respond);
       case "save-page-json":

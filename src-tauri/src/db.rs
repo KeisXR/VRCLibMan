@@ -3884,7 +3884,7 @@ pub(crate) fn record_extension_download(
         ).sql()?;
         let names = statement.query_map(params![booth_id, variation, id], |row| row.get::<_, String>(0))
             .sql()?.collect::<rusqlite::Result<Vec<_>>>().sql()?;
-        if names.len() != 1 { return Err("ファイルとバリエーションを一意に確認できません".into()); }
+        if names.len() != 1 { return Err("どのファイルか確かめられません".into()); }
         names[0].clone()
     } else { actual_filename.clone() };
     if !variation.is_empty() {

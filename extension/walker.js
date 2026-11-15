@@ -6,7 +6,7 @@
   if (typeof module === "object" && module.exports) module.exports = api;
   root.VrcLibManWalker = api;
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
-  const LOGIN_NOTICE = "BOOTH のログインが切れているか、読み込み先のページではありません。BOOTH にログインしてから、もう一度読み込んでください";
+  const LOGIN_NOTICE = "BOOTH のログインが切れているようです。BOOTH にログインしてから、もう一度読み込んでください";
   const DETAIL_UNREADABLE = "注文の詳細を読めませんでした。BOOTH のページの形が変わった可能性があります";
   const MAX_PAGE = 200;
 
@@ -119,7 +119,7 @@
         const response = await boothFetch(url, { credentials: "include" });
         const landed = landedOn(response, url);
         if (!libraryPage(landed)) throw stop(LOGIN_NOTICE);
-        if (!response.ok) throw stop(`${section.label}の ${page} ページ目を読めませんでした (${response.status})`);
+        if (!response.ok) throw stop(`${section.label}の ${page} ページ目を読めませんでした（エラー ${response.status}）`);
         const doc = parse(await response.text(), landed);
         const found = extract.extractPage(doc, landed);
         collected.pages += 1;
@@ -169,7 +169,7 @@
       const targets = products.filter((product) => needsDetail(product) || needsCategory(product));
       for (let index = 0; index < targets.length; index += 1) {
         const product = targets[index];
-        progress({ line: `説明とカテゴリを補完 ${index + 1} / ${targets.length} 件`, current: index + 1, total: targets.length, count: products.length });
+        progress({ line: `商品の説明とカテゴリを確認 ${index + 1} / ${targets.length} 件`, current: index + 1, total: targets.length, count: products.length });
         let htmlStatus = 0;
         let jsonStatus = 0;
         if (needsDetail(product)) {
@@ -208,7 +208,7 @@
       const path = ordersPath(landed);
       const fits = expect.list ? path && path.list : path && path.detail === expect.detail;
       if (!fits) throw stop(LOGIN_NOTICE);
-      if (!response.ok) throw stop(`購入履歴を読めませんでした (${response.status})`);
+      if (!response.ok) throw stop(`購入履歴を読めませんでした（エラー ${response.status}）`);
       return { landed, doc: parse(await response.text(), landed) };
     }
 

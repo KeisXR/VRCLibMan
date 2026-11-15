@@ -561,7 +561,7 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
                 return cors_json(
                     origin.as_deref(),
                     400,
-                    r#"{"error":"ファイルとバリエーションを一意に確認できません"}"#.into(),
+                    r#"{"error":"どのファイルか確かめられません。ページを再読み込みしてください"}"#.into(),
                 );
             }
         }

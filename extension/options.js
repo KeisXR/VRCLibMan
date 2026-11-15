@@ -6,7 +6,7 @@ const statusLine = $("#status");
 const tokenInput = $("#token");
 const intervalInput = $("#booth-interval");
 
-$("#version").textContent = `拡張 ${chrome.runtime.getManifest().version}`;
+$("#version").textContent = `バージョン ${chrome.runtime.getManifest().version}`;
 
 function send(message) {
   return chrome.runtime.sendMessage(message).catch((error) => ({ error: error.message || String(error) }));

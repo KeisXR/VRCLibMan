@@ -1468,7 +1468,7 @@ test("extension settings show the manifest version, and local requests carry it"
   }
   for (let i = 0; i < 20 && !sent.includes("connection"); i++) await delay();
   await delay();
-  assert.equal(document.querySelector("#version").textContent, `拡張 ${manifest.version}`);
+  assert.equal(document.querySelector("#version").textContent, `バージョン ${manifest.version}`);
   assert.equal(document.querySelector("#token").value, "ABCD-2345");
   assert.equal(document.querySelector("#link-chip").textContent, "接続中");
   assert.match(document.querySelector("#link-note").textContent, /最後の通信：今日/);

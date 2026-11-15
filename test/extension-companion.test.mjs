@@ -155,7 +155,7 @@ test('reconcile recovers complete downloads after shutdown before the completion
 });
 test('HTML login responses are not registered as asset files',async()=>{
   const w=worker();await w.message({type:'start-download',tabId:1,downloadableId:'555555'});w.items[0].mime='text/html';await w.finish();
-  assert.equal(w.sent.length,0);assert.equal(w.data.pendingDeliveries?.length || 0,0);assert.match(w.data.deliveryError,/HTML/);
+  assert.equal(w.sent.length,0);assert.equal(w.data.pendingDeliveries?.length || 0,0);assert.match(w.data.deliveryError,/ログイン画面などが届きました/);
 });
 test('status queries come from our BOOTH page or our own pages, and the token never goes to the page',async()=>{
   const w=worker({},[],{app:{'/product-status':()=>({products:[{boothId:'123456',registered:true}]})}});
@@ -277,7 +277,7 @@ test('a new-purchase job asks for known IDs, hands the walk to the offscreen doc
   assert.equal(imported.source,'library-update');
   assert.equal(imported.complete,undefined);
   assert.equal(w.session.job.state,'done');
-  assert.match(w.session.job.line,/追加 1 件.*3 ページを確認.*そこまでで止めました/);
+  assert.match(w.session.job.line,/追加 1 件.*3 ページを確認.*前に取り込んだ商品まで来たので、そこで止めました/);
   assert.equal(w.data.importHistory[0].kind,'library-new');
   await w.message({type:'walk-progress',id:started.id,line:'遅れて届いた進み具合'},offscreenPage);
   assert.equal(w.session.job.state,'done','a late progress note never revives a finished job');

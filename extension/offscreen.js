@@ -23,7 +23,7 @@ function appRequester(token, version) {
       throw new Error("アプリに接続できなくなったため、ここまでで止めました");
     }
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || `アプリが受け付けませんでした (${response.status})`);
+    if (!response.ok) throw new Error(data.error || `アプリが受け付けませんでした（エラー ${response.status}）`);
     return data;
   };
 }
