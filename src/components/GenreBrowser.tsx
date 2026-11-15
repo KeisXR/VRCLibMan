@@ -57,7 +57,19 @@ const CardGroup = memo(function CardGroup({ items, context }: { items: ItemView[
 });
 
 export function GenreBrowser({ title, lede }: { title: string; lede?: string }) {
-  const { kind, routeGenre, selected, focusId, data, error, genreBar, reload, setDraggingId } = useGenreBrowse();
+  const {
+    kind,
+    routeGenre,
+    focusId,
+    data,
+    dataGenre,
+    dataKey,
+    loading,
+    error,
+    genreBar,
+    reload,
+    setDraggingId,
+  } = useGenreBrowse();
   const [filter, setFilter] = useState("");
   // Only the preview part of the panel: selecting a row or changing tabs does not draw the list again.
   const panel = useRightPanelPreview();
@@ -75,12 +87,14 @@ export function GenreBrowser({ title, lede }: { title: string; lede?: string }) 
     [probedItems],
   );
   const noun = NOUN[kind];
-  const selectedLabel = selected ? GENRE_LABEL[selected] ?? selected : "すべて";
+  // 件数と説明は、いま表示している一覧のジャンルに合わせる。切替直後は前の一覧と一緒に残る。
+  const selectedLabel = dataGenre ? GENRE_LABEL[dataGenre] ?? dataGenre : "すべて";
   const unknownGenre = routeGenre != null && routeGenre !== "" && selectedGenre(kind, routeGenre) === null;
   const selectedItem = selectedId ? probedMap.get(selectedId) ?? shown.find((item) => item.boothId === selectedId) ?? null : null;
   const tabStopId = selectedId ?? shownIds[0] ?? null;
   // Another genre or filter is another list; a refresh of the same one keeps what is drawn.
-  const { count: drawnCount, reveal } = useProgressiveCount(`${kind}\u0000${selected ?? ""}\u0000${filter}`, shown.length);
+  // 表示中の一覧で数える。押した瞬間に前の一覧を最初の数件へ縮めない。
+  const { count: drawnCount, reveal } = useProgressiveCount(`${dataKey ?? ""}\u0000${filter}`, shown.length);
   const clearSelection = useCallback(() => setSelectedId(null), []);
   const publishedItem = previewOpen ? selectedItem : null;
 
@@ -101,7 +115,7 @@ export function GenreBrowser({ title, lede }: { title: string; lede?: string }) 
       focusedOnce.current = null;
       return;
     }
-    if (focusedOnce.current === focusId) return;
+    if (loading || focusedOnce.current === focusId) return;
     const index = shownIds.indexOf(focusId);
     if (index < 0) return;
     if (index >= drawnCount) {
@@ -113,8 +127,10 @@ export function GenreBrowser({ title, lede }: { title: string; lede?: string }) 
     window.requestAnimationFrame(() => {
       document.getElementById(`product-${focusId}`)?.scrollIntoView({ block: "center" });
     });
-  }, [focusId, shownIds, previewOpen, drawnCount, reveal]);
-  const focusMissing = Boolean(focusId && current && !current.items.some((item) => item.boothId === focusId));
+  }, [focusId, shownIds, previewOpen, drawnCount, reveal, loading]);
+  const focusMissing = Boolean(
+    focusId && current && !loading && !current.items.some((item) => item.boothId === focusId),
+  );
 
   useEffect(() => {
     if (!keyboardMove.current || !selectedId) return;
@@ -151,7 +167,8 @@ export function GenreBrowser({ title, lede }: { title: string; lede?: string }) 
   }, [previewOpen, shownIds]);
 
   const listRef = useRef<HTMLDivElement>(null);
-  useReplayRise(listRef, selected);
+  // 新しいジャンルの一覧が届いて差し替えたときに動かす。押した瞬間は前の一覧のまま。
+  useReplayRise(listRef, dataKey);
   const groups = useMemo(() => chunked(shown), [shown]);
   const cardContext = useMemo<CardContext>(
     () => ({
@@ -168,7 +185,7 @@ export function GenreBrowser({ title, lede }: { title: string; lede?: string }) 
     [probedMap, statusFor, retryProbe, previewOpen, selectedId, focusId, tabStopId, setDraggingId],
   );
   const list = (
-    <div className="stack" ref={listRef}>
+    <div className="stack genre-list" ref={listRef} aria-busy={loading || undefined}>
       {groups.slice(0, chunksFor(drawnCount)).map((items, index) => (
         <CardGroup key={index} items={items} context={cardContext} />
       ))}
@@ -205,12 +222,12 @@ export function GenreBrowser({ title, lede }: { title: string; lede?: string }) 
       />
       {unknownGenre && <p className="note genre-notice">指定されたジャンルが見つからないため、すべてを表示しています。</p>}
       {focusMissing && <p className="note genre-notice">開こうとした商品は、この一覧にありません。分類が変わったか、除外した商品です。</p>}
-      {selected === GENRE_UNSET && (
+      {dataGenre === GENRE_UNSET && (
         <p className="note genre-notice">
           ジャンルが決まっていない{noun}の商品です。確認画面や再分類でジャンルが付くと、各ジャンルに移ります。
         </p>
       )}
-      {selected === GENRE_FREE && (
+      {dataGenre === GENRE_FREE && (
         <p className="note genre-notice">
           ダウンロードされていない無料の{noun}です。ファイルが手元に来ると、各ジャンルに移ります。手動で移動した商品は、移動先のジャンルに残ります。
         </p>

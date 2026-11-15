@@ -13,7 +13,17 @@ interface GenreBrowseContextValue {
   selected: string | null;
   /** ほかの画面から開いた商品。一覧で見える位置へ送り、枠で示す。 */
   focusId: string | null;
+  /**
+   * 表示する一覧。ジャンルを替えた直後は、新しい一覧が届くまで同じ種類の前の一覧を残す。
+   * 一覧を「読み込み中」に置き換えないので、切替でカードとサムネイルが消えてちらつかない。
+   */
   data: GenreProducts | null;
+  /** `data` がどのジャンルの一覧か（null は「すべて」）。`loading` の間は `selected` と違う。 */
+  dataGenre: string | null;
+  /** `data` の種類とジャンル。届いた一覧が変わったときだけ変わる。 */
+  dataKey: string | null;
+  /** 選んだジャンルの一覧がまだ届いていない。`data` は前のジャンルのもの。 */
+  loading: boolean;
   error: string | null;
   /** The genre column does not fit; the page shows the genre chip bar. */
   genreBar: boolean;
@@ -45,7 +55,12 @@ export function GenreBrowseProvider({
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const selected = selectedGenre(kind, genre);
   const key = `${kind}:${selected ?? ""}`;
-  const [loaded, setLoaded] = useState<{ key: string; data: GenreProducts } | null>(null);
+  const [loaded, setLoaded] = useState<{
+    key: string;
+    kind: GenreKind;
+    genre: string | null;
+    data: GenreProducts;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
 
@@ -54,7 +69,7 @@ export function GenreBrowseProvider({
     setError(null);
     api.productsByGenre(kind, selected).then(
       (data) => {
-        if (!cancelled) setLoaded({ key, data });
+        if (!cancelled) setLoaded({ key, kind, genre: selected, data });
       },
       (err: unknown) => {
         if (!cancelled) setError(errorText(err));
@@ -65,7 +80,12 @@ export function GenreBrowseProvider({
     };
   }, [kind, selected, key, revision, attempt]);
 
-  const data = loaded?.key === key ? loaded.data : null;
+  // 別の種類（アセットとワールド）の一覧は残さない。画面ごと替わるため。
+  const shown = loaded?.kind === kind ? loaded : null;
+  const data = shown?.data ?? null;
+  const dataGenre = shown?.genre ?? null;
+  const dataKey = shown?.key ?? null;
+  const loading = loaded?.key !== key;
   const value = useMemo(
     () => ({
       kind,
@@ -74,6 +94,9 @@ export function GenreBrowseProvider({
       selected,
       focusId: focus,
       data,
+      dataGenre,
+      dataKey,
+      loading,
       error,
       genreBar,
       reload: () => setAttempt((value) => value + 1),
@@ -81,7 +104,7 @@ export function GenreBrowseProvider({
       setDraggingId,
       moveProduct,
     }),
-    [kind, basePath, genre, selected, focus, data, error, genreBar, draggingId, moveProduct],
+    [kind, basePath, genre, selected, focus, data, dataGenre, dataKey, loading, error, genreBar, draggingId, moveProduct],
   );
 
   return <GenreBrowseContext.Provider value={value}>{children}</GenreBrowseContext.Provider>;

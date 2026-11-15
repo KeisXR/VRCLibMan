@@ -842,8 +842,29 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         const unset = await api.productsByGenre("world", "unset");
         assert.equal(unset.items.length, all.counts.unset);
         assert.ok(unset.items.every((item) => item.genre == null));
-        await route("#/worlds/unset");
-        await wait(() => activeTab()?.textContent.startsWith("ジャンル未設定"));
+        // 切替の間は前の一覧を残し、「読み込み中」に置き換えない（ちらつかせない）。
+        const productsByGenre = api.productsByGenre;
+        let release;
+        const held = new Promise((resolve) => {
+          release = resolve;
+        });
+        api.productsByGenre = async (...args) => {
+          await held;
+          return productsByGenre(...args);
+        };
+        try {
+          await route("#/worlds/unset");
+          await wait(() => activeTab()?.textContent.startsWith("ジャンル未設定"));
+          assert.equal(items().length, sky.items.length, "the previous list stays while loading");
+          assert.ok(main().textContent.includes(sky.items[0].title));
+          assert.ok(!main().textContent.includes("読み込み中"));
+          assert.equal(main().querySelector(".genre-list")?.getAttribute("aria-busy"), "true");
+          assert.ok(main().querySelector(".genre-result").textContent.startsWith("Skybox"), "the count matches the list shown");
+        } finally {
+          api.productsByGenre = productsByGenre;
+          release();
+        }
+        await wait(() => main().querySelector(".genre-list")?.hasAttribute("aria-busy") === false);
         await wait(() => items().length === unset.items.length);
         assert.ok(main().textContent.includes("ジャンルが決まっていないワールドの商品です。"));
         assert.ok(!main().textContent.includes(sky.items[0].title));
