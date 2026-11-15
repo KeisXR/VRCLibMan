@@ -327,6 +327,8 @@ pub struct Settings {
     /// Left sidebar shows icons only.
     pub ui_rail_collapsed: bool,
     pub ui_genre_width: u32,
+    /// Genre column shows icons only.
+    pub ui_genre_collapsed: bool,
     pub preview_pane: bool,
     pub preview_pane_width: u32,
     /// Avatar detail hero: large | small | off.
@@ -372,6 +374,8 @@ pub struct SettingsInput {
     pub ui_rail_collapsed: bool,
     #[serde(default = "default_ui_genre_width")]
     pub ui_genre_width: u32,
+    #[serde(default)]
+    pub ui_genre_collapsed: bool,
     #[serde(default = "default_preview_pane")]
     pub preview_pane: bool,
     #[serde(default = "default_preview_pane_width")]
@@ -408,6 +412,7 @@ pub struct SettingsPatch {
     pub ui_rail_width: Option<u32>,
     pub ui_rail_collapsed: Option<bool>,
     pub ui_genre_width: Option<u32>,
+    pub ui_genre_collapsed: Option<bool>,
     #[serde(default)]
     pub preview_pane: Option<bool>,
     pub preview_pane_width: Option<u32>,
@@ -449,6 +454,7 @@ impl SettingsPatch {
             ui_rail_width: self.ui_rail_width.unwrap_or(current.ui_rail_width),
             ui_rail_collapsed: self.ui_rail_collapsed.unwrap_or(current.ui_rail_collapsed),
             ui_genre_width: self.ui_genre_width.unwrap_or(current.ui_genre_width),
+            ui_genre_collapsed: self.ui_genre_collapsed.unwrap_or(current.ui_genre_collapsed),
             preview_pane: self.preview_pane.unwrap_or(current.preview_pane),
             preview_pane_width: clamp_preview_pane_width(
                 self.preview_pane_width.unwrap_or(current.preview_pane_width),

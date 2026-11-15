@@ -12,7 +12,8 @@ import { AssetsPage } from "./pages/AssetsPage";
 import { SearchPage } from "./pages/SearchPage";
 import { PurchasesPage } from "./pages/PurchasesPage";
 import { SetupWizard, classificationRunning, setupLanding } from "./pages/SetupWizard";
-import { GenreColumn } from "./components/GenreColumn";
+import { AvatarGenreColumn, GenreColumn } from "./components/GenreColumn";
+import { AvatarGenreProvider } from "./avatarGenreContext";
 import { ResizeSeparator } from "./components/ResizeSeparator";
 import { GenreBrowseProvider } from "./genreBrowseContext";
 import { useAppLayout } from "./useAppLayout";
@@ -108,6 +109,7 @@ function parseRoute(hash: string): Route {
       page: "avatar",
       id: decodeURIComponent(parts[1]),
       fileBoothId: parts[2] === "files" && parts[3] ? decodeURIComponent(parts[3]) : undefined,
+      genre: parts[2] === "genre" && parts[3] ? decodePart(parts[3]) : undefined,
     };
   }
   if (parts[0] === "assets" || parts[0] === "worlds") {
@@ -156,6 +158,8 @@ export default function App() {
   const [setupComplete, setSetupComplete] = useState<boolean | null>(null);
   const [checkUpdateOnStartup, setCheckUpdateOnStartup] = useState(false);
   const route = useMemo(() => parseRoute(hash), [hash]);
+  // Picking a genre on the avatar page narrows the items below the hero; it keeps the scroll.
+  const scrollKey = route.page === "avatar" ? `avatar/${route.id ?? ""}/${route.fileBoothId ?? ""}` : hash;
   const contentRef = useRef<HTMLDivElement>(null);
   const topbarRef = useRef<HTMLDivElement>(null);
 
@@ -173,7 +177,7 @@ export default function App() {
     const pane = contentRef.current;
     if (!pane) return;
     pane.scrollTop = 0;
-  }, [hash]);
+  }, [scrollKey]);
 
   useEffect(() => onRefresh(refresh), [refresh]);
 
@@ -335,9 +339,14 @@ export default function App() {
         : "";
   const browseKind = route.page === "assets" ? "asset" : route.page === "worlds" ? "world" : null;
   const browseBase = browseKind === "asset" ? "#/assets" : "#/worlds";
+  const avatarGenreId = route.page === "avatar" && route.id ? route.id : null;
   const rightPanel = useRightPanelState(fail, { builtinBrowser });
-  const layout = useAppLayout(browseKind !== null, rightPanel);
+  const layout = useAppLayout(browseKind !== null || avatarGenreId !== null, rightPanel);
   const collapsed = layout.railCollapsed;
+  const { setGenreCollapsed, genreCollapsedSaved } = layout;
+  const toggleGenre = useCallback(() => setGenreCollapsed(!genreCollapsedSaved), [setGenreCollapsed, genreCollapsedSaved]);
+  const showGenreIconsNow = useCallback(() => setGenreCollapsed(true), [setGenreCollapsed]);
+  const showGenreIcons = layout.genreCanCollapse ? showGenreIconsNow : undefined;
   const navItems: { href: string; label: string; icon: NavIconName; active: boolean; count?: number }[] = [
     { href: "#/", label: "アバター", icon: "avatars", active: route.page === "avatars" || route.page === "avatar", count: stats?.ownedAvatars ?? 0 },
     { href: "#/assets", label: "アセット", icon: "assets", active: route.page === "assets" },
@@ -357,7 +366,7 @@ export default function App() {
       <main className={`content ${density}`}>
         {route.page === "avatars" && <AvatarsPage />}
         {route.page === "avatar" && route.id && (
-          <AvatarDetailPage id={route.id} fileBoothId={route.fileBoothId} />
+          <AvatarDetailPage id={route.id} fileBoothId={route.fileBoothId} genre={route.genre} />
         )}
         {route.page === "assets" && <AssetsPage />}
         {route.page === "worlds" && <WorldsPage />}
@@ -388,6 +397,24 @@ export default function App() {
       </div>
       {routeContent}
     </div>
+  );
+
+  // Open, the genre column can be dragged wider; closed, it keeps its icon width.
+  const genreSeparator = !layout.genreVisible ? null : layout.genreCollapsed ? (
+    <div className="resize-separator rail-fixed-separator" aria-hidden="true" />
+  ) : (
+    <ResizeSeparator
+      label="ジャンル列の幅"
+      value={layout.genreWidth}
+      min={UI_GENRE_WIDTH.min}
+      max={UI_GENRE_WIDTH.max}
+      onChange={layout.setGenreWidth}
+      onCommit={layout.persistGenre}
+      onReset={() => {
+        layout.setGenreWidth(UI_GENRE_WIDTH.default);
+        layout.persistGenre(UI_GENRE_WIDTH.default);
+      }}
+    />
   );
 
   const openAppUpdateSettings = useCallback(() => openSettingsSection("settings-app-update"), []);
@@ -548,26 +575,27 @@ export default function App() {
             focus={route.focus ?? null}
             basePath={browseBase}
             genreBar={layout.genreBar}
+            showGenreIcons={showGenreIcons}
           >
             {layout.genreVisible && (
-              <GenreColumn />
+              <GenreColumn collapsed={layout.genreCollapsed} onToggle={toggleGenre} />
             )}
-            {layout.genreVisible && (
-              <ResizeSeparator
-                label="ジャンル列の幅"
-                value={layout.genreWidth}
-                min={UI_GENRE_WIDTH.min}
-                max={UI_GENRE_WIDTH.max}
-                onChange={layout.setGenreWidth}
-                onCommit={layout.persistGenre}
-                onReset={() => {
-                  layout.setGenreWidth(UI_GENRE_WIDTH.default);
-                  layout.persistGenre(UI_GENRE_WIDTH.default);
-                }}
-              />
-            )}
+            {genreSeparator}
             {mainPane}
           </GenreBrowseProvider>
+        ) : avatarGenreId ? (
+          <AvatarGenreProvider
+            avatarId={avatarGenreId}
+            genre={route.genre ?? null}
+            genreBar={layout.genreBar}
+            showGenreIcons={showGenreIcons}
+          >
+            {layout.genreVisible && (
+              <AvatarGenreColumn collapsed={layout.genreCollapsed} onToggle={toggleGenre} />
+            )}
+            {genreSeparator}
+            {mainPane}
+          </AvatarGenreProvider>
         ) : (
           mainPane
         )}

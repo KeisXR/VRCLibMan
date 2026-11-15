@@ -27,6 +27,8 @@ interface GenreBrowseContextValue {
   error: string | null;
   /** The genre column does not fit; the page shows the genre chip bar. */
   genreBar: boolean;
+  /** Set when the chip bar can switch to the icon-only column. */
+  showGenreIcons?: () => void;
   reload: () => void;
   draggingId: string | null;
   setDraggingId: (id: string | null) => void;
@@ -41,6 +43,7 @@ export function GenreBrowseProvider({
   focus = null,
   basePath,
   genreBar,
+  showGenreIcons,
   children,
 }: {
   kind: GenreKind;
@@ -48,6 +51,7 @@ export function GenreBrowseProvider({
   focus?: string | null;
   basePath: string;
   genreBar: boolean;
+  showGenreIcons?: () => void;
   children: React.ReactNode;
 }) {
   const { revision } = useShell();
@@ -99,12 +103,13 @@ export function GenreBrowseProvider({
       loading,
       error,
       genreBar,
+      showGenreIcons,
       reload: () => setAttempt((value) => value + 1),
       draggingId,
       setDraggingId,
       moveProduct,
     }),
-    [kind, basePath, genre, selected, focus, data, dataGenre, dataKey, loading, error, genreBar, draggingId, moveProduct],
+    [kind, basePath, genre, selected, focus, data, dataGenre, dataKey, loading, error, genreBar, showGenreIcons, draggingId, moveProduct],
   );
 
   return <GenreBrowseContext.Provider value={value}>{children}</GenreBrowseContext.Provider>;

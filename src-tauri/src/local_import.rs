@@ -394,6 +394,7 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
                         ui_rail_width: settings.ui_rail_width,
                         ui_rail_collapsed: settings.ui_rail_collapsed,
                         ui_genre_width: settings.ui_genre_width,
+                        ui_genre_collapsed: settings.ui_genre_collapsed,
                         preview_pane: settings.preview_pane,
                         preview_pane_width: settings.preview_pane_width,
                         avatar_hero: crate::model::DEFAULT_AVATAR_HERO.into(),

@@ -4,6 +4,29 @@ import { GENRE_FREE, GENRE_LABEL, GENRE_UNSET, genresForKind } from "../types";
 import type { GenreKind } from "../types";
 import { useGenreBrowse } from "../genreBrowseContext";
 import { genreHref } from "../genreBrowseUtils";
+import { useAvatarGenre } from "../avatarGenreContext";
+import { AVATAR_GENRES, avatarGenreHref } from "../avatarGenre";
+import { GenreIcon, GenreToggleIcon } from "./genreIcons";
+
+/** One choice of the genre column or the chip bar. */
+export interface GenreEntry {
+  key: string;
+  href?: string;
+  label: string;
+  /** Icon name (genreIcons.tsx). The chip bar shows no icons. */
+  icon?: string;
+  count?: number;
+  active?: boolean;
+  /** Dropping a product card here moves it to this genre. */
+  dropGenre?: string | null;
+  onDropId?: (boothId: string) => void;
+}
+
+/** Choices shown only while a product card is dragged: the genres of the other kind. */
+export interface GenreOtherGroup {
+  label: string;
+  entries: GenreEntry[];
+}
 
 function dropProps(
   genre: string | null,
@@ -31,6 +54,7 @@ function dropProps(
 export function GenreTarget({
   href,
   label,
+  icon,
   count,
   active,
   dropGenre,
@@ -38,18 +62,15 @@ export function GenreTarget({
   labelClassName = "genre-link-label",
   countClassName = "genre-link-count",
   showCount = true,
+  compact = false,
   onDropId,
-}: {
-  href?: string;
-  label: string;
-  count?: number;
-  active?: boolean;
-  dropGenre?: string | null;
+}: Omit<GenreEntry, "key"> & {
   className?: string;
   labelClassName?: string;
   countClassName?: string;
   showCount?: boolean;
-  onDropId: (boothId: string) => void;
+  /** Icon only: the name and count stay in the link for screen readers and show as a tooltip. */
+  compact?: boolean;
 }) {
   const [over, setOver] = useState(false);
   const classes = [className];
@@ -57,97 +78,70 @@ export function GenreTarget({
   if (count === 0) classes.push("genre-link-zero");
   if (over) classes.push("drag-over");
   const classText = classes.filter(Boolean).join(" ");
-  const handlers = dropProps(dropGenre ?? null, setOver, onDropId);
+  const handlers = dropProps(dropGenre ?? null, setOver, onDropId ?? (() => undefined));
+  const tooltip = compact ? (count === undefined ? label : `${label}（${count}）`) : undefined;
   const body = (
     <>
-      <span className={labelClassName} title={label}>{label}</span>
+      {icon && <GenreIcon name={icon} />}
+      <span className={labelClassName} title={compact ? undefined : label}>{label}</span>
       {showCount && count !== undefined && <span className={countClassName}>{count}</span>}
     </>
   );
   if (!href) {
     return (
-      <button type="button" className={classText} {...handlers}>
+      <button type="button" className={classText} title={tooltip} {...handlers}>
         {body}
       </button>
     );
   }
   return (
-    <a className={classText} href={href} aria-current={active ? "page" : undefined} {...handlers}>
+    <a className={classText} href={href} title={tooltip} aria-current={active ? "page" : undefined} {...handlers}>
       {body}
     </a>
   );
 }
 
-function otherKind(kind: GenreKind): GenreKind {
-  return kind === "world" ? "asset" : "world";
-}
-
-export function GenreColumn() {
-  const { kind, basePath, selected, data, draggingId, setDraggingId, moveProduct } = useGenreBrowse();
-  const genres = genresForKind(kind);
-  const unsetCount = data?.counts[GENRE_UNSET] ?? 0;
-  const showUnset = unsetCount > 0 || selected === GENRE_UNSET;
-  const across = otherKind(kind);
-  const drop = (targetKind: GenreKind, genre: string) => (boothId: string) => {
-    setDraggingId(null);
-    void moveProduct(boothId, targetKind, genre);
-  };
-
+/**
+ * The genre column beside the list. Closed, it is a narrow column of icons, like the closed
+ * left sidebar; the toggle in its head opens and closes it (saved as `ui_genre_collapsed`).
+ */
+export function GenreRail({
+  entries,
+  other,
+  collapsed,
+  onToggle,
+}: {
+  entries: GenreEntry[];
+  other?: GenreOtherGroup | null;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  const toggleLabel = collapsed ? "ジャンル列を開く" : "ジャンル列を閉じる";
   return (
-    <aside className="genre-rail" aria-label="ジャンル">
+    <aside className={collapsed ? "genre-rail collapsed" : "genre-rail"} aria-label="ジャンル" data-collapsed={collapsed ? "true" : "false"}>
       <header className="genre-rail-head">
         <h2>ジャンル</h2>
+        <button
+          type="button"
+          className="genre-rail-toggle"
+          aria-expanded={!collapsed}
+          aria-controls="genre-rail-nav"
+          aria-label={toggleLabel}
+          title={toggleLabel}
+          onClick={onToggle}
+        >
+          <GenreToggleIcon collapsed={collapsed} />
+        </button>
       </header>
-      <nav className="genre-rail-nav">
-        <GenreTarget
-          href={genreHref(basePath, null)}
-          label="すべて"
-          count={data?.total}
-          active={selected === null}
-          className="genre-link"
-          onDropId={() => undefined}
-        />
-        {genres.map((value) => (
-          <GenreTarget
-            key={value}
-            href={genreHref(basePath, value)}
-            label={GENRE_LABEL[value] ?? value}
-            count={data ? data.counts[value] ?? 0 : undefined}
-            active={selected === value}
-            dropGenre={value}
-            className="genre-link"
-            onDropId={drop(kind, value)}
-          />
+      <nav id="genre-rail-nav" className="genre-rail-nav">
+        {entries.map(({ key, ...entry }) => (
+          <GenreTarget key={key} {...entry} className="genre-link" compact={collapsed} />
         ))}
-        <GenreTarget
-          href={genreHref(basePath, GENRE_FREE)}
-          label={GENRE_LABEL[GENRE_FREE]}
-          count={data ? data.counts[GENRE_FREE] ?? 0 : undefined}
-          active={selected === GENRE_FREE}
-          className="genre-link"
-          onDropId={() => undefined}
-        />
-        {showUnset && (
-          <GenreTarget
-            href={genreHref(basePath, GENRE_UNSET)}
-            label={GENRE_LABEL[GENRE_UNSET]}
-            count={data ? unsetCount : undefined}
-            active={selected === GENRE_UNSET}
-            className="genre-link"
-            onDropId={() => undefined}
-          />
-        )}
-        {draggingId && (
+        {other && (
           <div className="genre-rail-other">
-            <p className="genre-rail-kicker">{across === "world" ? "ワールド" : "アセット"}</p>
-            {genresForKind(across).map((value) => (
-              <GenreTarget
-                key={value}
-                label={GENRE_LABEL[value] ?? value}
-                dropGenre={value}
-                className="genre-link"
-                onDropId={drop(across, value)}
-              />
+            <p className="genre-rail-kicker">{other.label}</p>
+            {other.entries.map(({ key, ...entry }) => (
+              <GenreTarget key={key} {...entry} className="genre-link" compact={collapsed} />
             ))}
           </div>
         )}
@@ -155,3 +149,108 @@ export function GenreColumn() {
     </aside>
   );
 }
+
+function otherKind(kind: GenreKind): GenreKind {
+  return kind === "world" ? "asset" : "world";
+}
+
+/** The asset or world genres with their counts and drop targets, shared by the column and the chip bar. */
+export function useBrowseGenreEntries(): { entries: GenreEntry[]; other: GenreOtherGroup | null; activeKey: string } {
+  const { kind, basePath, selected, data, draggingId, setDraggingId, moveProduct } = useGenreBrowse();
+  const unsetCount = data?.counts[GENRE_UNSET] ?? 0;
+  const across = otherKind(kind);
+  const drop = (targetKind: GenreKind, genre: string) => (boothId: string) => {
+    setDraggingId(null);
+    void moveProduct(boothId, targetKind, genre);
+  };
+  const entries: GenreEntry[] = [
+    { key: "", href: genreHref(basePath, null), label: "すべて", icon: "all", count: data?.total, active: selected === null },
+    ...genresForKind(kind).map((value) => ({
+      key: value,
+      href: genreHref(basePath, value),
+      label: GENRE_LABEL[value] ?? value,
+      icon: value,
+      count: data ? data.counts[value] ?? 0 : undefined,
+      active: selected === value,
+      dropGenre: value,
+      onDropId: drop(kind, value),
+    })),
+    {
+      key: GENRE_FREE,
+      href: genreHref(basePath, GENRE_FREE),
+      label: GENRE_LABEL[GENRE_FREE],
+      icon: GENRE_FREE,
+      count: data ? data.counts[GENRE_FREE] ?? 0 : undefined,
+      active: selected === GENRE_FREE,
+    },
+  ];
+  if (unsetCount > 0 || selected === GENRE_UNSET) {
+    entries.push({
+      key: GENRE_UNSET,
+      href: genreHref(basePath, GENRE_UNSET),
+      label: GENRE_LABEL[GENRE_UNSET],
+      icon: GENRE_UNSET,
+      count: data ? unsetCount : undefined,
+      active: selected === GENRE_UNSET,
+    });
+  }
+  const other = draggingId
+    ? {
+        label: across === "world" ? "ワールド" : "アセット",
+        entries: genresForKind(across).map((value) => ({
+          key: `${across}-${value}`,
+          label: GENRE_LABEL[value] ?? value,
+          icon: value,
+          dropGenre: value,
+          onDropId: drop(across, value),
+        })),
+      }
+    : null;
+  return { entries, other, activeKey: selected ?? "" };
+}
+
+/**
+ * The genres of one avatar's items (avatarGenre.ts). Counts come from the avatar detail page
+ * once it has loaded; there are no drop targets and no "free" choice.
+ */
+export function useAvatarGenreEntries(): { entries: GenreEntry[]; other: null; activeKey: string } {
+  const avatar = useAvatarGenre();
+  if (!avatar) return { entries: [], other: null, activeKey: "" };
+  const { avatarId, selected, counts } = avatar;
+  const unsetCount = counts?.counts[GENRE_UNSET] ?? 0;
+  const entries: GenreEntry[] = [
+    { key: "", href: avatarGenreHref(avatarId, null), label: "すべて", icon: "all", count: counts?.total, active: selected === null },
+    ...AVATAR_GENRES.map((value) => ({
+      key: value,
+      href: avatarGenreHref(avatarId, value),
+      label: GENRE_LABEL[value] ?? value,
+      icon: value,
+      count: counts ? counts.counts[value] ?? 0 : undefined,
+      active: selected === value,
+    })),
+  ];
+  if (unsetCount > 0 || selected === GENRE_UNSET) {
+    entries.push({
+      key: GENRE_UNSET,
+      href: avatarGenreHref(avatarId, GENRE_UNSET),
+      label: GENRE_LABEL[GENRE_UNSET],
+      icon: GENRE_UNSET,
+      count: counts ? unsetCount : undefined,
+      active: selected === GENRE_UNSET,
+    });
+  }
+  return { entries, other: null, activeKey: selected ?? "" };
+}
+
+/** The asset or world genre column. */
+export function GenreColumn({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+  const { entries, other } = useBrowseGenreEntries();
+  return <GenreRail entries={entries} other={other} collapsed={collapsed} onToggle={onToggle} />;
+}
+
+/** The genre column of the avatar detail page. */
+export function AvatarGenreColumn({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+  const { entries } = useAvatarGenreEntries();
+  return <GenreRail entries={entries} collapsed={collapsed} onToggle={onToggle} />;
+}
+

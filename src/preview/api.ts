@@ -175,6 +175,7 @@ const store: Store = {
     uiRailWidth: 232,
     uiRailCollapsed: false,
     uiGenreWidth: 200,
+    uiGenreCollapsed: false,
     previewPane: false,
     previewPaneWidth: 300,
     avatarHero: "small",
