@@ -10,6 +10,24 @@ export function CloseGlyph() {
   );
 }
 
+/** できる（読み込み方の比較表）。 */
+export function CheckGlyph() {
+  return (
+    <svg className="glyph" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+      <path d="M2.5 7.5 5.5 10.5 11.5 3.5" />
+    </svg>
+  );
+}
+
+/** できない（読み込み方の比較表）。閉じるボタンの × と同じ形を、表の文字の高さに合わせる。 */
+export function CrossGlyph() {
+  return (
+    <svg className="glyph" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+      <path d="M3 3 9 9M9 3 3 9" />
+    </svg>
+  );
+}
+
 export function PlusGlyph() {
   return (
     <svg className="glyph" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">

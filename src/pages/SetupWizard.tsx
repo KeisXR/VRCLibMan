@@ -469,7 +469,7 @@ export function SetupWizard({
         </>}
         {step === "extension" && (
           <>
-            <p>商品情報の取得方法を選びます。「アプリの内蔵ブラウザ」なら、拡張機能のインストールは不要です。</p>
+            <p>BOOTH の商品情報をアプリへ読み込む方法を選びます。「読み込み方を選ぶ」で、内蔵ブラウザと拡張機能のできることを比べられます。</p>
             <BoothImportSettings requireChoice onChange={(mode) => { setBrowserEnabled(mode !== "extension"); onRefresh(); }} onFail={setMessage} onReady={setImportReady} navigateBrowser={() => guide("library")} />
             {message && <p className="note-strong" role="alert">{message}</p>}
             <div className="row-actions setup-actions">

@@ -324,7 +324,7 @@ export function SettingsPage() {
           <AssetUpdates />
 
           <section className="settings-section" id="settings-booth">
-            <header><h2>BOOTH の読み込み方</h2><p>拡張機能・内蔵ブラウザ・併用を選びます。</p></header>
+            <header><h2>BOOTH の読み込み方</h2><p>BOOTH の商品情報をアプリへ読み込む方法です。「変更」で、できることを比べて選び直せます。</p></header>
             <div className="section-body"><BoothImportSettings onFail={fail} onChange={() => refresh()} pairingId="settings-extension-pairing" /></div>
             {settings.builtinBrowser && <BuiltinBrowserAccessSettings />}
             {settings.builtinBrowser && (

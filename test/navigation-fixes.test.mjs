@@ -53,12 +53,23 @@ test("settings use the words people look for, and the old names still find them"
 });
 
 test("the built-in browser comes first and is confirmed in the app, not with an OS dialog", async () => {
-  await withModules(["/src/components/BoothImportSettings.tsx"], ({ BUILTIN_BROWSER_CONFIRM }) => {
+  await withModules(["/src/importMethods.ts"], ({ BUILTIN_BROWSER_CONFIRM, IMPORT_METHODS, IMPORT_COMPARISON, switchNotes }) => {
     assert.deepEqual(BUILTIN_BROWSER_CONFIRM.map((group) => group.title), ["保存するもの", "使う場面", "しないこと", "注意"]);
+    assert.deepEqual(IMPORT_METHODS.map((method) => method.mode), ["browser", "extension", "both"], "the recommended choice is first");
+    for (const row of IMPORT_COMPARISON.flatMap((group) => group.rows)) {
+      for (const mode of ["browser", "extension", "both"]) assert.equal(typeof row[mode].can, "boolean", row.label);
+    }
+    const titles = (from, to) => switchNotes(from, to).map((group) => group.title);
+    // 内蔵ブラウザを使い始めるときだけ確認を出す。初回セットアップ（null）も、保存値の拡張機能からと同じ。
+    assert.deepEqual(titles(null, "browser"), ["保存するもの", "使う場面", "しないこと", "注意"]);
+    assert.deepEqual(titles(null, "extension"), ["このあとすること"]);
+    assert.deepEqual(titles("extension", "both"), ["保存するもの", "使う場面", "しないこと", "注意"]);
+    assert.deepEqual(titles("browser", "both"), ["このあとすること"]);
+    assert.deepEqual(titles("both", "extension"), ["内蔵ブラウザについて"]);
+    assert.deepEqual(titles("both", "browser"), ["拡張機能について"]);
   });
-  const source = readFileSync("src/components/BoothImportSettings.tsx", "utf8");
-  assert.doesNotMatch(source, /window\.confirm\(BUILTIN_BROWSER_CONFIRM\)/);
-  assert.ok(source.indexOf('"browser",\n              "アプリの内蔵ブラウザ"') < source.indexOf('"extension",\n              "Chrome / Edge の拡張機能"'), "the recommended choice is first");
+  const source = readFileSync("src/components/ImportMethodWizard.tsx", "utf8");
+  assert.doesNotMatch(source, /window\.confirm/);
 });
 
 test("the import screen keeps product management on its own and shows the pairing code", () => {
