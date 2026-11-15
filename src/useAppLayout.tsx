@@ -26,6 +26,8 @@ export function useAppLayout(browseGenre: boolean, panel: PanelLayoutInput = { o
   const [railCollapsed, setRailCollapsedState] = useState(false);
   const railToggled = useRef(false);
   const [genreWidth, setGenreWidth] = useState(UI_GENRE_WIDTH.default);
+  const [genreCollapsed, setGenreCollapsedState] = useState(false);
+  const genreToggled = useRef(false);
   const [windowWidth, setWindowWidth] = useState(currentWindowWidth);
   // Set only by the toggle, so window resizes, separator drags and the first load never animate.
   const [railMotion, setRailMotion] = useState<RailMotion>("none");
@@ -37,6 +39,7 @@ export function useAppLayout(browseGenre: boolean, panel: PanelLayoutInput = { o
       setRailWidth(clampRailWidth(settings.uiRailWidth));
       if (!railToggled.current) setRailCollapsedState(settings.uiRailCollapsed === true);
       setGenreWidth(clampGenreWidth(settings.uiGenreWidth));
+      if (!genreToggled.current) setGenreCollapsedState(settings.uiGenreCollapsed === true);
     });
   }, []);
 
@@ -54,12 +57,13 @@ export function useAppLayout(browseGenre: boolean, panel: PanelLayoutInput = { o
       railWidth,
       railCollapsed,
       genreWidth,
+      genreCollapsed,
       browseGenre,
       panelOpen: panel.open && panel.floating !== true,
       panelMaximized: panel.maximized,
       panelStoredWidth: panel.width,
     }),
-    [windowWidth, railWidth, railCollapsed, genreWidth, browseGenre, panel.open, panel.floating, panel.maximized, panel.width],
+    [windowWidth, railWidth, railCollapsed, genreWidth, genreCollapsed, browseGenre, panel.open, panel.floating, panel.maximized, panel.width],
   );
   const layout = useMemo(() => computeAppLayout(layoutInput), [layoutInput]);
   const layoutInputRef = useRef(layoutInput);
@@ -71,19 +75,30 @@ export function useAppLayout(browseGenre: boolean, panel: PanelLayoutInput = { o
     void api.updateSettings({ uiRailWidth: next });
   }, []);
 
-  // The width slides on every toggle. With the right panel open the docked page (a native view)
-  // follows the viewport; if the toggle would also move or resize the panel itself, the page is
-  // hidden for the motion instead ("hold").
-  const setRailCollapsed = useCallback((next: boolean) => {
-    railToggled.current = true;
+  // The width slides on every toggle of the sidebar or the genre column. With the right panel
+  // open the docked page (a native view) follows the viewport; if the toggle would also move or
+  // resize the panel itself, the page is hidden for the motion instead ("hold").
+  const startToggleMotion = useCallback((change: Partial<AppLayoutInput>) => {
     const input = layoutInputRef.current;
-    const hold = railMotionHoldsPanel(computeAppLayout(input), computeAppLayout({ ...input, railCollapsed: next }));
+    const hold = railMotionHoldsPanel(computeAppLayout(input), computeAppLayout({ ...input, ...change }));
     setRailMotion(hold ? "hold" : "slide");
     if (railMotionTimer.current) clearTimeout(railMotionTimer.current);
     railMotionTimer.current = setTimeout(() => setRailMotion("none"), RAIL_MOTION_HOLD_MS);
+  }, []);
+
+  const setRailCollapsed = useCallback((next: boolean) => {
+    railToggled.current = true;
+    startToggleMotion({ railCollapsed: next });
     setRailCollapsedState(next);
     void api.updateSettings({ uiRailCollapsed: next }).catch(() => undefined);
-  }, []);
+  }, [startToggleMotion]);
+
+  const setGenreCollapsed = useCallback((next: boolean) => {
+    genreToggled.current = true;
+    startToggleMotion({ genreCollapsed: next });
+    setGenreCollapsedState(next);
+    void api.updateSettings({ uiGenreCollapsed: next }).catch(() => undefined);
+  }, [startToggleMotion]);
 
   const persistGenre = useCallback((value: number) => {
     const next = clampGenreWidth(value);
@@ -116,7 +131,13 @@ export function useAppLayout(browseGenre: boolean, panel: PanelLayoutInput = { o
     setRailCollapsed,
     genreWidth: layout.genre,
     genreVisible,
+    /** The genre column shows icons only. */
+    genreCollapsed: layout.genreCollapsed,
+    /** The saved state; the toggle flips this one. */
+    genreCollapsedSaved: genreCollapsed,
+    setGenreCollapsed,
     genreBar: layout.genreBar,
+    genreCanCollapse: layout.genreCanCollapse,
     narrow: layout.narrow,
     panelDocked,
     panelMaximized,

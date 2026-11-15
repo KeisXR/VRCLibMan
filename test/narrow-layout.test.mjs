@@ -174,6 +174,24 @@ test("narrow window layout in Chromium", { timeout: 120000, skip: chromePath ? f
       await waitFor("document.querySelector('.genre-chip-bar .chip-bar-item.active')?.getAttribute('aria-current') === 'page' && location.hash !== '#/assets'", "chip route");
     });
 
+    await t.test("700px: the chip bar switches to the icon-only genre column, and its toggle switches back", async () => {
+      const savedGenreCollapsed = () => evaluate(`(async () => { const { api } = await import("/src/api.ts"); return (await api.settings()).uiGenreCollapsed; })()`);
+      // 60 + 6 + 52 + 6 leaves the list 576px, so the bar offers the icon column.
+      await evaluate("document.querySelector('.genre-chip-bar .chip-bar-icon').click()");
+      await waitFor("!!document.querySelector('.genre-rail.collapsed') && !document.querySelector('.genre-chip-bar')", "icon column");
+      const s = await state();
+      assert.equal(s.columns, 5, "rail | sep | genre icons | sep | list");
+      assert.equal(await evaluate("Math.round(document.querySelector('.genre-rail').getBoundingClientRect().width)"), 52);
+      assert.equal(await evaluate("document.querySelector('.genre-rail .genre-link.active')?.getAttribute('aria-current')"), "page", "the picked genre stays current");
+      assert.equal(await evaluate("[...document.querySelectorAll('.genre-rail .genre-link')].every((link) => !!link.querySelector('svg') && !!link.title)"), true, "every genre shows an icon and names itself in a tooltip");
+      assert.equal(await savedGenreCollapsed(), true);
+      await shot("pr1-700-genre-icons");
+      // Opening the column again does not fit at 700px, so the chip bar comes back.
+      await evaluate("document.querySelector('.genre-rail-toggle').click()");
+      await waitFor("!document.querySelector('.genre-rail') && !!document.querySelector('.genre-chip-bar .chip-bar-icon')", "chip bar again");
+      assert.equal(await savedGenreCollapsed(), false);
+    });
+
     await t.test("700px: the right panel floats, moves by its tab strip and resizes from its edge", async () => {
       await page("Page.navigate", { url: `${baseUrl}/?browser=1#/assets` });
       await waitFor("document.querySelectorAll('.genre-browser .item').length > 0 && !!document.querySelector('.right-panel-launcher')", "list again", 30000);

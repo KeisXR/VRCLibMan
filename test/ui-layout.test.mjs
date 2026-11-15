@@ -107,3 +107,84 @@ test("app layout: icon rail at 860px or less, genre column only while the list k
     await server.close();
   }
 });
+
+test("genre column: closed it keeps a fixed icon width, and the chip bar offers it when only that fits", async () => {
+  const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  try {
+    const { computeAppLayout, fitBrowseWidths, UI_GENRE_COLLAPSED_WIDTH, UI_RAIL_COLLAPSED_WIDTH } = await server.ssrLoadModule("/src/uiLayout.ts");
+    assert.equal(UI_GENRE_COLLAPSED_WIDTH, 52);
+    const base = { railWidth: 232, railCollapsed: false, genreWidth: 240, genreCollapsed: true, browseGenre: true, panelOpen: false, panelMaximized: false, panelStoredWidth: 420 };
+    const at = (windowWidth, extra = {}) => computeAppLayout({ ...base, windowWidth, ...extra });
+    const pick = ({ rail, genre, genreVisible, genreCollapsed, genreBar, genreCanCollapse, listWidth }) => ({ rail, genre, genreVisible, genreCollapsed, genreBar, genreCanCollapse, listWidth });
+
+    // The saved width is ignored while closed and kept for when it opens again.
+    assert.deepEqual(pick(at(1100)), { rail: 232, genre: 52, genreVisible: true, genreCollapsed: true, genreBar: false, genreCanCollapse: false, listWidth: 804 });
+    assert.equal(at(1100, { genreCollapsed: false }).genre, 240);
+    // The open rail gives way first; the icon column does not shrink.
+    // 760 - 480 - 52 - 12 = 216 for the rail.
+    assert.deepEqual(fitBrowseWidths(760, 300, 240, true, false, true), { rail: 216, genre: 52 });
+    assert.deepEqual(fitBrowseWidths(760, 300, 240, true, true, true), { rail: UI_RAIL_COLLAPSED_WIDTH, genre: 52 });
+    // 700px: the open column would leave the list too little, the icon column fits.
+    assert.deepEqual(pick(at(700)), { rail: 60, genre: 52, genreVisible: true, genreCollapsed: true, genreBar: false, genreCanCollapse: false, listWidth: 576 });
+    assert.deepEqual(pick(at(700, { genreCollapsed: false })), { rail: 60, genre: 0, genreVisible: false, genreCollapsed: false, genreBar: true, genreCanCollapse: true, listWidth: 634 });
+    // 600px: neither fits; the chip bar has nothing to offer.
+    assert.deepEqual(pick(at(600)), { rail: 60, genre: 0, genreVisible: false, genreCollapsed: false, genreBar: true, genreCanCollapse: false, listWidth: 534 });
+    assert.equal(at(600, { genreCollapsed: false }).genreCanCollapse, false);
+    // Pages without genres never offer it.
+    assert.equal(at(700, { browseGenre: false, genreCollapsed: false }).genreCanCollapse, false);
+  } finally {
+    await server.close();
+  }
+});
+
+test("every genre, and all / free / unset, has its own icon", async () => {
+  const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  try {
+    const { ASSET_GENRES, WORLD_GENRES, GENRE_FREE, GENRE_UNSET } = await server.ssrLoadModule("/src/types.ts");
+    const { GENRE_ICON_NAMES } = await server.ssrLoadModule("/src/components/genreIcons.tsx");
+    for (const name of [...ASSET_GENRES, ...WORLD_GENRES, GENRE_FREE, GENRE_UNSET, "all"]) {
+      assert.ok(GENRE_ICON_NAMES.includes(name), name);
+    }
+  } finally {
+    await server.close();
+  }
+});
+
+test("avatar genres: counts each item once and narrows every list but the avatar body", async () => {
+  const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  try {
+    const { avatarGenreHref, countAvatarGenres, filterAvatarItems, selectedAvatarGenre } = await server.ssrLoadModule("/src/avatarGenre.ts");
+    const item = (boothId, genre) => ({ boothId, genre });
+    const detail = {
+      id: "lime",
+      ownedProducts: [item("1", null)],
+      sections: [
+        { category: "outfit", items: [item("10", "outfit"), item("11", "shoes_socks")] },
+        { category: "hair", items: [item("20", "hair")] },
+        // A product listed twice and one with a world genre.
+        { category: "other", items: [item("10", "outfit"), item("30", "furniture_props"), item("31", null)] },
+      ],
+      genericItems: [item("40", "shoes_socks")],
+      unsetEditionItems: [item("50", "outfit")],
+      unsupportedOutfits: [item("60", "hair")],
+    };
+    assert.deepEqual(countAvatarGenres(detail), { avatarId: "lime", counts: { outfit: 1, shoes_socks: 2, hair: 1, unset: 2 }, total: 6 });
+
+    const shoes = filterAvatarItems(detail, "shoes_socks");
+    assert.deepEqual(shoes.sections.map((section) => [section.category, section.items.map((row) => row.boothId)]), [["outfit", ["11"]]]);
+    assert.deepEqual(shoes.genericItems.map((row) => row.boothId), ["40"]);
+    assert.deepEqual(shoes.unsetEditionItems, []);
+    assert.deepEqual(shoes.unsupportedOutfits, []);
+    assert.deepEqual(filterAvatarItems(detail, "unset").sections.map((section) => section.items.map((row) => row.boothId)), [["30", "31"]]);
+    assert.equal(filterAvatarItems(detail, null), detail);
+
+    assert.equal(selectedAvatarGenre("hair"), "hair");
+    assert.equal(selectedAvatarGenre("unset"), "unset");
+    assert.equal(selectedAvatarGenre("skybox"), null, "world genres are not avatar genres");
+    assert.equal(selectedAvatarGenre("free"), null);
+    assert.equal(avatarGenreHref("ライム", null), "#/avatar/%E3%83%A9%E3%82%A4%E3%83%A0");
+    assert.equal(avatarGenreHref("lime", "head_ears_tail"), "#/avatar/lime/genre/head_ears_tail");
+  } finally {
+    await server.close();
+  }
+});

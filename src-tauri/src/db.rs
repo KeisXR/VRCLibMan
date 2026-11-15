@@ -469,6 +469,7 @@ fn ensure_ready(connection: &Connection) -> Result<u32, String> {
         ("ui_rail_width", "232"),
         ("ui_rail_collapsed", "0"),
         ("ui_genre_width", "200"),
+        ("ui_genre_collapsed", "0"),
         ("preview_pane", "0"),
         ("preview_pane_width", "300"),
         ("avatar_hero", crate::model::DEFAULT_AVATAR_HERO),
@@ -557,6 +558,7 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(200),
         ),
+        ui_genre_collapsed: setting(connection, "ui_genre_collapsed")?.as_deref() == Some("1"),
         preview_pane: setting(connection, "preview_pane")?.as_deref() == Some("1"),
         preview_pane_width: crate::model::clamp_preview_pane_width(
             setting(connection, "preview_pane_width")?
@@ -734,6 +736,11 @@ fn save_settings_values(
         connection,
         "avatar_hero",
         &crate::model::normalize_avatar_hero(&input.avatar_hero),
+    )?;
+    set_setting(
+        connection,
+        "ui_genre_collapsed",
+        if input.ui_genre_collapsed { "1" } else { "0" },
     )?;
     set_setting(
         connection,
@@ -8248,6 +8255,7 @@ mod tests {
                 ui_rail_width: 232,
                 ui_rail_collapsed: false,
                 ui_genre_width: 200,
+                ui_genre_collapsed: false,
                 preview_pane: false,
                 preview_pane_width: 300,
                 avatar_hero: crate::model::DEFAULT_AVATAR_HERO.into(),
@@ -8317,6 +8325,20 @@ mod tests {
         .unwrap();
         assert!(widened.ui_rail_collapsed);
         assert_eq!(widened.ui_rail_width, 300);
+        // The genre column's closed state is saved on its own and leaves the sidebar alone.
+        assert!(!widened.ui_genre_collapsed);
+        let genre_closed = update_settings(
+            &connection,
+            &crate::model::SettingsPatch {
+                ui_genre_collapsed: Some(true),
+                ..crate::model::SettingsPatch::default()
+            },
+        )
+        .unwrap();
+        assert!(genre_closed.ui_genre_collapsed);
+        assert!(genre_closed.ui_rail_collapsed);
+        assert_eq!(genre_closed.ui_genre_width, 200);
+        assert!(settings(&connection).unwrap().ui_genre_collapsed);
         connection
             .execute("DELETE FROM settings WHERE key = 'ui_rail_collapsed'", [])
             .unwrap();
@@ -8573,6 +8595,7 @@ mod tests {
                 ui_rail_width: 232,
                 ui_rail_collapsed: false,
                 ui_genre_width: 200,
+                ui_genre_collapsed: false,
                 preview_pane: false,
                 preview_pane_width: 300,
                 avatar_hero: crate::model::DEFAULT_AVATAR_HERO.into(),
@@ -10049,6 +10072,7 @@ mod tests {
                 ui_rail_width: 232,
                 ui_rail_collapsed: false,
                 ui_genre_width: 200,
+                ui_genre_collapsed: false,
                 preview_pane: false,
                 preview_pane_width: 300,
                 avatar_hero: crate::model::DEFAULT_AVATAR_HERO.into(),
@@ -10076,6 +10100,7 @@ mod tests {
                 ui_rail_width: 232,
                 ui_rail_collapsed: false,
                 ui_genre_width: 200,
+                ui_genre_collapsed: false,
                 preview_pane: false,
                 preview_pane_width: 300,
                 avatar_hero: crate::model::DEFAULT_AVATAR_HERO.into(),
@@ -10198,6 +10223,7 @@ mod tests {
                 ui_rail_width: 232,
                 ui_rail_collapsed: false,
                 ui_genre_width: 200,
+                ui_genre_collapsed: false,
                 preview_pane: false,
                 preview_pane_width: 300,
                 avatar_hero: crate::model::DEFAULT_AVATAR_HERO.into(),
@@ -10466,6 +10492,7 @@ mod tests {
             ui_rail_width: 232,
             ui_rail_collapsed: false,
             ui_genre_width: 200,
+            ui_genre_collapsed: false,
             preview_pane: false,
             preview_pane_width: 300,
             avatar_hero: crate::model::DEFAULT_AVATAR_HERO.into(),
@@ -10663,6 +10690,7 @@ mod tests {
                 ui_rail_width: 232,
                 ui_rail_collapsed: false,
                 ui_genre_width: 200,
+                ui_genre_collapsed: false,
                 preview_pane: false,
                 preview_pane_width: 300,
                 avatar_hero: crate::model::DEFAULT_AVATAR_HERO.into(),

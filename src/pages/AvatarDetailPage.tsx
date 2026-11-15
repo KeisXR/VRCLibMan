@@ -4,8 +4,11 @@ import { useShell } from "../App";
 import { downloadDetail, downloadKey, isDownloadActive, type DownloadEntry } from "../downloads";
 import { useDownloads } from "../useDownloads";
 import { filePresence, formatBytes } from "../media";
-import { CATEGORY_LABEL } from "../types";
+import { CATEGORY_LABEL, GENRE_LABEL } from "../types";
 import type { AvatarDetail, BoothFileStatus, DownloadView, ItemView, Knowledge, ProductOption } from "../types";
+import { avatarGenreHref, countAvatarGenres, filterAvatarItems, selectedAvatarGenre } from "../avatarGenre";
+import { useAvatarGenre } from "../avatarGenreContext";
+import { AvatarGenreChipBar } from "../components/GenreChipBar";
 import { FileMark, Thumb, errorText } from "../ui";
 import { AvatarHero } from "../components/AvatarHero";
 import { AvatarHeroMenu } from "../components/AvatarHeroMenu";
@@ -51,9 +54,11 @@ function formatAssetSummary(count: number, bytes: number): string {
   return `${count} ファイル`;
 }
 
-export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?: string }) {
+export function AvatarDetailPage({ id, fileBoothId, genre }: { id: string; fileBoothId?: string; genre?: string }) {
   const { revision, refresh, notify, fail } = useShell();
   const [detail, setDetail] = useState<AvatarDetail | null>(null);
+  // The route id the detail was loaded for. The previous avatar stays on screen while the next loads.
+  const [detailFor, setDetailFor] = useState<string | null>(null);
   const [knowledge, setKnowledge] = useState<Knowledge | null>(null);
   const [heroSize, setHeroSize] = useState<AvatarHeroSize>("small");
   const [intoId, setIntoId] = useState("");
@@ -62,7 +67,9 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
     let cancelled = false;
     api.avatar(id).then(
       (value) => {
-        if (!cancelled) setDetail(value);
+        if (cancelled) return;
+        setDetail(value);
+        setDetailFor(id);
       },
       (err: unknown) => {
         if (!cancelled) fail(errorText(err));
@@ -89,6 +96,27 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
     if (!detail || !fileBoothId) return;
     document.getElementById(`files-${fileBoothId}`)?.scrollIntoView({ block: "start" });
   }, [detail, fileBoothId]);
+
+  // The genre column (App) and the chip bar narrow the items to one asset genre.
+  const avatarGenre = useAvatarGenre();
+  const publishGenres = avatarGenre?.publish;
+  const selectedGenre = selectedAvatarGenre(genre);
+  useEffect(() => {
+    if (!publishGenres || !detail || detailFor !== id) return;
+    publishGenres({ ...countAvatarGenres(detail), avatarId: id });
+  }, [publishGenres, detail, detailFor, id]);
+  const shownLists = useMemo(() => (detail ? filterAvatarItems(detail, selectedGenre) : null), [detail, selectedGenre]);
+  // After a switch, bring the start of the narrowed list back into view if it is scrolled past.
+  const genreStartRef = useRef<HTMLDivElement>(null);
+  const lastGenre = useRef(selectedGenre);
+  useLayoutEffect(() => {
+    if (lastGenre.current === selectedGenre) return;
+    lastGenre.current = selectedGenre;
+    const start = genreStartRef.current;
+    const pane = start?.closest(".main");
+    if (!start || !pane) return;
+    if (start.getBoundingClientRect().top < pane.getBoundingClientRect().top) start.scrollIntoView?.({ block: "start" });
+  }, [selectedGenre]);
 
   const catalogItems = useMemo(() => {
     if (!detail) return [];
@@ -140,13 +168,17 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
 
   if (!detail) return <p className="meta">読み込み中</p>;
   const targets = (knowledge?.avatars ?? []).filter((avatar) => avatar.id !== detail.id);
+  const lists = shownLists ?? detail;
+  const genreLabel = selectedGenre ? GENRE_LABEL[selectedGenre] ?? selectedGenre : null;
+  const hasItems = detail.sections.length > 0 || detail.genericItems.length > 0;
+  const shownCount = lists.sections.reduce((sum, section) => sum + section.items.length, 0) + lists.genericItems.length;
 
   const subtitle = `${detail.owned ? "所持アバター" : "所持未登録"}${detail.baseBodyName ? ` ・ ${detail.baseBodyName}` : ""}`;
   const addAction = <AddAvatarItem avatarId={detail.id} linkedIds={linkedIds} />;
   const primaryOwned = detail.ownedProducts[0] ?? null;
   const backLink = <a className="button avatar-back-link" href="#/">アバター一覧へ</a>;
   const heroImage = avatarHeroSource(detail);
-  const itemCount = detail.sections.reduce((sum, section) => sum + section.items.length, 0) + detail.genericItems.length;
+  const itemCount = shownCount;
   // ヒーローと本体ファイルの下にある対応アイテムへ、1回で移る。ハッシュは画面の切り替えに使うので、スクロールだけにする。
   const jumpToItems = itemCount > 0 && (
     <button
@@ -214,8 +246,15 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
               ))}
             </div>
           )}
-          {detail.sections.map((section) => (
-            <div className="section" key={section.category} id={section === detail.sections[0] ? "avatar-items" : undefined}>
+          <div className="avatar-genre-items" ref={genreStartRef}>
+          {avatarGenre?.genreBar && <AvatarGenreChipBar />}
+          {genreLabel && shownCount > 0 && (
+            <p className="meta genre-result" role="status">
+              {genreLabel} {shownCount} 件
+            </p>
+          )}
+          {lists.sections.map((section) => (
+            <div className="section" key={section.category} id={section === lists.sections[0] ? "avatar-items" : undefined}>
               <h2>{CATEGORY_LABEL[section.category] ?? section.category}</h2>
               <div className="stack">
                 {section.items.map((item) => (
@@ -224,27 +263,34 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
               </div>
             </div>
           ))}
-          {detail.genericItems.length > 0 && (
-            <details className="generic" id={detail.sections.length === 0 ? "avatar-items" : undefined}>
-              <summary>汎用 {detail.genericItems.length} 件</summary>
+          {lists.genericItems.length > 0 && (
+            <details className="generic" id={lists.sections.length === 0 ? "avatar-items" : undefined}>
+              <summary>汎用 {lists.genericItems.length} 件</summary>
               <div className="stack">
-                {detail.genericItems.map((item) => (
+                {lists.genericItems.map((item) => (
                   <ItemCard key={item.boothId} {...itemCardProps(item)} />
                 ))}
               </div>
             </details>
           )}
-          {detail.sections.length === 0 && detail.genericItems.length === 0 && (
+          {!hasItems && (
             <p className="empty">このアバターに結び付いた衣装・髪・ギミックはまだありません。</p>
           )}
-          {(detail.unsetEditionItems?.length ?? 0) > 0 && <details className="generic-section">
-            <summary>対応版未設定 {detail.unsetEditionItems.length} 件</summary>
-            <p className="meta">{EDITION_UNSET_HINT}。このアバター向けを買っていれば、設定すると上の一覧に移ります。</p>
-            <div className="stack">{detail.unsetEditionItems.map(item => <ItemCard key={item.boothId} {...itemCardProps(item)} />)}</div>
-          </details>}
-          {detail.unsupportedOutfits.length > 0 && (
-            <UnsupportedOutfits key={detail.id} items={detail.unsupportedOutfits} itemCardProps={itemCardProps} />
+          {hasItems && genreLabel && shownCount === 0 && (
+            <div className="empty">
+              <p>「{genreLabel}」の対応アイテムはありません。</p>
+              <a href={avatarGenreHref(id, null)}>すべてのジャンルを表示</a>
+            </div>
           )}
+          {(lists.unsetEditionItems?.length ?? 0) > 0 && <details className="generic-section">
+            <summary>対応版未設定 {lists.unsetEditionItems.length} 件</summary>
+            <p className="meta">{EDITION_UNSET_HINT}。このアバター向けを買っていれば、設定すると上の一覧に移ります。</p>
+            <div className="stack">{lists.unsetEditionItems.map(item => <ItemCard key={item.boothId} {...itemCardProps(item)} />)}</div>
+          </details>}
+          {lists.unsupportedOutfits.length > 0 && (
+            <UnsupportedOutfits key={detail.id} items={lists.unsupportedOutfits} itemCardProps={itemCardProps} />
+          )}
+          </div>
         </div>
         {!detail.isBuiltin && (
           <details className="generic">
