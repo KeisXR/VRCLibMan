@@ -1406,8 +1406,8 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       await click(button("汎用ペンライト", panel));
       await wait(() => text().includes("アイテムを追加しました"));
       await wait(() => {
-        const section = [...main().querySelectorAll(".section")].find((node) => node.querySelector("h2")?.textContent === "ギミック");
-        return section?.textContent.includes("汎用ペンライト");
+        // The avatar's items are headed by genre.
+        return document.getElementById("genre-section-gimmick")?.textContent.includes("汎用ペンライト");
       });
       const card = [...main().querySelectorAll(".section .item")].find((node) => node.textContent.includes("汎用ペンライト"));
       assert.ok(card);
@@ -1434,9 +1434,7 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       await click(button("アイテムを追加"));
       await wait(() => button(title, document.querySelector(".avatar-add-panel")));
       await click(button(title, document.querySelector(".avatar-add-panel")));
-      await wait(() => [...main().querySelectorAll(".section")].some((section) =>
-        section.querySelector("h2")?.textContent === "髪" && section.textContent.includes(title),
-      ));
+      await wait(() => [...main().querySelectorAll(".genre-section")].some((section) => section.textContent.includes(title)));
       const hair = hairOf(await api.avatar("plum")).find((item) => item.boothId === "8800102");
       assert.equal(hair.viaBaseBody, false);
       assert.equal((await api.avatars()).find((avatar) => avatar.id === "plum").hairCount, 1);

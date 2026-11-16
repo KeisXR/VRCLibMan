@@ -150,10 +150,21 @@ test("every genre, and all / free / unset, has its own icon", async () => {
   }
 });
 
-test("avatar genres: counts each item once and narrows every list but the avatar body", async () => {
+test("avatar genre headings: split in the column's order, each item once", async () => {
   const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
   try {
-    const { avatarGenreHref, countAvatarGenres, filterAvatarItems, selectedAvatarGenre } = await server.ssrLoadModule("/src/avatarGenre.ts");
+    const { genreSectionId, groupGenreSections } = await server.ssrLoadModule("/src/genreSections.ts");
+    const { avatarGenreSections, countAvatarGenres } = await server.ssrLoadModule("/src/avatarGenre.ts");
+    const rows = [{ id: "a", genre: "hair" }, { id: "b", genre: "outfit" }, { id: "c", genre: "hair" }, { id: "d", genre: "mystery" }];
+    const split = groupGenreSections(rows, (row) => row.genre, ["outfit", "hair", "pose"]);
+    // The given order, the list's own order inside, empty genres left out, unknown keys last.
+    assert.deepEqual(split.map((section) => [section.key, section.items.map((row) => row.id), section.start]), [
+      ["outfit", ["b"], 0],
+      ["hair", ["a", "c"], 1],
+      ["mystery", ["d"], 3],
+    ]);
+    assert.equal(genreSectionId("hair"), "genre-section-hair");
+
     const item = (boothId, genre) => ({ boothId, genre });
     const detail = {
       id: "lime",
@@ -168,22 +179,15 @@ test("avatar genres: counts each item once and narrows every list but the avatar
       unsetEditionItems: [item("50", "outfit")],
       unsupportedOutfits: [item("60", "hair")],
     };
-    assert.deepEqual(countAvatarGenres(detail), { avatarId: "lime", counts: { outfit: 1, shoes_socks: 2, hair: 1, unset: 2 }, total: 6 });
-
-    const shoes = filterAvatarItems(detail, "shoes_socks");
-    assert.deepEqual(shoes.sections.map((section) => [section.category, section.items.map((row) => row.boothId)]), [["outfit", ["11"]]]);
-    assert.deepEqual(shoes.genericItems.map((row) => row.boothId), ["40"]);
-    assert.deepEqual(shoes.unsetEditionItems, []);
-    assert.deepEqual(shoes.unsupportedOutfits, []);
-    assert.deepEqual(filterAvatarItems(detail, "unset").sections.map((section) => section.items.map((row) => row.boothId)), [["30", "31"]]);
-    assert.equal(filterAvatarItems(detail, null), detail);
-
-    assert.equal(selectedAvatarGenre("hair"), "hair");
-    assert.equal(selectedAvatarGenre("unset"), "unset");
-    assert.equal(selectedAvatarGenre("skybox"), null, "world genres are not avatar genres");
-    assert.equal(selectedAvatarGenre("free"), null);
-    assert.equal(avatarGenreHref("ライム", null), "#/avatar/%E3%83%A9%E3%82%A4%E3%83%A0");
-    assert.equal(avatarGenreHref("lime", "head_ears_tail"), "#/avatar/lime/genre/head_ears_tail");
+    // The category blocks become genre headings; 汎用・対応版未設定・未対応 stay outside them.
+    const sections = avatarGenreSections(detail);
+    assert.deepEqual(sections.map((section) => [section.key, section.items.map((row) => row.boothId)]), [
+      ["outfit", ["10"]],
+      ["shoes_socks", ["11"]],
+      ["hair", ["20"]],
+      ["unset", ["30", "31"]],
+    ]);
+    assert.deepEqual(countAvatarGenres("lime", sections), { avatarId: "lime", counts: { outfit: 1, shoes_socks: 1, hair: 1, unset: 2 }, total: 5 });
   } finally {
     await server.close();
   }

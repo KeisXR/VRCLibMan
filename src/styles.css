@@ -315,9 +315,15 @@ a.drag-over {
 .app-shell[data-rail-motion] .genre-rail.collapsed :is(.genre-icon, .genre-rail-toggle) {
   animation: rail-icon-in var(--motion-fast) var(--ease-out) both;
 }
-/* アバター詳細の対応アイテム。ジャンルを切り替えたとき、上の固定バナーの下へ先頭を戻す */
+/* アバター詳細の対応アイテム。「対応アイテムへ」で、上の固定バナーの下へ先頭を出す */
 .avatar-genre-items { scroll-margin-top: var(--topbar-height, 8px); }
-.avatar-genre-items > .genre-result { margin-top: var(--space-4); }
+/* アバター詳細のジャンルの見出し。ジャンル列とチップ帯がここへスクロールする。
+   固定のバナー（と狭い窓のチップ帯）の下に見出しが来るよう scroll-margin-top を取る */
+.genre-section { scroll-margin-top: calc(var(--topbar-height, 8px) + var(--space-3)); }
+.avatar-genre-items:has(> .genre-chip-bar) .genre-section { scroll-margin-top: calc(var(--topbar-height, 8px) + 60px); }
+.genre-section-head { display: flex; align-items: center; gap: 8px; margin: 0 0 var(--space-2); font-size: 15px; font-weight: 650; }
+.genre-section-head .genre-icon { color: var(--text-secondary); }
+.genre-section-count { font-size: 12px; font-weight: 400; color: var(--faint); font-variant-numeric: tabular-nums; }
 .genre-browser {
   display: flex;
   flex-direction: column;
