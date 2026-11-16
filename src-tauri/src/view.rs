@@ -95,6 +95,9 @@ pub struct GenreProducts {
     pub items: Vec<ItemView>,
     pub counts: HashMap<String, u32>,
     pub total: u32,
+    /// The browse group of every listed item (booth id -> genre, `free` or `unset`), so the
+    /// page can head the whole list with genres in the same split as `counts`.
+    pub buckets: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -468,10 +471,15 @@ pub fn genre_products(
         })
         .cloned()
         .collect();
+    let listed = ids
+        .iter()
+        .filter_map(|id| buckets.get(id.as_str()).map(|key| (id.clone(), key.clone())))
+        .collect();
     GenreProducts {
         items: items_by_ids(snapshot, &lookup, &ids),
         counts,
         total,
+        buckets: listed,
     }
 }
 
@@ -1601,6 +1609,12 @@ mod tests {
         assert_eq!(everyone.total, 7);
         assert_eq!(everyone.items.len(), 7);
         assert!(everyone.items.iter().any(|item| item.booth_id == "30"));
+        // Every listed item names its group, split the same way as the counts.
+        assert_eq!(everyone.buckets.len(), 7);
+        for (key, count) in &everyone.counts {
+            assert_eq!(everyone.buckets.values().filter(|bucket| *bucket == key).count() as u32, *count, "{key}");
+        }
+        assert_eq!(everyone.buckets.get("30").map(String::as_str), Some(crate::genre::FREE));
 
         let worlds = genre_products(
             &snapshot,

@@ -156,7 +156,7 @@ test("narrow window layout in Chromium", { timeout: 120000, skip: chromePath ? f
       assert.ok(s.chipBar && !s.oldPicker, JSON.stringify(s));
       assert.equal(s.columns, 3, "rail | sep | list");
       assert.ok(s.chips >= 5);
-      assert.equal(s.activeChip, "すべて");
+      assert.equal(s.activeChip, "衣装", "at the top, the first heading is current");
       assert.match(s.chipCount ?? "", /^\d+$/);
       await shot("pr1-700");
       const overflow = await evaluate("getComputedStyle(document.querySelector('.chip-bar-track')).overflowX");
@@ -169,9 +169,11 @@ test("narrow window layout in Chromium", { timeout: 120000, skip: chromePath ? f
       assert.ok(Math.abs(top - topbar) <= 1, `chip bar top ${top}, banner bottom ${topbar}`);
       await shot("pr1-700-scrolled");
       await evaluate("document.querySelector('.main').scrollTop = 0");
-      // Picking a genre in the bar routes like the column and marks it current.
-      await evaluate("document.querySelectorAll('.genre-chip-bar .chip-bar-item')[1].click()");
-      await waitFor("document.querySelector('.genre-chip-bar .chip-bar-item.active')?.getAttribute('aria-current') === 'page' && location.hash !== '#/assets'", "chip route");
+      // Picking a genre in the bar scrolls its heading just below the bar, like the column, and marks it current.
+      await evaluate("[...document.querySelectorAll('.genre-chip-bar .chip-bar-item')].find((node) => node.textContent.startsWith('ギミック')).click()");
+      await waitFor("document.querySelector('.genre-chip-bar .chip-bar-item.active')?.getAttribute('aria-current') === 'location' && document.querySelector('.genre-chip-bar .chip-bar-item.active .chip-bar-label')?.textContent === 'ギミック'", "chip current");
+      await waitFor("(() => { const head = document.getElementById('genre-section-gimmick').getBoundingClientRect().top; const bar = document.querySelector('.genre-chip-bar').getBoundingClientRect().bottom; return head >= bar - 1 && head - bar < 40; })()", "heading below the bar", 4000);
+      assert.equal(await evaluate("location.hash"), "#/assets", "the route stays on the list");
     });
 
     await t.test("700px: the chip bar switches to the icon-only genre column, and its toggle switches back", async () => {
@@ -182,7 +184,7 @@ test("narrow window layout in Chromium", { timeout: 120000, skip: chromePath ? f
       const s = await state();
       assert.equal(s.columns, 5, "rail | sep | genre icons | sep | list");
       assert.equal(await evaluate("Math.round(document.querySelector('.genre-rail').getBoundingClientRect().width)"), 52);
-      assert.equal(await evaluate("document.querySelector('.genre-rail .genre-link.active')?.getAttribute('aria-current')"), "page", "the picked genre stays current");
+      assert.equal(await evaluate("document.querySelector('.genre-rail .genre-link.active')?.getAttribute('aria-current')"), "location", "the picked genre stays current");
       assert.equal(await evaluate("[...document.querySelectorAll('.genre-rail .genre-link')].every((link) => !!link.querySelector('svg') && !!link.title)"), true, "every genre shows an icon and names itself in a tooltip");
       assert.equal(await savedGenreCollapsed(), true);
       await shot("pr1-700-genre-icons");

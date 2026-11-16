@@ -109,7 +109,6 @@ function parseRoute(hash: string): Route {
       page: "avatar",
       id: decodeURIComponent(parts[1]),
       fileBoothId: parts[2] === "files" && parts[3] ? decodeURIComponent(parts[3]) : undefined,
-      genre: parts[2] === "genre" && parts[3] ? decodePart(parts[3]) : undefined,
     };
   }
   if (parts[0] === "assets" || parts[0] === "worlds") {
@@ -158,8 +157,6 @@ export default function App() {
   const [setupComplete, setSetupComplete] = useState<boolean | null>(null);
   const [checkUpdateOnStartup, setCheckUpdateOnStartup] = useState(false);
   const route = useMemo(() => parseRoute(hash), [hash]);
-  // Picking a genre on the avatar page narrows the items below the hero; it keeps the scroll.
-  const scrollKey = route.page === "avatar" ? `avatar/${route.id ?? ""}/${route.fileBoothId ?? ""}` : hash;
   const contentRef = useRef<HTMLDivElement>(null);
   const topbarRef = useRef<HTMLDivElement>(null);
 
@@ -177,7 +174,7 @@ export default function App() {
     const pane = contentRef.current;
     if (!pane) return;
     pane.scrollTop = 0;
-  }, [scrollKey]);
+  }, [hash]);
 
   useEffect(() => onRefresh(refresh), [refresh]);
 
@@ -366,7 +363,7 @@ export default function App() {
       <main className={`content ${density}`}>
         {route.page === "avatars" && <AvatarsPage />}
         {route.page === "avatar" && route.id && (
-          <AvatarDetailPage id={route.id} fileBoothId={route.fileBoothId} genre={route.genre} />
+          <AvatarDetailPage id={route.id} fileBoothId={route.fileBoothId} />
         )}
         {route.page === "assets" && <AssetsPage />}
         {route.page === "worlds" && <WorldsPage />}
@@ -586,7 +583,6 @@ export default function App() {
         ) : avatarGenreId ? (
           <AvatarGenreProvider
             avatarId={avatarGenreId}
-            genre={route.genre ?? null}
             genreBar={layout.genreBar}
             showGenreIcons={showGenreIcons}
           >

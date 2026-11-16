@@ -756,42 +756,62 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       },
     );
     await t.test(
-      "asset page browses products by genre through the hash route",
+      "asset page lists every product under genre headings and jumps between them",
       async () => {
         const main = () => document.querySelector("main");
-        const tabs = () => [...document.querySelectorAll(".genre-rail-nav a")];
-        const activeTab = () => document.querySelector('.genre-rail-nav a[aria-current="page"]');
+        const tabs = () => [...document.querySelectorAll(".genre-rail-nav .genre-link")];
+        const tab = (label) => tabs().find((node) => node.textContent.startsWith(label));
+        const section = (key) => document.getElementById(`genre-section-${key}`);
+        const { ASSET_GENRES } = await server.ssrLoadModule("/src/types.ts");
         assert.ok(document.querySelector('.rail a[href="#/assets"]'));
         const all = await api.productsByGenre("asset");
         assert.ok(all.total > 0);
         assert.ok(all.items.every((item) => item.category && item.category !== "avatar" && item.category !== "world"));
+        assert.equal(Object.keys(all.buckets).length, all.items.length);
         await route("#/assets");
         await wait(() => main().querySelector("h1")?.textContent === "アセット");
-        await wait(() => main().querySelector(".item"));
-        assert.equal(tabs().length, 16);
-        assert.equal(activeTab().textContent, `すべて${all.total}`);
-        assert.equal(main().querySelectorAll(".item").length, all.items.length);
+        await wait(() => main().querySelectorAll(".item").length === all.items.length);
+        // 14 genres + 無料. Every genre is a drop target, so empty ones stay listed.
+        assert.equal(tabs().length, 15);
+        assert.ok(tabs().every((node) => node.tagName === "BUTTON"));
+        assert.ok(main().querySelector(".genre-result").textContent.startsWith(`${all.items.length} 件`));
         assert.ok(!main().textContent.includes("見本のワールド小物"));
         assert.ok(!main().textContent.includes("説明がまだないアクセサリ"));
+        // The headings follow the column's order and hold exactly the counted products.
+        const headings = [...main().querySelectorAll(".genre-section")].map((node) => node.id.replace("genre-section-", ""));
+        assert.deepEqual(headings, [...ASSET_GENRES, "free", "unset"].filter((key) => all.counts[key] > 0));
+        for (const key of headings) assert.equal(section(key).querySelectorAll(".item").length, all.counts[key], key);
 
         const eye = await api.productsByGenre("asset", "eye_texture");
         assert.ok(eye.items.length > 0);
         assert.ok(eye.items.every((item) => item.genre === "eye_texture"));
         assert.equal(eye.total, all.total);
-        assert.ok(tabs().some((node) => node.getAttribute("href") === "#/assets/eye_texture"));
+        assert.ok(section("eye_texture").textContent.includes(eye.items[0].title));
+        assert.ok(tab("アイテクスチャ").textContent.endsWith(String(eye.counts.eye_texture)));
+        // An empty genre has no heading to go to.
+        assert.ok(tab("ポーズ").classList.contains("genre-link-zero"));
+        assert.equal(section("pose"), null);
+
+        // Picking a genre scrolls its heading into view, like the settings contents.
+        const scrolled = [];
+        for (const node of main().querySelectorAll(".genre-section")) {
+          node.scrollIntoView = (options) => scrolled.push([node.id, options?.behavior]);
+        }
+        await click(tab("アイテクスチャ"));
+        await wait(() => scrolled.some(([id]) => id === "genre-section-eye_texture"));
+        assert.equal(scrolled.at(-1)[1], "smooth");
+        assert.equal(tab("アイテクスチャ").getAttribute("aria-current"), "location");
+        await click(tab("ポーズ"));
+        await delay();
+        assert.ok(!scrolled.some(([id]) => id === "genre-section-pose"));
+
+        // The genre route opens the whole list at that heading.
+        scrolled.length = 0;
         await route("#/assets/eye_texture");
-        await wait(() => activeTab()?.textContent.startsWith("アイテクスチャ"));
-        await wait(() => main().querySelectorAll(".item").length === eye.items.length);
-        assert.ok(main().textContent.includes(eye.items[0].title));
-        assert.ok(activeTab().textContent.endsWith(String(eye.counts.eye_texture)));
-
-        await route("#/assets/pose");
-        await wait(() => main().textContent.includes("「ポーズ」の商品はまだありません。"));
-        assert.ok(activeTab().classList.contains("genre-link-zero"));
-
+        await wait(() => scrolled.some(([id]) => id === "genre-section-eye_texture"));
+        assert.equal(main().querySelectorAll(".item").length, all.items.length);
         await route("#/assets/not-a-genre");
-        await wait(() => main().textContent.includes("指定されたジャンルが見つからないため"));
-        await wait(() => activeTab()?.textContent.startsWith("すべて"));
+        await wait(() => main().querySelectorAll(".item").length === all.items.length);
 
         const { filterItems, genreHref } = await server.ssrLoadModule("/src/components/GenreBrowser.tsx");
         assert.equal(filterItems(all.items, "一致しない見本文字列").length, 0);
@@ -802,11 +822,12 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       },
     );
     await t.test(
-      "world page browses world products by genre and keeps the old route",
+      "world page lists world products under genre headings and keeps the old route",
       async () => {
         const main = () => document.querySelector("main");
-        const tabs = () => [...document.querySelectorAll(".genre-rail-nav a")];
-        const activeTab = () => document.querySelector('.genre-rail-nav a[aria-current="page"]');
+        const tabs = () => [...document.querySelectorAll(".genre-rail-nav .genre-link")];
+        const tab = (label) => tabs().find((node) => node.textContent.startsWith(label));
+        const section = (key) => document.getElementById(`genre-section-${key}`);
         const items = () => main().querySelectorAll(".item");
         const legacy = await api.productsByCategory("world");
         const all = await api.productsByGenre("world");
@@ -822,68 +843,50 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         await wait(() => main().querySelector("h1")?.textContent === "ワールド");
         await wait(() => items().length === all.items.length);
         assert.ok(document.querySelector('.rail a[href="#/worlds"]').classList.contains("active"));
-        assert.equal(activeTab().textContent, `すべて${all.total}`);
-        // すべて + 10 world genres + 無料 + ジャンル未設定 (未設定は件数があるときだけ)
-        assert.equal(tabs().length, 13);
-        assert.ok(tabs().some((node) => node.getAttribute("href") === "#/worlds/furniture_props"));
-        assert.ok(tabs().some((node) => node.getAttribute("href") === "#/worlds/unset"));
-        assert.ok(tabs().some((node) => node.getAttribute("href") === "#/worlds/free"));
+        // 10 world genres + 無料 + ジャンル未設定 (未設定は件数があるときだけ)
+        assert.equal(tabs().length, 12);
+        assert.ok(tab("ジャンル未設定"));
+        assert.ok(tab("無料"));
         assert.ok(main().querySelector(".product-actions-trigger"));
 
         const sky = await api.productsByGenre("world", "skybox");
         assert.ok(sky.items.length > 0);
         assert.ok(sky.items.every((item) => item.genre === "skybox"));
-        await route("#/worlds/skybox");
-        await wait(() => activeTab()?.textContent.startsWith("Skybox"));
-        await wait(() => items().length === sky.items.length);
-        assert.ok(main().textContent.includes(sky.items[0].title));
-        assert.ok(document.querySelector('.rail a[href="#/worlds"]').classList.contains("active"));
-
+        assert.equal(section("skybox").querySelectorAll(".item").length, sky.items.length);
+        assert.ok(section("skybox").textContent.includes(sky.items[0].title));
         const unset = await api.productsByGenre("world", "unset");
         assert.equal(unset.items.length, all.counts.unset);
         assert.ok(unset.items.every((item) => item.genre == null));
-        // 切替の間は前の一覧を残し、「読み込み中」に置き換えない（ちらつかせない）。
+        assert.equal(section("unset").querySelectorAll(".item").length, all.counts.unset);
+        assert.ok(section("unset").textContent.includes("ジャンルが決まっていないワールドの商品です。"));
+        assert.ok(!section("skybox").textContent.includes("ジャンルが決まっていない"));
+
+        // A genre route moves to a heading of the list on screen: no new load, no 「読み込み中」.
         const productsByGenre = api.productsByGenre;
-        let release;
-        const held = new Promise((resolve) => {
-          release = resolve;
-        });
+        let loads = 0;
         api.productsByGenre = async (...args) => {
-          await held;
+          loads += 1;
           return productsByGenre(...args);
         };
         try {
-          await route("#/worlds/unset");
-          await wait(() => activeTab()?.textContent.startsWith("ジャンル未設定"));
-          assert.equal(items().length, sky.items.length, "the previous list stays while loading");
-          assert.ok(main().textContent.includes(sky.items[0].title));
+          await route("#/worlds/skybox");
+          await delay();
+          assert.equal(loads, 0);
+          assert.equal(items().length, all.items.length);
           assert.ok(!main().textContent.includes("読み込み中"));
-          assert.equal(main().querySelector(".genre-list")?.getAttribute("aria-busy"), "true");
-          assert.ok(main().querySelector(".genre-result").textContent.startsWith("Skybox"), "the count matches the list shown");
         } finally {
           api.productsByGenre = productsByGenre;
-          release();
         }
-        await wait(() => main().querySelector(".genre-list")?.hasAttribute("aria-busy") === false);
-        await wait(() => items().length === unset.items.length);
-        assert.ok(main().textContent.includes("ジャンルが決まっていないワールドの商品です。"));
-        assert.ok(!main().textContent.includes(sky.items[0].title));
-
-        await route("#/worlds/lighting_postprocess");
-        await wait(() => main().textContent.includes("「ライティング・ポストプロセス」の商品はまだありません。"));
-        assert.ok(activeTab().classList.contains("genre-link-zero"));
-
-        await route("#/worlds/hair");
-        await wait(() => main().textContent.includes("指定されたジャンルが見つからないため"));
-        await wait(() => activeTab()?.textContent.startsWith("すべて"));
+        assert.ok(tab("ライティング・ポストプロセス").classList.contains("genre-link-zero"));
+        assert.equal(section("lighting_postprocess"), null);
 
         const assets = await api.productsByGenre("asset");
         assert.ok(!assets.counts.unset);
         await route("#/assets");
         await wait(() => main().querySelector("h1")?.textContent === "アセット");
-        await wait(() => tabs().length === 16);
-        assert.ok(!tabs().some((node) => node.getAttribute("href") === "#/assets/unset"));
-        assert.ok(tabs().some((node) => node.getAttribute("href") === "#/assets/free"));
+        await wait(() => tabs().length === 15);
+        assert.ok(!tab("ジャンル未設定"));
+        assert.ok(tab("無料"));
 
         const freeAssets = await api.productsByGenre("asset", "free");
         assert.ok(freeAssets.items.some((item) => item.boothId === "8800111" && item.isFree));
@@ -901,38 +904,38 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         const furniture = await api.productsByGenre("world", "furniture_props");
         assert.ok(!furniture.items.some((item) => item.boothId === "8901004"));
 
-        await route("#/assets/free");
-        await wait(() => activeTab()?.textContent.startsWith("無料"));
-        await wait(() => main().textContent.includes("無料のリボン"));
-        await wait(() => main().textContent.includes("ダウンロードされていない無料のアセット"));
-        assert.ok(!main().textContent.includes("手元にある無料の小物"));
-        assert.ok(!main().textContent.includes("手動で移した無料の小物"));
-        assert.equal(activeTab().getAttribute("data-drop-genre"), null);
+        await wait(() => section("free")?.textContent.includes("無料のリボン"));
+        assert.ok(section("free").textContent.includes("ダウンロードされていない無料のアセット"));
+        assert.ok(!section("free").textContent.includes("手元にある無料の小物"));
+        assert.ok(!section("free").textContent.includes("手動で移した無料の小物"));
+        assert.equal(tab("無料").getAttribute("data-drop-genre"), null);
         const freeSearch = main().querySelector(".genre-list-search");
         await typeInto(freeSearch, "一致しない見本文字列");
         await wait(() => main().textContent.includes("条件に合う商品はありません"));
         await typeInto(freeSearch, "リボン");
         await wait(() => main().textContent.includes("無料のリボン"));
-        assert.equal(main().querySelectorAll(".item").length, 1);
+        // The filter spans every heading; under 無料 only the ribbon is left.
+        assert.ok([...main().querySelectorAll(".item")].every((node) => node.textContent.includes("リボン")));
+        assert.equal(section("free").querySelectorAll(".item").length, 1);
         await typeInto(freeSearch, "");
+        await wait(() => main().querySelectorAll(".item").length === assets.items.length);
 
-        await route("#/assets/accessory");
-        await wait(() => main().textContent.includes("非公開の見本アクセサリ"));
-        const hidden = [...main().querySelectorAll(".item")].find((node) => node.textContent.includes("非公開の見本アクセサリ"));
+        const accessory = section("accessory");
+        assert.ok(accessory.textContent.includes("非公開の見本アクセサリ"));
+        const hidden = [...accessory.querySelectorAll(".item")].find((node) => node.textContent.includes("非公開の見本アクセサリ"));
         assert.ok(hidden.classList.contains("item-unpublished"));
         assert.ok([...hidden.querySelectorAll(".badge")].some((node) => node.textContent === "非公開"));
         const booth = [...hidden.querySelectorAll("button")].find((node) => node.textContent === "BOOTH");
         assert.ok(booth && !booth.disabled);
-        assert.ok(main().textContent.includes("手元にある無料の小物"));
+        assert.ok(accessory.textContent.includes("手元にある無料の小物"));
         assert.ok([...main().querySelectorAll(".badge")].some((node) => node.textContent === "無料"));
 
         await route("#/worlds/free");
-        await wait(() => main().textContent.includes("未入手の無料ワールド小物"));
-        const hiddenWorld = [...main().querySelectorAll(".item")].find((node) => node.textContent.includes("未入手の無料ワールド小物"));
+        await wait(() => section("free")?.textContent.includes("未入手の無料ワールド小物"));
+        const hiddenWorld = [...section("free").querySelectorAll(".item")].find((node) => node.textContent.includes("未入手の無料ワールド小物"));
         assert.ok(hiddenWorld.classList.contains("item-unpublished"));
         assert.ok([...hiddenWorld.querySelectorAll(".badge")].some((node) => node.textContent === "非公開"));
         assert.ok([...hiddenWorld.querySelectorAll(".badge")].some((node) => node.textContent === "無料"));
-        assert.equal(document.querySelector('.genre-rail-nav a[aria-current="page"]')?.getAttribute("href"), "#/worlds/free");
 
         await route("#/avatar/lime");
         await wait(() => main().textContent.includes("非公開の見本アクセサリ"));
@@ -1114,12 +1117,12 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       assert.ok(rail().querySelector(".brand svg.brand-mark"));
       assert.equal(wordmark().getAttribute("aria-label"), "VRCLibMan");
       // The genre column is separate from the rail and keeps working.
-      assert.ok(document.querySelector('.genre-rail-nav a[href="#/assets"]'));
+      assert.ok(document.querySelector('.genre-rail-nav [data-drop-genre="outfit"]'));
       await route("#/worlds");
       await wait(() => document.querySelector("main h1")?.textContent === "ワールド");
       assert.ok(rail().querySelector('a[href="#/worlds"]').classList.contains("active"));
       assert.ok(!rail().querySelector('a[href="#/assets"]').classList.contains("active"));
-      assert.ok(document.querySelector('.genre-rail-nav a[href="#/worlds"]'));
+      await wait(() => document.querySelector('.genre-rail-nav [data-drop-genre="skybox"]'));
 
       // A fresh start reads the saved choice.
       await act(async () => root.unmount());
@@ -1181,17 +1184,19 @@ test("setup, import and version flows with synthetic local data", async (t) => {
           await delay();
         });
       };
-      await route("#/assets/eye_texture");
-      await wait(() => main().textContent.includes("瞳のテクスチャ集"));
-      const all = document.querySelector('.genre-rail-nav a[href="#/assets"]');
-      const pose = document.querySelector('.genre-rail-nav a[href="#/assets/pose"]');
-      assert.equal(all.getAttribute("data-drop-genre"), null);
-      assert.equal(pose.getAttribute("data-drop-genre"), "pose");
+      await route("#/assets");
+      const section = (key) => document.getElementById(`genre-section-${key}`);
+      const cardIn = (key, title) => [...(section(key)?.querySelectorAll(".item") ?? [])].find((node) => node.textContent.includes(title));
+      const dropTarget = (genre) => document.querySelector(`.genre-rail-nav [data-drop-genre="${genre}"]`);
+      await wait(() => cardIn("eye_texture", "瞳のテクスチャ集"));
+      const pose = dropTarget("pose");
       assert.ok(pose.classList.contains("genre-link-zero"));
+      // 無料 is a browse group, not a genre to move to.
+      assert.equal(dropTarget("free"), null);
       assert.equal(document.querySelector(".genre-rail-other"), null);
       assert.equal(document.querySelector(".item").getAttribute("draggable"), "true");
 
-      const card = [...main().querySelectorAll(".item")].find((node) => node.textContent.includes("瞳のテクスチャ集"));
+      const card = cardIn("eye_texture", "瞳のテクスチャ集");
       await click(card.querySelector(".product-actions-trigger"));
       await wait(() => button("移動", card));
       await click(button("移動", card));
@@ -1201,21 +1206,18 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       assert.ok(button("ワールド", panel));
       await click(button("ポーズ", panel));
       await wait(() => button("元に戻す"));
-      await wait(() => !main().textContent.includes("瞳のテクスチャ集"));
-
-      await route("#/assets/pose");
-      await wait(() => main().textContent.includes("瞳のテクスチャ集"));
-      await wait(() => [...main().querySelectorAll(".badge")].some((node) => node.textContent === "手動"));
+      // The card moves to the heading of its new genre.
+      await wait(() => cardIn("pose", "瞳のテクスチャ集") && !cardIn("eye_texture", "瞳のテクスチャ集"));
+      await wait(() => [...section("pose").querySelectorAll(".badge")].some((node) => node.textContent === "手動"));
       const moved = await api.productsByGenre("asset", "pose");
       assert.ok(moved.items.some((item) => item.classificationPinned && item.genre === "pose" && item.category === "gimmick"));
 
       await click(button("元に戻す"));
       await refresh();
-      await route("#/assets/eye_texture");
-      await wait(() => main().textContent.includes("瞳のテクスチャ集"));
-      assert.ok(!main().textContent.includes("手動"));
+      await wait(() => cardIn("eye_texture", "瞳のテクスチャ集"));
+      assert.ok(!cardIn("eye_texture", "瞳のテクスチャ集").textContent.includes("手動"));
 
-      const dragged = [...main().querySelectorAll(".item")].find((node) => node.textContent.includes("瞳のテクスチャ集"));
+      const dragged = cardIn("eye_texture", "瞳のテクスチャ集");
       assert.equal(dragged.getAttribute("draggable"), "true");
       for (const image of dragged.querySelectorAll("img")) {
         assert.equal(image.getAttribute("draggable"), "false");
@@ -1249,7 +1251,7 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       assert.equal(dataTransfer.effectAllowed, "move");
       assert.equal(dataTransfer.getData("text/plain"), "8800120");
       await wait(() => document.querySelector(".genre-rail-other"));
-      const poseAgain = document.querySelector('.genre-rail-nav a[href="#/assets/pose"]');
+      const poseAgain = dropTarget("pose");
       await act(async () => {
         drag(poseAgain, "dragover");
         await delay();
@@ -1261,14 +1263,12 @@ test("setup, import and version flows with synthetic local data", async (t) => {
         await delay();
       });
       await wait(() => button("元に戻す"));
-      await route("#/assets/pose");
-      await wait(() => main().textContent.includes("瞳のテクスチャ集"));
+      await wait(() => cardIn("pose", "瞳のテクスチャ集"));
       await click(button("元に戻す"));
       await refresh();
-      await route("#/assets/eye_texture");
-      await wait(() => main().textContent.includes("瞳のテクスチャ集"));
+      await wait(() => cardIn("eye_texture", "瞳のテクスチャ集"));
 
-      const again = [...main().querySelectorAll(".item")].find((node) => node.textContent.includes("瞳のテクスチャ集"));
+      const again = cardIn("eye_texture", "瞳のテクスチャ集");
       await click(again.querySelector(".product-actions-trigger"));
       await click(button("移動", again));
       await click(button("ワールド", again.querySelector(".genre-move-panel")));
@@ -1277,8 +1277,8 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       const worlds = await api.productsByGenre("world", "furniture_props");
       assert.ok(worlds.items.some((item) => item.boothId === "8800120" && item.category === "world" && item.classificationPinned));
       await route("#/worlds/furniture_props");
-      await wait(() => main().textContent.includes("瞳のテクスチャ集"));
-      const worldCard = [...main().querySelectorAll(".item")].find((node) => node.textContent.includes("瞳のテクスチャ集"));
+      await wait(() => cardIn("furniture_props", "瞳のテクスチャ集"));
+      const worldCard = cardIn("furniture_props", "瞳のテクスチャ集");
       await click(worldCard.querySelector(".product-actions-trigger"));
       await click(button("自動分類に戻す", worldCard));
       await wait(() => text().includes("自動分類の対象に戻しました"));
@@ -1406,8 +1406,8 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       await click(button("汎用ペンライト", panel));
       await wait(() => text().includes("アイテムを追加しました"));
       await wait(() => {
-        const section = [...main().querySelectorAll(".section")].find((node) => node.querySelector("h2")?.textContent === "ギミック");
-        return section?.textContent.includes("汎用ペンライト");
+        // The avatar's items are headed by genre.
+        return document.getElementById("genre-section-gimmick")?.textContent.includes("汎用ペンライト");
       });
       const card = [...main().querySelectorAll(".section .item")].find((node) => node.textContent.includes("汎用ペンライト"));
       assert.ok(card);
@@ -1434,9 +1434,7 @@ test("setup, import and version flows with synthetic local data", async (t) => {
       await click(button("アイテムを追加"));
       await wait(() => button(title, document.querySelector(".avatar-add-panel")));
       await click(button(title, document.querySelector(".avatar-add-panel")));
-      await wait(() => [...main().querySelectorAll(".section")].some((section) =>
-        section.querySelector("h2")?.textContent === "髪" && section.textContent.includes(title),
-      ));
+      await wait(() => [...main().querySelectorAll(".genre-section")].some((section) => section.textContent.includes(title)));
       const hair = hairOf(await api.avatar("plum")).find((item) => item.boothId === "8800102");
       assert.equal(hair.viaBaseBody, false);
       assert.equal((await api.avatars()).find((avatar) => avatar.id === "plum").hairCount, 1);

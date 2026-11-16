@@ -31,6 +31,8 @@ export interface GenreProducts {
   items: ItemView[];
   counts: Record<string, number>;
   total: number;
+  /** Browse group of each listed item (booth id -> genre, `free` or `unset`), split like `counts`. */
+  buckets: Record<string, string>;
 }
 
 export interface AvatarCard {

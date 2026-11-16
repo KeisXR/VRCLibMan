@@ -72,7 +72,11 @@ test("the genre list draws its cards in memoized groups and reveals focused or s
   const source = readFileSync("src/components/GenreBrowser.tsx", "utf8");
   assert.match(source, /const CardGroup = memo\(/);
   assert.match(source, /useProgressiveCount\(/);
-  assert.match(source, /groups\.slice\(0, chunksFor\(drawnCount\)\)/);
+  // Each genre heading draws its share of the cards drawn so far.
+  assert.match(source, /\.slice\(0, chunksFor\(drawn\)\)/);
+  assert.match(source, /const drawn = Math\.min\(section\.items\.length, drawnCount - section\.start\)/);
   // A product opened from another screen and a keyboard move both reach items not drawn yet.
   assert.equal(source.match(/reveal\(index\)/g)?.length, 2);
+  // So does a genre picked in the column whose heading is not drawn yet.
+  assert.match(source, /reveal\(section\.start \+/);
 });
