@@ -4,11 +4,13 @@ import { GENRE_FREE, GENRE_LABEL, GENRE_UNSET, genresForKind } from "../types";
 import type { GenreKind } from "../types";
 import { useAvatarGenre } from "../avatarGenreContext";
 import { useGenreBrowse } from "../genreBrowseContext";
+import { genreHref } from "../genreBrowseUtils";
 import { GenreIcon, GenreToggleIcon } from "./genreIcons";
 
 /**
- * One choice of the genre column or the chip bar. The lists show every genre under its own
- * heading; a choice scrolls to its heading (`onSelect`), like the settings page's contents.
+ * One choice of the genre column or the chip bar. On the asset and world lists it is a link
+ * that narrows the list to the genre (`href`); on the avatar detail page it scrolls to the
+ * genre's heading (`onSelect`), like the settings page's contents.
  */
 export interface GenreEntry {
   key: string;
@@ -164,12 +166,9 @@ function otherKind(kind: GenreKind): GenreKind {
   return kind === "world" ? "asset" : "world";
 }
 
-/**
- * The asset or world genres with their counts and drop targets, shared by the column and the
- * chip bar. Every genre is listed (each is a drop target); 未設定 only when it has products.
- */
+/** The asset or world genres with their counts and drop targets, shared by the column and the chip bar. */
 export function useBrowseGenreEntries(): { entries: GenreEntry[]; other: GenreOtherGroup | null; activeKey: string } {
-  const { kind, data, draggingId, setDraggingId, moveProduct, active, go } = useGenreBrowse();
+  const { kind, basePath, selected, data, draggingId, setDraggingId, moveProduct } = useGenreBrowse();
   const unsetCount = data?.counts[GENRE_UNSET] ?? 0;
   const across = otherKind(kind);
   const drop = (targetKind: GenreKind, genre: string) => (boothId: string) => {
@@ -177,33 +176,34 @@ export function useBrowseGenreEntries(): { entries: GenreEntry[]; other: GenreOt
     void moveProduct(boothId, targetKind, genre);
   };
   const entries: GenreEntry[] = [
+    { key: "", href: genreHref(basePath, null), label: "すべて", icon: "all", count: data?.total, active: selected === null },
     ...genresForKind(kind).map((value) => ({
       key: value,
-      onSelect: () => go(value),
+      href: genreHref(basePath, value),
       label: GENRE_LABEL[value] ?? value,
       icon: value,
       count: data ? data.counts[value] ?? 0 : undefined,
-      active: active === value,
+      active: selected === value,
       dropGenre: value,
       onDropId: drop(kind, value),
     })),
     {
       key: GENRE_FREE,
-      onSelect: () => go(GENRE_FREE),
+      href: genreHref(basePath, GENRE_FREE),
       label: GENRE_LABEL[GENRE_FREE],
       icon: GENRE_FREE,
       count: data ? data.counts[GENRE_FREE] ?? 0 : undefined,
-      active: active === GENRE_FREE,
+      active: selected === GENRE_FREE,
     },
   ];
-  if (unsetCount > 0) {
+  if (unsetCount > 0 || selected === GENRE_UNSET) {
     entries.push({
       key: GENRE_UNSET,
-      onSelect: () => go(GENRE_UNSET),
+      href: genreHref(basePath, GENRE_UNSET),
       label: GENRE_LABEL[GENRE_UNSET],
       icon: GENRE_UNSET,
-      count: unsetCount,
-      active: active === GENRE_UNSET,
+      count: data ? unsetCount : undefined,
+      active: selected === GENRE_UNSET,
     });
   }
   const other = draggingId
@@ -218,7 +218,7 @@ export function useBrowseGenreEntries(): { entries: GenreEntry[]; other: GenreOt
         })),
       }
     : null;
-  return { entries, other, activeKey: active ?? "" };
+  return { entries, other, activeKey: selected ?? "" };
 }
 
 /**

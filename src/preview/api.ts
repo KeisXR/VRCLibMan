@@ -2211,9 +2211,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       const known: readonly string[] = genresForKind(kind);
       const bucket = (item: Product) => browseGenre(item, known);
       const counts: Record<string, number> = {}; for (const item of rows) counts[bucket(item)] = (counts[bucket(item)] ?? 0) + 1;
-      const listed = rows.filter((item) => !wanted || bucket(item) === wanted).sort((a,b) => a.title.localeCompare(b.title, "ja"));
-      const buckets = Object.fromEntries(listed.map((item) => [item.boothId, bucket(item)]));
-      return { items: listed.map((item) => itemView(item, false)), counts, total: rows.length, buckets } as T;
+      return { items: rows.filter((item) => !wanted || bucket(item) === wanted).sort((a,b) => a.title.localeCompare(b.title, "ja")).map((item) => itemView(item, false)), counts, total: rows.length } as T;
     }
     case "probe_remote_files":
       store.remoteChecked = true;

@@ -58,8 +58,8 @@ PC 間の移行は [データ移行](docs/remote-sync.md) に従う。現在は�
 - 画面が DB を読むだけのコマンドは `#[tauri::command(async)]` にする。同期コマンドは UI スレッドで DB のロックを待ち、その間アプリ全体が止まるため（`commands.rs` の `read_commands_run_off_the_ui_thread`）。
 - Tauri のコマンド引数は Rust のパラメータ名と一致させる。複数語は camelCase（`productId`、`fromId`、`intoId`）。構造体は `rename_all = "camelCase"`。
 - `tauri` の feature に `protocol-asset` が必要。`tauri.conf.json` の asset scope は `$APPDATA/**`。
-- 画面遷移はハッシュ（`#/` `#/avatar/{id}` `#/classification-log` `#/import` `#/settings`）。ルータライブラリは無い。`#/assets/<genre>` と `#/worlds/<genre>` は一覧を絞らず、その見出しへスクロールして開く。
-- ジャンル列（アセット・ワールド・アバター詳細）は一覧を絞らない目次で、押すと見出しへなめらかにスクロールし、スクロール位置で選択中が替わる（設定画面のカテゴリ一覧と同じ）。`ui_genre_collapsed` でアイコンだけの 52px の列に閉じる。ジャンルを足したら `src/components/genreIcons.tsx` にアイコンも足す。詳しくは [デザインガイド](docs/design/README.md#ジャンルの見出しと目次)。
+- 画面遷移はハッシュ（`#/` `#/avatar/{id}` `#/classification-log` `#/import` `#/settings`）。ルータライブラリは無い。
+- ジャンル列（アセット・ワールド・アバター詳細）は `ui_genre_collapsed` でアイコンだけの 52px の列に閉じる。アセットとワールドでは一覧を絞り込み、アバター詳細では絞り込まずにジャンルの見出しへスクロールする目次になる（設定画面のカテゴリ一覧と同じ）。ジャンルを足したら `src/components/genreIcons.tsx` にアイコンも足す。詳しくは [デザインガイド](docs/design/README.md#ジャンル列の開閉とアイコン)。
 - ライブラリへの配置（拡張の自動整理、内蔵ブラウザの受け取り）は、名前ごとに置き換えない操作で確保する。Windows は置き換えなしの `MoveFileExW`、ほかは `hard_link`、別のボリュームは `create_new` で作ってコピーし、取られていたら `名前 (n).拡張子` を 9999 まで試す。存在確認と書き込みの間に別の処理が同じ名前を作っても上書きしないため。
 - 検索画面の商品は、カードの説明（先頭500字）に加え、Rust の `search.rs` が保存済みの説明全文・題・ショップ・ジャンル名・ID を同じ分け方（空白区切り・AND）で見る。読み込みは種類ごとに分け、失敗した種類だけを「もう一度読み込む」で読み直す。読めた種類は検索できる。
 - 検索画面の「画面と設定」は `src/appSearchIndex.ts` の手書きの索引で、移動先の `id` を変えたり項目を足したりしたら索引も直す（`test/search.test.mjs` が id の実在を確かめる）。詳しくは [デザインガイド](docs/design/README.md#検索)。

@@ -1,16 +1,8 @@
-import { GENRE_FREE, GENRE_UNSET, genresForKind } from "./types";
-import type { GenreKind } from "./types";
-
 /** One genre heading of a list and its items. `start` is the index of its first item in the whole list. */
 export interface GenreSection<T> {
   key: string;
   items: T[];
   start: number;
-}
-
-/** The order of the genre headings on the asset and world lists: the genres, then 無料, then 未設定. */
-export function browseGenreOrder(kind: GenreKind): readonly string[] {
-  return [...genresForKind(kind), GENRE_FREE, GENRE_UNSET];
 }
 
 /**
@@ -34,7 +26,7 @@ export function groupGenreSections<T>(items: readonly T[], keyOf: (item: T) => s
   });
 }
 
-/** The element id of a genre heading. One genre list is on screen at a time. */
+/** The element id of a genre heading (the avatar detail page). */
 export function genreSectionId(key: string): string {
   return `genre-section-${key}`;
 }

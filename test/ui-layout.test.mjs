@@ -137,12 +137,12 @@ test("genre column: closed it keeps a fixed icon width, and the chip bar offers 
   }
 });
 
-test("every genre, and free / unset, has its own icon", async () => {
+test("every genre, and all / free / unset, has its own icon", async () => {
   const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
   try {
     const { ASSET_GENRES, WORLD_GENRES, GENRE_FREE, GENRE_UNSET } = await server.ssrLoadModule("/src/types.ts");
     const { GENRE_ICON_NAMES } = await server.ssrLoadModule("/src/components/genreIcons.tsx");
-    for (const name of [...ASSET_GENRES, ...WORLD_GENRES, GENRE_FREE, GENRE_UNSET]) {
+    for (const name of [...ASSET_GENRES, ...WORLD_GENRES, GENRE_FREE, GENRE_UNSET, "all"]) {
       assert.ok(GENRE_ICON_NAMES.includes(name), name);
     }
   } finally {
@@ -150,10 +150,10 @@ test("every genre, and free / unset, has its own icon", async () => {
   }
 });
 
-test("genre headings: lists split in the column's order, and each avatar item is listed once", async () => {
+test("avatar genre headings: split in the column's order, each item once", async () => {
   const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
   try {
-    const { browseGenreOrder, genreSectionId, groupGenreSections } = await server.ssrLoadModule("/src/genreSections.ts");
+    const { genreSectionId, groupGenreSections } = await server.ssrLoadModule("/src/genreSections.ts");
     const { avatarGenreSections, countAvatarGenres } = await server.ssrLoadModule("/src/avatarGenre.ts");
     const rows = [{ id: "a", genre: "hair" }, { id: "b", genre: "outfit" }, { id: "c", genre: "hair" }, { id: "d", genre: "mystery" }];
     const split = groupGenreSections(rows, (row) => row.genre, ["outfit", "hair", "pose"]);
@@ -163,8 +163,6 @@ test("genre headings: lists split in the column's order, and each avatar item is
       ["hair", ["a", "c"], 1],
       ["mystery", ["d"], 3],
     ]);
-    assert.deepEqual(browseGenreOrder("world").slice(-2), ["free", "unset"]);
-    assert.equal(browseGenreOrder("asset")[0], "outfit");
     assert.equal(genreSectionId("hair"), "genre-section-hair");
 
     const item = (boothId, genre) => ({ boothId, genre });

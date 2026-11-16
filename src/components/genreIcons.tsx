@@ -6,6 +6,8 @@
 import type { ReactNode } from "react";
 
 const PATHS: Record<string, ReactNode> = {
+  // Four tiles: everything.
+  all: <path d="M3 3h4.6v4.6H3zM10.4 3H15v4.6h-4.6zM3 10.4h4.6V15H3zM10.4 10.4H15V15h-4.6z" />,
   // A T-shirt.
   outfit: <path d="M6.4 2.8 2.6 4.6l-.8 3.6 2.6.9v6.2h9.2V9.1l2.6-.9-.8-3.6-3.8-1.8c-.4 1.2-1.4 2-2.6 2s-2.2-.8-2.6-2z" />,
   // A sock with a cuff.
@@ -152,7 +154,7 @@ const PATHS: Record<string, ReactNode> = {
   ),
 };
 
-/** Every key with its own icon: the genres, plus "free" and "unset". */
+/** Every key with its own icon: the genres, plus "all", "free" and "unset". */
 export const GENRE_ICON_NAMES: readonly string[] = Object.keys(PATHS);
 
 /** One genre's icon. Unknown genres use the "other" icon. */
