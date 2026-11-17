@@ -394,6 +394,8 @@ fn complete_download(
     let Some(id) = db::browser_auto_register(c, &choice.product)? else {
         return Ok(false);
     };
+    // ページが始めたダウンロードも、ネットから取得したファイルとして扱う。
+    crate::library_files::mark_from_internet(path);
     let saved = db::settings(c)?;
     let routed = saved.route_downloads && !saved.library_folder.trim().is_empty();
     let placed = if routed {
@@ -412,6 +414,7 @@ fn complete_download(
         if staged.exists() {
             staged = dir.join(format!("{}-{filename}", token));
         }
+        crate::library_files::carry_internet_mark(path, tmp.path());
         tmp.persist_noclobber(&staged)
             .map_err(|_| "整理用ファイルを保存できません")?;
         crate::library_files::place_into_library(

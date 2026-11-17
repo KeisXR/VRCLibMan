@@ -636,6 +636,67 @@ fn rename_noreplace(source: &Path, dest: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Windows keeps "this file came from the internet" in a second stream of the file,
+/// `Zone.Identifier`, and asks before running a program that carries it (also one unpacked
+/// from a marked archive). A browser writes it; a file this app receives or copies itself has
+/// none unless it is written here. Zone 3 is the internet. The address the file came from is
+/// left out: a download address is signed and is not kept anywhere.
+#[cfg(windows)]
+const INTERNET_ZONE: &[u8] = b"[ZoneTransfer]\r\nZoneId=3\r\n";
+
+/// A browser's mark is a few lines. Anything longer is not carried over.
+#[cfg(windows)]
+const ZONE_MARK_LIMIT: u64 = 16 * 1024;
+
+#[cfg(windows)]
+fn zone_stream(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(":Zone.Identifier");
+    PathBuf::from(name)
+}
+
+#[cfg(windows)]
+fn zone_mark(path: &Path) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let mut mark = Vec::new();
+    std::fs::File::open(zone_stream(path))
+        .ok()?
+        .take(ZONE_MARK_LIMIT + 1)
+        .read_to_end(&mut mark)
+        .ok()?;
+    (!mark.is_empty() && mark.len() as u64 <= ZONE_MARK_LIMIT).then_some(mark)
+}
+
+/// Opening a stream of a missing file would create that file, so only an existing file is
+/// written to. A failure is ignored: FAT, exFAT and some shares have no second stream.
+#[cfg(windows)]
+fn write_zone_mark(path: &Path, mark: &[u8]) {
+    if std::fs::symlink_metadata(path).is_ok_and(|meta| meta.is_file()) {
+        let _ = std::fs::write(zone_stream(path), mark);
+    }
+}
+
+/// Mark a file this app received from the internet, unless it is marked already.
+pub(crate) fn mark_from_internet(path: &Path) {
+    #[cfg(windows)]
+    if zone_mark(path).is_none() {
+        write_zone_mark(path, INTERNET_ZONE);
+    }
+    #[cfg(not(windows))]
+    let _ = path;
+}
+
+/// Give a copy the mark of the file it was copied from. A move within one volume keeps the
+/// mark by itself; a copy (another volume, a remote folder) starts without one.
+pub(crate) fn carry_internet_mark(source: &Path, copy: &Path) {
+    #[cfg(windows)]
+    if let Some(mark) = zone_mark(source) {
+        write_zone_mark(copy, &mark);
+    }
+    #[cfg(not(windows))]
+    let _ = (source, copy);
+}
+
 /// Claim `dest` with `create_new` and copy into it. The source is removed only after the
 /// copy is complete; when it cannot be removed, the copy is removed so one file remains.
 fn claim_by_copy(source: &Path, dest: &Path) -> Result<Claim, String> {
@@ -658,6 +719,7 @@ fn claim_by_copy(source: &Path, dest: &Path) -> Result<Claim, String> {
         let _ = std::fs::remove_file(dest);
         return Err(format!("ファイルを移動できません: {err}"));
     }
+    carry_internet_mark(source, dest);
     if let Err(err) = std::fs::remove_file(source) {
         let _ = std::fs::remove_file(dest);
         return Err(format!(
@@ -1005,6 +1067,8 @@ pub(crate) fn push_missing_file(
     temp.as_file()
         .sync_all()
         .map_err(|err| format!("同期ファイルを保存できません: {err}"))?;
+    // Before the file gets its name: writing the mark afterwards would change its date.
+    carry_internet_mark(source, temp.path());
     match temp.persist_noclobber(&dest) {
         Ok(_) => Ok(CopyOutcome::Copied),
         Err(err) if err.error.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -1078,6 +1142,7 @@ fn copy_confirmed(source: &Path, dest: &Path, overwrite: bool) -> Result<CopyOut
     temp.as_file()
         .sync_all()
         .map_err(|err| format!("ファイルをコピーできません: {err}"))?;
+    carry_internet_mark(source, temp.path());
     if overwrite {
         temp.persist(dest)
             .map_err(|err| format!("ファイルを置き換えられません: {}", err.error))?;
@@ -2100,5 +2165,129 @@ mod tests {
         ] {
             assert!(!staged_download_shaped(&path, &downloads, id), "{}", path.display());
         }
+    }
+
+    #[cfg(windows)]
+    const BROWSER_MARK: &[u8] = b"[ZoneTransfer]\r\nZoneId=3\r\nReferrerUrl=https://shop.example.test/\r\nHostUrl=https://files.example.test/pkg.zip\r\n";
+
+    #[cfg(windows)]
+    #[test]
+    fn a_received_file_is_marked_as_from_the_internet_without_an_address() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("pkg.zip");
+        std::fs::write(&file, b"asset").unwrap();
+        assert_eq!(zone_mark(&file), None);
+        mark_from_internet(&file);
+        assert_eq!(zone_mark(&file).as_deref(), Some(&b"[ZoneTransfer]\r\nZoneId=3\r\n"[..]));
+        // The file itself is untouched, and no file is created next to it.
+        assert_eq!(std::fs::read(&file).unwrap(), b"asset");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+        // A mark a browser wrote stays as it is.
+        let browsed = dir.path().join("browsed.zip");
+        std::fs::write(&browsed, b"asset").unwrap();
+        std::fs::write(zone_stream(&browsed), BROWSER_MARK).unwrap();
+        mark_from_internet(&browsed);
+        assert_eq!(zone_mark(&browsed).as_deref(), Some(BROWSER_MARK));
+        // A missing file is not created by marking it.
+        let missing = dir.path().join("missing.zip");
+        mark_from_internet(&missing);
+        carry_internet_mark(&browsed, &missing);
+        assert!(!missing.exists());
+        // A folder is left alone.
+        mark_from_internet(dir.path());
+        assert_eq!(zone_mark(dir.path()), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_copy_keeps_the_mark_of_its_source_and_an_unmarked_file_stays_unmarked() {
+        let dir = tempfile::tempdir().unwrap();
+        let marked = dir.path().join("marked.zip");
+        let plain = dir.path().join("plain.zip");
+        std::fs::write(&marked, b"asset").unwrap();
+        std::fs::write(&plain, b"plain").unwrap();
+        std::fs::write(zone_stream(&marked), BROWSER_MARK).unwrap();
+
+        // Moving to the library: the rename keeps the mark, the copy (another volume) carries it.
+        for (try_rename, name) in [(true, "renamed"), (false, "copied")] {
+            let source = dir.path().join(format!("{name}.part"));
+            std::fs::write(&source, b"asset").unwrap();
+            std::fs::write(zone_stream(&source), BROWSER_MARK).unwrap();
+            let library = dir.path().join(name);
+            std::fs::create_dir_all(&library).unwrap();
+            let placed = move_to_free_name_with(&source, &library, "pkg.zip", try_rename).unwrap();
+            assert_eq!(zone_mark(&placed).as_deref(), Some(BROWSER_MARK), "{name}");
+            assert_eq!(std::fs::read(&placed).unwrap(), b"asset");
+            assert!(!source.exists());
+            let source = dir.path().join(format!("{name}-plain.part"));
+            std::fs::write(&source, b"plain").unwrap();
+            let placed = move_to_free_name_with(&source, &library, "plain.zip", try_rename).unwrap();
+            assert_eq!(zone_mark(&placed), None, "{name}");
+        }
+
+        // The manual copies, with and without replacing, and automatic sync.
+        let remote = dir.path().join("remote");
+        std::fs::create_dir_all(&remote).unwrap();
+        let (pushed, outcome) = push_file(&marked, &remote, "900001", "marked.zip", false).unwrap();
+        assert_eq!(outcome, CopyOutcome::Copied);
+        assert_eq!(zone_mark(&pushed).as_deref(), Some(BROWSER_MARK));
+        std::fs::write(&pushed, b"older file").unwrap();
+        let (pushed, outcome) = push_file(&marked, &remote, "900001", "marked.zip", true).unwrap();
+        assert_eq!(outcome, CopyOutcome::Copied);
+        assert_eq!(std::fs::read(&pushed).unwrap(), b"asset");
+        assert_eq!(zone_mark(&pushed).as_deref(), Some(BROWSER_MARK));
+        let (pushed, _) = push_file(&plain, &remote, "900001", "plain.zip", false).unwrap();
+        assert_eq!(zone_mark(&pushed), None);
+        // Replacing a marked file with an unmarked one leaves no mark behind.
+        let (pushed, _) = push_file(&plain, &remote, "900001", "marked.zip", true).unwrap();
+        assert_eq!(std::fs::read(&pushed).unwrap(), b"plain");
+        assert_eq!(zone_mark(&pushed), None);
+        assert_eq!(push_missing_file(&marked, &remote, "900002", "marked.zip").unwrap(), CopyOutcome::Copied);
+        assert_eq!(zone_mark(&remote.join("900002/marked.zip")).as_deref(), Some(BROWSER_MARK));
+        assert_eq!(push_missing_file(&plain, &remote, "900002", "plain.zip").unwrap(), CopyOutcome::Copied);
+        assert_eq!(zone_mark(&remote.join("900002/plain.zip")), None);
+        // No temporary file is left behind by any of the copies.
+        for folder in ["900001", "900002"] {
+            let names: Vec<String> = std::fs::read_dir(remote.join(folder))
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            assert!(names.iter().all(|name| !name.starts_with("~vrclibman-")), "{names:?}");
+        }
+        // The source keeps its own mark.
+        assert_eq!(zone_mark(&marked).as_deref(), Some(BROWSER_MARK));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn an_oversized_or_empty_mark_is_not_carried() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.zip");
+        let copy = dir.path().join("copy.zip");
+        std::fs::write(&source, b"asset").unwrap();
+        std::fs::write(&copy, b"asset").unwrap();
+        std::fs::write(zone_stream(&source), vec![b'a'; ZONE_MARK_LIMIT as usize + 1]).unwrap();
+        carry_internet_mark(&source, &copy);
+        assert_eq!(zone_mark(&copy), None);
+        std::fs::write(zone_stream(&source), b"").unwrap();
+        carry_internet_mark(&source, &copy);
+        assert_eq!(zone_mark(&copy), None);
+    }
+
+    /// Other systems have no such stream: marking writes nothing and creates no file.
+    #[cfg(not(windows))]
+    #[test]
+    fn the_internet_mark_does_nothing_outside_windows() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.zip");
+        let copy = dir.path().join("copy.zip");
+        std::fs::write(&source, b"asset").unwrap();
+        std::fs::write(&copy, b"asset").unwrap();
+        mark_from_internet(&source);
+        carry_internet_mark(&source, &copy);
+        mark_from_internet(&dir.path().join("missing.zip"));
+        assert_eq!(std::fs::read(&source).unwrap(), b"asset");
+        assert_eq!(std::fs::read(&copy).unwrap(), b"asset");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
     }
 }

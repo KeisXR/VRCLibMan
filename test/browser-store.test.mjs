@@ -127,7 +127,8 @@ test("settings calls from a window run in the order they were made", async () =>
     assert.match(source, /updateSettings: \(patch: Partial<Settings>\) => inSettingsOrder\(/);
     assert.match(source, /settings: \(\) => inSettingsOrder\(/);
     const commands = readFileSync("src-tauri/src/commands.rs", "utf8");
-    assert.match(commands, /#\[tauri::command\(async\)\]\npub fn update_settings\(/, "saving runs off the UI thread that places the pages");
+    // Git for Windows checks the sources out with CRLF by default.
+    assert.match(commands, /#\[tauri::command\(async\)\]\r?\npub fn update_settings\(/, "saving runs off the UI thread that places the pages");
   } finally {
     await server.close();
   }
