@@ -344,3 +344,27 @@ test("partial or mixed releases never produce a manifest", () => {
     /URL/,
   );
 });
+
+// The build job holds the updater signing key and release write access. A tag or branch of
+// someone else's action can be moved to other code later; a commit cannot.
+test("release workflows pin third-party actions to a commit", () => {
+  for (const name of ["release.yml", "finalize-updater.yml"]) {
+    const workflow = readFileSync(
+      new URL(`../.github/workflows/${name}`, import.meta.url),
+      "utf8",
+    );
+    const used = [...workflow.matchAll(/^\s*(?:-\s*)?uses:\s*(\S+)/gm)].map(
+      (match) => match[1],
+    );
+    assert.ok(used.length > 0, name);
+    for (const ref of used.filter((ref) => !ref.startsWith("actions/"))) {
+      assert.match(ref, /^[\w.-]+\/[\w.-]+@[0-9a-f]{40}$/, `${name}: ${ref}`);
+    }
+    // A pinned rust-toolchain commit is on master, which has no default toolchain.
+    for (const step of workflow.matchAll(
+      /uses:\s*dtolnay\/rust-toolchain@\S+[^\n]*\n((?:\s+\S[^\n]*\n)*?)\n/g,
+    )) {
+      assert.match(step[1], /^\s+toolchain: stable$/m, name);
+    }
+  }
+});

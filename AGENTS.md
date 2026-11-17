@@ -57,7 +57,7 @@ PC 間の移行は [データ移行](docs/remote-sync.md) に従う。現在は�
 - DB の `MutexGuard` を `.await` の間に持たない。抽出の実行中フラグは `Arc<AtomicBool>`。
 - 画面が DB を読むだけのコマンドは `#[tauri::command(async)]` にする。同期コマンドは UI スレッドで DB のロックを待ち、その間アプリ全体が止まるため（`commands.rs` の `read_commands_run_off_the_ui_thread`）。
 - Tauri のコマンド引数は Rust のパラメータ名と一致させる。複数語は camelCase（`productId`、`fromId`、`intoId`）。構造体は `rename_all = "camelCase"`。
-- `tauri` の feature に `protocol-asset` が必要。`tauri.conf.json` の asset scope は `$APPDATA/**`。
+- `tauri` の feature に `protocol-asset` が必要。`tauri.conf.json` の asset scope は、画面が画像を読む `$APPDATA/thumbs/**`・`$APPDATA/previews/**`・`$APPDATA/hero_images/**` だけにする。Tauri は asset プロトコルを内蔵ブラウザのタブにも登録するので、範囲を広げると外部ページから `library.sqlite` や Linux のログイン状態を読める（[検証記録](docs/verification.md#内蔵ブラウザのタブから-asset-プロトコルで読める範囲2026-11-17)）。画像の保存先を足すときは範囲と `test/link.test.mjs` も足す。
 - 画面遷移はハッシュ（`#/` `#/avatar/{id}` `#/classification-log` `#/import` `#/settings`）。ルータライブラリは無い。
 - ジャンル列（アセット・ワールド・アバター詳細）は `ui_genre_collapsed` でアイコンだけの 52px の列に閉じる。アセットとワールドでは一覧を絞り込み、アバター詳細では絞り込まずにジャンルの見出しへスクロールする目次になる（設定画面のカテゴリ一覧と同じ）。ジャンルを足したら `src/components/genreIcons.tsx` にアイコンも足す。詳しくは [デザインガイド](docs/design/README.md#ジャンル列の開閉とアイコン)。
 - ライブラリへの配置（拡張の自動整理、内蔵ブラウザの受け取り）は、名前ごとに置き換えない操作で確保する。Windows は置き換えなしの `MoveFileExW`、ほかは `hard_link`、別のボリュームは `create_new` で作ってコピーし、取られていたら `名前 (n).拡張子` を 9999 まで試す。存在確認と書き込みの間に別の処理が同じ名前を作っても上書きしないため。
@@ -130,6 +130,7 @@ BOOTH商品の更新確認と履歴はアプリ本体の更新とは別機能。
 - 更新先は本体公開後の GitHub Releases の `latest/download/latest.json`。HTTPS、署名と署名された版の検証、既定の新しい版だけの比較を維持する。アプリへ GitHub token・秘密鍵を含めない。リモート WebView とブラウザ操作バーには更新コマンドを許可しない。プラグインの JS 用 updater / process 権限も追加しない。
 - 検証済みのバイト列と更新状態はプロセス内に保持し、ウィンドウ再作成後も参照できる。適用前に未保存の設定を保存し、分類・ライブラリ全取得・BOOTH ダウンロード中の適用は Rust でも拒否する。ライブラリ・設定を削除しない。
 - release は Actions Secret `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` と Variable `TAURI_UPDATER_PUBLIC_KEY` を使う。`configure-updater.mjs` の追加設定で公開鍵と `createUpdaterArtifacts` を渡す。秘密鍵はリポジトリに置かない。全ターゲットのビルド完了後に一つのジョブで `latest.json` を作る。欠落した成果物・署名のまま公開用情報を作らない。初回設定と実機検証の手順は `docs/updater.md`。
+- `release.yml` の GitHub 公式（`actions/*`）以外の Action は、タグやブランチではなくコミット SHA で指定する。署名鍵と Release への書き込み権限を受け取るジョブで動き、タグは持ち主が後から別の中身へ付け替えられるため。更新の手順は [配布とアプリ内更新](docs/updater.md#外部-action-の固定)。
 - `tauri-action` の通常の workflow Artifacts は更新用 `.app.tar.gz` / `.sig` を含まないので、試しビルドは `stage-updater-artifacts.mjs` で更新ファイル・署名・公開鍵を別途保存する。Windows MSVC のライブラリテストは、Tauri の生成済み resource を明示的にリンクし、Common Controls v6 の manifest を含める。
 - アプリの版は、ユーザー体験に明確に手を入れる変更でメジャー、一般的な機能追加でマイナー、修正と小さな調整でパッチを上げる。基準は [版番号の決め方](docs/updater.md#版番号の決め方)。
 - 下書き Release の `browser_download_url` は `untagged-*` になる。`latest.json` には公開後の `v<版>` URL を生成する。更新情報だけの再生成は `finalize-updater.yml` の手動実行で行え、既存タグが main に含まれる下書きだけを変更する。署名済みの配布ファイルとタグは変更しない。

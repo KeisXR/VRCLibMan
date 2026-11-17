@@ -1,5 +1,19 @@
 # 検証記録
 
+## 内蔵ブラウザのタブから asset プロトコルで読める範囲（2026-11-17）
+
+対象は main の `43ccfa9`（0.9.0）。Linux x86_64 のコンテナ、WebKitGTK 2.52.6、Tauri 2.12.5 / wry 0.57.0 / tauri-runtime-wry 2.12.3、Rust 1.97.0、Xvfb。実アプリではなく、同じ `Cargo.lock` で作った再現用の最小アプリで確かめた。タブは `browser_surface.rs` の `mount_tab` と同じく `WebviewBuilder::new(id, WebviewUrl::External(url))` を `Window::add_child` で足し、専用の `data_directory`（データフォルダの `booth-browser`）を付けた。外部ページの役は `http://127.0.0.1` のローカルサーバで、読む対象はダミーの `library.sqlite`・`thumbs` の画像と、WebKitGTK が実際に書いた Cookie の保存ファイル。
+
+仕組み：Tauri は asset プロトコルをすべての WebView に登録し、呼び出し元を確かめない。中身を読めるかは応答の `Access-Control-Allow-Origin` だけで決まり、その値は WebView を作ったときの URL のオリジンになる。Windows と macOS は WebView ごと、Linux は同じプロファイルで最初に作った WebView の値を使う（`tauri-runtime-wry` の `registered_custom_protocols`）。ページから開く新しいタブは、そのページが指定した URL で作る（`on_new_window` → `new_tab_on`）。
+
+- 範囲が `$APPDATA/**` のとき：タブのページのオリジンが上の値と一致すると、`fetch` と XHR で `library.sqlite` と `booth-browser/cookies` の中身を読めた。絶対パスの代わりに `/proc/self/cwd/.local/share/…` でも読めた（作業フォルダがホームのとき、ユーザー名が要らない）。一致しないときは中身を読めないが、`<img>` の読み込み成否でファイルの有無は分かった。範囲の外（`/etc/hostname`）は 403。
+- 範囲を `$APPDATA/thumbs/**`・`previews/**`・`hero_images/**` にしたとき：`library.sqlite`、Cookie の保存ファイル、`/proc/self/cwd` 経由のどれも 403。`thumbs` の画像は、アプリ自身の画面（`tauri://localhost`）からもタブのページからも読めた。
+- タブのページからのコマンド呼び出しは、アプリのコマンドも `core` のコマンドも拒否された（`window.__TAURI_INTERNALS__` はあるが、外部オリジンは ACL で落ちる）。
+- 実アプリの Linux では最初のタブを必ず BOOTH のライブラリで作るので、変更前でも外部ページのオリジンは一致しない。中身まで読めたのは、再現アプリで最初のタブを外部ページにしたとき。
+- 範囲を絞った実アプリ：`cargo check` が通り、`npm test` は 319 件すべて成功した（範囲を見る `test/link.test.mjs` の 1 件を含む。範囲を `$APPDATA/**` に戻すと失敗する）。画面が asset プロトコルで読むのは `thumbs`・`previews`・`hero_images` の画像だけ（`src/media.ts` の `mediaSrc` の呼び出し 4 か所）。`cargo test` と、実アプリを起動してサムネイル・プレビュー・ヒーロー画像が表示されることの確認は行っていない。
+
+確かめていないこと：Windows（WebView2）と macOS の実機。コード上はタブごとに値が決まるので、ページから開いたタブで一致する。https のページ（wry は Linux でカスタムスキームを secure として登録する）。`about:blank` で作った WebView が最初のときの、オリジンが `null` の枠からの読み取り（試したが応答が返らず、判断できなかった）。変更後も、タブのページは `thumbs` などの画像の有無を絶対パスが分かれば確かめられる。
+
 ## アプリが前面にないときの通知（2026-11-16）
 
 対象はブランチ `codex/arrival-notifications`（main の `721c00e` の上）。下の実機の確認は、同じ変更を main の `5805002`（0.8.9）に載せた状態で行った。Windows 11 x64 / Rust 1.99.1 / tauri-plugin-notification 2.8.1 で確かめた。仕様は [拡張の仕様](browser-extension.md#アプリが前面にないときの通知)。

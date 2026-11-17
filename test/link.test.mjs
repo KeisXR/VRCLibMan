@@ -22,6 +22,20 @@ test("main window keeps HTML5 drag and drop for genre moves and JSON drops", () 
   assert.match(css, /\.item > \.row-actions \{[^}]*align-self:\s*start/);
 });
 
+// Tauri registers the asset protocol on every webview, the built-in browser's page tabs included.
+// The scope is what keeps a remote page away from library.sqlite and the browser profile.
+test("the asset protocol serves only the image folders, never the whole data folder", () => {
+  const scope = config.app.security.assetProtocol.scope;
+  assert.deepEqual(scope, ["$APPDATA/thumbs/**", "$APPDATA/previews/**", "$APPDATA/hero_images/**"]);
+  const setup = readFileSync("src-tauri/src/lib.rs", "utf8");
+  for (const pattern of scope) {
+    const folder = pattern.match(/^\$APPDATA\/([a-z_]+)\/\*\*$/)?.[1];
+    assert.ok(folder, pattern);
+    assert.match(setup, new RegExp(`directory\\.join\\("${folder}"\\)`), `${folder} is a folder the app creates`);
+  }
+  assert.match(agents, /asset scope は、画面が画像を読む/);
+});
+
 test("extension and app share the fixed loopback port", () => {
   assert.match(rust, new RegExp(`LOCAL_IMPORT_PORT: u16 = ${port}`));
   assert.match(rust, /127\.0\.0\.1:\{LOCAL_IMPORT_PORT\}/);
