@@ -49,7 +49,7 @@ pub(crate) fn safe_filename(value: &str) -> Option<String> {
 /// installers and shortcuts. Archives, packages, images and documents are not in the list.
 const RUNS_WHEN_OPENED: &[&str] = &[
     // Windows
-    "exe", "com", "scr", "pif", "bat", "cmd", "msi", "msp", "msix", "msixbundle", "appx",
+    "exe", "com", "scr", "pif", "bat", "cmd", "msi", "msp", "msu", "msix", "msixbundle", "appx",
     "appxbundle", "appinstaller", "ps1", "psm1", "psd1", "ps1xml", "vbs", "vbe", "vb", "js",
     "jse", "wsf", "wsh", "wsc", "sct", "hta", "cpl", "msc", "reg", "inf", "scf", "lnk", "url",
     "website", "application", "appref-ms", "gadget", "chm", "hlp", "shb", "shs", "library-ms",
@@ -2127,7 +2127,7 @@ mod tests {
     #[test]
     fn programs_scripts_and_shortcuts_run_when_opened_and_assets_do_not() {
         for name in [
-            "Setup.exe", "setup.EXE", "run.bat", "install.cmd", "tool.msi", "viewer.scr",
+            "Setup.exe", "setup.EXE", "run.bat", "install.cmd", "tool.msi", "update.msu", "viewer.scr",
             "readme.lnk", "site.url", "script.ps1", "macro.vbs", "helper.js", "page.hta",
             "addon.py", "Tool.app", "start.command", "installer.pkg", "launcher.desktop",
             "Tool.AppImage", "build.sh", "library.jar", "tool.exe.", "tool.exe ", "tool.exe. .",
