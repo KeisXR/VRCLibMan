@@ -1194,6 +1194,18 @@ pub async fn open_local_path(app: tauri::AppHandle, path: String) -> Result<(), 
         if std::fs::symlink_metadata(&path).is_err() {
             return Err("ファイルが見つかりません。フォルダを調べ直してください".to_string());
         }
+        // 開くと実行される種類（プログラム、スクリプト、ショートカット）は既定のアプリへ渡さない。
+        // 登録済みでも、押しただけで動かさないため。代わりに保存先のフォルダで示す。
+        if crate::library_files::runs_when_opened(Path::new(&path)) {
+            return Err(
+                if tauri_plugin_opener::reveal_item_in_dir(&path).is_ok() {
+                    "プログラムやショートカットは、ここからは開きません。保存先のフォルダを開きました"
+                } else {
+                    "プログラムやショートカットは、ここからは開きません。保存先のフォルダで確認してください"
+                }
+                .to_string(),
+            );
+        }
         tauri_plugin_opener::open_path(&path, None::<&str>)
             .map_err(|_| "ファイルを開けませんでした".to_string())
     })

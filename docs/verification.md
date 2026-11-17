@@ -1,5 +1,56 @@
 # 検証記録
 
+## 残りの指摘への対応：自動整理の判定、CSP、開く種類、拡張の保存領域（2026-11-17）
+
+対象はブランチ `claude/epic-ptolemy-5c5d06` の `0416c54` に載せた変更。Linux x86_64 のコンテナ、Rust 1.97.0、Node 22.23.5、Playwright の Chromium（リビジョン 1243）、WebKitGTK 2.52.6、Xvfb。BOOTH には接続していない。BOOTH の役は、`booth.pm`・`shop.booth.pm`・`accounts.booth.pm` と外部サイトの名前をローカルの HTTPS サーバーへ向けて（`--host-resolver-rules`、`--no-proxy-server`）代わりにした。Windows・macOS、実際の Chrome / Edge、実際の BOOTH では確かめていない。その分は [Windows での確認と残りの実装](windows-handoff.md) に書いた。
+
+### 拡張の自動整理（`download-route.js`）
+
+本物の拡張を Chromium に読み込み（`--load-extension`）、「ダウンロードを自動整理」をオン、アプリの受信口の代わりを 17321 番に置いて、リンクを実際に押した。変更前（`0416c54` の拡張）と変更後で、保存先と、アプリへ送る `/download-finished` の中身を比べた。
+
+| 場面 | 変更前 | 変更後 |
+| --- | --- | --- |
+| 商品ページ（`booth.pm/ja/items/…`、クエリ付きも）から | 振り分けない | 同じ |
+| ショップのページ（`shop.booth.pm/items/…`）から | 振り分けない | 同じ |
+| ライブラリ・注文詳細から、クリックの記録なし | 振り分けない | 同じ |
+| ライブラリ・商品ページから、クリックの記録あり | `VRCLibMan/<記録の商品ID>/` へ。通知に商品 ID とファイル ID | 同じ |
+| 同じファイルの記録が 2 件（曖昧） | 振り分けない | 同じ |
+| 対象外の種類（pdf） | 振り分けない | 同じ |
+| 転送先のパスに `/items/<ID>/` がある | `VRCLibMan/<ID>/` へ | 同じ |
+| 外部サイトのページ（URL に `/items/<別の商品>`、`referrerpolicy="unsafe-url"`）から BOOTH のファイル | `VRCLibMan/<別の商品>/` へ入った | 振り分けない |
+| BOOTH のページから、外部サイトのファイル（URL に `/items/<別の商品>/`） | `VRCLibMan/<別の商品>/` へ入った | 振り分けない |
+| BOOTH のダウンロード URL のクエリに `/items/<別の商品>` | `VRCLibMan/<別の商品>/` へ入った | 振り分けない |
+| 外部サイトのページ（ID なし）から BOOTH のファイル | 振り分けない | 同じ |
+
+- 別のサーバーへ転送されたダウンロードの `referrer` は、同じ `booth.pm` の商品ページから押しても `https://booth.pm/` だけだった。`url` は転送前、`finalUrl` は転送後のアドレスだった。商品ページの URL から商品 ID を読む経路は、この条件では変更前から働いていない。
+- 変更前と変更後の関数に同じ入力を 40 万件与えて比べた（BOOTH から始まり、商品 ID はパスにだけあり、リンク元は BOOTH か空）。振り分け先と通知はすべて一致した。
+- 確かめていないこと：実際の BOOTH の転送先のアドレスの形、実際の BOOTH のページでのクリックの記録（代わりのページには商品の DOM が無いので、記録はストレージへ直接入れた）、「取得」「LibMan で取得」のボタン。
+
+### 拡張の保存領域（`TRUSTED_CONTEXTS`）
+
+同じ Chromium で、BOOTH 役のページに入ったコンテンツスクリプトの実行環境から `chrome.storage.local.get` を呼んだ。変更前はペアリングコードを読めた。変更後は「Access to storage is not allowed from this context.」で拒否され、サービスワーカー・設定ページ・ポップアップは読めた。コンテンツスクリプトからのメッセージ（`page-state`）は変更後も応答した。サイドパネルと offscreen 文書は開いていない。
+
+### CSP とサムネイルの URL
+
+- フロントをビルドし、`tauri.conf.json` の `csp` をヘッダーに付けて Chromium で開いた（Tauri の外なので見本データ）。アバター・アセット・ワールド・購入履歴・ログ・インポート・設定・検索・アバター詳細・右パネルで、違反もコンソールのエラーも 0 件。別ホストの画像と `fetch`、インラインのスクリプト、`eval` は止まった。
+- 実アプリを本番と同じ形（`cargo build --features tauri/custom-protocol`、フロントを埋め込み）でビルドし、空のデータフォルダで Xvfb 上で起動した。確認のため `csp` に `report-uri` を足した（`TAURI_CONFIG`。リポジトリの設定は変えていない）。見本の 7 商品を受信口の `/import` で入れ、`thumbs` に置いた画像を 3 商品に結び付けた。初回セットアップとアバター一覧は崩れずに出て、件数は実データ（7 商品）で、`thumbs` の画像が表示され、違反の報告は 0 件だった。
+- 対照として `img-src` から `asset:` を外した版では、`img-src` の違反が報告された。報告が届く仕組みであることを確かめるため。
+- サムネイルの URL を `http://127.0.0.1:8799/…` にした商品では、その URL への要求が 1 件も来なかった（`remoteImageUrl` が外す）。`booth.pximg.net` の URL は、このコンテナから外へ出られないので画像の表示までは見ていない。
+- 開発モード（Vite の開発サーバーにつないだデバッグビルド）でも、起動直後の画面が出た。
+- 確かめていないこと：WebKitGTK の実アプリで操作できたのは起動直後の画面だけ（アバター一覧より先の画面、操作バー、内蔵ブラウザ、ダイアログは見ていない）。Windows の WebView2 では `http://asset.localhost` と `http://ipc.localhost` を使うので、同じ結果になるとは限らない。
+
+### Rust 側（開く種類、`/download-finished` のパス）
+
+- `cargo test` は 549 件成功、失敗 0（無視 3）。`runs_when_opened` の種類の一覧、`staged_download_shaped`、検査の順序（`recovered` がパスの文字を見てから開くこと）を含む。
+- `open_local_path` が実際に Windows のエクスプローラーで保存先を示すこと、`.exe` などが起動しないことは、実機で確かめていない。
+
+### 見送ったもの
+
+- 開発用の依存の既知の問題（`picomatch` の ReDoS、GHSA-fc5q-39xc-vjpf）：最新の 4.0.7 まで対象で、直った版が無い。`npm audit fix --force` は vite を 6.2.7 へ下げる提案なので使っていない。配布物に入る依存は 0 件。
+- ペアリングコードの送り方、Windows の「ネットから取得」の印：[Windows での確認と残りの実装](windows-handoff.md) に書いた。
+
+`npm test` は 325 件すべて成功した。
+
 ## 内蔵ブラウザのタブから asset プロトコルで読める範囲（2026-11-17）
 
 対象は main の `43ccfa9`（0.9.0）。Linux x86_64 のコンテナ、WebKitGTK 2.52.6、Tauri 2.12.5 / wry 0.57.0 / tauri-runtime-wry 2.12.3、Rust 1.97.0、Xvfb。実アプリではなく、同じ `Cargo.lock` で作った再現用の最小アプリで確かめた。タブは `browser_surface.rs` の `mount_tab` と同じく `WebviewBuilder::new(id, WebviewUrl::External(url))` を `Window::add_child` で足し、専用の `data_directory`（データフォルダの `booth-browser`）を付けた。外部ページの役は `http://127.0.0.1` のローカルサーバで、読む対象はダミーの `library.sqlite`・`thumbs` の画像と、WebKitGTK が実際に書いた Cookie の保存ファイル。

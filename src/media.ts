@@ -1,11 +1,30 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { isTauri } from "./api";
 
+/**
+ * 保存していない画像は BOOTH の画像サーバーからだけ読む。URL は読み込んだ商品情報に書かれた値なので、
+ * 別のサーバーを指していても接続しない（`tauri.conf.json` の CSP の `img-src` と同じ範囲）。
+ */
+export function remoteImageUrl(url: string | null): string | null {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port) return null;
+    const host = parsed.hostname;
+    const allowed =
+      host === "booth.pm" || host.endsWith(".booth.pm") || host === "pximg.net" || host.endsWith(".pximg.net");
+    return allowed ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 export function mediaSrc(path: string | null, url: string | null): string | null {
   if (path && isTauri()) {
     return convertFileSrc(path);
   }
-  return url;
+  // ブラウザ確認用の見本（Tauri の外）は、見本データの画像をそのまま出す。
+  return isTauri() ? remoteImageUrl(url) : url;
 }
 
 export function formatBytes(size: number): string {

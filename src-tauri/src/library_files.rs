@@ -45,6 +45,43 @@ pub(crate) fn safe_filename(value: &str) -> Option<String> {
     Some(name.to_string())
 }
 
+/// Types the OS runs, installs or follows when asked to "open" them: programs, scripts,
+/// installers and shortcuts. Archives, packages, images and documents are not in the list.
+const RUNS_WHEN_OPENED: &[&str] = &[
+    // Windows
+    "exe", "com", "scr", "pif", "bat", "cmd", "msi", "msp", "msix", "msixbundle", "appx",
+    "appxbundle", "appinstaller", "ps1", "psm1", "psd1", "ps1xml", "vbs", "vbe", "vb", "js",
+    "jse", "wsf", "wsh", "wsc", "sct", "hta", "cpl", "msc", "reg", "inf", "scf", "lnk", "url",
+    "website", "application", "appref-ms", "gadget", "chm", "hlp", "shb", "shs", "library-ms",
+    "search-ms", "settingcontent-ms", "diagcab", "dll", "ocx", "sys", "drv",
+    // macOS
+    "app", "command", "tool", "pkg", "mpkg", "scpt", "scptd", "applescript", "workflow",
+    "action", "terminal", "inetloc", "webloc", "fileloc",
+    // Linux
+    "desktop", "appimage", "run", "bin", "deb", "rpm", "flatpakref", "snap",
+    // interpreters that may be installed anywhere
+    "jar", "jnlp", "py", "pyw", "pyz", "rb", "pl", "php", "sh", "bash", "zsh", "fish", "csh",
+    "ksh",
+];
+
+/// Whether opening `path` with the default application would run it rather than show it.
+/// Windows drops trailing dots and spaces from a name, so `tool.exe.` is `tool.exe`.
+pub(crate) fn runs_when_opened(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        // A name that is not Unicode cannot be compared; do not hand it to the OS blind.
+        return path.file_name().is_some();
+    };
+    let name = name.trim_end_matches(['.', ' ']);
+    let Some((stem, extension)) = name.rsplit_once('.') else {
+        return false;
+    };
+    if stem.is_empty() {
+        return false;
+    }
+    let extension = extension.trim().to_ascii_lowercase();
+    RUNS_WHEN_OPENED.contains(&extension.as_str())
+}
+
 pub(crate) fn clean_variation(value: &str) -> Option<String> {
     let name = value.split_whitespace().collect::<Vec<_>>().join(" ");
     if name.is_empty() || name.chars().count() > 80 {
@@ -272,6 +309,32 @@ pub(crate) fn staged_download_ok(
     downloads: &Path,
     booth_id: &str,
 ) -> Result<PathBuf, String> {
+    let (root, root_len) = staged_shape(source, downloads, booth_id)?;
+    let source_names = normal_names(source).map_err(|_| staged_path_error())?;
+    let staging = open_child(&root, &source_names[root_len], true)?;
+    let product_dir = open_child(&staging, &source_names[root_len + 1], true)?;
+    let file = open_child(&product_dir, &source_names[root_len + 2], false)?;
+    let source_canon = std::fs::canonicalize(source).map_err(|_| staged_path_error())?;
+    if !same_path(&source_canon, &file) {
+        return Err(staged_path_error());
+    }
+    Ok(file)
+}
+
+/// Whether `source` is written as `{downloads}/VRCLibMan/{booth_id}/{filename}`.
+/// Only the text of `source` is read. A caller that has not checked the path yet asks this
+/// first, so a path on another machine is refused before the OS connects to it.
+pub(crate) fn staged_download_shaped(source: &Path, downloads: &Path, booth_id: &str) -> bool {
+    staged_shape(source, downloads, booth_id).is_ok()
+}
+
+/// The part of `staged_download_ok` that opens nothing at `source`. Returns the canonical
+/// downloads folder and how many names it has, for walking the three levels below it.
+fn staged_shape(
+    source: &Path,
+    downloads: &Path,
+    booth_id: &str,
+) -> Result<(PathBuf, usize), String> {
     if !source.is_absolute() || !downloads.is_absolute() {
         return Err("ダウンロードのパスが絶対パスではありません".into());
     }
@@ -307,15 +370,7 @@ pub(crate) fn staged_download_ok(
     let root_len = under(downloads)
         .or_else(|| under(&without_verbatim_prefix(&root)))
         .ok_or_else(staged_path_error)?;
-    let source_names = normal_names(source).map_err(|_| staged_path_error())?;
-    let staging = open_child(&root, &source_names[root_len], true)?;
-    let product_dir = open_child(&staging, &source_names[root_len + 1], true)?;
-    let file = open_child(&product_dir, &source_names[root_len + 2], false)?;
-    let source_canon = std::fs::canonicalize(source).map_err(|_| staged_path_error())?;
-    if !same_path(&source_canon, &file) {
-        return Err(staged_path_error());
-    }
-    Ok(file)
+    Ok((root, root_len))
 }
 
 /// Create `{downloads}/VRCLibMan/{booth_id}` as real directories.
@@ -2002,5 +2057,48 @@ mod tests {
         assert!(probes[0].remote_checked);
         assert!(!probes[0].remote_reachable);
         assert!(dead.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn programs_scripts_and_shortcuts_run_when_opened_and_assets_do_not() {
+        for name in [
+            "Setup.exe", "setup.EXE", "run.bat", "install.cmd", "tool.msi", "viewer.scr",
+            "readme.lnk", "site.url", "script.ps1", "macro.vbs", "helper.js", "page.hta",
+            "addon.py", "Tool.app", "start.command", "installer.pkg", "launcher.desktop",
+            "Tool.AppImage", "build.sh", "library.jar", "tool.exe.", "tool.exe ", "tool.exe. .",
+            "body.unitypackage.exe", "写真.png.lnk",
+        ] {
+            assert!(runs_when_opened(Path::new("/library/123456").join(name).as_path()), "{name}");
+        }
+        for name in [
+            "body.unitypackage", "body.zip", "body.rar", "body.7z", "avatar.vrm", "model.fbx",
+            "model.blend", "texture.psd", "texture.png", "readme.txt", "manual.pdf", "notes.md",
+            "説明書.html", "exe", "bat", ".exe", "tool.exe.zip", "My Tool", "123456",
+        ] {
+            assert!(!runs_when_opened(Path::new("/library/123456").join(name).as_path()), "{name}");
+        }
+    }
+
+    #[test]
+    fn the_shape_of_a_staged_path_is_read_without_opening_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let downloads = dir.path().join("Downloads");
+        std::fs::create_dir_all(&downloads).unwrap();
+        // Nothing exists below the downloads folder: only the text is compared.
+        assert!(staged_download_shaped(&downloads.join("VRCLibMan/900001/body.zip"), &downloads, "900001"));
+        assert!(staged_download_ok(&downloads.join("VRCLibMan/900001/body.zip"), &downloads, "900001").is_err());
+        for (path, id) in [
+            (downloads.join("VRCLibMan/900001/body.zip"), "900002"),
+            (downloads.join("VRCLibMan/900001/sub/body.zip"), "900001"),
+            (downloads.join("VRCLibMan/900001"), "900001"),
+            (downloads.join("Other/900001/body.zip"), "900001"),
+            (downloads.join("VRCLibMan/900001/../900001/body.zip"), "900001"),
+            (dir.path().join("VRCLibMan/900001/body.zip"), "900001"),
+            (PathBuf::from("VRCLibMan/900001/body.zip"), "900001"),
+            (PathBuf::from(r"\\files.example.test\share\VRCLibMan\900001\body.zip"), "900001"),
+            (PathBuf::from("//files.example.test/share/VRCLibMan/900001/body.zip"), "900001"),
+        ] {
+            assert!(!staged_download_shaped(&path, &downloads, id), "{}", path.display());
+        }
     }
 }

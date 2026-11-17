@@ -61,6 +61,15 @@ test("the extension wakes the app, never reads cookies and carries the app's ver
   for (const size of ["16", "32", "48", "128"]) assert.equal(manifest.icons[size], `icons/icon-${size}.png`);
 });
 
+test("only the extension's own pages can read its storage", () => {
+  assert.match(background, /chrome\.storage\.local\.setAccessLevel\?\.\(\{ accessLevel: "TRUSTED_CONTEXTS" \}\)/);
+  // Scripts that run inside BOOTH pages: the manifest's content scripts and what executeScript injects.
+  const inPage = new Set(["extract.js", ...manifest.content_scripts.flatMap((entry) => entry.js)]);
+  for (const file of inPage) {
+    assert.equal(readFileSync(`extension/${file}`, "utf8").includes("chrome.storage"), false, file);
+  }
+});
+
 // The real popup script against a browser DOM and an in-memory extension runtime.
 test("the manifest key fixes the extension ID the app accepts, and the app ships the extension", () => {
   const der = Buffer.from(manifest.key, "base64");

@@ -26,15 +26,30 @@
     } catch { return false; }
   }
 
+  function pathOf(value) {
+    try { return new URL(String(value || "")).pathname; } catch { return ""; }
+  }
+
+  // BOOTH's files start at a BOOTH address (booth.pm/downloadables/<n>) and are then redirected.
+  // The page that linked to a file (referrer) does not make another site's file a BOOTH file.
   function isBoothAsset(item) {
     if (!item) return false;
     const name = safeDownloadName(item.filename || item.finalUrl || item.url || "");
     if (!ASSET.test(name)) return false;
-    return [item.url, item.finalUrl, item.referrer].some((value) => boothHost(value));
+    return boothHost(item.url);
   }
 
+  // Whoever writes a link chooses its query string, and the page it sits on. So the product ID
+  // is read from paths only, and only from BOOTH's own addresses: the start of the download,
+  // where BOOTH's redirect ended, and a BOOTH page that linked to it.
   function boothIdFrom(item) {
-    const blob = [item && item.url, item && item.finalUrl, item && item.referrer, item && item.filename].join("\n");
+    const started = Boolean(item) && boothHost(item.url);
+    const blob = [
+      started ? pathOf(item.url) : "",
+      item && (started || boothHost(item.finalUrl)) ? pathOf(item.finalUrl) : "",
+      item && boothHost(item.referrer) ? pathOf(item.referrer) : "",
+      item && item.filename,
+    ].join("\n");
     const itemId = blob.match(/\/items\/(\d{4,12})/);
     if (itemId) return itemId[1];
     const downloadId = blob.match(/\/downloads\/(\d{4,12})/);
