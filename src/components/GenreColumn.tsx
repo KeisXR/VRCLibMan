@@ -2,16 +2,20 @@ import { useState } from "react";
 import type { DragEvent } from "react";
 import { GENRE_FREE, GENRE_LABEL, GENRE_UNSET, genresForKind } from "../types";
 import type { GenreKind } from "../types";
+import { useAvatarGenre } from "../avatarGenreContext";
 import { useGenreBrowse } from "../genreBrowseContext";
 import { genreHref } from "../genreBrowseUtils";
-import { useAvatarGenre } from "../avatarGenreContext";
-import { AVATAR_GENRES, avatarGenreHref } from "../avatarGenre";
 import { GenreIcon, GenreToggleIcon } from "./genreIcons";
 
-/** One choice of the genre column or the chip bar. */
+/**
+ * One choice of the genre column or the chip bar. On the asset and world lists it is a link
+ * that narrows the list to the genre (`href`); on the avatar detail page it scrolls to the
+ * genre's heading (`onSelect`), like the settings page's contents.
+ */
 export interface GenreEntry {
   key: string;
   href?: string;
+  onSelect?: () => void;
   label: string;
   /** Icon name (genreIcons.tsx). The chip bar shows no icons. */
   icon?: string;
@@ -53,6 +57,7 @@ function dropProps(
 
 export function GenreTarget({
   href,
+  onSelect,
   label,
   icon,
   count,
@@ -89,7 +94,14 @@ export function GenreTarget({
   );
   if (!href) {
     return (
-      <button type="button" className={classText} title={tooltip} {...handlers}>
+      <button
+        type="button"
+        className={classText}
+        title={tooltip}
+        aria-current={active ? "location" : undefined}
+        onClick={onSelect}
+        {...handlers}
+      >
         {body}
       </button>
     );
@@ -210,36 +222,22 @@ export function useBrowseGenreEntries(): { entries: GenreEntry[]; other: GenreOt
 }
 
 /**
- * The genres of one avatar's items (avatarGenre.ts). Counts come from the avatar detail page
- * once it has loaded; there are no drop targets and no "free" choice.
+ * The genre headings of one avatar's items (avatarGenre.ts), only those with items. Counts
+ * come from the avatar detail page once it has loaded; there are no drop targets.
  */
 export function useAvatarGenreEntries(): { entries: GenreEntry[]; other: null; activeKey: string } {
   const avatar = useAvatarGenre();
   if (!avatar) return { entries: [], other: null, activeKey: "" };
-  const { avatarId, selected, counts } = avatar;
-  const unsetCount = counts?.counts[GENRE_UNSET] ?? 0;
-  const entries: GenreEntry[] = [
-    { key: "", href: avatarGenreHref(avatarId, null), label: "すべて", icon: "all", count: counts?.total, active: selected === null },
-    ...AVATAR_GENRES.map((value) => ({
-      key: value,
-      href: avatarGenreHref(avatarId, value),
-      label: GENRE_LABEL[value] ?? value,
-      icon: value,
-      count: counts ? counts.counts[value] ?? 0 : undefined,
-      active: selected === value,
-    })),
-  ];
-  if (unsetCount > 0 || selected === GENRE_UNSET) {
-    entries.push({
-      key: GENRE_UNSET,
-      href: avatarGenreHref(avatarId, GENRE_UNSET),
-      label: GENRE_LABEL[GENRE_UNSET],
-      icon: GENRE_UNSET,
-      count: counts ? unsetCount : undefined,
-      active: selected === GENRE_UNSET,
-    });
-  }
-  return { entries, other: null, activeKey: selected ?? "" };
+  const { keys, counts, active, go } = avatar;
+  const entries: GenreEntry[] = keys.map((value) => ({
+    key: value,
+    onSelect: () => go(value),
+    label: GENRE_LABEL[value] ?? value,
+    icon: value,
+    count: counts?.counts[value] ?? 0,
+    active: active === value,
+  }));
+  return { entries, other: null, activeKey: active ?? "" };
 }
 
 /** The asset or world genre column. */
