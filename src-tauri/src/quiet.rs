@@ -609,6 +609,8 @@ pub async fn fetch_staged_file<F: FnMut(u64, Option<u64>)>(
         let _ = std::fs::remove_file(&path);
         return Err(QuietError::Failed);
     }
+    // ブラウザを通さずに受け取ったので、Windows の「ネットから取得した」の印はここで付ける。
+    crate::library_files::mark_from_internet(&path);
     Ok(StagedFetch { path, host })
 }
 
@@ -1021,6 +1023,19 @@ mod tests {
         assert!(classify_at < send_at);
         assert!(!fetch.contains("println"));
         assert!(!fetch.contains("eprintln"));
+    }
+
+    /// 受け取ったファイルは、閉じてログイン画面でないと分かったあと、返す前に印を付ける。
+    #[test]
+    fn a_received_file_is_marked_before_it_is_handed_on() {
+        let source = include_str!("quiet.rs");
+        let production = source.split("mod tests").next().unwrap();
+        let fetch = function_body(production, "fn fetch_staged_file");
+        let closed = fetch.rfind("drop(file);").expect("closed");
+        let checked = fetch.rfind("file_looks_like_login_page(&path)").expect("checked");
+        let marked = fetch.find("library_files::mark_from_internet(&path)").expect("marked");
+        let returned = fetch.find("Ok(StagedFetch").expect("returned");
+        assert!(closed < checked && checked < marked && marked < returned);
     }
 
     fn function_body<'a>(source: &'a str, name: &str) -> &'a str {

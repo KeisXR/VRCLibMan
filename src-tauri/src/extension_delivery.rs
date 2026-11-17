@@ -51,6 +51,19 @@ pub(crate) fn recovered(
     notice: &DownloadFinished,
     started_at: Option<&str>,
 ) -> Result<Option<PathBuf>, String> {
+    // Read the text of the path before opening anything: only a path written as a staged
+    // download is looked at. One that points elsewhere (another machine's share, say) is left
+    // to the normal path, which refuses it by its text as well.
+    let shaped = crate::library_files::downloads_folder().is_ok_and(|downloads| {
+        crate::library_files::staged_download_shaped(
+            Path::new(&notice.path),
+            &downloads,
+            &notice.booth_id,
+        )
+    });
+    if !shaped {
+        return Ok(None);
+    }
     // Existing sources must take the normal path, including symlink/path validation.
     match std::fs::symlink_metadata(&notice.path) {
         Ok(_) => return Ok(None),
@@ -134,7 +147,10 @@ mod tests {
             INSERT INTO products(booth_id,title,imported_at,updated_at) VALUES ('123456','見本','','');
             INSERT INTO product_files(booth_id,variation,filename,downloadable_id) VALUES ('123456','A用','sample.zip','555555');").unwrap();
         crate::db::record_placed_download(&c, "123456", "", &destination, None).unwrap();
-        let source = dir.path().join("Downloads/VRCLibMan/123456/sample.zip");
+        let downloads = dir.path().join("Downloads");
+        std::fs::create_dir_all(&downloads).unwrap();
+        crate::library_files::set_test_downloads(Some(downloads.clone()));
+        let source = downloads.join("VRCLibMan/123456/sample.zip");
         let started = chrono::Utc::now().to_rfc3339();
         remember(&c, &source, "123456", &destination).unwrap();
         let mut notice = DownloadFinished {
@@ -180,5 +196,59 @@ mod tests {
         c.execute_batch("UPDATE settings SET value='0' WHERE key='route_downloads'")
             .unwrap();
         assert!(recovered(&c, &notice, Some(&started)).unwrap().is_none());
+        crate::library_files::set_test_downloads(None);
+    }
+
+    /// A receipt exists for the path and every other condition holds, but the path is not
+    /// written as a staged download: it is not looked at, and nothing is recovered.
+    #[test]
+    fn a_path_outside_the_staging_folder_is_not_opened() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = crate::db::open(&dir.path().join("test.sqlite")).unwrap();
+        let library = dir.path().join("library");
+        let destination = library.join("123456/sample.zip");
+        std::fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        std::fs::write(&destination, b"test").unwrap();
+        c.execute(
+            "UPDATE settings SET value=?1 WHERE key='library_folder'",
+            [library.display().to_string()],
+        )
+        .unwrap();
+        c.execute_batch("UPDATE settings SET value='1' WHERE key='route_downloads';
+            INSERT INTO products(booth_id,title,imported_at,updated_at) VALUES ('123456','見本','','');").unwrap();
+        crate::db::record_placed_download(&c, "123456", "", &destination, None).unwrap();
+        let downloads = dir.path().join("Downloads");
+        std::fs::create_dir_all(&downloads).unwrap();
+        crate::library_files::set_test_downloads(Some(downloads.clone()));
+        let started = chrono::Utc::now().to_rfc3339();
+        let notice = |path: &Path| DownloadFinished {
+            booth_id: "123456".into(),
+            path: path.display().to_string(),
+            filename: "sample.zip".into(),
+            size: Some(4),
+            is_free: None,
+            is_adult: None,
+            variation: String::new(),
+            title: String::new(),
+        };
+        let staged = downloads.join("VRCLibMan/123456/sample.zip");
+        remember(&c, &staged, "123456", &destination).unwrap();
+        assert_eq!(recovered(&c, &notice(&staged), Some(&started)).unwrap(), Some(destination.clone()));
+        for elsewhere in [
+            dir.path().join("Other/VRCLibMan/123456/sample.zip"),
+            downloads.join("VRCLibMan/123456/sub/sample.zip"),
+            downloads.join("VRCLibMan/654321/sample.zip"),
+            downloads.join("sample.zip"),
+            PathBuf::from(r"\\files.example.test\share\VRCLibMan\123456\sample.zip"),
+            PathBuf::from("//files.example.test/share/VRCLibMan/123456/sample.zip"),
+        ] {
+            remember(&c, &elsewhere, "123456", &destination).unwrap();
+            assert!(recovered(&c, &notice(&elsewhere), Some(&started)).unwrap().is_none(), "{}", elsewhere.display());
+        }
+        crate::library_files::set_test_downloads(None);
+        // The text is read before the path is opened.
+        let source = include_str!("extension_delivery.rs");
+        let body = &source[source.find("pub(crate) fn recovered(").unwrap()..];
+        assert!(body.find("staged_download_shaped").unwrap() < body.find("symlink_metadata").unwrap());
     }
 }

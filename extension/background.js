@@ -10,6 +10,12 @@ const OFFSCREEN = "offscreen.html";
 const EXTENSION_PAGES = ["popup.html", "sidepanel.html", "options.html"];
 const SOURCES = { page: "current-page", library: "library", "library-new": "library-update" };
 
+// chrome.storage.local holds the pairing code and the queues. By default the scripts this extension
+// runs inside BOOTH pages could read it too. They never use it, so only our own pages may.
+try {
+  chrome.storage.local.setAccessLevel?.({ accessLevel: "TRUSTED_CONTEXTS" })?.catch?.(() => {});
+} catch {}
+
 // Serialize storage mutations across events; persist everything needed after worker shutdown.
 let serial = Promise.resolve();
 function exclusive(run) {

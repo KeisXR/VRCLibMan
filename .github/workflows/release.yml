@@ -239,8 +239,12 @@ jobs:
           node-version: lts/*
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Third-party actions in this job are pinned to a commit: the job holds the updater
+      # signing key and release write access, and a tag can be moved later (docs/updater.md).
+      # rust-toolchain must be a commit on its master branch, with the toolchain named here.
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
+          toolchain: stable
           targets: ${{ matrix.target }}
 
       # Only Windows uses LLD and a faster release profile. Keep the existing
@@ -255,7 +259,7 @@ jobs:
           "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16" >> $env:GITHUB_ENV
           "CARGO_PROFILE_RELEASE_LTO=thin" >> $env:GITHUB_ENV
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: "./src-tauri -> target"
           key: release-${{ matrix.name }}
@@ -270,7 +274,7 @@ jobs:
         run: node scripts/configure-updater.mjs "${{ runner.temp }}/updater.conf.json"
 
       - id: tauri
-        uses: tauri-apps/tauri-action@v1
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPIMAGE_EXTRACT_AND_RUN: ${{ runner.os == 'Linux' && '1' || '' }}

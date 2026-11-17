@@ -63,6 +63,26 @@ Windows x64 の NSIS 配布版、Apple Silicon Mac の .app、Linux x86_64 / aar
 
 下書き Release の `browser_download_url` は `untagged-*` になる場合があるため、更新情報には公開後の `v<版>` の URL を生成します。更新情報だけの再生成は、上記の `finalize updater manifest` を使います。署名済みの配布ファイル、タグ、公開状態は変更しません。
 
+## 外部 Action の固定
+
+`release.yml` のビルドジョブは、更新の署名鍵と Release への書き込み権限を受け取ります。そこで動く GitHub 公式（`actions/*`）以外の Action は、タグやブランチではなく 40 桁のコミット SHA で指定します。`@v1` や `@stable` は持ち主が後から別の中身へ付け替えられ、付け替えられると次のリリースで署名鍵を読まれたり、配布ファイルを差し替えられたりするためです。`test/updater-release.test.mjs` が SHA 以外の指定を失敗にします。
+
+| Action | 指定するコミット |
+| --- | --- |
+| `tauri-apps/tauri-action` | リリースタグ（`v1.0.0` など）が指すコミット |
+| `Swatinem/rust-cache` | リリースタグ（`v2.9.3` など）が指すコミット |
+| `dtolnay/rust-toolchain` | `master` ブランチのコミット。`stable` ブランチのコミットは後で消えるので使わず、`with: toolchain: stable` を書く |
+
+新しい版へ上げるときは、タグが指すコミットを調べて書き換え、行末のコメントの版も直します。注釈付きタグは `^{}` の付いた行がコミットです。
+
+```sh
+git ls-remote --tags https://github.com/tauri-apps/tauri-action 'v1*'
+git ls-remote --tags https://github.com/Swatinem/rust-cache 'v2*'
+git ls-remote https://github.com/dtolnay/rust-toolchain refs/heads/master
+```
+
+書き換えたら「Run workflow」の試しビルドで全ターゲットが通ることを確かめてから、タグを付けます。`ci.yml` は秘密情報を受け取らないので、この固定の対象にしていません。
+
 ## Linux の導入と更新
 
 Linux は実機未検証のテスト版として、通常の各リリースに両 CPU の AppImage を添付します。CI でのビルド・署名と成果物の確認を配布条件とし、Linux の実機確認は公開の必須条件にしません。Release 全体は通常版のまま、Linux の配布物をテスト版と明記します。アプリ内更新の経路も提供しますが、配布先での実際の更新は未検証です。
