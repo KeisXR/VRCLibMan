@@ -1,6 +1,6 @@
 //! Opt-in public metadata checks. Never downloads files or uses a BOOTH session.
-use crate::{AppState, booth_detail, db};
 use crate::model::{IncomingDownload, IncomingProduct};
+use crate::{AppState, booth_detail, db};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -65,27 +65,60 @@ pub(crate) struct UpdateRecord {
 
 fn update_file(id: &str, variation: &str, filename: &str) -> UpdateFile {
     UpdateFile {
-        downloadable_id: ((1..=12).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_digit())).then(|| id.to_owned()),
+        downloadable_id: ((1..=12).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_digit()))
+            .then(|| id.to_owned()),
         variation: variation.to_owned(),
         filename: filename.to_owned(),
     }
 }
 
-fn record_delta(w: &mut Watch, booth_id: &str, source: &str, before: &[UpdateFile], after: &[UpdateFile], description_changed: bool) -> bool {
-    let mut removed: Vec<_> = before.iter().filter(|f| !after.contains(f)).cloned().collect();
-    let mut added: Vec<_> = after.iter().filter(|f| !before.contains(f)).cloned().collect();
-    if removed.is_empty() && added.is_empty() && !description_changed { return false; }
-    removed.sort(); removed.dedup();
-    added.sort(); added.dedup();
-    w.history.push(UpdateRecord { booth_id: booth_id.to_owned(), detected_at: crate::model::now_iso(), source: source.to_owned(), description_changed, removed, added });
-    if w.history.len() > 200 { w.history.drain(..w.history.len() - 200); }
+fn record_delta(
+    w: &mut Watch,
+    booth_id: &str,
+    source: &str,
+    before: &[UpdateFile],
+    after: &[UpdateFile],
+    description_changed: bool,
+) -> bool {
+    let mut removed: Vec<_> = before
+        .iter()
+        .filter(|f| !after.contains(f))
+        .cloned()
+        .collect();
+    let mut added: Vec<_> = after
+        .iter()
+        .filter(|f| !before.contains(f))
+        .cloned()
+        .collect();
+    if removed.is_empty() && added.is_empty() && !description_changed {
+        return false;
+    }
+    removed.sort();
+    removed.dedup();
+    added.sort();
+    added.dedup();
+    w.history.push(UpdateRecord {
+        booth_id: booth_id.to_owned(),
+        detected_at: crate::model::now_iso(),
+        source: source.to_owned(),
+        description_changed,
+        removed,
+        added,
+    });
+    if w.history.len() > 200 {
+        w.history.drain(..w.history.len() - 200);
+    }
     true
 }
 
 pub(crate) fn history(c: &Connection) -> Result<Vec<UpdateRecord>, String> {
     let w = load(c)?;
     let titles = products(c)?;
-    Ok(w.history.into_iter().rev().filter(|r| titles.contains_key(&r.booth_id)).collect())
+    Ok(w.history
+        .into_iter()
+        .rev()
+        .filter(|r| titles.contains_key(&r.booth_id))
+        .collect())
 }
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 struct Snapshot {
@@ -118,7 +151,10 @@ pub struct Status {
     rows: Vec<RowStatus>,
 }
 #[derive(Serialize)]
-struct CheckProgress { done: usize, total: usize }
+struct CheckProgress {
+    done: usize,
+    total: usize,
+}
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RowStatus {
@@ -225,13 +261,21 @@ fn changes(row: &Row) -> Vec<String> {
 
 fn candidate_key(row: &Row) -> Option<String> {
     use std::hash::{Hash, Hasher};
-    if changes(row).is_empty() { return None; }
+    if changes(row).is_empty() {
+        return None;
+    }
     let mut hash = std::collections::hash_map::DefaultHasher::new();
     let mut files = row.new_files.clone();
-    files.sort(); files.dedup(); files.hash(&mut hash);
+    files.sort();
+    files.dedup();
+    files.hash(&mut hash);
     if let (Some(before), Some(after)) = (&row.baseline, &row.latest) {
-        if before.description != after.description { (&before.description, &after.description).hash(&mut hash); }
-        if before.files != after.files { (&before.files, &after.files).hash(&mut hash); }
+        if before.description != after.description {
+            (&before.description, &after.description).hash(&mut hash);
+        }
+        if before.files != after.files {
+            (&before.files, &after.files).hash(&mut hash);
+        }
     }
     Some(format!("{:016x}", hash.finish()))
 }
@@ -328,8 +372,7 @@ pub(crate) fn record_imported_files(
     let mut w = load(c)?;
     let mut dirty = false;
     for product in products {
-        if !booth_detail::item_json_url(&product.booth_id).is_ok()
-            || !active(c, &product.booth_id)?
+        if !booth_detail::item_json_url(&product.booth_id).is_ok() || !active(c, &product.booth_id)?
         {
             continue;
         }
@@ -391,11 +434,22 @@ pub(crate) fn record_imported_files(
         }
         if !public_files {
             let refs = |only_new: bool| -> Vec<UpdateFile> {
-                product.downloads.iter().filter(|f| !only_new || clean_file_key(f).is_some_and(|key| newly_marked.contains(&key)))
-                    .map(|f| update_file(f.downloadable_id.trim(), &f.variation, &f.filename)).collect()
+                product
+                    .downloads
+                    .iter()
+                    .filter(|f| {
+                        !only_new
+                            || clean_file_key(f).is_some_and(|key| newly_marked.contains(&key))
+                    })
+                    .map(|f| update_file(f.downloadable_id.trim(), &f.variation, &f.filename))
+                    .collect()
             };
             let previous = row.history_library_files.clone();
-            let current = if authoritative { Some(refs(false)) } else { None };
+            let current = if authoritative {
+                Some(refs(false))
+            } else {
+                None
+            };
             if let Some(current) = &current {
                 if previous.as_ref() != Some(current) {
                     row.history_library_files = Some(current.clone());
@@ -403,8 +457,17 @@ pub(crate) fn record_imported_files(
                 }
             }
             dirty |= match (previous, current) {
-                (Some(before), Some(after)) => record_delta(&mut w, &product.booth_id, "library", &before, &after, false),
-                _ => record_delta(&mut w, &product.booth_id, "library", &[], &refs(true), false),
+                (Some(before), Some(after)) => {
+                    record_delta(&mut w, &product.booth_id, "library", &before, &after, false)
+                }
+                _ => record_delta(
+                    &mut w,
+                    &product.booth_id,
+                    "library",
+                    &[],
+                    &refs(true),
+                    false,
+                ),
             };
         }
     }
@@ -431,8 +494,7 @@ pub(crate) fn clear_new_file_on_download(
     let before = row.new_files.len();
     let id = downloadable_id.map(str::trim).unwrap_or("");
     let name = filename.trim();
-    row.new_files
-        .retain(|key| key != id && key != name);
+    row.new_files.retain(|key| key != id && key != name);
     if row.new_files.len() != before {
         row.generation += 1;
         db::set_setting(
@@ -469,7 +531,10 @@ pub fn status(c: &Connection) -> Result<Status, String> {
         all_products: w.all_products,
         total_products: titles.len(),
         running,
-        progress: (running && total > 0).then(|| CheckProgress { done: CHECK_DONE.load(Ordering::Relaxed).min(total), total }),
+        progress: (running && total > 0).then(|| CheckProgress {
+            done: CHECK_DONE.load(Ordering::Relaxed).min(total),
+            total,
+        }),
         rows,
     })
 }
@@ -551,7 +616,13 @@ fn interpret_observation(id: &str, body: &str) -> Result<FetchedObservation, Str
         } => {
             let tuples = files
                 .iter()
-                .map(|f| (f.downloadable_id.clone(), f.variation.clone(), f.filename.clone()))
+                .map(|f| {
+                    (
+                        f.downloadable_id.clone(),
+                        f.variation.clone(),
+                        f.filename.clone(),
+                    )
+                })
                 .collect();
             (tuples, files, is_free, is_adult)
         }
@@ -625,8 +696,13 @@ pub async fn check(app: &AppHandle, manual: bool) -> Result<Status, String> {
         let c = state.db.lock().map_err(|_| "設定を読めません")?;
         let w = load(&c)?;
         let now = chrono::Utc::now().timestamp();
-        if !w.automatic || w.retry_after.is_some_and(|until| now < until)
-            || !w.rows.iter().any(|r| r.enabled && due(r, now) && active(&c, &r.booth_id).unwrap_or(false)) {
+        if !w.automatic
+            || w.retry_after.is_some_and(|until| now < until)
+            || !w
+                .rows
+                .iter()
+                .any(|r| r.enabled && due(r, now) && active(&c, &r.booth_id).unwrap_or(false))
+        {
             return status(&c);
         }
     }
@@ -742,8 +818,17 @@ async fn check_inner(app: &AppHandle, manual: bool) -> Result<(), String> {
                     record(row, result.map(|obs| obs.snapshot));
                     if row.error.is_none() {
                         if let (Some(before), Some(after)) = (previous, row.latest.as_ref()) {
-                            let refs = |s: &Snapshot| s.files.iter().map(|(id, v, name)| update_file(id, v, name)).collect::<Vec<_>>();
-                            let (old, new, desc) = (refs(&before), refs(after), before.description != after.description);
+                            let refs = |s: &Snapshot| {
+                                s.files
+                                    .iter()
+                                    .map(|(id, v, name)| update_file(id, v, name))
+                                    .collect::<Vec<_>>()
+                            };
+                            let (old, new, desc) = (
+                                refs(&before),
+                                refs(after),
+                                before.description != after.description,
+                            );
                             record_delta(&mut w, id, "public", &old, &new, desc);
                         }
                     }
@@ -1071,12 +1156,20 @@ mod tests {
             watch.current_files.as_ref().unwrap(),
             &HashSet::from(["10000100".to_string()])
         );
-        assert_eq!(history(&c).unwrap().len(), 1, "the partial and full import do not repeat the same discovery");
+        assert_eq!(
+            history(&c).unwrap().len(),
+            1,
+            "the partial and full import do not repeat the same discovery"
+        );
         let before_row = load(&c).unwrap().rows.remove(0);
         let key = candidate_key(&before_row);
         let mut revised = before_row;
         revised.generation += 1;
-        assert_eq!(key, candidate_key(&revised), "revisions alone do not change the notification");
+        assert_eq!(
+            key,
+            candidate_key(&revised),
+            "revisions alone do not change the notification"
+        );
 
         clear_new_file_on_download(&c, "424242", Some("10000100"), "MochiFitter75r.zip").unwrap();
         assert!(status(&c).unwrap().rows[0].changes.is_empty());
@@ -1087,13 +1180,23 @@ mod tests {
         record_imported_files(&c, &before, &incoming, true, false).unwrap();
         let records = history(&c).unwrap();
         assert_eq!(records.len(), 2);
-        assert_eq!(records[0].removed[0].downloadable_id.as_deref(), Some("10000100"));
-        assert_eq!(records[0].added[0].downloadable_id.as_deref(), Some("10000101"));
+        assert_eq!(
+            records[0].removed[0].downloadable_id.as_deref(),
+            Some("10000100")
+        );
+        assert_eq!(
+            records[0].added[0].downloadable_id.as_deref(),
+            Some("10000101")
+        );
         assert!(chrono::DateTime::parse_from_rfc3339(&records[0].detected_at).is_ok());
         let mut ack = config(None, Some("424242"), None);
         ack.acknowledge = Some(true);
         configure(&mut c, ack).unwrap();
         assert!(status(&c).unwrap().rows[0].changes.is_empty());
-        assert_eq!(history(&c).unwrap().len(), 2, "acknowledging the candidate keeps the evidence");
+        assert_eq!(
+            history(&c).unwrap().len(),
+            2,
+            "acknowledging the candidate keeps the evidence"
+        );
     }
 }

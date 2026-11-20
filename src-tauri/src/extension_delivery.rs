@@ -233,7 +233,10 @@ mod tests {
         };
         let staged = downloads.join("VRCLibMan/123456/sample.zip");
         remember(&c, &staged, "123456", &destination).unwrap();
-        assert_eq!(recovered(&c, &notice(&staged), Some(&started)).unwrap(), Some(destination.clone()));
+        assert_eq!(
+            recovered(&c, &notice(&staged), Some(&started)).unwrap(),
+            Some(destination.clone())
+        );
         for elsewhere in [
             dir.path().join("Other/VRCLibMan/123456/sample.zip"),
             downloads.join("VRCLibMan/123456/sub/sample.zip"),
@@ -243,12 +246,20 @@ mod tests {
             PathBuf::from("//files.example.test/share/VRCLibMan/123456/sample.zip"),
         ] {
             remember(&c, &elsewhere, "123456", &destination).unwrap();
-            assert!(recovered(&c, &notice(&elsewhere), Some(&started)).unwrap().is_none(), "{}", elsewhere.display());
+            assert!(
+                recovered(&c, &notice(&elsewhere), Some(&started))
+                    .unwrap()
+                    .is_none(),
+                "{}",
+                elsewhere.display()
+            );
         }
         crate::library_files::set_test_downloads(None);
         // The text is read before the path is opened.
         let source = include_str!("extension_delivery.rs");
         let body = &source[source.find("pub(crate) fn recovered(").unwrap()..];
-        assert!(body.find("staged_download_shaped").unwrap() < body.find("symlink_metadata").unwrap());
+        assert!(
+            body.find("staged_download_shaped").unwrap() < body.find("symlink_metadata").unwrap()
+        );
     }
 }

@@ -48,7 +48,8 @@ pub fn retire_settings(connection: &Connection) -> Result<bool, String> {
 pub fn remove_api_key(service: &str) {
     #[cfg(any(windows, target_os = "macos"))]
     {
-        match keyring::Entry::new(service, KEY_ACCOUNT).and_then(|entry| entry.delete_credential()) {
+        match keyring::Entry::new(service, KEY_ACCOUNT).and_then(|entry| entry.delete_credential())
+        {
             Ok(()) | Err(keyring::Error::NoEntry) => {}
             Err(_) => eprintln!(
                 "VRCLibMan: 使わなくなったクラウド分類の APIキーを OS の資格情報から削除できませんでした"

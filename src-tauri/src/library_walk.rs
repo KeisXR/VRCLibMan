@@ -26,7 +26,10 @@ pub fn detail_progress_line(current: u32, total: u32, pause: Duration) -> String
         return format!("商品情報を確認中 {current}/{total}");
     }
     let seconds = pause.as_secs_f64() * f64::from(left);
-    format!("商品情報を確認中 {current}/{total}（{}）", remaining_label(seconds))
+    format!(
+        "商品情報を確認中 {current}/{total}（{}）",
+        remaining_label(seconds)
+    )
 }
 
 /// 残り時間の目安。分の単位で切り上げ、1 時間を超えたら時間と分にする。
@@ -47,7 +50,11 @@ pub fn allowed_page_delay_ms(value: u64) -> bool {
 }
 
 pub fn normalize_page_delay_ms(value: u64) -> u64 {
-    if allowed_page_delay_ms(value) { value } else { PAGE_DELAY_MS }
+    if allowed_page_delay_ms(value) {
+        value
+    } else {
+        PAGE_DELAY_MS
+    }
 }
 const MAX_PAGE: u32 = 200;
 
@@ -65,7 +72,8 @@ pub enum WalkSection {
     Free,
 }
 
-pub const WALK_SECTIONS: [WalkSection; 3] = [WalkSection::Library, WalkSection::Gifts, WalkSection::Free];
+pub const WALK_SECTIONS: [WalkSection; 3] =
+    [WalkSection::Library, WalkSection::Gifts, WalkSection::Free];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WalkStop {
@@ -542,11 +550,26 @@ mod tests {
         assert_eq!(PAGE_DELAY_MS, 1000);
         assert_eq!(detail_pause(PAGE_DELAY), DETAIL_DELAY);
         assert_eq!(detail_pause(Duration::from_millis(250)), DETAIL_DELAY);
-        assert_eq!(detail_progress_line(1, 4, DETAIL_DELAY), "商品情報を確認中 1/4（残り1分未満）");
-        assert_eq!(detail_progress_line(4, 4, DETAIL_DELAY), "商品情報を確認中 4/4");
-        assert_eq!(detail_progress_line(1, 101, DETAIL_DELAY), "商品情報を確認中 1/101（残り約5分）");
-        assert_eq!(detail_progress_line(0, 1200, DETAIL_DELAY), "商品情報を確認中 0/1200（残り約1時間）");
-        assert_eq!(detail_progress_line(0, 1300, DETAIL_DELAY), "商品情報を確認中 0/1300（残り約1時間5分）");
+        assert_eq!(
+            detail_progress_line(1, 4, DETAIL_DELAY),
+            "商品情報を確認中 1/4（残り1分未満）"
+        );
+        assert_eq!(
+            detail_progress_line(4, 4, DETAIL_DELAY),
+            "商品情報を確認中 4/4"
+        );
+        assert_eq!(
+            detail_progress_line(1, 101, DETAIL_DELAY),
+            "商品情報を確認中 1/101（残り約5分）"
+        );
+        assert_eq!(
+            detail_progress_line(0, 1200, DETAIL_DELAY),
+            "商品情報を確認中 0/1200（残り約1時間）"
+        );
+        assert_eq!(
+            detail_progress_line(0, 1300, DETAIL_DELAY),
+            "商品情報を確認中 0/1300（残り約1時間5分）"
+        );
         assert!(!detail_progress_line(1, 4, DETAIL_DELAY).contains('?'));
         assert_eq!(PAGE_DELAY, Duration::from_millis(1000));
         assert_eq!(

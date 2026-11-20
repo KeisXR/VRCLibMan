@@ -12,8 +12,8 @@ pub struct ParsedExport {
 }
 
 pub fn parse_export(text: &str) -> Result<ParsedExport, String> {
-    let value: Value = serde_json::from_str(text)
-        .map_err(|err| format!("JSONを読めません: {err}"))?;
+    let value: Value =
+        serde_json::from_str(text).map_err(|err| format!("JSONを読めません: {err}"))?;
     let items = match value {
         Value::Array(items) => items,
         Value::Object(map) => {
@@ -83,7 +83,9 @@ fn parse_one(value: &Value) -> Result<IncomingProduct, String> {
     }
     let title = cap(&first_text(map, &["title", "name"]), 300);
     if title.is_empty() {
-        return Err(format!("商品 {booth_id} はタイトルがないのでスキップしました"));
+        return Err(format!(
+            "商品 {booth_id} はタイトルがないのでスキップしました"
+        ));
     }
     let url_text = cap(&first_text(map, &["url"]), 500);
     let url = if url_text.is_empty() {
@@ -98,7 +100,10 @@ fn parse_one(value: &Value) -> Result<IncomingProduct, String> {
     } else {
         (
             cap(
-                &first_text(map, &["descriptionSnippet", "description_snippet", "description"]),
+                &first_text(
+                    map,
+                    &["descriptionSnippet", "description_snippet", "description"],
+                ),
                 8000,
             ),
             parse_booth_category(map),
@@ -241,15 +246,12 @@ fn parse_downloads(value: Option<&Value>) -> Vec<IncomingDownload> {
         let Some(map) = item.as_object() else {
             continue;
         };
-        let downloadable_id = clean_downloadable_id(&first_text(
-            map,
-            &["downloadableId", "downloadable_id"],
-        ));
-        let Some(filename) = crate::library_files::safe_filename(&first_text(
-            map,
-            &["filename", "name"],
-        ))
-        .or_else(|| crate::library_files::safe_filename(&downloadable_id)) else {
+        let downloadable_id =
+            clean_downloadable_id(&first_text(map, &["downloadableId", "downloadable_id"]));
+        let Some(filename) =
+            crate::library_files::safe_filename(&first_text(map, &["filename", "name"]))
+                .or_else(|| crate::library_files::safe_filename(&downloadable_id))
+        else {
             continue;
         };
         let variation = crate::library_files::clean_variation(&first_text(
@@ -413,7 +415,10 @@ mod tests {
         }"#;
         let parsed = parse_export(unpublished).unwrap();
         assert_eq!(parsed.products.len(), 1);
-        assert_eq!(parsed.products[0].description_snippet, "公開終了（取得できず）");
+        assert_eq!(
+            parsed.products[0].description_snippet,
+            "公開終了（取得できず）"
+        );
         assert_eq!(parsed.products[0].shop, "mokemoke-dy");
         assert_eq!(parsed.products[0].unpublished, None);
     }
@@ -426,10 +431,9 @@ mod tests {
         .unwrap();
         assert_eq!(hidden.products[0].unpublished, Some(true));
         assert_eq!(hidden.products[0].is_free, Some(true));
-        let cleared = parse_export(
-            r#"{"boothId":"424242","title":"ダミー衣装","unpublished":false}"#,
-        )
-        .unwrap();
+        let cleared =
+            parse_export(r#"{"boothId":"424242","title":"ダミー衣装","unpublished":false}"#)
+                .unwrap();
         assert_eq!(cleared.products[0].unpublished, Some(false));
         let omitted = parse_export(r#"{"boothId":"424242","title":"ダミー衣装"}"#).unwrap();
         assert_eq!(omitted.products[0].unpublished, None);
@@ -457,8 +461,18 @@ mod tests {
         assert_eq!(product.is_free, Some(true));
         assert_eq!(product.is_adult, Some(false));
         assert_eq!(product.variations.len(), 2);
-        assert!(product.variations.iter().any(|row| row.name == "通常" && row.owned));
-        assert!(product.variations.iter().any(|row| row.name == "特典" && !row.owned));
+        assert!(
+            product
+                .variations
+                .iter()
+                .any(|row| row.name == "通常" && row.owned)
+        );
+        assert!(
+            product
+                .variations
+                .iter()
+                .any(|row| row.name == "特典" && !row.owned)
+        );
         assert_eq!(product.downloads.len(), 1);
         assert_eq!(product.downloads[0].filename, "body.unitypackage");
         assert_eq!(product.downloads[0].size_bytes, Some(12));

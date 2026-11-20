@@ -49,18 +49,95 @@ pub(crate) fn safe_filename(value: &str) -> Option<String> {
 /// installers and shortcuts. Archives, packages, images and documents are not in the list.
 const RUNS_WHEN_OPENED: &[&str] = &[
     // Windows
-    "exe", "com", "scr", "pif", "bat", "cmd", "msi", "msp", "msu", "msix", "msixbundle", "appx",
-    "appxbundle", "appinstaller", "ps1", "psm1", "psd1", "ps1xml", "vbs", "vbe", "vb", "js",
-    "jse", "wsf", "wsh", "wsc", "sct", "hta", "cpl", "msc", "reg", "inf", "scf", "lnk", "url",
-    "website", "application", "appref-ms", "gadget", "chm", "hlp", "shb", "shs", "library-ms",
-    "search-ms", "settingcontent-ms", "diagcab", "dll", "ocx", "sys", "drv",
+    "exe",
+    "com",
+    "scr",
+    "pif",
+    "bat",
+    "cmd",
+    "msi",
+    "msp",
+    "msu",
+    "msix",
+    "msixbundle",
+    "appx",
+    "appxbundle",
+    "appinstaller",
+    "ps1",
+    "psm1",
+    "psd1",
+    "ps1xml",
+    "vbs",
+    "vbe",
+    "vb",
+    "js",
+    "jse",
+    "wsf",
+    "wsh",
+    "wsc",
+    "sct",
+    "hta",
+    "cpl",
+    "msc",
+    "reg",
+    "inf",
+    "scf",
+    "lnk",
+    "url",
+    "website",
+    "application",
+    "appref-ms",
+    "gadget",
+    "chm",
+    "hlp",
+    "shb",
+    "shs",
+    "library-ms",
+    "search-ms",
+    "settingcontent-ms",
+    "diagcab",
+    "dll",
+    "ocx",
+    "sys",
+    "drv",
     // macOS
-    "app", "command", "tool", "pkg", "mpkg", "scpt", "scptd", "applescript", "workflow",
-    "action", "terminal", "inetloc", "webloc", "fileloc",
+    "app",
+    "command",
+    "tool",
+    "pkg",
+    "mpkg",
+    "scpt",
+    "scptd",
+    "applescript",
+    "workflow",
+    "action",
+    "terminal",
+    "inetloc",
+    "webloc",
+    "fileloc",
     // Linux
-    "desktop", "appimage", "run", "bin", "deb", "rpm", "flatpakref", "snap",
+    "desktop",
+    "appimage",
+    "run",
+    "bin",
+    "deb",
+    "rpm",
+    "flatpakref",
+    "snap",
     // interpreters that may be installed anywhere
-    "jar", "jnlp", "py", "pyw", "pyz", "rb", "pl", "php", "sh", "bash", "zsh", "fish", "csh",
+    "jar",
+    "jnlp",
+    "py",
+    "pyw",
+    "pyz",
+    "rb",
+    "pl",
+    "php",
+    "sh",
+    "bash",
+    "zsh",
+    "fish",
+    "csh",
     "ksh",
 ];
 
@@ -176,7 +253,10 @@ fn known_downloads_folder() -> Result<PathBuf, String> {
 }
 
 #[cfg(target_os = "linux")]
-fn linux_downloads_folder(configured: Option<PathBuf>, home: Option<PathBuf>) -> Result<PathBuf, String> {
+fn linux_downloads_folder(
+    configured: Option<PathBuf>,
+    home: Option<PathBuf>,
+) -> Result<PathBuf, String> {
     // dirs reads XDG_DOWNLOAD_DIR from user-dirs.dirs, including localized and
     // relocated folders. Preserve the previous default when XDG has no directory.
     let path = configured
@@ -467,17 +547,13 @@ pub(crate) fn choose_download_name(row_filename: &str, suggested: &str) -> Strin
 }
 
 pub(crate) fn looks_like_login_page(bytes: &[u8]) -> bool {
-    let bytes = bytes
-        .strip_prefix(&[0xEF, 0xBB, 0xBF])
-        .unwrap_or(bytes);
+    let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
     let text = String::from_utf8_lossy(bytes);
     let trimmed = text
         .trim_start()
         .trim_start_matches('\u{feff}')
         .to_ascii_lowercase();
-    trimmed.starts_with("<!doctype")
-        || trimmed.starts_with("<html")
-        || trimmed.starts_with("<head")
+    trimmed.starts_with("<!doctype") || trimmed.starts_with("<html") || trimmed.starts_with("<head")
 }
 
 pub(crate) fn file_looks_like_login_page(path: &Path) -> bool {
@@ -937,7 +1013,10 @@ pub(crate) enum CopyOutcome {
     /// same size). Nothing was written.
     AlreadyThere,
     /// Another file holds the name. Nothing was written. The sizes help a person decide.
-    Conflict { source_size: u64, existing_size: u64 },
+    Conflict {
+        source_size: u64,
+        existing_size: u64,
+    },
 }
 
 fn existing_outcome(meta: &std::fs::Metadata, source_size: u64) -> CopyOutcome {
@@ -1134,8 +1213,8 @@ fn copy_confirmed(source: &Path, dest: &Path, overwrite: bool) -> Result<CopyOut
         .map_err(|err| format!("コピー用の一時ファイルを作れません: {err}"))?;
     let mut input =
         std::fs::File::open(source).map_err(|err| format!("コピー元を開けません: {err}"))?;
-    let copied =
-        std::io::copy(&mut input, &mut temp).map_err(|err| format!("ファイルをコピーできません: {err}"))?;
+    let copied = std::io::copy(&mut input, &mut temp)
+        .map_err(|err| format!("ファイルをコピーできません: {err}"))?;
     if copied != source_size {
         return Err("コピー中に元のファイルが変更されました。もう一度試してください".into());
     }
@@ -1153,10 +1232,14 @@ fn copy_confirmed(source: &Path, dest: &Path, overwrite: bool) -> Result<CopyOut
         // Someone else put a file there while this one was copied.
         Err(err) if err.error.kind() == std::io::ErrorKind::AlreadyExists => {
             drop(err);
-            Ok(compare_with_existing(source, dest, source_size)?.unwrap_or(CopyOutcome::Conflict {
-                source_size,
-                existing_size: 0,
-            }))
+            Ok(
+                compare_with_existing(source, dest, source_size)?.unwrap_or(
+                    CopyOutcome::Conflict {
+                        source_size,
+                        existing_size: 0,
+                    },
+                ),
+            )
         }
         Err(err) => Err(format!("ファイルをコピーできません: {}", err.error)),
     }
@@ -1231,10 +1314,8 @@ pub(crate) fn probe_remote_for_products(
     let id_set: HashSet<&str> = booth_ids.iter().map(|id| id.as_str()).collect();
     let remote_root = Path::new(remote_folder);
     let root_ok = probe_path(remote_root, PROBE_TIMEOUT) == Probe::Present;
-    let mut reachable: HashMap<String, bool> = booth_ids
-        .iter()
-        .map(|id| (id.clone(), root_ok))
-        .collect();
+    let mut reachable: HashMap<String, bool> =
+        booth_ids.iter().map(|id| (id.clone(), root_ok)).collect();
     for placed in &mut snapshot.placed_downloads {
         if !id_set.contains(placed.booth_id.as_str()) {
             continue;
@@ -1347,7 +1428,15 @@ pub(crate) fn staged_download_candidates(downloads: &Path) -> Vec<PathBuf> {
             if meta.is_dir() && !meta.file_type().is_symlink() {
                 continue;
             }
-            let incomplete = path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| matches!(ext.to_ascii_lowercase().as_str(), "crdownload" | "part" | "download" | "tmp"));
+            let incomplete = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| {
+                    matches!(
+                        ext.to_ascii_lowercase().as_str(),
+                        "crdownload" | "part" | "download" | "tmp"
+                    )
+                });
             if !incomplete && (meta.is_file() || meta.file_type().is_symlink()) {
                 found.push(path);
             }
@@ -1366,14 +1455,27 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let dir = root.path().join("VRCLibMan/123456");
         std::fs::create_dir_all(&dir).unwrap();
-        for name in ["complete.zip", "pending.zip.crdownload", "pending.zip.part", "pending.DOWNLOAD", "pending.tmp"] {
+        for name in [
+            "complete.zip",
+            "pending.zip.crdownload",
+            "pending.zip.part",
+            "pending.DOWNLOAD",
+            "pending.tmp",
+        ] {
             std::fs::write(dir.join(name), b"data").unwrap();
         }
         // Compare the tail components only: the returned paths may carry the platform's
         // resolved prefix (macOS /private, Windows verbatim), the tempdir path does not.
         let found = staged_download_candidates(root.path());
         assert_eq!(found.len(), 1, "{found:?}");
-        assert!(found[0].ends_with(std::path::Path::new("VRCLibMan").join("123456").join("complete.zip")), "{found:?}");
+        assert!(
+            found[0].ends_with(
+                std::path::Path::new("VRCLibMan")
+                    .join("123456")
+                    .join("complete.zip")
+            ),
+            "{found:?}"
+        );
     }
 
     #[cfg(target_os = "linux")]
@@ -1656,7 +1758,12 @@ mod tests {
         let candidates = staged_download_candidates(&downloads);
         assert_eq!(candidates.len(), 2);
         for path in &candidates {
-            let booth_id = path.parent().unwrap().file_name().unwrap().to_string_lossy();
+            let booth_id = path
+                .parent()
+                .unwrap()
+                .file_name()
+                .unwrap()
+                .to_string_lossy();
             assert!(staged_download_ok(path, &downloads, &booth_id).is_ok());
         }
 
@@ -1763,13 +1870,15 @@ mod tests {
         std::fs::create_dir_all(remote.join("424242")).unwrap();
         std::fs::create_dir_all(&library).unwrap();
         std::fs::write(remote.join("424242").join("body.unitypackage"), b"remote").unwrap();
-        let (pulled, outcome) = pull_file(&remote, &library, "424242", "body.unitypackage", false).unwrap();
+        let (pulled, outcome) =
+            pull_file(&remote, &library, "424242", "body.unitypackage", false).unwrap();
         assert_eq!(outcome, CopyOutcome::Copied);
         assert_eq!(std::fs::read(&pulled).unwrap(), b"remote");
         assert!(remote.join("424242").join("body.unitypackage").exists());
         std::fs::write(&pulled, b"local").unwrap();
         // Another file under the name is reported and left as it is.
-        let (pushed, outcome) = push_file(&pulled, &remote, "424242", "body.unitypackage", false).unwrap();
+        let (pushed, outcome) =
+            push_file(&pulled, &remote, "424242", "body.unitypackage", false).unwrap();
         assert_eq!(
             outcome,
             CopyOutcome::Conflict {
@@ -1779,16 +1888,19 @@ mod tests {
         );
         assert_eq!(std::fs::read(&pushed).unwrap(), b"remote");
         // Replacing it is a separate, confirmed request.
-        let (pushed, outcome) = push_file(&pulled, &remote, "424242", "body.unitypackage", true).unwrap();
+        let (pushed, outcome) =
+            push_file(&pulled, &remote, "424242", "body.unitypackage", true).unwrap();
         assert_eq!(outcome, CopyOutcome::Copied);
         assert_eq!(std::fs::read(pushed).unwrap(), b"local");
         assert_eq!(std::fs::read(&pulled).unwrap(), b"local");
         // The same bytes under the name: nothing to do.
-        let (_, outcome) = pull_file(&remote, &library, "424242", "body.unitypackage", false).unwrap();
+        let (_, outcome) =
+            pull_file(&remote, &library, "424242", "body.unitypackage", false).unwrap();
         assert_eq!(outcome, CopyOutcome::AlreadyThere);
         // The same size with other bytes is still another file.
         std::fs::write(&pulled, b"LOCAL").unwrap();
-        let (_, outcome) = pull_file(&remote, &library, "424242", "body.unitypackage", false).unwrap();
+        let (_, outcome) =
+            pull_file(&remote, &library, "424242", "body.unitypackage", false).unwrap();
         assert_eq!(
             outcome,
             CopyOutcome::Conflict {
@@ -1882,7 +1994,11 @@ mod tests {
             std::fs::create_dir(&dir).unwrap();
             // The original name and (2) through (60): more than the old limit of 49.
             for index in 1..=60 {
-                std::fs::write(dir.join(numbered_name("pkg.zip", index)), format!("old {index}")).unwrap();
+                std::fs::write(
+                    dir.join(numbered_name("pkg.zip", index)),
+                    format!("old {index}"),
+                )
+                .unwrap();
             }
             let source = root.path().join("incoming.zip");
             std::fs::write(&source, b"new package").unwrap();
@@ -1917,14 +2033,20 @@ mod tests {
                     let barrier = barrier.clone();
                     std::thread::spawn(move || {
                         barrier.wait();
-                        (worker, move_to_free_name_with(&source, &dir, "pkg.zip", try_rename).unwrap())
+                        (
+                            worker,
+                            move_to_free_name_with(&source, &dir, "pkg.zip", try_rename).unwrap(),
+                        )
                     })
                 })
                 .collect();
             let mut placed = std::collections::HashSet::new();
             for handle in handles {
                 let (worker, path) = handle.join().unwrap();
-                assert_eq!(std::fs::read(&path).unwrap(), vec![b'a' + worker as u8; 32 * 1024]);
+                assert_eq!(
+                    std::fs::read(&path).unwrap(),
+                    vec![b'a' + worker as u8; 32 * 1024]
+                );
                 assert!(placed.insert(path));
             }
             assert_eq!(std::fs::read(dir.join("pkg.zip")).unwrap(), b"already here");
@@ -1994,12 +2116,23 @@ mod tests {
             choose_download_name("2336025", "folder/body.unitypackage?token=secret"),
             "body.unitypackage"
         );
-        assert_eq!(choose_download_name("2336025", "../secret.unitypackage"), "secret.unitypackage");
-        assert_eq!(choose_download_name("2336025", "login.html"), "received.bin");
-        assert_eq!(choose_download_name("body .unitypackage", "pack.zip"), "pack.zip");
+        assert_eq!(
+            choose_download_name("2336025", "../secret.unitypackage"),
+            "secret.unitypackage"
+        );
+        assert_eq!(
+            choose_download_name("2336025", "login.html"),
+            "received.bin"
+        );
+        assert_eq!(
+            choose_download_name("body .unitypackage", "pack.zip"),
+            "pack.zip"
+        );
         assert!(!is_packaged_asset(".zip"));
         assert!(!is_packaged_asset("note.txt"));
-        assert!(looks_like_login_page(b"  <!DOCTYPE html><html><head></head>"));
+        assert!(looks_like_login_page(
+            b"  <!DOCTYPE html><html><head></head>"
+        ));
         assert!(looks_like_login_page(b"\xEF\xBB\xBF<html>"));
         assert!(looks_like_login_page(b"<head><title>login</title>"));
         assert!(!looks_like_login_page(b"PK\x03\x04dummy"));
@@ -2064,7 +2197,10 @@ mod tests {
             base_bodies: Vec::new(),
             links: Vec::new(),
             variations: Vec::new(),
-            download_rows: vec![probe_download(booth_a, "a.zip"), probe_download(booth_b, "b.zip")],
+            download_rows: vec![
+                probe_download(booth_a, "a.zip"),
+                probe_download(booth_b, "b.zip"),
+            ],
             placed_downloads: Vec::new(),
             product_flags: Vec::new(),
             file_watches: std::collections::HashMap::new(),
@@ -2072,7 +2208,8 @@ mod tests {
             remote_checked: false,
             remote_reachable: false,
         };
-        let probes = probe_remote_for_products(&mut snapshot, remote.to_str().unwrap(), &[booth_a.into()]);
+        let probes =
+            probe_remote_for_products(&mut snapshot, remote.to_str().unwrap(), &[booth_a.into()]);
         assert_eq!(probes.len(), 1);
         assert!(probes[0].remote_checked);
         assert!(probes[0].remote_reachable);
@@ -2127,20 +2264,63 @@ mod tests {
     #[test]
     fn programs_scripts_and_shortcuts_run_when_opened_and_assets_do_not() {
         for name in [
-            "Setup.exe", "setup.EXE", "run.bat", "install.cmd", "tool.msi", "update.msu", "viewer.scr",
-            "readme.lnk", "site.url", "script.ps1", "macro.vbs", "helper.js", "page.hta",
-            "addon.py", "Tool.app", "start.command", "installer.pkg", "launcher.desktop",
-            "Tool.AppImage", "build.sh", "library.jar", "tool.exe.", "tool.exe ", "tool.exe. .",
-            "body.unitypackage.exe", "写真.png.lnk",
+            "Setup.exe",
+            "setup.EXE",
+            "run.bat",
+            "install.cmd",
+            "tool.msi",
+            "update.msu",
+            "viewer.scr",
+            "readme.lnk",
+            "site.url",
+            "script.ps1",
+            "macro.vbs",
+            "helper.js",
+            "page.hta",
+            "addon.py",
+            "Tool.app",
+            "start.command",
+            "installer.pkg",
+            "launcher.desktop",
+            "Tool.AppImage",
+            "build.sh",
+            "library.jar",
+            "tool.exe.",
+            "tool.exe ",
+            "tool.exe. .",
+            "body.unitypackage.exe",
+            "写真.png.lnk",
         ] {
-            assert!(runs_when_opened(Path::new("/library/123456").join(name).as_path()), "{name}");
+            assert!(
+                runs_when_opened(Path::new("/library/123456").join(name).as_path()),
+                "{name}"
+            );
         }
         for name in [
-            "body.unitypackage", "body.zip", "body.rar", "body.7z", "avatar.vrm", "model.fbx",
-            "model.blend", "texture.psd", "texture.png", "readme.txt", "manual.pdf", "notes.md",
-            "説明書.html", "exe", "bat", ".exe", "tool.exe.zip", "My Tool", "123456",
+            "body.unitypackage",
+            "body.zip",
+            "body.rar",
+            "body.7z",
+            "avatar.vrm",
+            "model.fbx",
+            "model.blend",
+            "texture.psd",
+            "texture.png",
+            "readme.txt",
+            "manual.pdf",
+            "notes.md",
+            "説明書.html",
+            "exe",
+            "bat",
+            ".exe",
+            "tool.exe.zip",
+            "My Tool",
+            "123456",
         ] {
-            assert!(!runs_when_opened(Path::new("/library/123456").join(name).as_path()), "{name}");
+            assert!(
+                !runs_when_opened(Path::new("/library/123456").join(name).as_path()),
+                "{name}"
+            );
         }
     }
 
@@ -2150,20 +2330,44 @@ mod tests {
         let downloads = dir.path().join("Downloads");
         std::fs::create_dir_all(&downloads).unwrap();
         // Nothing exists below the downloads folder: only the text is compared.
-        assert!(staged_download_shaped(&downloads.join("VRCLibMan/900001/body.zip"), &downloads, "900001"));
-        assert!(staged_download_ok(&downloads.join("VRCLibMan/900001/body.zip"), &downloads, "900001").is_err());
+        assert!(staged_download_shaped(
+            &downloads.join("VRCLibMan/900001/body.zip"),
+            &downloads,
+            "900001"
+        ));
+        assert!(
+            staged_download_ok(
+                &downloads.join("VRCLibMan/900001/body.zip"),
+                &downloads,
+                "900001"
+            )
+            .is_err()
+        );
         for (path, id) in [
             (downloads.join("VRCLibMan/900001/body.zip"), "900002"),
             (downloads.join("VRCLibMan/900001/sub/body.zip"), "900001"),
             (downloads.join("VRCLibMan/900001"), "900001"),
             (downloads.join("Other/900001/body.zip"), "900001"),
-            (downloads.join("VRCLibMan/900001/../900001/body.zip"), "900001"),
+            (
+                downloads.join("VRCLibMan/900001/../900001/body.zip"),
+                "900001",
+            ),
             (dir.path().join("VRCLibMan/900001/body.zip"), "900001"),
             (PathBuf::from("VRCLibMan/900001/body.zip"), "900001"),
-            (PathBuf::from(r"\\files.example.test\share\VRCLibMan\900001\body.zip"), "900001"),
-            (PathBuf::from("//files.example.test/share/VRCLibMan/900001/body.zip"), "900001"),
+            (
+                PathBuf::from(r"\\files.example.test\share\VRCLibMan\900001\body.zip"),
+                "900001",
+            ),
+            (
+                PathBuf::from("//files.example.test/share/VRCLibMan/900001/body.zip"),
+                "900001",
+            ),
         ] {
-            assert!(!staged_download_shaped(&path, &downloads, id), "{}", path.display());
+            assert!(
+                !staged_download_shaped(&path, &downloads, id),
+                "{}",
+                path.display()
+            );
         }
     }
 
@@ -2178,7 +2382,10 @@ mod tests {
         std::fs::write(&file, b"asset").unwrap();
         assert_eq!(zone_mark(&file), None);
         mark_from_internet(&file);
-        assert_eq!(zone_mark(&file).as_deref(), Some(&b"[ZoneTransfer]\r\nZoneId=3\r\n"[..]));
+        assert_eq!(
+            zone_mark(&file).as_deref(),
+            Some(&b"[ZoneTransfer]\r\nZoneId=3\r\n"[..])
+        );
         // The file itself is untouched, and no file is created next to it.
         assert_eq!(std::fs::read(&file).unwrap(), b"asset");
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
@@ -2221,7 +2428,8 @@ mod tests {
             assert!(!source.exists());
             let source = dir.path().join(format!("{name}-plain.part"));
             std::fs::write(&source, b"plain").unwrap();
-            let placed = move_to_free_name_with(&source, &library, "plain.zip", try_rename).unwrap();
+            let placed =
+                move_to_free_name_with(&source, &library, "plain.zip", try_rename).unwrap();
             assert_eq!(zone_mark(&placed), None, "{name}");
         }
 
@@ -2242,9 +2450,18 @@ mod tests {
         let (pushed, _) = push_file(&plain, &remote, "900001", "marked.zip", true).unwrap();
         assert_eq!(std::fs::read(&pushed).unwrap(), b"plain");
         assert_eq!(zone_mark(&pushed), None);
-        assert_eq!(push_missing_file(&marked, &remote, "900002", "marked.zip").unwrap(), CopyOutcome::Copied);
-        assert_eq!(zone_mark(&remote.join("900002/marked.zip")).as_deref(), Some(BROWSER_MARK));
-        assert_eq!(push_missing_file(&plain, &remote, "900002", "plain.zip").unwrap(), CopyOutcome::Copied);
+        assert_eq!(
+            push_missing_file(&marked, &remote, "900002", "marked.zip").unwrap(),
+            CopyOutcome::Copied
+        );
+        assert_eq!(
+            zone_mark(&remote.join("900002/marked.zip")).as_deref(),
+            Some(BROWSER_MARK)
+        );
+        assert_eq!(
+            push_missing_file(&plain, &remote, "900002", "plain.zip").unwrap(),
+            CopyOutcome::Copied
+        );
         assert_eq!(zone_mark(&remote.join("900002/plain.zip")), None);
         // No temporary file is left behind by any of the copies.
         for folder in ["900001", "900002"] {
@@ -2252,7 +2469,10 @@ mod tests {
                 .unwrap()
                 .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
                 .collect();
-            assert!(names.iter().all(|name| !name.starts_with("~vrclibman-")), "{names:?}");
+            assert!(
+                names.iter().all(|name| !name.starts_with("~vrclibman-")),
+                "{names:?}"
+            );
         }
         // The source keeps its own mark.
         assert_eq!(zone_mark(&marked).as_deref(), Some(BROWSER_MARK));
@@ -2266,7 +2486,11 @@ mod tests {
         let copy = dir.path().join("copy.zip");
         std::fs::write(&source, b"asset").unwrap();
         std::fs::write(&copy, b"asset").unwrap();
-        std::fs::write(zone_stream(&source), vec![b'a'; ZONE_MARK_LIMIT as usize + 1]).unwrap();
+        std::fs::write(
+            zone_stream(&source),
+            vec![b'a'; ZONE_MARK_LIMIT as usize + 1],
+        )
+        .unwrap();
         carry_internet_mark(&source, &copy);
         assert_eq!(zone_mark(&copy), None);
         std::fs::write(zone_stream(&source), b"").unwrap();

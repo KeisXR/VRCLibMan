@@ -104,10 +104,17 @@ struct CheckoutBody {
 }
 
 fn orders_path(href: &str) -> Option<OrdersPath> {
-    Url::parse(href).ok().as_ref().and_then(purchase_walk::orders_path)
+    Url::parse(href)
+        .ok()
+        .as_ref()
+        .and_then(purchase_walk::orders_path)
 }
 
-pub(crate) fn handle(connection: &mut Connection, route: Route, body: &str) -> Result<Outcome, String> {
+pub(crate) fn handle(
+    connection: &mut Connection,
+    route: Route,
+    body: &str,
+) -> Result<Outcome, String> {
     match route {
         Route::State => Ok(Outcome::ok(json!({
             "complete": purchases::history_complete(connection)?,
@@ -175,7 +182,10 @@ fn checkout(connection: &mut Connection, body: &str) -> Result<Outcome, String> 
         return Ok(Outcome::bad("購入完了ページではありません"));
     };
     let path_id = url.path().strip_prefix("/orders/").unwrap_or_default();
-    if !crate::browser_auto::checkout_url(&url) || path_id != body.order_id || !purchase_walk::is_order_id(path_id) {
+    if !crate::browser_auto::checkout_url(&url)
+        || path_id != body.order_id
+        || !purchase_walk::is_order_id(path_id)
+    {
         return Ok(Outcome::bad("購入完了ページではありません"));
     }
     let products: Vec<Value> = body
@@ -277,11 +287,23 @@ mod tests {
         let value = json_of(&outcome);
         assert_eq!(value["added"], 1);
         assert_eq!(value["news"], true);
-        assert_eq!(json_of(&handle(&mut c, Route::Pending, "").unwrap())["ids"], json!(["90000001"]));
+        assert_eq!(
+            json_of(&handle(&mut c, Route::Pending, "").unwrap())["ids"],
+            json!(["90000001"])
+        );
         let again = handle(&mut c, Route::List, &body).unwrap();
         assert_eq!(json_of(&again)["news"], false);
-        for href in ["https://accounts.booth.pm/library", "https://evil.example/orders", "https://accounts.booth.pm/orders/90000001"] {
-            let outcome = handle(&mut c, Route::List, &json!({"href": href, "orders": []}).to_string()).unwrap();
+        for href in [
+            "https://accounts.booth.pm/library",
+            "https://evil.example/orders",
+            "https://accounts.booth.pm/orders/90000001",
+        ] {
+            let outcome = handle(
+                &mut c,
+                Route::List,
+                &json!({"href": href, "orders": []}).to_string(),
+            )
+            .unwrap();
             assert_eq!(outcome.status, 400, "{href}");
         }
     }
@@ -306,21 +328,32 @@ mod tests {
         let wrong = handle(
             &mut c,
             Route::Detail,
-            &json!({"href": "https://accounts.booth.pm/orders/90000002", "detail": detail}).to_string(),
+            &json!({"href": "https://accounts.booth.pm/orders/90000002", "detail": detail})
+                .to_string(),
         )
         .unwrap();
         assert_eq!(wrong.status, 400);
         let right = handle(
             &mut c,
             Route::Detail,
-            &json!({"href": "https://accounts.booth.pm/orders/90000001", "detail": detail}).to_string(),
+            &json!({"href": "https://accounts.booth.pm/orders/90000001", "detail": detail})
+                .to_string(),
         )
         .unwrap();
         assert_eq!(right.status, 200);
-        assert_eq!(json_of(&handle(&mut c, Route::Pending, "").unwrap())["ids"], json!([]));
-        assert_eq!(json_of(&handle(&mut c, Route::State, "").unwrap())["complete"], false);
+        assert_eq!(
+            json_of(&handle(&mut c, Route::Pending, "").unwrap())["ids"],
+            json!([])
+        );
+        assert_eq!(
+            json_of(&handle(&mut c, Route::State, "").unwrap())["complete"],
+            false
+        );
         handle(&mut c, Route::Finish, r#"{"listComplete":true}"#).unwrap();
-        assert_eq!(json_of(&handle(&mut c, Route::State, "").unwrap())["complete"], true);
+        assert_eq!(
+            json_of(&handle(&mut c, Route::State, "").unwrap())["complete"],
+            true
+        );
     }
 
     #[test]
@@ -342,16 +375,26 @@ mod tests {
         assert_eq!(json_of(&outcome)["registered"], 1);
         assert_eq!(crate::db::browser_auto_pending(&c).unwrap().len(), 1);
         let description: String = c
-            .query_row("SELECT description_snippet FROM products WHERE booth_id='123456'", [], |r| r.get(0))
+            .query_row(
+                "SELECT description_snippet FROM products WHERE booth_id='123456'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert!(!description.contains("受け取らない"));
-        assert_eq!(json_of(&handle(&mut c, Route::Pending, "").unwrap())["ids"], json!(["90000003"]));
+        assert_eq!(
+            json_of(&handle(&mut c, Route::Pending, "").unwrap())["ids"],
+            json!(["90000003"])
+        );
         let again = handle(&mut c, Route::Checkout, &body).unwrap();
         assert!(!again.purchases_changed && !again.prompt);
         for (href, id) in [
             ("https://checkout.booth.pm/orders/90000004", "90000003"),
             ("https://booth.pm/orders/90000003", "90000003"),
-            ("https://checkout.booth.pm/orders/90000003/other", "90000003"),
+            (
+                "https://checkout.booth.pm/orders/90000003/other",
+                "90000003",
+            ),
         ] {
             let outcome = handle(
                 &mut c,

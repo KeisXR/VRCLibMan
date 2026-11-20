@@ -201,7 +201,9 @@ pub fn nothing_found(outcome: &FreeFilesOutcome) -> Option<&'static str> {
 /// The message the card shows when the check itself failed. Nothing was stored.
 pub fn refusal(outcome: &FreeFilesOutcome) -> Option<&'static str> {
     match outcome {
-        FreeFilesOutcome::Free { .. } | FreeFilesOutcome::NotFree | FreeFilesOutcome::NoFiles => None,
+        FreeFilesOutcome::Free { .. } | FreeFilesOutcome::NotFree | FreeFilesOutcome::NoFiles => {
+            None
+        }
         FreeFilesOutcome::Unavailable(DetailOutcome::Missing) => {
             Some("BOOTH で商品が見つかりません。公開が終了した可能性があります")
         }
@@ -332,7 +334,11 @@ mod tests {
             FreeFilesOutcome::Free { .. }
         ));
         // 有料と一覧なしは失敗ではなく「無かった」。確認できなかったときだけ失敗にする。
-        assert!(nothing_found(&FreeFilesOutcome::NotFree).unwrap().contains("有料"));
+        assert!(
+            nothing_found(&FreeFilesOutcome::NotFree)
+                .unwrap()
+                .contains("有料")
+        );
         assert!(nothing_found(&FreeFilesOutcome::NoFiles).is_some());
         assert!(refusal(&FreeFilesOutcome::NotFree).is_none());
         assert!(refusal(&FreeFilesOutcome::NoFiles).is_none());

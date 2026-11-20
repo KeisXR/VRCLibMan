@@ -1,11 +1,11 @@
 use crate::model::{Avatar, Category};
-use std::collections::HashMap;
 use crate::normalize::{
     adjacent_reading, is_blocked_avatar_label, is_boundary_char, is_cjk, is_name_alias,
     is_promo_name, is_script_boundary, label_variants, nfkc, normalize_label, paren_pieces,
     preferred_display_name, quoted_segments, strip_tag_brackets, strip_title_noise,
     suggested_display_name,
 };
+use std::collections::HashMap;
 
 pub struct ResolveInput<'a> {
     pub booth_id: &'a str,
@@ -87,7 +87,10 @@ impl NameIndex {
                 }
             }
         }
-        Self { by_key, len: avatars.len() }
+        Self {
+            by_key,
+            len: avatars.len(),
+        }
     }
 
     /// `avatars` must be the slice the index was built from. `allow` narrows the candidates
@@ -100,7 +103,11 @@ impl NameIndex {
         raw: &str,
         allow: impl Fn(&Avatar) -> bool,
     ) -> Option<&'a Avatar> {
-        debug_assert_eq!(avatars.len(), self.len, "the index belongs to another avatar list");
+        debug_assert_eq!(
+            avatars.len(),
+            self.len,
+            "the index belongs to another avatar list"
+        );
         if !resolvable_label(raw) {
             return None;
         }
@@ -113,7 +120,8 @@ impl NameIndex {
             return None;
         }
         for variant in label_variants(raw) {
-            if is_blocked_avatar_label(&variant) && !crate::normalize::is_attribute_label(&variant) {
+            if is_blocked_avatar_label(&variant) && !crate::normalize::is_attribute_label(&variant)
+            {
                 continue;
             }
             self.consider_key(&normalize_label(&variant), avatars, &allow, &mut hits);
@@ -790,10 +798,17 @@ mod tests {
     /// of each matchable avatar (`name_keys` and `avatar_matchable`, pure functions) are passed
     /// in so the test stays fast; `None` marks an avatar that is not matchable.
     fn scan_keys(avatars: &[Avatar]) -> Vec<Option<Vec<String>>> {
-        avatars.iter().map(|avatar| avatar_matchable(avatar).then(|| name_keys(avatar))).collect()
+        avatars
+            .iter()
+            .map(|avatar| avatar_matchable(avatar).then(|| name_keys(avatar)))
+            .collect()
     }
 
-    fn resolve_name_by_scan<'a>(raw: &str, avatars: &'a [Avatar], keys: &[Option<Vec<String>>]) -> Option<&'a Avatar> {
+    fn resolve_name_by_scan<'a>(
+        raw: &str,
+        avatars: &'a [Avatar],
+        keys: &[Option<Vec<String>>],
+    ) -> Option<&'a Avatar> {
         let consider = |key: &str, hits: &mut Vec<&'a Avatar>| {
             if key.chars().count() < 2 && !key.chars().any(is_cjk) {
                 return;
@@ -802,7 +817,9 @@ mod tests {
                 let Some(own) = own else {
                     continue;
                 };
-                if own.iter().any(|candidate| candidate == key) && !hits.iter().any(|hit| hit.id == avatar.id) {
+                if own.iter().any(|candidate| candidate == key)
+                    && !hits.iter().any(|hit| hit.id == avatar.id)
+                {
                     hits.push(avatar);
                 }
             }
@@ -821,7 +838,8 @@ mod tests {
             return None;
         }
         for variant in label_variants(raw) {
-            if is_blocked_avatar_label(&variant) && !crate::normalize::is_attribute_label(&variant) {
+            if is_blocked_avatar_label(&variant) && !crate::normalize::is_attribute_label(&variant)
+            {
                 continue;
             }
             consider(&normalize_label(&variant), &mut hits);
@@ -838,10 +856,41 @@ mod tests {
         assert!(avatars.len() > 500, "the bundled dictionary is loaded");
         let index = NameIndex::new(&avatars);
         let mut labels: Vec<String> = [
-            "Black", "White", "フルセット", "Full Set", "V2", "v3", "ver1.0.8", "Re", "半額セール", "新作",
-            "対応", "専用", "猫", "萌", "", "  ", "PB", "PhysBone", "Quest版", "PC版", "NSFW", "素体", "Mao", "mao",
-            "ショコラ -Chocolat-", "シフォン(Chiffon)", "真冬 Mafuyu", "manuka-マヌカ", "エルキュナ２(Eruqyuna2",
-            "ライム / プラム", "ライム・プラム", "Lime & Plum", "【ライム専用】", "萌(Moe)", "Chocolate",
+            "Black",
+            "White",
+            "フルセット",
+            "Full Set",
+            "V2",
+            "v3",
+            "ver1.0.8",
+            "Re",
+            "半額セール",
+            "新作",
+            "対応",
+            "専用",
+            "猫",
+            "萌",
+            "",
+            "  ",
+            "PB",
+            "PhysBone",
+            "Quest版",
+            "PC版",
+            "NSFW",
+            "素体",
+            "Mao",
+            "mao",
+            "ショコラ -Chocolat-",
+            "シフォン(Chiffon)",
+            "真冬 Mafuyu",
+            "manuka-マヌカ",
+            "エルキュナ２(Eruqyuna2",
+            "ライム / プラム",
+            "ライム・プラム",
+            "Lime & Plum",
+            "【ライム専用】",
+            "萌(Moe)",
+            "Chocolate",
         ]
         .iter()
         .map(|label| label.to_string())
@@ -871,7 +920,8 @@ mod tests {
         let keys = scan_keys(&avatars);
         let every_third: Vec<Avatar> = avatars.iter().step_by(3).cloned().collect();
         let every_third_keys = scan_keys(&every_third);
-        let every_third_ids: std::collections::HashSet<&str> = every_third.iter().map(|a| a.id.as_str()).collect();
+        let every_third_ids: std::collections::HashSet<&str> =
+            every_third.iter().map(|a| a.id.as_str()).collect();
         let id_of = |hit: Option<&Avatar>| hit.map(|avatar| avatar.id.clone());
         for (position, label) in labels.iter().enumerate() {
             assert_eq!(
@@ -880,7 +930,11 @@ mod tests {
                 "whole dictionary: {label:?}"
             );
             if position % 97 == 0 {
-                assert_eq!(id_of(resolve_name(label, &avatars)), id_of(resolve_name_by_scan(label, &avatars, &keys)), "{label:?}");
+                assert_eq!(
+                    id_of(resolve_name(label, &avatars)),
+                    id_of(resolve_name_by_scan(label, &avatars, &keys)),
+                    "{label:?}"
+                );
             }
             assert_eq!(
                 id_of(index.resolve(&avatars, label, |a| every_third_ids.contains(a.id.as_str()))),
@@ -889,8 +943,15 @@ mod tests {
             );
             // A few neighbours in dictionary order, like the compatible avatars of one product.
             let start = position % avatars.len();
-            let near: Vec<Avatar> = avatars.iter().cycle().skip(start).take(4).cloned().collect();
-            let near_ids: std::collections::HashSet<&str> = near.iter().map(|a| a.id.as_str()).collect();
+            let near: Vec<Avatar> = avatars
+                .iter()
+                .cycle()
+                .skip(start)
+                .take(4)
+                .cloned()
+                .collect();
+            let near_ids: std::collections::HashSet<&str> =
+                near.iter().map(|a| a.id.as_str()).collect();
             assert_eq!(
                 id_of(index.resolve(&avatars, label, |a| near_ids.contains(a.id.as_str()))),
                 id_of(resolve_name_by_scan(label, &near, &scan_keys(&near))),
@@ -953,10 +1014,20 @@ mod tests {
             assert!(known_name_in(title, &avatars).is_none(), "{title}");
             assert!(match_title(title, &avatars).is_none(), "{title}");
         }
-        assert!(!links_grounded(&["feilong".into()], &avatars, "ツール V3.6", ""));
+        assert!(!links_grounded(
+            &["feilong".into()],
+            &avatars,
+            "ツール V3.6",
+            ""
+        ));
         // The names themselves still match.
         assert_eq!(known_names_in("Feilong 対応", &avatars), ["フェイロン"]);
-        assert!(links_grounded(&["sapphy".into()], &avatars, "サフィー対応", ""));
+        assert!(links_grounded(
+            &["sapphy".into()],
+            &avatars,
+            "サフィー対応",
+            ""
+        ));
     }
 
     #[test]

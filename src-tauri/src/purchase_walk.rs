@@ -11,8 +11,7 @@ pub const ORDERS_PAGE: &str = "https://accounts.booth.pm/orders";
 const MAX_PAGE: u32 = 200;
 const MAX_NAME_CHARS: usize = 1000;
 const MAX_YEN: i64 = 100_000_000;
-pub const LOGIN_NOTICE: &str =
-    "ログインの期限が切れているか、購入履歴のページではありません。内蔵ブラウザでログインしてから、もう一度読み込んでください";
+pub const LOGIN_NOTICE: &str = "ログインの期限が切れているか、購入履歴のページではありません。内蔵ブラウザでログインしてから、もう一度読み込んでください";
 pub const DETAIL_UNREADABLE: &str =
     "注文の詳細を読めませんでした。BOOTH のページの形が変わった可能性があります";
 
@@ -103,7 +102,9 @@ pub fn same_orders_page(landed: &str, target: &Url) -> bool {
         return false;
     };
     match (orders_path(&url), orders_path(target)) {
-        (Some(OrdersPath::List), Some(OrdersPath::List)) => page_number(&url) == page_number(target),
+        (Some(OrdersPath::List), Some(OrdersPath::List)) => {
+            page_number(&url) == page_number(target)
+        }
         (Some(OrdersPath::Detail(a)), Some(OrdersPath::Detail(b))) => a == b,
         _ => false,
     }
@@ -281,7 +282,9 @@ pub fn parse_detail(value: &serde_json::Value) -> Option<OrderDetail> {
             }
             let quantity = item
                 .quantity
-                .filter(|value| value.is_finite() && value.fract() == 0.0 && (1.0..=9999.0).contains(value))
+                .filter(|value| {
+                    value.is_finite() && value.fract() == 0.0 && (1.0..=9999.0).contains(value)
+                })
                 .map(|value| value as i64)
                 .unwrap_or(1);
             Some(DetailItem {
@@ -319,8 +322,17 @@ pub struct DetailApplied {
 
 #[derive(Clone, Debug)]
 pub enum PlannedRead {
-    List { url: Url, page: u32, last_page: u32 },
-    Detail { url: Url, order_id: String, index: u32, total: u32 },
+    List {
+        url: Url,
+        page: u32,
+        last_page: u32,
+    },
+    Detail {
+        url: Url,
+        order_id: String,
+        index: u32,
+        total: u32,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -366,7 +378,10 @@ impl PurchaseWalk {
     pub fn new(known_complete: bool) -> Self {
         Self {
             known_complete,
-            phase: Phase::List { page: 1, last_page: 1 },
+            phase: Phase::List {
+                page: 1,
+                last_page: 1,
+            },
             reads: 0,
             pages: 0,
             added: 0,
@@ -436,8 +451,13 @@ impl PurchaseWalk {
 
     pub fn progress_line(&self, planned: &Planned) -> String {
         match &planned.read {
-            PlannedRead::List { page, last_page, .. } => {
-                format!("購入履歴 {page}/{last_page} ページ（新しい注文 {} 件）", self.added)
+            PlannedRead::List {
+                page, last_page, ..
+            } => {
+                format!(
+                    "購入履歴 {page}/{last_page} ページ（新しい注文 {} 件）",
+                    self.added
+                )
             }
             PlannedRead::Detail { index, total, .. } => format!("注文の詳細 {index}/{total}"),
         }
@@ -559,7 +579,10 @@ mod tests {
     fn list(page: u32, last_page: u32, ids: &[&str]) -> ListSnapshot {
         ListSnapshot {
             href: orders_page_url(page).unwrap().to_string(),
-            orders: ids.iter().map(|id| order(id, OrderState::Confirmed)).collect(),
+            orders: ids
+                .iter()
+                .map(|id| order(id, OrderState::Confirmed))
+                .collect(),
             last_page,
         }
     }
@@ -573,8 +596,14 @@ mod tests {
 
     #[test]
     fn only_the_order_history_and_one_order_are_reachable() {
-        assert_eq!(orders_page_url(1).unwrap().as_str(), "https://accounts.booth.pm/orders");
-        assert_eq!(orders_page_url(3).unwrap().as_str(), "https://accounts.booth.pm/orders?page=3");
+        assert_eq!(
+            orders_page_url(1).unwrap().as_str(),
+            "https://accounts.booth.pm/orders"
+        );
+        assert_eq!(
+            orders_page_url(3).unwrap().as_str(),
+            "https://accounts.booth.pm/orders?page=3"
+        );
         assert!(orders_page_url(0).is_err());
         assert!(orders_page_url(201).is_err());
         assert_eq!(
@@ -588,11 +617,20 @@ mod tests {
             ("https://accounts.booth.pm/orders?page=2", None),
             ("https://accounts.booth.pm/orders/90221765", None),
             ("https://accounts.booth.pm/library", Some(WalkStop::Login)),
-            ("https://accounts.booth.pm/orders/90221765/order_qualified_invoices", Some(WalkStop::Login)),
-            ("https://accounts.booth.pm/users/sign_in", Some(WalkStop::Login)),
+            (
+                "https://accounts.booth.pm/orders/90221765/order_qualified_invoices",
+                Some(WalkStop::Login),
+            ),
+            (
+                "https://accounts.booth.pm/users/sign_in",
+                Some(WalkStop::Login),
+            ),
             ("https://booth.pm/orders", Some(WalkStop::Login)),
             ("http://accounts.booth.pm/orders", Some(WalkStop::Login)),
-            ("https://accounts.booth.pm/age_verification?return=/orders", Some(WalkStop::AgeGate)),
+            (
+                "https://accounts.booth.pm/age_verification?return=/orders",
+                Some(WalkStop::AgeGate),
+            ),
         ] {
             assert_eq!(purchase_block_reason(href), stop, "{href}");
         }
@@ -602,13 +640,28 @@ mod tests {
     #[test]
     fn landed_pages_match_by_page_number_or_order() {
         let second = orders_page_url(2).unwrap();
-        assert!(same_orders_page("https://accounts.booth.pm/orders?page=2", &second));
-        assert!(!same_orders_page("https://accounts.booth.pm/orders", &second));
+        assert!(same_orders_page(
+            "https://accounts.booth.pm/orders?page=2",
+            &second
+        ));
+        assert!(!same_orders_page(
+            "https://accounts.booth.pm/orders",
+            &second
+        ));
         let first = orders_page_url(1).unwrap();
-        assert!(same_orders_page("https://accounts.booth.pm/orders?page=1", &first));
+        assert!(same_orders_page(
+            "https://accounts.booth.pm/orders?page=1",
+            &first
+        ));
         let one = order_detail_url("90221765").unwrap();
-        assert!(same_orders_page("https://accounts.booth.pm/orders/90221765/", &one));
-        assert!(!same_orders_page("https://accounts.booth.pm/orders/90221766", &one));
+        assert!(same_orders_page(
+            "https://accounts.booth.pm/orders/90221765/",
+            &one
+        ));
+        assert!(!same_orders_page(
+            "https://accounts.booth.pm/orders/90221766",
+            &one
+        ));
     }
 
     #[test]
@@ -616,10 +669,24 @@ mod tests {
         let mut walk = PurchaseWalk::new(false);
         let planned = walk.plan().unwrap();
         assert!(!planned.pause);
-        walk.accept_list(&list(1, 3, &["1001", "1002"]), ListApplied { added: 2, removed: 0, news: true });
+        walk.accept_list(
+            &list(1, 3, &["1001", "1002"]),
+            ListApplied {
+                added: 2,
+                removed: 0,
+                news: true,
+            },
+        );
         let planned = walk.plan().unwrap();
         assert!(planned.pause);
-        assert!(matches!(planned.read, PlannedRead::List { page: 2, last_page: 3, .. }));
+        assert!(matches!(
+            planned.read,
+            PlannedRead::List {
+                page: 2,
+                last_page: 3,
+                ..
+            }
+        ));
         // 前回の完了印が無いので、新しい注文が無いページでも最後まで読む。
         walk.accept_list(&list(2, 3, &["1003"]), ListApplied::default());
         walk.accept_list(&list(3, 3, &["1004"]), ListApplied::default());
@@ -628,13 +695,18 @@ mod tests {
         assert!(walk.needs_detail_queue());
         walk.start_details(vec!["1001".into(), "bad".into(), "1002".into()]);
         let planned = walk.plan().unwrap();
-        assert!(matches!(&planned.read, PlannedRead::Detail { order_id, index: 1, total: 2, .. } if order_id == "1001"));
+        assert!(
+            matches!(&planned.read, PlannedRead::Detail { order_id, index: 1, total: 2, .. } if order_id == "1001")
+        );
         assert_eq!(walk.progress_line(&planned), "注文の詳細 1/2");
         walk.accept_detail(&detail("1001"), DetailApplied::default());
         walk.accept_detail(&detail("1002"), DetailApplied { removed: true });
         assert!(walk.plan().is_none());
         let report = walk.report("年齢確認");
-        assert_eq!((report.pages, report.added, report.removed, report.details), (3, 2, 1, 2));
+        assert_eq!(
+            (report.pages, report.added, report.removed, report.details),
+            (3, 2, 1, 2)
+        );
         assert!(!report.cancelled);
         assert!(report.notice.is_empty());
     }
@@ -643,7 +715,14 @@ mod tests {
     fn a_later_walk_stops_the_list_at_a_page_without_new_orders() {
         let mut walk = PurchaseWalk::new(true);
         walk.plan().unwrap();
-        walk.accept_list(&list(1, 7, &["1001"]), ListApplied { added: 1, removed: 0, news: true });
+        walk.accept_list(
+            &list(1, 7, &["1001"]),
+            ListApplied {
+                added: 1,
+                removed: 0,
+                news: true,
+            },
+        );
         walk.plan().unwrap();
         walk.accept_list(&list(2, 7, &["1002"]), ListApplied::default());
         assert!(walk.list_complete());
@@ -657,7 +736,14 @@ mod tests {
     fn a_cancelled_list_is_not_marked_complete() {
         let mut walk = PurchaseWalk::new(false);
         walk.plan().unwrap();
-        walk.accept_list(&list(1, 3, &["1001"]), ListApplied { added: 1, removed: 0, news: true });
+        walk.accept_list(
+            &list(1, 3, &["1001"]),
+            ListApplied {
+                added: 1,
+                removed: 0,
+                news: true,
+            },
+        );
         walk.cancel();
         assert!(walk.plan().is_none());
         assert!(!walk.list_complete());
@@ -692,7 +778,10 @@ mod tests {
             },
             DetailApplied::default(),
         );
-        assert_eq!(walk.report("年齢確認は自動で通過しません").notice, "年齢確認は自動で通過しません");
+        assert_eq!(
+            walk.report("年齢確認は自動で通過しません").notice,
+            "年齢確認は自動で通過しません"
+        );
     }
 
     #[test]
@@ -719,7 +808,10 @@ mod tests {
             ]
         }))
         .unwrap();
-        assert_eq!(detail.ordered_at.as_deref(), Some("2026-11-02T09:30:20+09:00"));
+        assert_eq!(
+            detail.ordered_at.as_deref(),
+            Some("2026-11-02T09:30:20+09:00")
+        );
         assert_eq!(detail.total_yen, Some(2300));
         assert!(detail.gift);
         assert_eq!(detail.items.len(), 2);

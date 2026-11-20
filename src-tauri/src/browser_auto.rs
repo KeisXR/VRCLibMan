@@ -129,7 +129,9 @@ pub(crate) fn page_loaded(view: &Webview, url: &Url) {
                 .db
                 .lock()
                 .ok()
-                .and_then(|mut c| crate::purchases::record_checkout(&mut c, &order_id, &products).ok())
+                .and_then(|mut c| {
+                    crate::purchases::record_checkout(&mut c, &order_id, &products).ok()
+                })
                 .unwrap_or(false);
             if recorded {
                 let _ = app.emit("purchases-changed", ());
@@ -207,7 +209,9 @@ fn orders_page_loaded(view: &Webview, url: &Url) {
                     .is_some_and(|detail| crate::purchases::apply_detail(&mut c, &detail).is_ok()),
                 None => browser::parse_purchase_list(&raw)
                     .ok()
-                    .is_some_and(|snapshot| crate::purchases::apply_list_page(&mut c, &snapshot.orders).is_ok()),
+                    .is_some_and(|snapshot| {
+                        crate::purchases::apply_list_page(&mut c, &snapshot.orders).is_ok()
+                    }),
             };
             drop(c);
             if stored {

@@ -3,8 +3,8 @@
 
 use crate::library_walk;
 use crate::model::UNAVAILABLE_DESCRIPTION;
-use reqwest::header::{ACCEPT, CONTENT_TYPE, LOCATION, USER_AGENT};
 use reqwest::StatusCode;
+use reqwest::header::{ACCEPT, CONTENT_TYPE, LOCATION, USER_AGENT};
 use serde_json::Value;
 use std::time::Duration;
 use url::Url;
@@ -82,7 +82,12 @@ pub fn is_item_json_url(url: &Url) -> bool {
         && url.path().contains("/items/")
 }
 
-pub fn classify_http(status: u16, final_url: &str, content_type: &str, body: &str) -> DetailOutcome {
+pub fn classify_http(
+    status: u16,
+    final_url: &str,
+    content_type: &str,
+    body: &str,
+) -> DetailOutcome {
     gate_http(status, final_url, content_type, body).unwrap_or_else(|| interpret_json(body))
 }
 
@@ -180,7 +185,9 @@ pub(crate) enum ItemDocument {
     Again,
 }
 
-pub(crate) async fn fetch_item_document(booth_id: &str) -> Result<(Option<u16>, ItemDocument), String> {
+pub(crate) async fn fetch_item_document(
+    booth_id: &str,
+) -> Result<(Option<u16>, ItemDocument), String> {
     let mut current = item_json_url(booth_id)?;
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -265,7 +272,11 @@ pub async fn fetch_public_item(booth_id: &str) -> Result<FetchReport, String> {
 /// Last four digits only. The line never includes the title, description, tags, or shop.
 pub fn id_tail(booth_id: &str) -> &str {
     let len = booth_id.len();
-    if len <= 4 { booth_id } else { &booth_id[len - 4..] }
+    if len <= 4 {
+        booth_id
+    } else {
+        &booth_id[len - 4..]
+    }
 }
 
 pub fn detail_log_line(
@@ -295,10 +306,7 @@ pub fn unavailable_description() -> &'static str {
 }
 
 fn is_redirect(status: StatusCode) -> bool {
-    matches!(
-        status.as_u16(),
-        301 | 302 | 303 | 307 | 308
-    )
+    matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308)
 }
 
 fn shop_name(value: Option<&Value>) -> String {
@@ -400,15 +408,30 @@ mod tests {
         );
         assert_eq!(html, DetailOutcome::AgeGate);
         assert_eq!(
-            classify_http(401, "https://booth.pm/ja/items/424242.json", "text/html", ""),
+            classify_http(
+                401,
+                "https://booth.pm/ja/items/424242.json",
+                "text/html",
+                ""
+            ),
             DetailOutcome::AgeGate
         );
         assert_eq!(
-            classify_http(404, "https://booth.pm/ja/items/424242.json", "application/json", ""),
+            classify_http(
+                404,
+                "https://booth.pm/ja/items/424242.json",
+                "application/json",
+                ""
+            ),
             DetailOutcome::Missing
         );
         assert_eq!(
-            classify_http(429, "https://booth.pm/ja/items/424242.json", "application/json", ""),
+            classify_http(
+                429,
+                "https://booth.pm/ja/items/424242.json",
+                "application/json",
+                ""
+            ),
             DetailOutcome::RetryLater
         );
     }
@@ -489,7 +512,11 @@ mod tests {
     #[test]
     fn the_fetcher_does_not_attach_a_browser_session() {
         let source = include_str!("booth_detail.rs");
-        let production = source.split("mod tests").next().unwrap().to_ascii_lowercase();
+        let production = source
+            .split("mod tests")
+            .next()
+            .unwrap()
+            .to_ascii_lowercase();
         assert!(!production.contains("cookie"));
         assert!(!production.contains("credentials"));
         assert!(production.contains("policy::none"));

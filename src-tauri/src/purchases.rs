@@ -82,7 +82,10 @@ fn delete_order(connection: &Connection, order_id: &str) -> Result<bool, String>
         [order_id],
     ))?;
     sql(connection.execute("DELETE FROM purchase_items WHERE order_id = ?1", [order_id]))?;
-    Ok(sql(connection.execute("DELETE FROM purchase_orders WHERE order_id = ?1", [order_id]))? > 0)
+    Ok(sql(connection.execute(
+        "DELETE FROM purchase_orders WHERE order_id = ?1",
+        [order_id],
+    ))? > 0)
 }
 
 fn order_exists(connection: &Connection, order_id: &str) -> Result<bool, String> {
@@ -95,7 +98,10 @@ fn order_exists(connection: &Connection, order_id: &str) -> Result<bool, String>
 
 /// 一覧 1 ページ分。確定した注文を足し、キャンセルと支払い待ちになった注文を消す。
 /// 詳細を読み終えた注文の日時や商品は、一覧の値で上書きしない。
-pub(crate) fn apply_list_page(connection: &mut Connection, orders: &[ListOrder]) -> Result<ListApplied, String> {
+pub(crate) fn apply_list_page(
+    connection: &mut Connection,
+    orders: &[ListOrder],
+) -> Result<ListApplied, String> {
     let tx = sql(connection.transaction())?;
     let mut applied = ListApplied::default();
     let now = now_iso();
@@ -138,7 +144,10 @@ pub(crate) fn apply_list_page(connection: &mut Connection, orders: &[ListOrder])
 
 /// 注文 1 件の詳細。日時、金額、ギフトの印、商品を詳細の値にそろえる。
 /// 同じ商品の行は ID を保ち、名前が変わった（購入完了ページでバリエーションが無かった）行のラベルは引き継ぐ。
-pub(crate) fn apply_detail(connection: &mut Connection, detail: &OrderDetail) -> Result<DetailApplied, String> {
+pub(crate) fn apply_detail(
+    connection: &mut Connection,
+    detail: &OrderDetail,
+) -> Result<DetailApplied, String> {
     if !is_order_id(&detail.order_id) {
         return Err("注文番号が正しくありません".into());
     }
@@ -149,7 +158,11 @@ pub(crate) fn apply_detail(connection: &mut Connection, detail: &OrderDetail) ->
         return Ok(DetailApplied { removed });
     }
     let now = now_iso();
-    let title = detail.items.first().map(|item| item.name.clone()).unwrap_or_default();
+    let title = detail
+        .items
+        .first()
+        .map(|item| item.name.clone())
+        .unwrap_or_default();
     sql(tx.execute(
         "INSERT INTO purchase_orders
             (order_id, ordered_at, total_yen, gift_detected, list_title, detail_read_at, source, recorded_at, updated_at)
@@ -202,8 +215,10 @@ pub(crate) fn apply_detail(connection: &mut Connection, detail: &OrderDetail) ->
             kept.push((id, item.booth_id.clone()));
         }
         let stale: Vec<(i64, String)> = {
-            let mut statement = sql(tx.prepare("SELECT id, booth_id FROM purchase_items WHERE order_id = ?1"))?;
-            let rows = sql(statement.query_map([&detail.order_id], |row| Ok((row.get(0)?, row.get(1)?))))?;
+            let mut statement =
+                sql(tx.prepare("SELECT id, booth_id FROM purchase_items WHERE order_id = ?1"))?;
+            let rows =
+                sql(statement.query_map([&detail.order_id], |row| Ok((row.get(0)?, row.get(1)?))))?;
             let all: Vec<(i64, String)> = sql(rows.collect())?;
             all.into_iter()
                 .filter(|(id, _)| !kept.iter().any(|(kept_id, _)| kept_id == id))
@@ -266,7 +281,13 @@ pub(crate) fn record_checkout(
         sql(tx.execute(
             "INSERT OR IGNORE INTO purchase_items (order_id, position, booth_id, name, shop)
              VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![order_id, position as i64, product.booth_id, product.title.trim(), product.shop.trim()],
+            params![
+                order_id,
+                position as i64,
+                product.booth_id,
+                product.title.trim(),
+                product.shop.trim()
+            ],
         ))?;
     }
     sql(tx.commit())?;
@@ -346,7 +367,8 @@ fn load_orders(connection: &Connection) -> Result<Vec<StoredOrder>, String> {
         let mut statement = sql(connection.prepare(
             "SELECT item_id, label_id FROM purchase_item_labels ORDER BY item_id, label_id",
         ))?;
-        let rows = sql(statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))))?;
+        let rows =
+            sql(statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))))?;
         for row in rows {
             let (item, label) = sql(row)?;
             labels.entry(item).or_default().push(label);
@@ -509,7 +531,19 @@ fn load_library(connection: &Connection) -> Result<Library, String> {
         }
     }
     Ok(Library {
-        avatars: crate::db::load_avatars(connection)?.into_iter().map(|a| (a.id.clone(), AvatarRef { id: a.id, name: a.display_name, owned: a.owned })).collect(),
+        avatars: crate::db::load_avatars(connection)?
+            .into_iter()
+            .map(|a| {
+                (
+                    a.id.clone(),
+                    AvatarRef {
+                        id: a.id,
+                        name: a.display_name,
+                        owned: a.owned,
+                    },
+                )
+            })
+            .collect(),
         editions: crate::purchased_editions::Catalog::load(connection)?,
         products,
         links,
@@ -534,7 +568,9 @@ fn body_for<'a>(library: &'a Library, booth_id: &str) -> Option<&'a AvatarRef> {
         if library.products.get(booth_id)?.category.as_deref() != Some("avatar") {
             return None;
         }
-        let [avatar] = library.links.get(booth_id)?.as_slice() else { return None };
+        let [avatar] = library.links.get(booth_id)?.as_slice() else {
+            return None;
+        };
         Some(avatar)
     })
 }
@@ -545,10 +581,11 @@ fn groups_for(library: &Library, booth_id: &str, name: &str) -> (Vec<PurchaseGro
     groups_with(library, booth_id, |product| {
         let hint = product.and_then(|p| variation_of(name, &p.title));
         let title_only = product.is_some_and(|p| {
-            name.trim() == p.title.trim()
-                || nfkc(name).trim() == nfkc(&p.title).trim()
+            name.trim() == p.title.trim() || nfkc(name).trim() == nfkc(&p.title).trim()
         });
-        library.editions.order_scope(booth_id, hint.as_deref(), title_only)
+        library
+            .editions
+            .order_scope(booth_id, hint.as_deref(), title_only)
     })
 }
 
@@ -563,9 +600,16 @@ fn groups_with(
     scope: impl FnOnce(Option<&LibraryProduct>) -> crate::purchased_editions::Choice,
 ) -> (Vec<PurchaseGroup>, Vec<bool>) {
     let special = |key: &'static str, label: &str| {
-        (vec![PurchaseGroup {
-            key: key.into(), kind: key, label: label.into(), avatar_id: None, body: false,
-        }], vec![false])
+        (
+            vec![PurchaseGroup {
+                key: key.into(),
+                kind: key,
+                label: label.into(),
+                avatar_id: None,
+                body: false,
+            }],
+            vec![false],
+        )
     };
     let product = library.products.get(booth_id);
     if product.is_some_and(|p| p.category.as_deref() == Some("world")) {
@@ -585,9 +629,17 @@ fn groups_with(
     }
     let scope = scope(product);
     if !scope.avatar_ids.is_empty() || library.links.contains_key(booth_id) {
-        let avatars: Vec<_> = scope.avatar_ids.iter().filter_map(|id| library.avatars.get(id)).collect();
+        let avatars: Vec<_> = scope
+            .avatar_ids
+            .iter()
+            .filter_map(|id| library.avatars.get(id))
+            .collect();
         if avatars.len() != 1 {
-            let (key, label) = if avatars.len() > 1 { ("multiple", "複数アバター対応") } else { ("unset", "対応版未設定") };
+            let (key, label) = if avatars.len() > 1 {
+                ("multiple", "複数アバター対応")
+            } else {
+                ("unset", "対応版未設定")
+            };
             return special(key, label);
         }
         return (
@@ -617,7 +669,8 @@ fn variation_of(name: &str, title: &str) -> Option<String> {
 }
 
 fn amount(item: &StoredItem) -> Option<i64> {
-    item.price_yen.map(|price| price + item.boost_yen.unwrap_or(0))
+    item.price_yen
+        .map(|price| price + item.boost_yen.unwrap_or(0))
 }
 
 /// アプリの中でその商品を開く先。アセットとワールドは一覧、アバター本体はアバターの画面。
@@ -631,7 +684,10 @@ pub struct LibraryLink {
 
 /// ライブラリにあり、除外しておらず、分類が決まっている商品だけ。贈っただけの商品はライブラリに無いので出ない。
 fn library_link(library: &Library, booth_id: &str) -> Option<LibraryLink> {
-    let product = library.products.get(booth_id).filter(|product| !product.excluded)?;
+    let product = library
+        .products
+        .get(booth_id)
+        .filter(|product| !product.excluded)?;
     match product.category.as_deref()? {
         "avatar" => body_for(library, booth_id).map(|avatar| LibraryLink {
             kind: "avatar",
@@ -797,9 +853,14 @@ fn item_view(library: &Library, item: &StoredItem) -> PurchaseItemView {
     let (groups, _) = groups_for(library, &item.booth_id, &item.name);
     let variation = product.and_then(|product| variation_of(&item.name, &product.title));
     let name = product
-        .map(|p| match (&variation, crate::purchased_editions::trailing_variation(&p.title)) {
-            (Some(_), Some((base, _))) => base.to_string(),
-            _ => p.title.clone(),
+        .map(|p| {
+            match (
+                &variation,
+                crate::purchased_editions::trailing_variation(&p.title),
+            ) {
+                (Some(_), Some((base, _))) => base.to_string(),
+                _ => p.title.clone(),
+            }
         })
         .unwrap_or_else(|| item.name.clone());
     PurchaseItemView {
@@ -833,7 +894,11 @@ fn order_view(library: &Library, order: &StoredOrder) -> PurchaseOrderView {
         detail_read: order.detail_read,
         source: order.source.clone(),
         title: order.list_title.clone(),
-        items: order.items.iter().map(|item| item_view(library, item)).collect(),
+        items: order
+            .items
+            .iter()
+            .map(|item| item_view(library, item))
+            .collect(),
     }
 }
 
@@ -848,12 +913,21 @@ fn haystack(view: &PurchaseOrderView, label_names: &HashMap<i64, String>) -> Str
         parts.push(item.shop.clone());
         parts.push(item.booth_id.clone());
         parts.extend(item.groups.iter().map(|group| group.label.clone()));
-        parts.extend(item.label_ids.iter().filter_map(|id| label_names.get(id).cloned()));
+        parts.extend(
+            item.label_ids
+                .iter()
+                .filter_map(|id| label_names.get(id).cloned()),
+        );
     }
     search_text(&parts.join("\n"))
 }
 
-fn matches(view: &PurchaseOrderView, query: &PurchaseQuery, tokens: &[String], label_names: &HashMap<i64, String>) -> bool {
+fn matches(
+    view: &PurchaseOrderView,
+    query: &PurchaseQuery,
+    tokens: &[String],
+    label_names: &HashMap<i64, String>,
+) -> bool {
     if let Some(gift) = query.gift {
         if view.gift != gift {
             return false;
@@ -866,12 +940,20 @@ fn matches(view: &PurchaseOrderView, query: &PurchaseQuery, tokens: &[String], l
         }
     }
     if let Some(label) = query.label_id {
-        if !view.items.iter().any(|item| item.label_ids.contains(&label)) {
+        if !view
+            .items
+            .iter()
+            .any(|item| item.label_ids.contains(&label))
+        {
             return false;
         }
     }
     if let Some(group) = query.group.as_deref().filter(|group| !group.is_empty()) {
-        if !view.items.iter().any(|item| item.groups.iter().any(|candidate| candidate.key == group)) {
+        if !view
+            .items
+            .iter()
+            .any(|item| item.groups.iter().any(|candidate| candidate.key == group))
+        {
             return false;
         }
     }
@@ -883,12 +965,22 @@ fn matches(view: &PurchaseOrderView, query: &PurchaseQuery, tokens: &[String], l
 }
 
 /// 購入履歴の 1 ページ。検索と絞り込みは全注文に対して行い、結果をページに分ける。
-pub(crate) fn page(connection: &Connection, query: &PurchaseQuery, running: bool) -> Result<PurchasePage, String> {
+pub(crate) fn page(
+    connection: &Connection,
+    query: &PurchaseQuery,
+    running: bool,
+) -> Result<PurchasePage, String> {
     let library = load_library(connection)?;
     let orders = load_orders(connection)?;
     let labels = labels(connection)?;
-    let label_names: HashMap<i64, String> = labels.iter().map(|label| (label.id, label.name.clone())).collect();
-    let views: Vec<PurchaseOrderView> = orders.iter().map(|order| order_view(&library, order)).collect();
+    let label_names: HashMap<i64, String> = labels
+        .iter()
+        .map(|label| (label.id, label.name.clone()))
+        .collect();
+    let views: Vec<PurchaseOrderView> = orders
+        .iter()
+        .map(|order| order_view(&library, order))
+        .collect();
 
     let mut group_counts: BTreeMap<String, GroupOption> = BTreeMap::new();
     let mut years = BTreeSet::new();
@@ -911,7 +1003,11 @@ pub(crate) fn page(connection: &Connection, query: &PurchaseQuery, running: bool
         }
     }
     let mut groups: Vec<GroupOption> = group_counts.into_values().collect();
-    groups.sort_by(|a, b| group_rank(a.kind).cmp(&group_rank(b.kind)).then_with(|| a.label.cmp(&b.label)));
+    groups.sort_by(|a, b| {
+        group_rank(a.kind)
+            .cmp(&group_rank(b.kind))
+            .then_with(|| a.label.cmp(&b.label))
+    });
 
     let tokens = tokens(&query.query);
     let matched: Vec<PurchaseOrderView> = views
@@ -920,9 +1016,17 @@ pub(crate) fn page(connection: &Connection, query: &PurchaseQuery, running: bool
         .collect();
     let limit = query.limit.unwrap_or(PAGE_SIZE).clamp(1, MAX_PAGE_SIZE);
     let total = matched.len() as u32;
-    let offset = if query.offset >= total { (total.saturating_sub(1) / limit) * limit } else { query.offset - query.offset % limit };
+    let offset = if query.offset >= total {
+        (total.saturating_sub(1) / limit) * limit
+    } else {
+        query.offset - query.offset % limit
+    };
     Ok(PurchasePage {
-        orders: matched.into_iter().skip(offset as usize).take(limit as usize).collect(),
+        orders: matched
+            .into_iter()
+            .skip(offset as usize)
+            .take(limit as usize)
+            .collect(),
         total,
         offset,
         limit,
@@ -989,7 +1093,10 @@ pub struct PurchaseSummary {
 
 /// 購入した対応版ごとの集計。複数アバター対応は専用の枠に一度だけ数える。
 /// 贈ったギフトは枠に入れない。もらったギフトは今の価格で別の列に数える。
-pub(crate) fn summary(connection: &Connection, year: Option<i32>) -> Result<PurchaseSummary, String> {
+pub(crate) fn summary(
+    connection: &Connection,
+    year: Option<i32>,
+) -> Result<PurchaseSummary, String> {
     let library = load_library(connection)?;
     let orders = load_orders(connection)?;
     let years: BTreeSet<i32> = orders.iter().filter_map(StoredOrder::year).collect();
@@ -1017,22 +1124,27 @@ pub(crate) fn summary(connection: &Connection, year: Option<i32>) -> Result<Purc
         group: &PurchaseGroup,
         owned: bool,
     ) -> &'a mut SummaryGroup {
-        groups.entry(group.key.clone()).or_insert_with(|| SummaryGroup {
-            key: group.key.clone(),
-            kind: group.kind,
-            label: group.label.clone(),
-            avatar_id: group.avatar_id.clone(),
-            owned,
-            items: 0,
-            body_items: 0,
-            amount_yen: 0,
-            unknown_amount_items: 0,
-            received_items: 0,
-            received_yen: 0,
-            received_unknown_items: 0,
-        })
+        groups
+            .entry(group.key.clone())
+            .or_insert_with(|| SummaryGroup {
+                key: group.key.clone(),
+                kind: group.kind,
+                label: group.label.clone(),
+                avatar_id: group.avatar_id.clone(),
+                owned,
+                items: 0,
+                body_items: 0,
+                amount_yen: 0,
+                unknown_amount_items: 0,
+                received_items: 0,
+                received_yen: 0,
+                received_unknown_items: 0,
+            })
     }
-    for order in orders.iter().filter(|order| year.is_none() || order.year() == year) {
+    for order in orders
+        .iter()
+        .filter(|order| year.is_none() || order.year() == year)
+    {
         summary.orders += 1;
         for item in &order.items {
             summary.items += 1;
@@ -1136,7 +1248,8 @@ fn unique_name(result: rusqlite::Result<usize>) -> Result<usize, String> {
 
 pub(crate) fn create_label(connection: &Connection, name: &str) -> Result<PurchaseLabel, String> {
     let name = label_name(name)?;
-    let count: i64 = sql(connection.query_row("SELECT COUNT(*) FROM purchase_labels", [], |row| row.get(0)))?;
+    let count: i64 =
+        sql(connection.query_row("SELECT COUNT(*) FROM purchase_labels", [], |row| row.get(0)))?;
     if count >= LABEL_LIMIT {
         return Err(format!("ラベルは{LABEL_LIMIT}個までです"));
     }
@@ -1153,7 +1266,11 @@ pub(crate) fn create_label(connection: &Connection, name: &str) -> Result<Purcha
 
 pub(crate) fn rename_label(connection: &Connection, id: i64, name: &str) -> Result<(), String> {
     let name = label_name(name)?;
-    if unique_name(connection.execute("UPDATE purchase_labels SET name = ?2 WHERE id = ?1", params![id, name]))? == 0 {
+    if unique_name(connection.execute(
+        "UPDATE purchase_labels SET name = ?2 WHERE id = ?1",
+        params![id, name],
+    ))? == 0
+    {
         return Err("ラベルが見つかりません".into());
     }
     Ok(())
@@ -1168,7 +1285,11 @@ pub(crate) fn delete_label(connection: &mut Connection, id: i64) -> Result<(), S
     sql(tx.commit())
 }
 
-pub(crate) fn set_item_labels(connection: &mut Connection, item_id: i64, label_ids: &[i64]) -> Result<(), String> {
+pub(crate) fn set_item_labels(
+    connection: &mut Connection,
+    item_id: i64,
+    label_ids: &[i64],
+) -> Result<(), String> {
     let tx = sql(connection.transaction())?;
     let exists: bool = sql(tx.query_row(
         "SELECT EXISTS (SELECT 1 FROM purchase_items WHERE id = ?1)",
@@ -1189,7 +1310,10 @@ pub(crate) fn set_item_labels(connection: &mut Connection, item_id: i64, label_i
             return Err("ラベルが見つかりません".into());
         }
     }
-    sql(tx.execute("DELETE FROM purchase_item_labels WHERE item_id = ?1", [item_id]))?;
+    sql(tx.execute(
+        "DELETE FROM purchase_item_labels WHERE item_id = ?1",
+        [item_id],
+    ))?;
     for label in wanted {
         sql(tx.execute(
             "INSERT INTO purchase_item_labels (item_id, label_id) VALUES (?1, ?2)",
@@ -1200,7 +1324,11 @@ pub(crate) fn set_item_labels(connection: &mut Connection, item_id: i64, label_i
 }
 
 /// ギフトの印を手で決める。`None` は詳細ページの判定に戻す。
-pub(crate) fn set_gift_override(connection: &Connection, order_id: &str, gift: Option<bool>) -> Result<(), String> {
+pub(crate) fn set_gift_override(
+    connection: &Connection,
+    order_id: &str,
+    gift: Option<bool>,
+) -> Result<(), String> {
     if sql(connection.execute(
         "UPDATE purchase_orders SET gift_override = ?2, updated_at = ?3 WHERE order_id = ?1",
         params![order_id, gift, now_iso()],
@@ -1253,9 +1381,17 @@ impl SyncPurchases {
 /// データ移行の `purchases`。注文番号の順に並べ、同じ内容なら同じ JSON になる。
 pub(crate) fn export(connection: &Connection) -> Result<SyncPurchases, String> {
     let label_list = labels(connection)?;
-    let names: HashMap<i64, String> = label_list.iter().map(|label| (label.id, label.name.clone())).collect();
+    let names: HashMap<i64, String> = label_list
+        .iter()
+        .map(|label| (label.id, label.name.clone()))
+        .collect();
     let mut orders = load_orders(connection)?;
-    orders.sort_by(|a, b| a.order_id.len().cmp(&b.order_id.len()).then_with(|| a.order_id.cmp(&b.order_id)));
+    orders.sort_by(|a, b| {
+        a.order_id
+            .len()
+            .cmp(&b.order_id.len())
+            .then_with(|| a.order_id.cmp(&b.order_id))
+    });
     Ok(SyncPurchases {
         show_prices: show_prices(connection)?,
         labels: label_list.into_iter().map(|label| label.name).collect(),
@@ -1273,7 +1409,11 @@ pub(crate) fn export(connection: &Connection) -> Result<SyncPurchases, String> {
                     .items
                     .into_iter()
                     .map(|item| {
-                        let mut labels: Vec<String> = item.labels.iter().filter_map(|id| names.get(id).cloned()).collect();
+                        let mut labels: Vec<String> = item
+                            .labels
+                            .iter()
+                            .filter_map(|id| names.get(id).cloned())
+                            .collect();
                         labels.sort();
                         SyncPurchaseItem {
                             booth_id: item.booth_id,
@@ -1361,25 +1501,74 @@ mod tests {
             ],
         )
         .unwrap();
-        assert_eq!(applied, ListApplied { added: 1, removed: 0, news: true });
-        let again = apply_list_page(&mut connection, &[listed("1001", OrderState::Confirmed, "2026-11-02T09:30:21+09:00")]).unwrap();
+        assert_eq!(
+            applied,
+            ListApplied {
+                added: 1,
+                removed: 0,
+                news: true
+            }
+        );
+        let again = apply_list_page(
+            &mut connection,
+            &[listed(
+                "1001",
+                OrderState::Confirmed,
+                "2026-11-02T09:30:21+09:00",
+            )],
+        )
+        .unwrap();
         assert_eq!(again, ListApplied::default());
-        assert_eq!(pending_detail_ids(&connection).unwrap(), vec!["1001".to_string()]);
+        assert_eq!(
+            pending_detail_ids(&connection).unwrap(),
+            vec!["1001".to_string()]
+        );
 
         apply_detail(
             &mut connection,
-            &detail("1001", "2026-11-02T09:30:19+09:00", false, vec![item("2001", "見本の衣装 (フル)", Some(2000), Some(300))]),
+            &detail(
+                "1001",
+                "2026-11-02T09:30:19+09:00",
+                false,
+                vec![item("2001", "見本の衣装 (フル)", Some(2000), Some(300))],
+            ),
         )
         .unwrap();
         assert!(pending_detail_ids(&connection).unwrap().is_empty());
         // 一覧と詳細で秒がずれることがある。詳細の値を残す。
-        apply_list_page(&mut connection, &[listed("1001", OrderState::Confirmed, "2026-11-02T09:30:20+09:00")]).unwrap();
+        apply_list_page(
+            &mut connection,
+            &[listed(
+                "1001",
+                OrderState::Confirmed,
+                "2026-11-02T09:30:20+09:00",
+            )],
+        )
+        .unwrap();
         let page = page(&connection, &PurchaseQuery::default(), false).unwrap();
-        assert_eq!(page.orders[0].ordered_at.as_deref(), Some("2026-11-02T09:30:19+09:00"));
+        assert_eq!(
+            page.orders[0].ordered_at.as_deref(),
+            Some("2026-11-02T09:30:19+09:00")
+        );
         assert_eq!(page.orders[0].items[0].amount_yen, Some(2300));
 
-        let removed = apply_list_page(&mut connection, &[listed("1001", OrderState::Cancelled, "2026-11-02T09:30:20+09:00")]).unwrap();
-        assert_eq!(removed, ListApplied { added: 0, removed: 1, news: true });
+        let removed = apply_list_page(
+            &mut connection,
+            &[listed(
+                "1001",
+                OrderState::Cancelled,
+                "2026-11-02T09:30:20+09:00",
+            )],
+        )
+        .unwrap();
+        assert_eq!(
+            removed,
+            ListApplied {
+                added: 0,
+                removed: 1,
+                news: true
+            }
+        );
         assert_eq!(status(&connection, false).unwrap().orders, 0);
     }
 
@@ -1394,14 +1583,26 @@ mod tests {
         assert!(record_checkout(&mut connection, "1001", &products).unwrap());
         assert!(!record_checkout(&mut connection, "1001", &products).unwrap());
         assert!(record_checkout(&mut connection, "../1", &products).is_err());
-        assert_eq!(pending_detail_ids(&connection).unwrap(), vec!["1001".to_string()]);
+        assert_eq!(
+            pending_detail_ids(&connection).unwrap(),
+            vec!["1001".to_string()]
+        );
         let label = create_label(&connection, "お気に入り").unwrap();
-        let item_id = page(&connection, &PurchaseQuery::default(), false).unwrap().orders[0].items[0].id;
+        let item_id = page(&connection, &PurchaseQuery::default(), false)
+            .unwrap()
+            .orders[0]
+            .items[0]
+            .id;
         set_item_labels(&mut connection, item_id, &[label.id]).unwrap();
 
         apply_detail(
             &mut connection,
-            &detail("1001", "2026-11-02T09:30:19+09:00", false, vec![item("2001", "見本の衣装 (フルセット)", Some(2000), None)]),
+            &detail(
+                "1001",
+                "2026-11-02T09:30:19+09:00",
+                false,
+                vec![item("2001", "見本の衣装 (フルセット)", Some(2000), None)],
+            ),
         )
         .unwrap();
         let view = page(&connection, &PurchaseQuery::default(), false).unwrap();
@@ -1432,43 +1633,125 @@ mod tests {
         for index in 0..120 {
             let id = format!("{}", 5000 + index);
             let booth = if index == 7 { "3000" } else { "3001" };
-            let name = if index == 7 { "プラム用の髪 (黒)" } else { "別の小物" };
+            let name = if index == 7 {
+                "プラム用の髪 (黒)"
+            } else {
+                "別の小物"
+            };
             apply_detail(
                 &mut connection,
-                &detail(&id, &format!("2025-{:02}-01T10:00:00+09:00", 1 + index % 12), index == 9, vec![item(booth, name, Some(500), Some(0))]),
+                &detail(
+                    &id,
+                    &format!("2025-{:02}-01T10:00:00+09:00", 1 + index % 12),
+                    index == 9,
+                    vec![item(booth, name, Some(500), Some(0))],
+                ),
             )
             .unwrap();
         }
-        apply_detail(&mut connection, &detail("9000", "2026-01-05T10:00:00+09:00", false, vec![item("3001", "別の小物", Some(100), None)])).unwrap();
+        apply_detail(
+            &mut connection,
+            &detail(
+                "9000",
+                "2026-01-05T10:00:00+09:00",
+                false,
+                vec![item("3001", "別の小物", Some(100), None)],
+            ),
+        )
+        .unwrap();
 
         let first = page(&connection, &PurchaseQuery::default(), false).unwrap();
         assert_eq!(first.total, 121);
         assert_eq!(first.orders.len(), 50);
         assert_eq!(first.orders[0].order_id, "9000");
         assert_eq!(first.years, vec![2026, 2025]);
-        let last = page(&connection, &PurchaseQuery { offset: 100, ..Default::default() }, false).unwrap();
+        let last = page(
+            &connection,
+            &PurchaseQuery {
+                offset: 100,
+                ..Default::default()
+            },
+            false,
+        )
+        .unwrap();
         assert_eq!(last.orders.len(), 21);
 
-        let hair = page(&connection, &PurchaseQuery { query: "ﾌﾟﾗﾑ 黒".into(), ..Default::default() }, false).unwrap();
+        let hair = page(
+            &connection,
+            &PurchaseQuery {
+                query: "ﾌﾟﾗﾑ 黒".into(),
+                ..Default::default()
+            },
+            false,
+        )
+        .unwrap();
         assert_eq!(hair.total, 1);
         assert_eq!(hair.orders[0].items[0].variation.as_deref(), Some("黒"));
         // A color of a single-avatar product still belongs to that avatar.
         assert_eq!(hair.orders[0].items[0].groups[0].key, "avatar:plum");
-        let by_group = page(&connection, &PurchaseQuery { group: Some("avatar:plum".into()), ..Default::default() }, false).unwrap();
+        let by_group = page(
+            &connection,
+            &PurchaseQuery {
+                group: Some("avatar:plum".into()),
+                ..Default::default()
+            },
+            false,
+        )
+        .unwrap();
         assert_eq!(by_group.total, 1);
-        let gifts = page(&connection, &PurchaseQuery { gift: Some(true), ..Default::default() }, false).unwrap();
+        let gifts = page(
+            &connection,
+            &PurchaseQuery {
+                gift: Some(true),
+                ..Default::default()
+            },
+            false,
+        )
+        .unwrap();
         assert_eq!(gifts.total, 1);
-        let by_word = page(&connection, &PurchaseQuery { query: "ギフト".into(), ..Default::default() }, false).unwrap();
+        let by_word = page(
+            &connection,
+            &PurchaseQuery {
+                query: "ギフト".into(),
+                ..Default::default()
+            },
+            false,
+        )
+        .unwrap();
         assert_eq!(by_word.total, 1);
-        let in_2026 = page(&connection, &PurchaseQuery { year: Some(2026), ..Default::default() }, false).unwrap();
+        let in_2026 = page(
+            &connection,
+            &PurchaseQuery {
+                year: Some(2026),
+                ..Default::default()
+            },
+            false,
+        )
+        .unwrap();
         assert_eq!(in_2026.total, 1);
 
         let label = create_label(&connection, "あとで使う").unwrap();
         let target = last.orders[3].items[0].id;
         set_item_labels(&mut connection, target, &[label.id]).unwrap();
-        let labelled = page(&connection, &PurchaseQuery { label_id: Some(label.id), ..Default::default() }, false).unwrap();
+        let labelled = page(
+            &connection,
+            &PurchaseQuery {
+                label_id: Some(label.id),
+                ..Default::default()
+            },
+            false,
+        )
+        .unwrap();
         assert_eq!(labelled.total, 1);
-        let by_label_name = page(&connection, &PurchaseQuery { query: "あとで".into(), ..Default::default() }, false).unwrap();
+        let by_label_name = page(
+            &connection,
+            &PurchaseQuery {
+                query: "あとで".into(),
+                ..Default::default()
+            },
+            false,
+        )
+        .unwrap();
         assert_eq!(by_label_name.total, 1);
     }
 
@@ -1477,17 +1760,43 @@ mod tests {
         let mut connection = db();
         product(&connection, "4000", "プラム本体", false);
         connection
-            .execute("INSERT INTO avatar_sources (booth_id, avatar_id) VALUES ('4000', 'plum')", [])
+            .execute(
+                "INSERT INTO avatar_sources (booth_id, avatar_id) VALUES ('4000', 'plum')",
+                [],
+            )
             .unwrap();
         product(&connection, "4001", "二人対応の衣装", false);
         link(&connection, "4001", "plum");
         link(&connection, "4001", "lime");
         product(&connection, "4002", "汎用の小物", true);
         for (id, at, gift, items) in [
-            ("1001", "2025-03-01T10:00:00+09:00", false, vec![item("4000", "プラム本体", Some(5000), Some(0))]),
-            ("1002", "2026-03-01T10:00:00+09:00", false, vec![item("4001", "二人対応の衣装", Some(2000), Some(500)), item("4002", "汎用の小物", Some(300), None)]),
-            ("1003", "2026-04-01T10:00:00+09:00", true, vec![item("4001", "二人対応の衣装", Some(2000), None)]),
-            ("1004", "2026-05-01T10:00:00+09:00", false, vec![item("4999", "グッズ", None, None)]),
+            (
+                "1001",
+                "2025-03-01T10:00:00+09:00",
+                false,
+                vec![item("4000", "プラム本体", Some(5000), Some(0))],
+            ),
+            (
+                "1002",
+                "2026-03-01T10:00:00+09:00",
+                false,
+                vec![
+                    item("4001", "二人対応の衣装", Some(2000), Some(500)),
+                    item("4002", "汎用の小物", Some(300), None),
+                ],
+            ),
+            (
+                "1003",
+                "2026-04-01T10:00:00+09:00",
+                true,
+                vec![item("4001", "二人対応の衣装", Some(2000), None)],
+            ),
+            (
+                "1004",
+                "2026-05-01T10:00:00+09:00",
+                false,
+                vec![item("4999", "グッズ", None, None)],
+            ),
         ] {
             apply_detail(&mut connection, &detail(id, at, gift, items)).unwrap();
         }
@@ -1497,14 +1806,23 @@ mod tests {
         assert_eq!(all.total_yen, 5000 + 2500 + 300 + 2000);
         assert_eq!(all.unknown_amount_items, 1);
         assert_eq!((all.gift_items, all.gift_yen), (1, 2000));
-        let get = |key: &str| all.groups.iter().find(|group| group.key == key).unwrap().clone();
+        let get = |key: &str| {
+            all.groups
+                .iter()
+                .find(|group| group.key == key)
+                .unwrap()
+                .clone()
+        };
         let plum = get("avatar:plum");
         assert_eq!((plum.items, plum.body_items, plum.amount_yen), (1, 1, 5000));
         assert_eq!(get("unset").amount_yen, 2500);
         assert!(!all.groups.iter().any(|g| g.key == "avatar:lime"));
         assert_eq!(get("generic").amount_yen, 300);
         let unclassified = get("unclassified");
-        assert_eq!((unclassified.items, unclassified.unknown_amount_items), (1, 1));
+        assert_eq!(
+            (unclassified.items, unclassified.unknown_amount_items),
+            (1, 1)
+        );
         assert_eq!(all.groups.last().unwrap().kind, "unclassified");
 
         let this_year = summary(&connection, Some(2026)).unwrap();
@@ -1522,9 +1840,17 @@ mod tests {
     #[test]
     fn received_gifts_count_at_the_current_price_beside_purchases() {
         let mut c = db();
-        for (id, title) in [("7001", "もらった衣装"), ("7002", "価格未取得の衣装"), ("7003", "自分でも買った衣装")] {
+        for (id, title) in [
+            ("7001", "もらった衣装"),
+            ("7002", "価格未取得の衣装"),
+            ("7003", "自分でも買った衣装"),
+        ] {
             product(&c, id, title, false);
-            c.execute("UPDATE products SET category = 'outfit', received_gift = 1 WHERE booth_id = ?1", [id]).unwrap();
+            c.execute(
+                "UPDATE products SET category = 'outfit', received_gift = 1 WHERE booth_id = ?1",
+                [id],
+            )
+            .unwrap();
             link(&c, id, "lime");
         }
         c.execute(
@@ -1532,15 +1858,38 @@ mod tests {
             [r#"[{"name":"","priceYen":1200}]"#],
         )
         .unwrap();
-        apply_detail(&mut c, &detail("1001", "2026-01-01T00:00:00+09:00", false, vec![item("7003", "自分でも買った衣装", Some(900), None)])).unwrap();
+        apply_detail(
+            &mut c,
+            &detail(
+                "1001",
+                "2026-01-01T00:00:00+09:00",
+                false,
+                vec![item("7003", "自分でも買った衣装", Some(900), None)],
+            ),
+        )
+        .unwrap();
 
         let all = summary(&c, None).unwrap();
         assert!(all.received_included);
-        assert_eq!((all.received_items, all.received_yen, all.received_unchecked_items), (2, 1200, 1));
+        assert_eq!(
+            (
+                all.received_items,
+                all.received_yen,
+                all.received_unchecked_items
+            ),
+            (2, 1200, 1)
+        );
         assert_eq!(all.total_yen, 900);
         let lime = all.groups.iter().find(|g| g.key == "avatar:lime").unwrap();
         assert_eq!((lime.items, lime.amount_yen), (1, 900));
-        assert_eq!((lime.received_items, lime.received_yen, lime.received_unknown_items), (2, 1200, 1));
+        assert_eq!(
+            (
+                lime.received_items,
+                lime.received_yen,
+                lime.received_unknown_items
+            ),
+            (2, 1200, 1)
+        );
 
         let year = summary(&c, Some(2026)).unwrap();
         assert!(!year.received_included);
@@ -1557,19 +1906,37 @@ mod tests {
             ("6003", "見本ワールド", "world"),
             ("6004", "ライム本体", "avatar"),
             ("6005", "対応に未解決名がある髪", "hair"),
-            ("6006", "【17アバター対応】ミルキーチル (フルセット)", "outfit"),
-            ("6007", "【14アバター対応】アイテクスチャ (ショコラ -Chocolat-)", "texture"),
+            (
+                "6006",
+                "【17アバター対応】ミルキーチル (フルセット)",
+                "outfit",
+            ),
+            (
+                "6007",
+                "【14アバター対応】アイテクスチャ (ショコラ -Chocolat-)",
+                "texture",
+            ),
             ("6008", "22アバター対応 衣装 (ライム・プラム対応)", "outfit"),
         ] {
             product(&c, id, title, false);
-            c.execute("UPDATE products SET category=?2 WHERE booth_id=?1", params![id, category]).unwrap();
-            if id != "6003" { link(&c, id, "lime"); }
+            c.execute(
+                "UPDATE products SET category=?2 WHERE booth_id=?1",
+                params![id, category],
+            )
+            .unwrap();
+            if id != "6003" {
+                link(&c, id, "lime");
+            }
         }
         link(&c, "6002", "plum");
         link(&c, "6006", "plum");
         link(&c, "6007", "chocolat");
         link(&c, "6008", "plum");
-        c.execute("UPDATE products SET unresolved_names_json='[\"見本ちゃん\"]' WHERE booth_id='6005'", []).unwrap();
+        c.execute(
+            "UPDATE products SET unresolved_names_json='[\"見本ちゃん\"]' WHERE booth_id='6005'",
+            [],
+        )
+        .unwrap();
         let items = [
             ("6001", "専用の衣装", 100),
             ("6002", "二人対応の衣装", 200),
@@ -1578,36 +1945,83 @@ mod tests {
             ("6004", "ライム本体", 500),
             ("6005", "対応に未解決名がある髪", 600),
             ("6006", "【17アバター対応】ミルキーチル (フルセット)", 700),
-            ("6007", "【14アバター対応】アイテクスチャ (ショコラ -Chocolat-)", 800),
+            (
+                "6007",
+                "【14アバター対応】アイテクスチャ (ショコラ -Chocolat-)",
+                800,
+            ),
             ("6008", "22アバター対応 衣装 (ライム・プラム対応)", 900),
-        ].into_iter().map(|(id, name, price)| item(id, name, Some(price), None)).collect();
-        apply_detail(&mut c, &detail("1001", "2026-01-01T00:00:00+09:00", false, items)).unwrap();
+        ]
+        .into_iter()
+        .map(|(id, name, price)| item(id, name, Some(price), None))
+        .collect();
+        apply_detail(
+            &mut c,
+            &detail("1001", "2026-01-01T00:00:00+09:00", false, items),
+        )
+        .unwrap();
 
         let totals = summary(&c, None).unwrap();
         let group = |key| totals.groups.iter().find(|g| g.key == key).unwrap();
-        assert_eq!((group("avatar:lime").items, group("avatar:lime").body_items, group("avatar:lime").amount_yen), (2, 1, 600));
+        assert_eq!(
+            (
+                group("avatar:lime").items,
+                group("avatar:lime").body_items,
+                group("avatar:lime").amount_yen
+            ),
+            (2, 1, 600)
+        );
         assert_eq!(group("avatar:plum").amount_yen, 300);
         assert_eq!(group("avatar:chocolat").amount_yen, 800);
         assert_eq!(group("multiple").amount_yen, 1600);
         assert_eq!(group("unset").amount_yen, 800);
         assert_eq!(group("world").amount_yen, 400);
-        assert_eq!(totals.groups.iter().map(|g| g.amount_yen).sum::<i64>(), totals.total_yen);
-        let worlds = page(&c, &PurchaseQuery { group: Some("world".into()), ..Default::default() }, false).unwrap();
+        assert_eq!(
+            totals.groups.iter().map(|g| g.amount_yen).sum::<i64>(),
+            totals.total_yen
+        );
+        let worlds = page(
+            &c,
+            &PurchaseQuery {
+                group: Some("world".into()),
+                ..Default::default()
+            },
+            false,
+        )
+        .unwrap();
         assert_eq!(worlds.total, 1);
-        assert!(worlds.groups.iter().any(|g| g.key == "world" && g.items == 1));
+        assert!(
+            worlds
+                .groups
+                .iter()
+                .any(|g| g.key == "world" && g.items == 1)
+        );
 
         let catalog = crate::purchased_editions::Catalog::load(&c).unwrap();
         assert_eq!(catalog.scope("6001").avatar_ids, ["lime"]);
         assert_eq!(catalog.scope("6005").mode, "unknown");
-        crate::purchased_editions::save(&c, "6001", &crate::purchased_editions::Choice::unknown()).unwrap();
+        crate::purchased_editions::save(&c, "6001", &crate::purchased_editions::Choice::unknown())
+            .unwrap();
         let updated = summary(&c, None).unwrap();
-        assert_eq!(updated.groups.iter().find(|g| g.key == "unset").unwrap().amount_yen, 900);
+        assert_eq!(
+            updated
+                .groups
+                .iter()
+                .find(|g| g.key == "unset")
+                .unwrap()
+                .amount_yen,
+            900
+        );
     }
 
     #[test]
     fn one_package_for_every_avatar_counts_once_and_per_avatar_files_do_not() {
         let mut c = db();
-        for (id, title, other) in [("7001", "ふたり対応の髪", "plum"), ("7002", "ふたり対応の衣装", "plum"), ("7003", "ふたり対応の目", "chocolat")] {
+        for (id, title, other) in [
+            ("7001", "ふたり対応の髪", "plum"),
+            ("7002", "ふたり対応の衣装", "plum"),
+            ("7003", "ふたり対応の目", "chocolat"),
+        ] {
             product(&c, id, title, false);
             link(&c, id, "lime");
             link(&c, id, other);
@@ -1619,13 +2033,27 @@ mod tests {
                 ('7003','','Eye_Lime.zip'),('7003','','Eye_Chocolate.zip');",
         )
         .unwrap();
-        let items = [("7001", "ふたり対応の髪", 100), ("7002", "ふたり対応の衣装", 200), ("7003", "ふたり対応の目 (chocolate)", 400)]
-            .into_iter()
-            .map(|(id, name, price)| item(id, name, Some(price), None))
-            .collect();
-        apply_detail(&mut c, &detail("1001", "2026-01-01T00:00:00+09:00", false, items)).unwrap();
+        let items = [
+            ("7001", "ふたり対応の髪", 100),
+            ("7002", "ふたり対応の衣装", 200),
+            ("7003", "ふたり対応の目 (chocolate)", 400),
+        ]
+        .into_iter()
+        .map(|(id, name, price)| item(id, name, Some(price), None))
+        .collect();
+        apply_detail(
+            &mut c,
+            &detail("1001", "2026-01-01T00:00:00+09:00", false, items),
+        )
+        .unwrap();
         let totals = summary(&c, None).unwrap();
-        let amount = |key| totals.groups.iter().find(|g| g.key == key).map(|g| g.amount_yen);
+        let amount = |key| {
+            totals
+                .groups
+                .iter()
+                .find(|g| g.key == key)
+                .map(|g| g.amount_yen)
+        };
         // One shared package covers every compatible avatar.
         assert_eq!(amount("multiple"), Some(100));
         // Files split by avatar and an unknown spelling leave the edition to the user.
@@ -1637,18 +2065,63 @@ mod tests {
     fn individual_orders_and_full_sets_have_disjoint_nonduplicating_spend_groups() {
         let mut c = db();
         product(&c, "6001", "衣装A", false);
-        for id in ["lime", "plum", "manuka"] { link(&c, "6001", id); }
-        for (id, variant, price) in [("1001", "Lime", 1500), ("1002", "Plum", 1600), ("1003", "フルセット", 5000), ("1004", "黒", 100)] {
-            apply_detail(&mut c, &detail(id, "2026-01-01T00:00:00+09:00", false, vec![item("6001", &format!("衣装A ({variant})"), Some(price), Some(0))])).unwrap();
+        for id in ["lime", "plum", "manuka"] {
+            link(&c, "6001", id);
+        }
+        for (id, variant, price) in [
+            ("1001", "Lime", 1500),
+            ("1002", "Plum", 1600),
+            ("1003", "フルセット", 5000),
+            ("1004", "黒", 100),
+        ] {
+            apply_detail(
+                &mut c,
+                &detail(
+                    id,
+                    "2026-01-01T00:00:00+09:00",
+                    false,
+                    vec![item(
+                        "6001",
+                        &format!("衣装A ({variant})"),
+                        Some(price),
+                        Some(0),
+                    )],
+                ),
+            )
+            .unwrap();
         }
         let summary = summary(&c, None).unwrap();
         assert_eq!(summary.total_yen, 8200);
-        assert_eq!(summary.groups.iter().map(|g| g.amount_yen).sum::<i64>(), 8200);
-        for (key, expected) in [("avatar:lime",1500),("avatar:plum",1600),("multiple",5000),("unset",100)] {
-            assert_eq!(summary.groups.iter().find(|g| g.key==key).unwrap().amount_yen, expected);
+        assert_eq!(
+            summary.groups.iter().map(|g| g.amount_yen).sum::<i64>(),
+            8200
+        );
+        for (key, expected) in [
+            ("avatar:lime", 1500),
+            ("avatar:plum", 1600),
+            ("multiple", 5000),
+            ("unset", 100),
+        ] {
+            assert_eq!(
+                summary
+                    .groups
+                    .iter()
+                    .find(|g| g.key == key)
+                    .unwrap()
+                    .amount_yen,
+                expected
+            );
         }
-        assert!(!summary.groups.iter().any(|g| g.key=="avatar:manuka"));
-        let lime = page(&c, &PurchaseQuery { group: Some("avatar:lime".into()), ..Default::default() }, false).unwrap();
+        assert!(!summary.groups.iter().any(|g| g.key == "avatar:manuka"));
+        let lime = page(
+            &c,
+            &PurchaseQuery {
+                group: Some("avatar:lime".into()),
+                ..Default::default()
+            },
+            false,
+        )
+        .unwrap();
         assert_eq!(lime.total, 1);
         assert_eq!(lime.orders[0].items[0].variation.as_deref(), Some("Lime"));
     }
@@ -1656,10 +2129,19 @@ mod tests {
     #[test]
     fn items_in_the_library_open_their_asset_world_or_avatar() {
         let mut connection = db();
-        for (id, category) in [("5001", Some("outfit")), ("5002", Some("world")), ("5003", Some("avatar")), ("5004", Some("hair")), ("5005", None)] {
+        for (id, category) in [
+            ("5001", Some("outfit")),
+            ("5002", Some("world")),
+            ("5003", Some("avatar")),
+            ("5004", Some("hair")),
+            ("5005", None),
+        ] {
             product(&connection, id, "見本", false);
             connection
-                .execute("UPDATE products SET category = ?2 WHERE booth_id = ?1", params![id, category])
+                .execute(
+                    "UPDATE products SET category = ?2 WHERE booth_id = ?1",
+                    params![id, category],
+                )
                 .unwrap();
         }
         connection
@@ -1672,12 +2154,20 @@ mod tests {
             .iter()
             .map(|id| item(id, &format!("見本 {id}"), Some(100), None))
             .collect();
-        apply_detail(&mut connection, &detail("1001", "2026-01-01T10:00:00+09:00", false, items)).unwrap();
+        apply_detail(
+            &mut connection,
+            &detail("1001", "2026-01-01T10:00:00+09:00", false, items),
+        )
+        .unwrap();
         let view = page(&connection, &PurchaseQuery::default(), false).unwrap();
         let links: Vec<Option<(&str, Option<&str>)>> = view.orders[0]
             .items
             .iter()
-            .map(|item| item.library_link.as_ref().map(|link| (link.kind, link.avatar_id.as_deref())))
+            .map(|item| {
+                item.library_link
+                    .as_ref()
+                    .map(|link| (link.kind, link.avatar_id.as_deref()))
+            })
             .collect();
         assert_eq!(
             links,
@@ -1697,7 +2187,11 @@ mod tests {
         let mut connection = db();
         let label = create_label(&connection, "  あとで   使う ").unwrap();
         assert_eq!(label.name, "あとで 使う");
-        assert!(create_label(&connection, "あとで 使う").unwrap_err().contains("同じ名前"));
+        assert!(
+            create_label(&connection, "あとで 使う")
+                .unwrap_err()
+                .contains("同じ名前")
+        );
         assert!(create_label(&connection, "").is_err());
         assert!(create_label(&connection, GIFT_LABEL).is_err());
         assert!(create_label(&connection, &"あ".repeat(31)).is_err());
@@ -1713,18 +2207,50 @@ mod tests {
     #[test]
     fn the_export_lists_orders_amounts_and_labels_in_a_fixed_order() {
         let mut connection = db();
-        apply_detail(&mut connection, &detail("2002", "2026-01-02T10:00:00+09:00", true, vec![item("3001", "見本", Some(100), Some(50))])).unwrap();
-        apply_detail(&mut connection, &detail("1001", "2026-01-01T10:00:00+09:00", false, vec![item("3002", "見本2", Some(200), None)])).unwrap();
+        apply_detail(
+            &mut connection,
+            &detail(
+                "2002",
+                "2026-01-02T10:00:00+09:00",
+                true,
+                vec![item("3001", "見本", Some(100), Some(50))],
+            ),
+        )
+        .unwrap();
+        apply_detail(
+            &mut connection,
+            &detail(
+                "1001",
+                "2026-01-01T10:00:00+09:00",
+                false,
+                vec![item("3002", "見本2", Some(200), None)],
+            ),
+        )
+        .unwrap();
         let label = create_label(&connection, "見本ラベル").unwrap();
-        let id = page(&connection, &PurchaseQuery::default(), false).unwrap().orders[0].items[0].id;
+        let id = page(&connection, &PurchaseQuery::default(), false)
+            .unwrap()
+            .orders[0]
+            .items[0]
+            .id;
         set_item_labels(&mut connection, id, &[label.id]).unwrap();
         set_show_prices(&connection, true).unwrap();
         let exported = export(&connection).unwrap();
         assert!(exported.show_prices);
         assert_eq!(exported.labels, vec!["見本ラベル".to_string()]);
-        assert_eq!(exported.orders.iter().map(|order| order.order_id.as_str()).collect::<Vec<_>>(), vec!["1001", "2002"]);
+        assert_eq!(
+            exported
+                .orders
+                .iter()
+                .map(|order| order.order_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["1001", "2002"]
+        );
         assert!(exported.orders[1].gift);
-        assert_eq!(exported.orders[1].items[0].labels, vec!["見本ラベル".to_string()]);
+        assert_eq!(
+            exported.orders[1].items[0].labels,
+            vec!["見本ラベル".to_string()]
+        );
         assert_eq!(exported.item_count(), 2);
         let json = serde_json::to_string(&exported).unwrap();
         assert!(!json.contains("recordedAt"));

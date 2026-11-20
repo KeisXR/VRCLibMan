@@ -19,13 +19,21 @@ pub enum ZoomChange {
 /// Page zoom is kept on each native view, independently of its host window.
 pub fn next_zoom(current: f64, change: ZoomChange) -> f64 {
     const LEVELS: &[f64] = &[
-        0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5,
-        3.0, 4.0, 5.0,
+        0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0,
     ];
     let current = if current.is_finite() { current } else { 1.0 };
     match change {
-        ZoomChange::In => LEVELS.iter().copied().find(|level| *level > current + 0.001).unwrap_or(5.0),
-        ZoomChange::Out => LEVELS.iter().rev().copied().find(|level| *level < current - 0.001).unwrap_or(0.25),
+        ZoomChange::In => LEVELS
+            .iter()
+            .copied()
+            .find(|level| *level > current + 0.001)
+            .unwrap_or(5.0),
+        ZoomChange::Out => LEVELS
+            .iter()
+            .rev()
+            .copied()
+            .find(|level| *level < current - 0.001)
+            .unwrap_or(0.25),
         ZoomChange::Reset => 1.0,
     }
 }
@@ -386,7 +394,12 @@ impl TabSession {
     }
 
     /// Moves one tab onto another host. An emptied source host stays until `drop_host_if_empty`.
-    pub fn move_tab(&mut self, tab_id: &str, to_host: &str, index: usize) -> Result<MoveToken, String> {
+    pub fn move_tab(
+        &mut self,
+        tab_id: &str,
+        to_host: &str,
+        index: usize,
+    ) -> Result<MoveToken, String> {
         let from_host = self
             .tabs
             .iter()
@@ -459,13 +472,15 @@ impl TabSession {
             tab.host_id = token.from_host.clone();
         }
         self.focused = Some(token.from_host.clone());
-        self.hosts.retain(|host| !host.order.is_empty() || host.id == token.from_host);
+        self.hosts
+            .retain(|host| !host.order.is_empty() || host.id == token.from_host);
         if self
             .hosts
             .iter()
             .any(|host| host.id == token.from_host && host.order.is_empty())
         {
-            self.hosts.retain(|host| host.id != token.from_host || !host.order.is_empty());
+            self.hosts
+                .retain(|host| host.id != token.from_host || !host.order.is_empty());
         }
         Ok(())
     }
@@ -651,10 +666,31 @@ mod tests {
         tabs.update(&first, |tab| tab.zoom_factor = 0.75);
         let window = tabs.add_window();
         let moved = tabs.move_tab(&first, &window, 0).unwrap();
-        assert_eq!(tabs.tabs.iter().find(|tab| tab.id == first).unwrap().zoom_factor, 0.75);
-        assert_eq!(tabs.tabs.iter().find(|tab| tab.id == second).unwrap().zoom_factor, 1.0);
+        assert_eq!(
+            tabs.tabs
+                .iter()
+                .find(|tab| tab.id == first)
+                .unwrap()
+                .zoom_factor,
+            0.75
+        );
+        assert_eq!(
+            tabs.tabs
+                .iter()
+                .find(|tab| tab.id == second)
+                .unwrap()
+                .zoom_factor,
+            1.0
+        );
         tabs.restore(moved).unwrap();
-        assert_eq!(tabs.tabs.iter().find(|tab| tab.id == first).unwrap().zoom_factor, 0.75);
+        assert_eq!(
+            tabs.tabs
+                .iter()
+                .find(|tab| tab.id == first)
+                .unwrap()
+                .zoom_factor,
+            0.75
+        );
     }
     #[test]
     fn login_popups_use_the_source_tab_only_on_known_login_pages() {
@@ -778,9 +814,10 @@ mod tests {
                 .unwrap();
         }
         let before = tabs.focused_tab();
-        assert!(tabs
-            .add(PANEL_HOST_ID, &navigation_url("other.example").unwrap())
-            .is_err());
+        assert!(
+            tabs.add(PANEL_HOST_ID, &navigation_url("other.example").unwrap())
+                .is_err()
+        );
         assert_eq!(tabs.focused_tab(), before);
         assert_eq!(tabs.tabs.len(), MAX_TABS);
     }
@@ -798,19 +835,29 @@ mod tests {
             .add(&window, &navigation_url("window.example").unwrap())
             .unwrap();
         tabs.select(&panel_a).unwrap();
-        assert_eq!(tabs.active_of(PANEL_HOST_ID).as_deref(), Some(panel_a.as_str()));
+        assert_eq!(
+            tabs.active_of(PANEL_HOST_ID).as_deref(),
+            Some(panel_a.as_str())
+        );
         assert_eq!(tabs.active_of(&window).as_deref(), Some(popped.as_str()));
         assert_eq!(tabs.coarse_host(), Some("panel"));
         tabs.reorder(PANEL_HOST_ID, &[panel_b.clone(), panel_a.clone()])
             .unwrap();
         assert_eq!(
-            tabs.hosts.iter().find(|host| host.id == PANEL_HOST_ID).unwrap().order,
+            tabs.hosts
+                .iter()
+                .find(|host| host.id == PANEL_HOST_ID)
+                .unwrap()
+                .order,
             vec![panel_b.clone(), panel_a.clone()]
         );
         assert!(tabs.reorder(PANEL_HOST_ID, &[panel_a.clone()]).is_err());
         let token = tabs.move_tab(&panel_b, &window, 0).unwrap();
         assert_eq!(tabs.host_of(&panel_b).as_deref(), Some(window.as_str()));
-        assert_eq!(tabs.active_of(PANEL_HOST_ID).as_deref(), Some(panel_a.as_str()));
+        assert_eq!(
+            tabs.active_of(PANEL_HOST_ID).as_deref(),
+            Some(panel_a.as_str())
+        );
         assert_eq!(tabs.active_of(&window).as_deref(), Some(panel_b.as_str()));
         tabs.restore(token).unwrap();
         assert_eq!(tabs.host_of(&panel_b).as_deref(), Some(PANEL_HOST_ID));
@@ -822,7 +869,10 @@ mod tests {
                 .order,
             vec![panel_b.clone(), panel_a.clone()]
         );
-        assert_eq!(tabs.active_of(PANEL_HOST_ID).as_deref(), Some(panel_a.as_str()));
+        assert_eq!(
+            tabs.active_of(PANEL_HOST_ID).as_deref(),
+            Some(panel_a.as_str())
+        );
         assert_eq!(tabs.active_of(&window).as_deref(), Some(popped.as_str()));
         let gone = tabs.take_host(&window);
         assert_eq!(gone, vec![popped.clone()]);

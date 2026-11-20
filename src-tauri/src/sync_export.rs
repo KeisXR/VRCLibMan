@@ -192,7 +192,8 @@ fn load_links(connection: &Connection) -> Result<HashMap<String, Vec<SyncLink>>,
 }
 
 fn load_products(connection: &Connection) -> Result<Vec<SyncProduct>, String> {
-    let mut classification_meta = sync_meta::load_meta(connection, sync_meta::ENTITY_CLASSIFICATION)?;
+    let mut classification_meta =
+        sync_meta::load_meta(connection, sync_meta::ENTITY_CLASSIFICATION)?;
     let mut links_meta = sync_meta::load_meta(connection, sync_meta::ENTITY_LINKS)?;
     let mut links = load_links(connection)?;
     let mut statement = sql(connection.prepare(
@@ -248,7 +249,10 @@ fn load_products(connection: &Connection) -> Result<Vec<SyncProduct>, String> {
 
 /// Avatars another device needs: owned, linked, user-made, changed here, or given a hero image.
 /// The untouched bundled catalog is left out because every install already has it.
-fn load_avatars(connection: &Connection, products: &[SyncProduct]) -> Result<Vec<SyncAvatar>, String> {
+fn load_avatars(
+    connection: &Connection,
+    products: &[SyncProduct],
+) -> Result<Vec<SyncAvatar>, String> {
     let mut meta = sync_meta::load_meta(connection, sync_meta::ENTITY_AVATAR)?;
     let referenced: HashSet<&str> = products
         .iter()
@@ -331,11 +335,18 @@ pub(crate) fn build(connection: &mut Connection, app_version: &str) -> Result<Sy
     let avatars = load_avatars(&tx, &products)?;
     let file_links = load_file_links(&tx)?;
     let purchases = crate::purchases::export(&tx)?;
-    let purchased_editions = crate::purchased_editions::Catalog::load(&tx)?.manual.into_iter().filter(|(id, _)| products.iter().any(|p| &p.booth_id == id)).collect();
+    let purchased_editions = crate::purchased_editions::Catalog::load(&tx)?
+        .manual
+        .into_iter()
+        .filter(|(id, _)| products.iter().any(|p| &p.booth_id == id))
+        .collect();
     sql(tx.commit())?;
     let counts = SyncCounts {
         products: products.len(),
-        links: products.iter().map(|product| product.links.items.len()).sum(),
+        links: products
+            .iter()
+            .map(|product| product.links.items.len())
+            .sum(),
         avatars: avatars.len(),
         file_links: file_links.len(),
         config: config.values.len(),
@@ -364,7 +375,8 @@ pub(crate) fn build(connection: &mut Connection, app_version: &str) -> Result<Sy
 }
 
 pub(crate) fn to_json(file: &SyncFile) -> Result<String, String> {
-    let mut json = serde_json::to_string_pretty(file).map_err(|_| "JSONにできません".to_string())?;
+    let mut json =
+        serde_json::to_string_pretty(file).map_err(|_| "JSONにできません".to_string())?;
     json.push('\n');
     Ok(json)
 }
@@ -372,7 +384,10 @@ pub(crate) fn to_json(file: &SyncFile) -> Result<String, String> {
 fn image_paths(connection: &Connection, query: &str) -> Result<HashMap<String, PathBuf>, String> {
     let mut statement = sql(connection.prepare(query))?;
     let rows = sql(statement.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, PathBuf::from(row.get::<_, String>(1)?)))
+        Ok((
+            row.get::<_, String>(0)?,
+            PathBuf::from(row.get::<_, String>(1)?),
+        ))
     }))?;
     sql(rows.collect())
 }
@@ -423,7 +438,8 @@ fn add_image<W: Write + Seek>(
     let entry = format!("{directory}/{stem}.{extension}");
     // These formats are compressed already.
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
-    zip.start_file(entry.as_str(), options).map_err(save_failed)?;
+    zip.start_file(entry.as_str(), options)
+        .map_err(save_failed)?;
     zip.write_all(&bytes).map_err(save_failed)?;
     Ok(Some(entry))
 }
@@ -460,11 +476,21 @@ pub(crate) fn save_package(
         let stem = hero_image::file_stem(&avatar.id);
         avatar.hero_image = add_image(&mut zip, HERO_ENTRIES, &stem, source)?;
     }
-    file.counts.thumbnails = file.products.iter().filter(|item| item.thumbnail.is_some()).count();
-    file.counts.hero_images = file.avatars.iter().filter(|item| item.hero_image.is_some()).count();
+    file.counts.thumbnails = file
+        .products
+        .iter()
+        .filter(|item| item.thumbnail.is_some())
+        .count();
+    file.counts.hero_images = file
+        .avatars
+        .iter()
+        .filter(|item| item.hero_image.is_some())
+        .count();
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
-    zip.start_file(MANIFEST_ENTRY, options).map_err(save_failed)?;
-    zip.write_all(to_json(&file)?.as_bytes()).map_err(save_failed)?;
+    zip.start_file(MANIFEST_ENTRY, options)
+        .map_err(save_failed)?;
+    zip.write_all(to_json(&file)?.as_bytes())
+        .map_err(save_failed)?;
     zip.finish().map_err(save_failed)?;
     temp.as_file().sync_all().map_err(save_failed)?;
     temp.persist(&destination).map_err(save_failed)?;
@@ -489,7 +515,8 @@ mod tests {
     ];
 
     fn import(connection: &mut Connection, id: &str, title: &str, description: &str) {
-        let body = json!({ "products": [{ "boothId": id, "title": title, "description": description }] });
+        let body =
+            json!({ "products": [{ "boothId": id, "title": title, "description": description }] });
         db::import_export_json(connection, &body.to_string()).unwrap();
     }
 
@@ -557,8 +584,7 @@ mod tests {
         let archive = zip::ZipArchive::new(std::fs::File::open(&path).unwrap()).unwrap();
         let mut names: Vec<String> = archive.file_names().map(str::to_string).collect();
         names.sort();
-        let manifest: Value =
-            serde_json::from_slice(&entry_bytes(&path, MANIFEST_ENTRY)).unwrap();
+        let manifest: Value = serde_json::from_slice(&entry_bytes(&path, MANIFEST_ENTRY)).unwrap();
         assert_eq!(manifest["counts"], serde_json::to_value(counts).unwrap());
         (names, manifest)
     }
@@ -595,8 +621,18 @@ mod tests {
         let mut connection = db::open_memory().unwrap();
         let file = export(&mut connection);
         for key in [
-            "format", "version", "device", "appVersion", "exportedAt", "config", "products",
-            "avatars", "fileLinks", "purchases", "purchasedEditions", "counts",
+            "format",
+            "version",
+            "device",
+            "appVersion",
+            "exportedAt",
+            "config",
+            "products",
+            "avatars",
+            "fileLinks",
+            "purchases",
+            "purchasedEditions",
+            "counts",
         ] {
             assert!(file.get(key).is_some(), "{key}");
         }
@@ -624,7 +660,10 @@ mod tests {
         let item = product(&file, "1001");
         assert_eq!(item["title"], "見本の衣装");
         assert_eq!(item["classification"]["category"], "outfit");
-        assert_eq!(item["links"]["items"], json!([{ "avatarId": "lime", "source": "manual" }]));
+        assert_eq!(
+            item["links"]["items"],
+            json!([{ "avatarId": "lime", "source": "manual" }])
+        );
         assert_eq!(item["links"]["locked"], true);
         assert_eq!(item["links"]["names"], json!(["ライム"]));
         assert_eq!(item["links"]["unresolvedNames"], json!(["架空ちゃん"]));
@@ -655,7 +694,9 @@ mod tests {
     fn export_lists_avatars_referenced_by_links() {
         let mut connection = sample_with_links();
         let owned: bool = connection
-            .query_row("SELECT owned FROM avatars WHERE id = 'lime'", [], |row| row.get(0))
+            .query_row("SELECT owned FROM avatars WHERE id = 'lime'", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert!(!owned);
         let file = export(&mut connection);
@@ -669,7 +710,10 @@ mod tests {
     fn export_omits_untouched_builtin_avatars() {
         let mut connection = db::open_memory().unwrap();
         connection
-            .execute("INSERT INTO avatars (id, display_name) VALUES ('hand-made', '手作り')", [])
+            .execute(
+                "INSERT INTO avatars (id, display_name) VALUES ('hand-made', '手作り')",
+                [],
+            )
             .unwrap();
         let file = export(&mut connection);
         assert_eq!(avatar_ids(&file), vec!["hand-made"]);
@@ -692,7 +736,11 @@ mod tests {
         assert_eq!(file["products"].as_array().unwrap().len(), 1);
         assert_eq!(file["fileLinks"].as_array().unwrap().len(), 1);
         assert_eq!(file["fileLinks"][0]["boothId"], "1001");
-        assert!(!to_json(&build(&mut connection, "1").unwrap()).unwrap().contains("除外する"));
+        assert!(
+            !to_json(&build(&mut connection, "1").unwrap())
+                .unwrap()
+                .contains("除外する")
+        );
     }
 
     #[test]
@@ -802,7 +850,10 @@ mod tests {
         }] });
         db::import_export_json(&mut connection, &body.to_string()).unwrap();
         let file = export(&mut connection);
-        assert_eq!(product(&file, "1001")["url"], "https://booth.pm/ja/items/1001");
+        assert_eq!(
+            product(&file, "1001")["url"],
+            "https://booth.pm/ja/items/1001"
+        );
     }
 
     #[test]
@@ -829,12 +880,21 @@ mod tests {
         assert_eq!(links, 2);
         assert_eq!(file["counts"]["products"], products.len());
         assert_eq!(file["counts"]["links"], links);
-        assert_eq!(file["counts"]["avatars"], file["avatars"].as_array().unwrap().len());
-        assert_eq!(file["counts"]["fileLinks"], file["fileLinks"].as_array().unwrap().len());
+        assert_eq!(
+            file["counts"]["avatars"],
+            file["avatars"].as_array().unwrap().len()
+        );
+        assert_eq!(
+            file["counts"]["fileLinks"],
+            file["fileLinks"].as_array().unwrap().len()
+        );
         assert_eq!(file["counts"]["config"], 6);
         assert_eq!(file["counts"]["thumbnails"], 0);
         assert_eq!(file["counts"]["heroImages"], 0);
-        assert_eq!(file["counts"]["purchaseOrders"], file["purchases"]["orders"].as_array().unwrap().len());
+        assert_eq!(
+            file["counts"]["purchaseOrders"],
+            file["purchases"]["orders"].as_array().unwrap().len()
+        );
         assert_eq!(file["counts"]["purchaseOrders"], 1);
         assert_eq!(file["counts"]["purchaseItems"], 1);
         assert_eq!(file["purchases"]["orders"][0]["items"][0]["priceYen"], 500);
@@ -876,10 +936,16 @@ mod tests {
         import(&mut connection, "1001", "見本", "説明");
         assert!(product(&export(&mut connection), "1001")["classification"]["meta"].is_null());
         connection
-            .execute("UPDATE products SET category = 'outfit' WHERE booth_id = '1001'", [])
+            .execute(
+                "UPDATE products SET category = 'outfit' WHERE booth_id = '1001'",
+                [],
+            )
             .unwrap();
         let file = export(&mut connection);
-        assert_eq!(product(&file, "1001")["classification"]["category"], "outfit");
+        assert_eq!(
+            product(&file, "1001")["classification"]["category"],
+            "outfit"
+        );
         assert!(product(&file, "1001")["classification"]["meta"]["at"].is_string());
     }
 
@@ -891,10 +957,17 @@ mod tests {
         import(&mut connection, "1002", "見本二", "最初の説明");
         db::move_product_genre(&mut connection, "1002", "asset", "hair").unwrap();
         connection
-            .execute("UPDATE products SET category_locked = 0 WHERE booth_id = '1002'", [])
+            .execute(
+                "UPDATE products SET category_locked = 0 WHERE booth_id = '1002'",
+                [],
+            )
             .unwrap();
         let genre_before: Option<String> = connection
-            .query_row("SELECT genre FROM products WHERE booth_id = '1001'", [], |row| row.get(0))
+            .query_row(
+                "SELECT genre FROM products WHERE booth_id = '1001'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         import(&mut connection, "1001", "見本", "変わった説明");
         import(&mut connection, "1002", "見本二", "変わった説明");
@@ -943,7 +1016,11 @@ mod tests {
 
         assert_eq!(
             names,
-            ["files/heroes/lime.png", "files/thumbnails/1001.jpg", "manifest.json"]
+            [
+                "files/heroes/lime.png",
+                "files/thumbnails/1001.jpg",
+                "manifest.json"
+            ]
         );
         assert_eq!(file["format"], "vrclibman-sync");
         assert_eq!(file["version"], 4);
@@ -956,7 +1033,10 @@ mod tests {
         assert_eq!(file["counts"]["thumbnails"], 1);
         assert_eq!(file["counts"]["heroImages"], 1);
         let package = dir.path().join("export.zip");
-        assert_eq!(entry_bytes(&package, "files/thumbnails/1001.jpg"), b"jpeg-bytes");
+        assert_eq!(
+            entry_bytes(&package, "files/thumbnails/1001.jpg"),
+            b"jpeg-bytes"
+        );
         assert_eq!(entry_bytes(&package, "files/heroes/lime.png"), b"png-bytes");
     }
 
@@ -988,7 +1068,10 @@ mod tests {
         assert_eq!(names, ["files/thumbnails/1003.png", "manifest.json"]);
         assert!(product(&file, "1001")["thumbnail"].is_null());
         assert!(product(&file, "1002")["thumbnail"].is_null());
-        assert_eq!(product(&file, "1003")["thumbnail"], "files/thumbnails/1003.png");
+        assert_eq!(
+            product(&file, "1003")["thumbnail"],
+            "files/thumbnails/1003.png"
+        );
         assert_eq!(file["counts"]["products"], 3);
         assert_eq!(file["counts"]["thumbnails"], 1);
     }
@@ -1061,7 +1144,10 @@ mod tests {
         let (names, file) = export_package(&mut connection, dir.path());
 
         let hero = avatar(&file, "../evil")["heroImage"].as_str().unwrap();
-        assert_eq!(hero, format!("files/heroes/{}.png", hero_image::file_stem("../evil")));
+        assert_eq!(
+            hero,
+            format!("files/heroes/{}.png", hero_image::file_stem("../evil"))
+        );
         assert!(!hero.contains(".."), "{hero}");
         assert_eq!(names, [hero, MANIFEST_ENTRY]);
         assert!(product(&file, "../1001")["thumbnail"].is_null());
@@ -1114,7 +1200,14 @@ mod tests {
 
         let text = file.to_string();
         let root = dir.path().to_str().unwrap();
-        for secret in [root, "LEAK-", "THUMB-SECRET", "thumbnailUrl", "thumbnailPath", "heroImagePath"] {
+        for secret in [
+            root,
+            "LEAK-",
+            "THUMB-SECRET",
+            "thumbnailUrl",
+            "thumbnailPath",
+            "heroImagePath",
+        ] {
             assert!(!text.contains(secret), "{secret}");
         }
         assert!(names.iter().all(|name| !name.contains(root)), "{names:?}");

@@ -174,7 +174,8 @@ fn sorted(names: &[String]) -> Vec<&String> {
     list
 }
 
-const STATE_SELECT: &str = "SELECT booth_id, category, unresolved_names_json, confidence, genre, is_generic,
+const STATE_SELECT: &str =
+    "SELECT booth_id, category, unresolved_names_json, confidence, genre, is_generic,
        compatible_avatars_json, extracted_at, classifier_version, user_confirmed, needs_review
      FROM products";
 
@@ -547,7 +548,8 @@ struct EntryRow {
     undone: bool,
 }
 
-const ENTRY_SELECT: &str = "SELECT e.id, e.run_id, r.started_at, r.kind, r.classifier, e.booth_id, p.title,
+const ENTRY_SELECT: &str =
+    "SELECT e.id, e.run_id, r.started_at, r.kind, r.classifier, e.booth_id, p.title,
        e.before_category, e.after_category, e.before_links, e.after_links, e.confidence,
        e.unresolved_names, e.before_state, e.undone
      FROM classification_entries e
@@ -722,12 +724,18 @@ fn undo_blocker(connection: &Connection, row: &EntryRow) -> Result<Option<String
     }
     let product = require_product(connection, &row.booth_id)?;
     if product.links_locked {
-        return Ok(Some("対応アバターが手動で固定されているため戻せません".into()));
+        return Ok(Some(
+            "対応アバターが手動で固定されているため戻せません".into(),
+        ));
     }
     if current.category != row.after_category || current.links != parse_list(&row.after_links) {
         return Ok(Some("この記録のあとに分類が変わったため戻せません".into()));
     }
-    let before = decode_before(row.before_category.clone(), &row.before_links, &row.before_state)?;
+    let before = decode_before(
+        row.before_category.clone(),
+        &row.before_links,
+        &row.before_state,
+    )?;
     if product.category_locked && current.category != before.category {
         return Ok(Some("カテゴリが手動で固定されているため戻せません".into()));
     }
@@ -736,7 +744,9 @@ fn undo_blocker(connection: &Connection, row: &EntryRow) -> Result<Option<String
     }
     for avatar_id in &before.links {
         if !avatar_exists(connection, avatar_id)? {
-            return Ok(Some("元の対応アバターが対応表から消えているため戻せません".into()));
+            return Ok(Some(
+                "元の対応アバターが対応表から消えているため戻せません".into(),
+            ));
         }
     }
     Ok(None)
@@ -757,7 +767,11 @@ pub(crate) fn undo_entry(connection: &mut Connection, entry_id: i64) -> Result<(
     if let Some(reason) = undo_blocker(connection, &row)? {
         return Err(reason);
     }
-    let before = decode_before(row.before_category.clone(), &row.before_links, &row.before_state)?;
+    let before = decode_before(
+        row.before_category.clone(),
+        &row.before_links,
+        &row.before_state,
+    )?;
     let current = product_state(connection, &row.booth_id)?.ok_or("商品が見つかりません")?;
     // A link this run added may be the only thing holding a body or a placeholder.
     let released: Vec<String> = current
@@ -839,7 +853,8 @@ mod tests {
     use super::super::*;
     use super::*;
 
-    const LISTED: &str = "対応アバター\nライム_ver1.00 https://booth.pm/ja/items/1001\n基本仕様\n布です。";
+    const LISTED: &str =
+        "対応アバター\nライム_ver1.00 https://booth.pm/ja/items/1001\n基本仕様\n布です。";
 
     struct Entry {
         run_id: i64,
@@ -909,13 +924,18 @@ mod tests {
 
     fn run_count(connection: &Connection) -> i64 {
         connection
-            .query_row("SELECT COUNT(*) FROM classification_runs", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM classification_runs", [], |row| {
+                row.get(0)
+            })
             .unwrap()
     }
 
     fn lime_id(connection: &Connection) -> String {
         let avatars = load_avatars(connection).unwrap();
-        crate::resolve::resolve_name("ライム", &avatars).unwrap().id.clone()
+        crate::resolve::resolve_name("ライム", &avatars)
+            .unwrap()
+            .id
+            .clone()
     }
 
     #[test]
@@ -946,10 +966,17 @@ mod tests {
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(version, 14);
-        assert_eq!(run_count(&connection), 0, "the migration writes no pseudo history");
+        assert_eq!(
+            run_count(&connection),
+            0,
+            "the migration writes no pseudo history"
+        );
         let product = require_product(&connection, "9001").unwrap();
         assert_eq!(product.category, Some(Category::Outfit));
-        assert!(product.needs_review, "the migration leaves product rows alone");
+        assert!(
+            product.needs_review,
+            "the migration leaves product rows alone"
+        );
     }
 
     #[test]
@@ -958,8 +985,14 @@ mod tests {
         product(&mut connection, "7001");
         let lime = lime_id(&connection);
         let mut run = ClassificationRun::new(KIND_RECLASSIFY, "ollama").with_note("unclassified");
-        apply_extraction_in_run(&mut connection, &mut run, "7001", &outfit_for(&["ライム"], 0.8), 0.6)
-            .unwrap();
+        apply_extraction_in_run(
+            &mut connection,
+            &mut run,
+            "7001",
+            &outfit_for(&["ライム"], 0.8),
+            0.6,
+        )
+        .unwrap();
         let logged = entries(&connection, "7001");
         assert_eq!(logged.len(), 1);
         assert_eq!(logged[0].before_category, None);
@@ -970,7 +1003,11 @@ mod tests {
         assert!(logged[0].unresolved.is_empty());
         assert_eq!(
             run_of(&connection, logged[0].run_id),
-            ("reclassify".to_string(), "ollama".to_string(), Some("unclassified".to_string()))
+            (
+                "reclassify".to_string(),
+                "ollama".to_string(),
+                Some("unclassified".to_string())
+            )
         );
     }
 
@@ -981,8 +1018,14 @@ mod tests {
         apply_extraction(&mut connection, "7002", &outfit_for(&["ライム"], 0.8), 0.6).unwrap();
         let runs = run_count(&connection);
         let mut run = ClassificationRun::new(KIND_RECLASSIFY, "apple");
-        apply_extraction_in_run(&mut connection, &mut run, "7002", &outfit_for(&["ライム"], 0.8), 0.6)
-            .unwrap();
+        apply_extraction_in_run(
+            &mut connection,
+            &mut run,
+            "7002",
+            &outfit_for(&["ライム"], 0.8),
+            0.6,
+        )
+        .unwrap();
         assert_eq!(entries(&connection, "7002").len(), 1);
         assert_eq!(run_count(&connection), runs);
     }
@@ -991,7 +1034,13 @@ mod tests {
     fn unresolved_names_land_in_the_entry() {
         let mut connection = open_memory().unwrap();
         product(&mut connection, "7003");
-        apply_extraction(&mut connection, "7003", &outfit_for(&["架空ちゃん"], 0.8), 0.6).unwrap();
+        apply_extraction(
+            &mut connection,
+            "7003",
+            &outfit_for(&["架空ちゃん"], 0.8),
+            0.6,
+        )
+        .unwrap();
         let logged = entries(&connection, "7003");
         assert_eq!(logged.len(), 1);
         assert_eq!(logged[0].unresolved, vec!["架空ちゃん".to_string()]);
@@ -1007,8 +1056,13 @@ mod tests {
         let mut connection = open_memory().unwrap();
         product(&mut connection, "7004");
         apply_extraction(&mut connection, "7004", &outfit_for(&["ライム"], 0.8), 0.6).unwrap();
-        apply_extraction(&mut connection, "7004", &outfit_for(&["ライム", "架空ちゃん"], 0.8), 0.6)
-            .unwrap();
+        apply_extraction(
+            &mut connection,
+            "7004",
+            &outfit_for(&["ライム", "架空ちゃん"], 0.8),
+            0.6,
+        )
+        .unwrap();
         let logged = entries(&connection, "7004");
         assert_eq!(logged.len(), 2);
         assert_eq!(logged[1].before_category, logged[1].after_category);
@@ -1021,10 +1075,22 @@ mod tests {
         let mut connection = open_memory().unwrap();
         product(&mut connection, "7005");
         let mut run = ClassificationRun::new(KIND_RECLASSIFY, "ollama");
-        apply_extraction_in_run(&mut connection, &mut run, "7005", &outfit_for(&["架空ちゃん"], 0.7), 0.6)
-            .unwrap();
-        apply_extraction_in_run(&mut connection, &mut run, "7005", &outfit_for(&["ライム"], 0.9), 0.6)
-            .unwrap();
+        apply_extraction_in_run(
+            &mut connection,
+            &mut run,
+            "7005",
+            &outfit_for(&["架空ちゃん"], 0.7),
+            0.6,
+        )
+        .unwrap();
+        apply_extraction_in_run(
+            &mut connection,
+            &mut run,
+            "7005",
+            &outfit_for(&["ライム"], 0.9),
+            0.6,
+        )
+        .unwrap();
         let logged = entries(&connection, "7005");
         assert_eq!(logged.len(), 1, "the later step updates the same entry");
         assert_eq!(logged[0].before_category, None);
@@ -1039,19 +1105,32 @@ mod tests {
         product(&mut connection, "7006");
         apply_extraction(&mut connection, "7006", &outfit_for(&["ライム"], 0.9), 0.6).unwrap();
         let mut run = ClassificationRun::new(KIND_RECLASSIFY, "ollama");
-        apply_extraction_in_run(&mut connection, &mut run, "7006", &outfit_for(&["架空ちゃん"], 0.9), 0.6)
-            .unwrap();
+        apply_extraction_in_run(
+            &mut connection,
+            &mut run,
+            "7006",
+            &outfit_for(&["架空ちゃん"], 0.9),
+            0.6,
+        )
+        .unwrap();
         assert_eq!(entries(&connection, "7006").len(), 2);
-        apply_extraction_in_run(&mut connection, &mut run, "7006", &outfit_for(&["ライム"], 0.9), 0.6)
-            .unwrap();
+        apply_extraction_in_run(
+            &mut connection,
+            &mut run,
+            "7006",
+            &outfit_for(&["ライム"], 0.9),
+            0.6,
+        )
+        .unwrap();
         assert_eq!(entries(&connection, "7006").len(), 1);
     }
 
     #[test]
     fn import_records_listed_compatibility_under_one_run() {
         let mut connection = open_memory().unwrap();
-        let body = serde_json::json!({"boothId": "7007", "title": "見本の小物", "description": LISTED})
-            .to_string();
+        let body =
+            serde_json::json!({"boothId": "7007", "title": "見本の小物", "description": LISTED})
+                .to_string();
         import_export_json(&mut connection, &body).unwrap();
         let logged = entries(&connection, "7007");
         assert_eq!(logged.len(), 1);
@@ -1087,7 +1166,13 @@ mod tests {
     fn catalog_reapply_is_its_own_run() {
         let mut connection = open_memory().unwrap();
         product(&mut connection, "7009");
-        apply_extraction(&mut connection, "7009", &outfit_for(&["架空ちゃん"], 0.9), 0.6).unwrap();
+        apply_extraction(
+            &mut connection,
+            "7009",
+            &outfit_for(&["架空ちゃん"], 0.9),
+            0.6,
+        )
+        .unwrap();
         // Adding the avatar re-resolves under the edit run. The catalog button then finds nothing.
         let avatar = save_avatar(
             &mut connection,
@@ -1133,7 +1218,13 @@ mod tests {
             },
         )
         .unwrap();
-        apply_extraction(&mut connection, "7010", &outfit_for(&["架空ちゃん"], 0.9), 0.6).unwrap();
+        apply_extraction(
+            &mut connection,
+            "7010",
+            &outfit_for(&["架空ちゃん"], 0.9),
+            0.6,
+        )
+        .unwrap();
         delete_avatar(&mut connection, &avatar).unwrap();
         let logged = entries(&connection, "7010");
         assert_eq!(logged.len(), 2);
@@ -1150,7 +1241,10 @@ mod tests {
         let mut run = ClassificationRun::new(KIND_BOOTH_DETAIL, CLASSIFIER_NONE);
         observe(&mut connection, &mut run, "7011", |connection| {
             connection
-                .execute("UPDATE products SET category = NULL WHERE booth_id = '7011'", [])
+                .execute(
+                    "UPDATE products SET category = NULL WHERE booth_id = '7011'",
+                    [],
+                )
                 .sql()?;
             Ok(())
         })
@@ -1165,7 +1259,13 @@ mod tests {
         let mut connection = open_memory().unwrap();
         product(&mut connection, "7012");
         apply_extraction(&mut connection, "7012", &outfit_for(&["ライム"], 0.9), 0.6).unwrap();
-        apply_extraction(&mut connection, "7012", &outfit_for(&["架空ちゃん"], 0.7), 0.6).unwrap();
+        apply_extraction(
+            &mut connection,
+            "7012",
+            &outfit_for(&["架空ちゃん"], 0.7),
+            0.6,
+        )
+        .unwrap();
         let (category, links, detail): (Option<String>, String, String) = connection
             .query_row(
                 "SELECT before_category, before_links, before_state FROM classification_entries
@@ -1192,8 +1292,14 @@ mod tests {
             .execute_batch("DROP TABLE classification_entries; DROP TABLE classification_runs;")
             .unwrap();
         let mut run = ClassificationRun::new(KIND_RECLASSIFY, "ollama");
-        apply_extraction_in_run(&mut connection, &mut run, "7013", &outfit_for(&["ライム"], 0.9), 0.6)
-            .unwrap();
+        apply_extraction_in_run(
+            &mut connection,
+            &mut run,
+            "7013",
+            &outfit_for(&["ライム"], 0.9),
+            0.6,
+        )
+        .unwrap();
         assert_eq!(
             require_product(&connection, "7013").unwrap().category,
             Some(Category::Outfit)
@@ -1208,7 +1314,10 @@ mod tests {
         let mut run = ClassificationRun::new(KIND_RECLASSIFY, "ollama");
         let result: Result<(), String> = observe(&mut connection, &mut run, "7014", |connection| {
             connection
-                .execute("UPDATE products SET category = 'hair' WHERE booth_id = '7014'", [])
+                .execute(
+                    "UPDATE products SET category = 'hair' WHERE booth_id = '7014'",
+                    [],
+                )
                 .sql()?;
             Err("途中で失敗".into())
         });
@@ -1287,13 +1396,25 @@ mod tests {
         product(&mut connection, "7102");
         apply_extraction(&mut connection, "7102", &outfit_for(&["ライム"], 0.9), 0.6).unwrap();
         let older = latest_entry(&connection, "7102");
-        apply_extraction(&mut connection, "7102", &outfit_for(&["架空ちゃん"], 0.9), 0.6).unwrap();
+        apply_extraction(
+            &mut connection,
+            "7102",
+            &outfit_for(&["架空ちゃん"], 0.9),
+            0.6,
+        )
+        .unwrap();
         let reason = blocked(&connection, "7102", older).unwrap();
         assert!(reason.contains("あとに分類が変わった"));
         let category = require_product(&connection, "7102").unwrap().category;
         assert_eq!(undo_entry(&mut connection, older).unwrap_err(), reason);
-        assert_eq!(require_product(&connection, "7102").unwrap().category, category);
-        assert!(entries(&connection, "7102").len() == 2, "a refused undo writes nothing");
+        assert_eq!(
+            require_product(&connection, "7102").unwrap().category,
+            category
+        );
+        assert!(
+            entries(&connection, "7102").len() == 2,
+            "a refused undo writes nothing"
+        );
     }
 
     #[test]
@@ -1328,9 +1449,16 @@ mod tests {
         apply_extraction(&mut connection, "7104", &outfit_for(&["ライム"], 0.9), 0.6).unwrap();
         let entry_id = latest_entry(&connection, "7104");
         connection
-            .execute("UPDATE products SET category_locked = 1 WHERE booth_id = '7104'", [])
+            .execute(
+                "UPDATE products SET category_locked = 1 WHERE booth_id = '7104'",
+                [],
+            )
             .unwrap();
-        assert!(undo_entry(&mut connection, entry_id).unwrap_err().contains("カテゴリ"));
+        assert!(
+            undo_entry(&mut connection, entry_id)
+                .unwrap_err()
+                .contains("カテゴリ")
+        );
     }
 
     #[test]
@@ -1340,10 +1468,18 @@ mod tests {
         apply_extraction(&mut connection, "7105", &outfit_for(&["ライム"], 0.9), 0.6).unwrap();
         let entry_id = latest_entry(&connection, "7105");
         undo_entry(&mut connection, entry_id).unwrap();
-        assert!(undo_entry(&mut connection, entry_id).unwrap_err().contains("すでに"));
+        assert!(
+            undo_entry(&mut connection, entry_id)
+                .unwrap_err()
+                .contains("すでに")
+        );
         let undo_id = latest_entry(&connection, "7105");
         assert_ne!(undo_id, entry_id);
-        assert!(undo_entry(&mut connection, undo_id).unwrap_err().contains("Undo"));
+        assert!(
+            undo_entry(&mut connection, undo_id)
+                .unwrap_err()
+                .contains("Undo")
+        );
         assert!(undo_entry(&mut connection, 999_999).is_err());
     }
 
@@ -1362,13 +1498,23 @@ mod tests {
             },
         )
         .unwrap();
-        apply_extraction(&mut connection, "7106", &outfit_for(&["架空ちゃん"], 0.9), 0.6).unwrap();
+        apply_extraction(
+            &mut connection,
+            "7106",
+            &outfit_for(&["架空ちゃん"], 0.9),
+            0.6,
+        )
+        .unwrap();
         apply_extraction(&mut connection, "7106", &outfit_for(&["ライム"], 0.9), 0.6).unwrap();
         let entry_id = latest_entry(&connection, "7106");
         connection
             .execute("DELETE FROM avatars WHERE id = ?1", params![avatar])
             .unwrap();
-        assert!(undo_entry(&mut connection, entry_id).unwrap_err().contains("消えている"));
+        assert!(
+            undo_entry(&mut connection, entry_id)
+                .unwrap_err()
+                .contains("消えている")
+        );
     }
 
     #[test]
@@ -1395,7 +1541,13 @@ mod tests {
         let mut connection = open_memory().unwrap();
         product(&mut connection, "7108");
         apply_extraction(&mut connection, "7108", &outfit_for(&["ライム"], 0.9), 0.6).unwrap();
-        apply_extraction(&mut connection, "7108", &outfit_for(&["架空ちゃん"], 0.9), 0.6).unwrap();
+        apply_extraction(
+            &mut connection,
+            "7108",
+            &outfit_for(&["架空ちゃん"], 0.9),
+            0.6,
+        )
+        .unwrap();
         let page = run_page(&connection, 0, 1).unwrap();
         assert_eq!(page.total, 2);
         assert_eq!(page.runs.len(), 1);
@@ -1418,19 +1570,48 @@ mod tests {
         product(&mut connection, "7109");
         product(&mut connection, "7110");
         product(&mut connection, "7111");
-        apply_extraction(&mut connection, "7109", &outfit_for(&["架空ちゃん"], 0.9), 0.6).unwrap();
+        apply_extraction(
+            &mut connection,
+            "7109",
+            &outfit_for(&["架空ちゃん"], 0.9),
+            0.6,
+        )
+        .unwrap();
         // A second entry for the same product is still one product.
-        apply_extraction(&mut connection, "7109", &outfit_for(&["架空ちゃん", "別人"], 0.9), 0.6)
-            .unwrap();
-        apply_extraction(&mut connection, "7110", &outfit_for(&["架空ちゃん"], 0.9), 0.6).unwrap();
-        apply_extraction(&mut connection, "7111", &outfit_for(&["取り消す名"], 0.9), 0.6).unwrap();
+        apply_extraction(
+            &mut connection,
+            "7109",
+            &outfit_for(&["架空ちゃん", "別人"], 0.9),
+            0.6,
+        )
+        .unwrap();
+        apply_extraction(
+            &mut connection,
+            "7110",
+            &outfit_for(&["架空ちゃん"], 0.9),
+            0.6,
+        )
+        .unwrap();
+        apply_extraction(
+            &mut connection,
+            "7111",
+            &outfit_for(&["取り消す名"], 0.9),
+            0.6,
+        )
+        .unwrap();
         let entry_id = latest_entry(&connection, "7111");
         undo_entry(&mut connection, entry_id).unwrap();
         assert_eq!(
             unresolved_name_counts(&connection).unwrap(),
             vec![
-                UnresolvedNameCount { name: "架空ちゃん".into(), product_count: 2 },
-                UnresolvedNameCount { name: "別人".into(), product_count: 1 },
+                UnresolvedNameCount {
+                    name: "架空ちゃん".into(),
+                    product_count: 2
+                },
+                UnresolvedNameCount {
+                    name: "別人".into(),
+                    product_count: 1
+                },
             ]
         );
         save_avatar(

@@ -1,18 +1,18 @@
 use crate::import_data::ParsedExport;
-use serde::Serialize;
 use crate::matching::{LabelScore, choose_match, contains_booth_id, score_label};
 use crate::model::{
-    Avatar, AvatarInput, BaseBody, BaseBodyInput, CatalogInfo, CatalogRefresh,
-    Category, ClassificationSnapshot, DownloadFact, DownloadFinished, Extraction, ImportReport,
-    OwnedAvatarRestore, RegisterOwnedBodyResult, SnapshotLink,
-    IncomingDownload, IncomingProduct, IncomingVariation, Knowledge, LibraryStats, Link, LocalFile, Product,
-    ProductFlag, ProductUpdate, ManagedProduct, Settings, SettingsInput, SettingsPatch, SetupStatus,
+    Avatar, AvatarInput, BaseBody, BaseBodyInput, CatalogInfo, CatalogRefresh, Category,
+    ClassificationSnapshot, DownloadFact, DownloadFinished, Extraction, ImportReport,
+    IncomingDownload, IncomingProduct, IncomingVariation, Knowledge, LibraryStats, Link, LocalFile,
+    ManagedProduct, OwnedAvatarRestore, Product, ProductFlag, ProductUpdate,
+    RegisterOwnedBodyResult, Settings, SettingsInput, SettingsPatch, SetupStatus, SnapshotLink,
     VariationFact, now_iso,
 };
 use crate::resolve::{ResolveInput, resolve_product};
 use crate::scan::ScanOutcome;
 use crate::view::Snapshot;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -22,6 +22,7 @@ mod classification_regressions;
 
 #[cfg(test)]
 pub(crate) use classification_log::KIND_IMPLICIT;
+use classification_log::observe_all;
 pub(crate) use classification_log::{
     CLASSIFIER_CATALOG, CLASSIFIER_NONE, CLASSIFIER_RULES, ClassificationRun, KIND_BOOTH_DETAIL,
     KIND_CATALOG, KIND_EDIT, KIND_IMPORT, KIND_RECLASSIFY, KIND_STARTUP, observe,
@@ -30,7 +31,6 @@ pub(crate) use classification_log::{
     ClassificationEntryView, ClassificationRunPage, UnresolvedNameCount, run_entries, run_page,
     search_entries, undo_entry, unresolved_name_counts,
 };
-use classification_log::observe_all;
 
 const SCHEMA: &str = "
 CREATE TABLE products (
@@ -228,19 +228,35 @@ fn migrate(connection: &Connection) -> Result<(), String> {
                 booth_id TEXT PRIMARY KEY REFERENCES products(booth_id) ON DELETE CASCADE,
                 excluded_at TEXT NOT NULL
             ); PRAGMA user_version = 2;",
-        ).sql()?;
+        )
+        .sql()?;
         tx.commit().sql()?;
     }
     if version < 3 {
         let tx = connection.unchecked_transaction().sql()?;
-        ensure_column(&tx, "products", "genre", "ALTER TABLE products ADD COLUMN genre TEXT")?;
-        ensure_column(&tx, "products", "genre_locked", "ALTER TABLE products ADD COLUMN genre_locked INTEGER NOT NULL DEFAULT 0")?;
+        ensure_column(
+            &tx,
+            "products",
+            "genre",
+            "ALTER TABLE products ADD COLUMN genre TEXT",
+        )?;
+        ensure_column(
+            &tx,
+            "products",
+            "genre_locked",
+            "ALTER TABLE products ADD COLUMN genre_locked INTEGER NOT NULL DEFAULT 0",
+        )?;
         let products = load_products(&tx)?;
         for product in products {
             let category = product.category.unwrap_or(Category::Other);
-            let genre = crate::genre::classify_text(category, &product.title, &product.description_snippet)
-                .unwrap_or_else(|| crate::genre::validate(category, None));
-            tx.execute("UPDATE products SET genre = ?1 WHERE booth_id = ?2", params![genre, product.booth_id]).sql()?;
+            let genre =
+                crate::genre::classify_text(category, &product.title, &product.description_snippet)
+                    .unwrap_or_else(|| crate::genre::validate(category, None));
+            tx.execute(
+                "UPDATE products SET genre = ?1 WHERE booth_id = ?2",
+                params![genre, product.booth_id],
+            )
+            .sql()?;
         }
         tx.execute_batch("PRAGMA user_version = 3;").sql()?;
         tx.commit().sql()?;
@@ -252,9 +268,7 @@ fn migrate(connection: &Connection) -> Result<(), String> {
             "classifier_version",
             "ALTER TABLE products ADD COLUMN classifier_version INTEGER NOT NULL DEFAULT 1",
         )?;
-        connection
-            .execute_batch("PRAGMA user_version = 4;")
-            .sql()?;
+        connection.execute_batch("PRAGMA user_version = 4;").sql()?;
     }
     // v5 is only `products.unpublished` (library badge「非公開」).
     // Keep this block self-contained so a parallel migration can take the next number.
@@ -265,9 +279,7 @@ fn migrate(connection: &Connection) -> Result<(), String> {
             "unpublished",
             "ALTER TABLE products ADD COLUMN unpublished INTEGER",
         )?;
-        connection
-            .execute_batch("PRAGMA user_version = 5;")
-            .sql()?;
+        connection.execute_batch("PRAGMA user_version = 5;").sql()?;
     }
     // v6 is only `classification_moves` (manual genre moves, unpin, and undo).
     // Older libraries have no history. Current pins are the lock columns.
@@ -287,9 +299,7 @@ fn migrate(connection: &Connection) -> Result<(), String> {
                 CREATE INDEX IF NOT EXISTS idx_classification_moves_booth ON classification_moves(booth_id);",
             )
             .sql()?;
-        connection
-            .execute_batch("PRAGMA user_version = 6;")
-            .sql()?;
+        connection.execute_batch("PRAGMA user_version = 6;").sql()?;
     }
     // v7 stores the public BOOTH category and tags used before the model.
     // booth_detail_at is set once a public document, adult flag, age gate, or 404 was seen.
@@ -324,9 +334,7 @@ fn migrate(connection: &Connection) -> Result<(), String> {
             "booth_detail_at",
             "ALTER TABLE products ADD COLUMN booth_detail_at TEXT",
         )?;
-        connection
-            .execute_batch("PRAGMA user_version = 7;")
-            .sql()?;
+        connection.execute_batch("PRAGMA user_version = 7;").sql()?;
     }
     // v8 records who last changed each syncable group. Existing values get a baseline with no
     // device or time, so none of them looks newer than a real change on another device.
@@ -345,9 +353,7 @@ fn migrate(connection: &Connection) -> Result<(), String> {
             "hero_image_path",
             "ALTER TABLE avatars ADD COLUMN hero_image_path TEXT",
         )?;
-        connection
-            .execute_batch("PRAGMA user_version = 9;")
-            .sql()?;
+        connection.execute_batch("PRAGMA user_version = 9;").sql()?;
     }
     // v10 is only the classification log. It is local display history, outside the sync export.
     // Older libraries have no history, and product rows stay as they are.
@@ -499,7 +505,11 @@ fn ensure_ready(connection: &Connection) -> Result<u32, String> {
             seeded = merge_seed(connection, stored)?.inserted;
         }
     }
-    set_setting(connection, "seed_revision", &seed_file()?.revision.to_string())?;
+    set_setting(
+        connection,
+        "seed_revision",
+        &seed_file()?.revision.to_string(),
+    )?;
     close_unavailable_products(connection)?;
     skip_setup_for_existing_use(connection)?;
     Ok(seeded)
@@ -534,7 +544,8 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
         library_folder: setting(connection, "library_folder")?.unwrap_or_default(),
         builtin_browser: setting(connection, "builtin_browser")?.as_deref() == Some("1"),
         browser_force_dark: setting(connection, "browser_force_dark")?.as_deref() == Some("1"),
-        browser_auto_register: setting(connection, "browser_auto_register")?.as_deref() != Some("0"),
+        browser_auto_register: setting(connection, "browser_auto_register")?.as_deref()
+            != Some("0"),
         booth_link_target: normalize_booth_link_target(
             &setting(connection, "booth_link_target")?.unwrap_or_else(|| "external".into()),
         ),
@@ -566,12 +577,14 @@ pub(crate) fn settings(connection: &Connection) -> Result<Settings, String> {
                 .unwrap_or(300),
         ),
         avatar_hero: crate::model::normalize_avatar_hero(
-            &setting(connection, "avatar_hero")?.unwrap_or_else(|| crate::model::DEFAULT_AVATAR_HERO.into()),
+            &setting(connection, "avatar_hero")?
+                .unwrap_or_else(|| crate::model::DEFAULT_AVATAR_HERO.into()),
         ),
         right_panel_tabs: crate::model::normalize_right_panel_tabs(
             &setting(connection, "right_panel_tabs")?.unwrap_or_default(),
         ),
-        check_update_on_startup: setting(connection, "check_update_on_startup")?.as_deref() == Some("1"),
+        check_update_on_startup: setting(connection, "check_update_on_startup")?.as_deref()
+            == Some("1"),
         ui_update_dismissed_version: setting(connection, "ui_update_dismissed_version")?
             .unwrap_or_default(),
         device_id: identity.id,
@@ -659,7 +672,15 @@ fn save_settings_values(
         "confidence_threshold",
         &input.confidence_threshold.clamp(0.0, 1.0).to_string(),
     )?;
-    set_setting(connection, "browser_auto_register", if input.browser_auto_register { "1" } else { "0" })?;
+    set_setting(
+        connection,
+        "browser_auto_register",
+        if input.browser_auto_register {
+            "1"
+        } else {
+            "0"
+        },
+    )?;
     set_setting(connection, "library_folder", input.library_folder.trim())?;
     forget_builtin_browser();
     set_setting(
@@ -750,9 +771,17 @@ fn save_settings_values(
     set_setting(
         connection,
         "check_update_on_startup",
-        if input.check_update_on_startup { "1" } else { "0" },
+        if input.check_update_on_startup {
+            "1"
+        } else {
+            "0"
+        },
     )?;
-    set_setting(connection, "ui_update_dismissed_version", &input.ui_update_dismissed_version)?;
+    set_setting(
+        connection,
+        "ui_update_dismissed_version",
+        &input.ui_update_dismissed_version,
+    )?;
     if let Some(name) = &device_name {
         set_setting(connection, crate::sync_meta::DEVICE_NAME_KEY, name)?;
     }
@@ -813,7 +842,11 @@ pub(crate) fn set_booth_page_interval_ms(
     if !crate::library_walk::allowed_page_delay_ms(interval_ms) {
         return Err("BOOTH のアクセス間隔は 250、500、1000 ミリ秒から選んでください".into());
     }
-    set_setting(connection, "booth_page_interval_ms", &interval_ms.to_string())
+    set_setting(
+        connection,
+        "booth_page_interval_ms",
+        &interval_ms.to_string(),
+    )
 }
 
 /// 既定の Unity 本体のパス。未設定なら空文字。
@@ -901,7 +934,10 @@ pub(crate) fn cached_builtin_browser() -> Option<bool> {
 /// connection locked.
 pub(crate) fn builtin_browser(connection: &Connection) -> Result<bool, String> {
     let enabled = setting(connection, "builtin_browser")?.as_deref() == Some("1");
-    BUILTIN_BROWSER.store(if enabled { 2 } else { 1 }, std::sync::atomic::Ordering::SeqCst);
+    BUILTIN_BROWSER.store(
+        if enabled { 2 } else { 1 },
+        std::sync::atomic::Ordering::SeqCst,
+    );
     Ok(enabled)
 }
 
@@ -960,7 +996,8 @@ fn import_products_unlogged(
     let mut before_files = std::collections::HashMap::new();
     for product in &parsed.products {
         if !product.downloads.is_empty() {
-            if let Ok(keys) = crate::asset_updates::existing_file_keys(connection, &product.booth_id)
+            if let Ok(keys) =
+                crate::asset_updates::existing_file_keys(connection, &product.booth_id)
             {
                 before_files.insert(product.booth_id.clone(), keys);
             }
@@ -2066,7 +2103,9 @@ fn classification_pinned(product: &Product) -> bool {
 fn classification_snapshot(product: &Product) -> ClassificationSnapshot {
     ClassificationSnapshot {
         booth_id: product.booth_id.clone(),
-        category: product.category.map(|category| category.as_str().to_string()),
+        category: product
+            .category
+            .map(|category| category.as_str().to_string()),
         genre: product.genre.clone(),
         category_locked: product.category_locked,
         genre_locked: product.genre_locked,
@@ -2100,7 +2139,9 @@ struct ClassificationPlacement {
 
 fn placement_of(product: &Product) -> ClassificationPlacement {
     ClassificationPlacement {
-        category: product.category.map(|category| category.as_str().to_string()),
+        category: product
+            .category
+            .map(|category| category.as_str().to_string()),
         genre: product.genre.clone(),
     }
 }
@@ -2188,7 +2229,10 @@ pub(crate) fn move_product_genre_with_avatars(
                 category: Some(category.as_str().to_string()),
                 genre: Some(genre.to_string()),
                 reset_genre: false,
-                is_generic: avatar_ids.as_ref().filter(|ids| !ids.is_empty()).map(|_| false),
+                is_generic: avatar_ids
+                    .as_ref()
+                    .filter(|ids| !ids.is_empty())
+                    .map(|_| false),
                 avatar_ids,
             },
         )?;
@@ -2370,7 +2414,9 @@ fn feedback_product(product: &Product) -> ClassificationFeedbackProduct {
         title: product.title.clone(),
         shop: product.shop.clone(),
         description_head: description_head(&product.description_snippet),
-        category: product.category.map(|category| category.as_str().to_string()),
+        category: product
+            .category
+            .map(|category| category.as_str().to_string()),
         genre: product.genre.clone(),
         classification_status: feedback_status(product).to_string(),
     }
@@ -2387,7 +2433,9 @@ fn feedback_scope_matches(product: &Product, scope: &str) -> bool {
     }
 }
 
-fn classification_corrections(connection: &Connection) -> Result<Vec<ClassificationCorrection>, String> {
+fn classification_corrections(
+    connection: &Connection,
+) -> Result<Vec<ClassificationCorrection>, String> {
     let mut statement = connection
         .prepare(
             "SELECT booth_id, at, action, from_category, from_genre, to_category, to_genre
@@ -2423,14 +2471,19 @@ fn classification_corrections(connection: &Connection) -> Result<Vec<Classificat
 }
 
 /// JSON for improving classification rules. No URLs, thumbnails, tokens, or local paths.
-pub(crate) fn classification_feedback_json(connection: &Connection, scope: &str) -> Result<String, String> {
+pub(crate) fn classification_feedback_json(
+    connection: &Connection,
+    scope: &str,
+) -> Result<String, String> {
     if !matches!(scope, "other" | "unclassified" | "both") {
         return Err("対象が不正です".into());
     }
     let excluded = excluded_product_ids(connection)?;
     let mut products: Vec<Product> = load_products(connection)?
         .into_iter()
-        .filter(|product| !excluded.contains(&product.booth_id) && feedback_scope_matches(product, scope))
+        .filter(|product| {
+            !excluded.contains(&product.booth_id) && feedback_scope_matches(product, scope)
+        })
         .collect();
     products.sort_by(|left, right| left.booth_id.cmp(&right.booth_id));
     let mut manual: Vec<Product> = load_products(connection)?
@@ -2448,7 +2501,8 @@ pub(crate) fn classification_feedback_json(connection: &Connection, scope: &str)
         corrections: classification_corrections(connection)?,
         manual_classifications: manual.iter().map(feedback_product).collect(),
     };
-    let mut json = serde_json::to_string_pretty(&file).map_err(|_| "JSONにできません".to_string())?;
+    let mut json =
+        serde_json::to_string_pretty(&file).map_err(|_| "JSONにできません".to_string())?;
     json.push('\n');
     Ok(json)
 }
@@ -2462,17 +2516,24 @@ pub(crate) fn save_classification_feedback(
     save_classification_feedback_body(path, &json)
 }
 
-pub(crate) fn save_classification_feedback_body(path: &std::path::Path, body: &str) -> Result<(), String> {
+pub(crate) fn save_classification_feedback_body(
+    path: &std::path::Path,
+    body: &str,
+) -> Result<(), String> {
     let destination = checked_json_destination(path)?;
     std::fs::write(&destination, body).map_err(|_| "ファイルを保存できません".to_string())?;
     Ok(())
 }
 
-pub(crate) fn checked_json_destination(path: &std::path::Path) -> Result<std::path::PathBuf, String> {
+pub(crate) fn checked_json_destination(
+    path: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
     checked_destination(path, ".json", "保存先は JSON ファイルにしてください")
 }
 
-pub(crate) fn checked_zip_destination(path: &std::path::Path) -> Result<std::path::PathBuf, String> {
+pub(crate) fn checked_zip_destination(
+    path: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
     checked_destination(path, ".zip", "保存先は ZIP ファイルにしてください")
 }
 
@@ -2534,7 +2595,10 @@ pub(crate) fn register_manual_owned_body(
     } else {
         match decide_owned_name(connection, &product)? {
             OwnedName::Ready(target) => target,
-            OwnedName::Ask { suggested, candidates } => {
+            OwnedName::Ask {
+                suggested,
+                candidates,
+            } => {
                 return Ok(RegisterOwnedBodyResult::NeedsName {
                     suggested_name: suggested,
                     candidates,
@@ -2576,8 +2640,8 @@ pub(crate) fn register_manual_owned_body(
         }
     }
     let unlocked = require_product(&tx, booth_id)?;
-    let from_catalog = !supplied
-        && catalog_body(&tx, booth_id)?.is_some_and(|(id, _)| id == target.avatar_id);
+    let from_catalog =
+        !supplied && catalog_body(&tx, booth_id)?.is_some_and(|(id, _)| id == target.avatar_id);
     if from_catalog {
         write_catalog_body(&tx, booth_id, &target.avatar_id, &target.display)?;
     } else {
@@ -2655,7 +2719,9 @@ pub(crate) fn update_product(
         product.category_locked = true;
     }
     if let Some(genre) = fixed_genre {
-        let category = product.category.ok_or("ジャンルを選ぶ前にカテゴリを選んでください")?;
+        let category = product
+            .category
+            .ok_or("ジャンルを選ぶ前にカテゴリを選んでください")?;
         product.genre = Some(crate::genre::validate(category, Some(genre)));
         product.genre_locked = true;
     } else if update.reset_genre {
@@ -2667,7 +2733,9 @@ pub(crate) fn update_product(
         };
         product.genre_locked = false;
     } else if update.category.is_some() {
-        product.genre = product.category.map(|category| crate::genre::validate(category, product.genre.as_deref()));
+        product.genre = product
+            .category
+            .map(|category| crate::genre::validate(category, product.genre.as_deref()));
     }
     if let Some(generic) = update.is_generic {
         product.is_generic = generic;
@@ -2802,7 +2870,9 @@ pub(crate) fn apply_library_scan(
     outcome: &ScanOutcome,
 ) -> Result<crate::model::ScanReport, String> {
     if settings(connection)?.library_folder != root {
-        return Err("調査中にライブラリのフォルダが変更されたため、以前の結果は反映しませんでした".into());
+        return Err(
+            "調査中にライブラリのフォルダが変更されたため、以前の結果は反映しませんでした".into(),
+        );
     }
     apply_scan(connection, root, outcome)
 }
@@ -2837,9 +2907,11 @@ pub(crate) fn apply_scan(
         if retained {
             continue;
         }
-        if entry.labels.iter().any(|label| {
-            excluded.iter().any(|id| contains_booth_id(label, id))
-        }) {
+        if entry
+            .labels
+            .iter()
+            .any(|label| excluded.iter().any(|id| contains_booth_id(label, id)))
+        {
             continue;
         }
         if outcome.truncated {
@@ -3146,7 +3218,9 @@ pub(crate) fn apply_booth_settlement(
     Ok(true)
 }
 
-pub(crate) fn products_needing_booth_detail(connection: &Connection) -> Result<Vec<String>, String> {
+pub(crate) fn products_needing_booth_detail(
+    connection: &Connection,
+) -> Result<Vec<String>, String> {
     let mut statement = connection
         .prepare(
             "SELECT booth_id FROM products
@@ -3244,7 +3318,9 @@ fn store_booth_detail_unlogged(
     }
 }
 
-pub(crate) fn classification_status(connection: &Connection) -> Result<crate::model::ClassificationStatus, String> {
+pub(crate) fn classification_status(
+    connection: &Connection,
+) -> Result<crate::model::ClassificationStatus, String> {
     let stale_count: i64 = connection
         .query_row(
             "SELECT COUNT(*) FROM products
@@ -3318,8 +3394,16 @@ pub(crate) fn product_ids_by_category(
     rows.collect::<Result<Vec<_>, _>>().sql()
 }
 
-pub(crate) fn product_ids_by_genre(connection: &Connection, kind: &str, genre: Option<&str>) -> Result<Vec<String>, String> {
-    let condition = match kind { "world" => "category = 'world'", "asset" => "category <> 'world' AND category <> 'avatar'", _ => return Err("ジャンルの種類が不正です".into()) };
+pub(crate) fn product_ids_by_genre(
+    connection: &Connection,
+    kind: &str,
+    genre: Option<&str>,
+) -> Result<Vec<String>, String> {
+    let condition = match kind {
+        "world" => "category = 'world'",
+        "asset" => "category <> 'world' AND category <> 'avatar'",
+        _ => return Err("ジャンルの種類が不正です".into()),
+    };
     let genre_filter = if genre == Some(crate::genre::UNSET) {
         // Keys are compile-time constants, so inlining them is safe.
         let known = crate::genre::kind_genres(kind)
@@ -3332,7 +3416,9 @@ pub(crate) fn product_ids_by_genre(connection: &Connection, kind: &str, genre: O
     } else {
         "(?1 IS NULL OR genre = ?1)".to_string()
     };
-    let sql = format!("SELECT booth_id FROM products WHERE {condition} AND {genre_filter} AND booth_id NOT IN (SELECT booth_id FROM product_exclusions) ORDER BY title COLLATE NOCASE, booth_id");
+    let sql = format!(
+        "SELECT booth_id FROM products WHERE {condition} AND {genre_filter} AND booth_id NOT IN (SELECT booth_id FROM product_exclusions) ORDER BY title COLLATE NOCASE, booth_id"
+    );
     let mut statement = connection.prepare(&sql).sql()?;
     let rows = statement.query_map([genre], |row| row.get(0)).sql()?;
     rows.collect::<Result<Vec<_>, _>>().sql()
@@ -3452,7 +3538,9 @@ pub(crate) fn library_stats(connection: &Connection) -> Result<LibraryStats, Str
 /// Products to pick from (adding an item to an avatar, linking a file, the update targets),
 /// without reading the whole library. Same rows and order as `view::product_options` on a
 /// snapshot: the snapshot's product order, then by title.
-pub(crate) fn product_options(connection: &Connection) -> Result<Vec<crate::view::ProductOption>, String> {
+pub(crate) fn product_options(
+    connection: &Connection,
+) -> Result<Vec<crate::view::ProductOption>, String> {
     let mut statement = connection
         .prepare(
             "SELECT booth_id, title, shop, category FROM products
@@ -3756,7 +3844,11 @@ pub(crate) fn store_free_files(
         variations: Vec::new(),
         downloads: files.to_vec(),
         is_free,
-        is_adult: if is_adult == Some(true) { Some(true) } else { None },
+        is_adult: if is_adult == Some(true) {
+            Some(true)
+        } else {
+            None
+        },
         unpublished: None,
         received_gift: None,
         booth_category: None,
@@ -3913,11 +4005,20 @@ pub(crate) fn record_extension_download(
         let mut statement = connection.prepare(
             "SELECT filename FROM product_files WHERE booth_id=?1 AND variation=?2 AND downloadable_id=?3"
         ).sql()?;
-        let names = statement.query_map(params![booth_id, variation, id], |row| row.get::<_, String>(0))
-            .sql()?.collect::<rusqlite::Result<Vec<_>>>().sql()?;
-        if names.len() != 1 { return Err("どのファイルか確かめられません".into()); }
+        let names = statement
+            .query_map(params![booth_id, variation, id], |row| {
+                row.get::<_, String>(0)
+            })
+            .sql()?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .sql()?;
+        if names.len() != 1 {
+            return Err("どのファイルか確かめられません".into());
+        }
         names[0].clone()
-    } else { actual_filename.clone() };
+    } else {
+        actual_filename.clone()
+    };
     if !variation.is_empty() {
         let _ = merge_variation(
             connection,
@@ -4062,9 +4163,7 @@ pub(crate) fn plan_browser_download(
         .as_deref()
         .filter(|id| crate::library_files::valid_booth_id(id))
         .map(str::to_string)
-        .or_else(|| {
-            crate::library_files::filename_is_number(&filename).then(|| filename.clone())
-        })
+        .or_else(|| crate::library_files::filename_is_number(&filename).then(|| filename.clone()))
         .ok_or_else(|| BROWSER_MISSING_ID_MESSAGE.to_string())?;
     Ok(BrowserFilePlan {
         booth_id: booth_id.to_string(),
@@ -4113,7 +4212,13 @@ pub(crate) fn adopt_download_filename(
                     "UPDATE product_files
                      SET filename = ?1, downloadable_id = COALESCE(NULLIF(?2, ''), downloadable_id)
                      WHERE booth_id = ?3 AND variation = ?4 AND filename = ?5",
-                    params![new_filename, downloadable_id, booth_id, variation, old_filename],
+                    params![
+                        new_filename,
+                        downloadable_id,
+                        booth_id,
+                        variation,
+                        old_filename
+                    ],
                 )
                 .sql()?;
             target = new_filename;
@@ -4173,8 +4278,11 @@ pub(crate) fn commit_browser_download(
         title: String::new(),
     };
     let ready = prepare_download(connection, &notice)?;
-    let placed =
-        crate::library_files::place_into_library(&ready.source, ready.library.as_deref(), &ready.booth_id)?;
+    let placed = crate::library_files::place_into_library(
+        &ready.source,
+        ready.library.as_deref(),
+        &ready.booth_id,
+    )?;
     record_placed_download(
         connection,
         &ready.booth_id,
@@ -4231,7 +4339,10 @@ pub(crate) fn product_labels(
             if !title.is_empty() {
                 labels.insert(
                     booth_id.clone(),
-                    crate::file_browser::EntryLabel { title: title.to_string(), adult },
+                    crate::file_browser::EntryLabel {
+                        title: title.to_string(),
+                        adult,
+                    },
                 );
             }
         }
@@ -4241,7 +4352,9 @@ pub(crate) fn product_labels(
 
 /// File tab: files whose product is known, as `(path, booth_id)`. Scan links
 /// (`local_files.linked_product_id`) and recorded downloads (`product_files.local_path`).
-pub(crate) fn linked_file_products(connection: &Connection) -> Result<Vec<(String, String)>, String> {
+pub(crate) fn linked_file_products(
+    connection: &Connection,
+) -> Result<Vec<(String, String)>, String> {
     let mut statement = connection
         .prepare(
             "SELECT path, linked_product_id FROM local_files
@@ -4252,7 +4365,9 @@ pub(crate) fn linked_file_products(connection: &Connection) -> Result<Vec<(Strin
         )
         .sql()?;
     let rows = statement
-        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
         .sql()?;
     rows.collect::<Result<Vec<_>, _>>().sql()
 }
@@ -4262,7 +4377,10 @@ pub(crate) struct SweepReport {
     pub left: Vec<crate::model::StagedLeftover>,
 }
 
-pub(crate) fn route_staged_download(connection: &mut Connection, source: &Path) -> Result<(), String> {
+pub(crate) fn route_staged_download(
+    connection: &mut Connection,
+    source: &Path,
+) -> Result<(), String> {
     let booth_id = source
         .parent()
         .and_then(|parent| parent.file_name())
@@ -5226,7 +5344,10 @@ fn settle_one(connection: &mut Connection, booth_id: &str, redo: bool) -> Result
 // without using compatibility names from its description as ownership evidence.
 // extracted_at is intentionally not a guard: a model run can already have stored
 // category avatar and an owned-<id> link while leaving avatars.owned at 0.
-fn settle_named_original_body(connection: &mut Connection, product: &Product) -> Result<bool, String> {
+fn settle_named_original_body(
+    connection: &mut Connection,
+    product: &Product,
+) -> Result<bool, String> {
     // A model-set avatar category is allowed, and so is an unlocked category
     // (unset, or not category_locked). A category locked to something else is not.
     if product_excluded(connection, &product.booth_id)?
@@ -5381,7 +5502,10 @@ struct OwnedTarget {
 
 enum OwnedName {
     Ready(OwnedTarget),
-    Ask { suggested: String, candidates: Vec<String> },
+    Ask {
+        suggested: String,
+        candidates: Vec<String>,
+    },
 }
 
 fn decide_owned_name(connection: &Connection, product: &Product) -> Result<OwnedName, String> {
@@ -5545,7 +5669,8 @@ fn single_acceptable_quote(title: &str) -> Option<String> {
 
 fn acceptable_title_name(title: &str) -> Option<String> {
     let name = crate::normalize::suggested_display_name(title);
-    if name.is_empty() || name == "名称未設定" || crate::normalize::is_blocked_avatar_label(&name) {
+    if name.is_empty() || name == "名称未設定" || crate::normalize::is_blocked_avatar_label(&name)
+    {
         None
     } else {
         Some(name)
@@ -5626,7 +5751,12 @@ fn apply_owned_restore(connection: &Connection, avatar: &OwnedAvatarRestore) -> 
             if !avatar.id.starts_with("owned-") {
                 return Err(format!("アバター {} が対応表にありません", avatar.id));
             }
-            insert_placeholder(connection, &avatar.id, &avatar.display_name, &avatar.aliases)?;
+            insert_placeholder(
+                connection,
+                &avatar.id,
+                &avatar.display_name,
+                &avatar.aliases,
+            )?;
         }
         connection
             .execute(
@@ -5772,7 +5902,11 @@ pub(crate) fn mark_owned_body(
     Ok(avatar_id)
 }
 
-fn save_owned_body(connection: &Connection, product: &Product, avatar_id: &str) -> Result<(), String> {
+fn save_owned_body(
+    connection: &Connection,
+    product: &Product,
+    avatar_id: &str,
+) -> Result<(), String> {
     let booth_id = &product.booth_id;
     connection
         .execute(
@@ -5870,7 +6004,8 @@ fn decide_category(
         if let Some(category) = crate::compat::strong_category_override(&existing.title) {
             return Some(category);
         }
-        if proposed == Category::Avatar && crate::normalize::is_avatar_count_title(&existing.title) {
+        if proposed == Category::Avatar && crate::normalize::is_avatar_count_title(&existing.title)
+        {
             return Some(Category::Other);
         }
         if crate::compat::world_hint_overrides(
@@ -5896,7 +6031,11 @@ fn decide_category(
 fn file_names_apply(category: Category) -> bool {
     matches!(
         category,
-        Category::Outfit | Category::Hair | Category::Accessory | Category::Texture | Category::Gimmick
+        Category::Outfit
+            | Category::Hair
+            | Category::Accessory
+            | Category::Texture
+            | Category::Gimmick
     )
 }
 
@@ -6139,9 +6278,11 @@ fn product_by_id(connection: &Connection, booth_id: &str) -> Result<Option<Produ
 }
 
 fn load_products(connection: &Connection) -> Result<Vec<Product>, String> {
-    let mut statement = connection.prepare(&format!(
-        "{PRODUCT_SELECT} WHERE booth_id NOT IN (SELECT booth_id FROM product_exclusions)"
-    )).sql()?;
+    let mut statement = connection
+        .prepare(&format!(
+            "{PRODUCT_SELECT} WHERE booth_id NOT IN (SELECT booth_id FROM product_exclusions)"
+        ))
+        .sql()?;
     let rows = statement.query_map([], map_product).sql()?;
     rows.collect::<Result<Vec<_>, _>>().sql()
 }
@@ -6271,9 +6412,11 @@ fn avatar_by_id(connection: &Connection, id: &str) -> Result<Option<Avatar>, Str
 
 fn base_body_exists(connection: &Connection, id: &str) -> Result<bool, String> {
     connection
-        .query_row("SELECT EXISTS(SELECT 1 FROM base_bodies WHERE id = ?1)", params![id], |row| {
-            row.get::<_, bool>(0)
-        })
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM base_bodies WHERE id = ?1)",
+            params![id],
+            |row| row.get::<_, bool>(0),
+        )
         .sql()
 }
 
@@ -6530,7 +6673,9 @@ mod tests {
                  INSERT INTO local_files (path, filename, scanned_at) VALUES ('/lib/unlinked.zip', 'unlinked.zip', 't');",
             )
             .unwrap();
-        let ids: Vec<String> = ["9000001", "9000002", "9000003", "9999999"].map(String::from).to_vec();
+        let ids: Vec<String> = ["9000001", "9000002", "9000003", "9999999"]
+            .map(String::from)
+            .to_vec();
         let labels = product_labels(&connection, &ids).unwrap();
         assert_eq!(labels.len(), 2, "blank titles and unknown IDs get no label");
         assert_eq!(labels["9000001"].title, "架空の服");
@@ -6551,15 +6696,40 @@ mod tests {
     fn bookmarks_persist_edits_and_intentionally_empty_lists() {
         let connection = open_memory().unwrap();
         assert_eq!(browser_bookmarks(&connection).unwrap().len(), 2);
-        save_browser_bookmark(&connection, None, "テストのサイト", "https://example.com/path?q=1").unwrap();
+        save_browser_bookmark(
+            &connection,
+            None,
+            "テストのサイト",
+            "https://example.com/path?q=1",
+        )
+        .unwrap();
         ensure_ready(&connection).unwrap();
-        assert!(browser_bookmarks(&connection).unwrap().iter().any(|item| item.title == "テストのサイト" && item.url == "https://example.com/path?q=1"));
-        save_browser_bookmark(&connection, Some("https://example.com/path?q=1"), "変更した名前", "https://example.com/other").unwrap();
-        assert!(browser_bookmarks(&connection).unwrap().iter().any(|item| item.title == "変更した名前"));
+        assert!(
+            browser_bookmarks(&connection)
+                .unwrap()
+                .iter()
+                .any(|item| item.title == "テストのサイト"
+                    && item.url == "https://example.com/path?q=1")
+        );
+        save_browser_bookmark(
+            &connection,
+            Some("https://example.com/path?q=1"),
+            "変更した名前",
+            "https://example.com/other",
+        )
+        .unwrap();
+        assert!(
+            browser_bookmarks(&connection)
+                .unwrap()
+                .iter()
+                .any(|item| item.title == "変更した名前")
+        );
         let before = browser_bookmarks(&connection).unwrap();
         assert!(save_browser_bookmark(&connection, None, "不正", "javascript:alert(1)").is_err());
         assert_eq!(browser_bookmarks(&connection).unwrap(), before);
-        for item in before { delete_browser_bookmark(&connection, &item.url).unwrap(); }
+        for item in before {
+            delete_browser_bookmark(&connection, &item.url).unwrap();
+        }
         ensure_ready(&connection).unwrap();
         assert!(browser_bookmarks(&connection).unwrap().is_empty());
     }
@@ -6598,7 +6768,9 @@ mod tests {
             .unwrap();
         assert_eq!(category_id, None);
         let moves: i64 = connection
-            .query_row("SELECT COUNT(*) FROM classification_moves", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM classification_moves", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(moves, 0);
         let unpublished: Option<i64> = connection
@@ -6609,8 +6781,17 @@ mod tests {
             )
             .unwrap();
         assert_eq!(unpublished, None);
-        assert_eq!(require_product(&connection, "9001").unwrap().genre.as_deref(), Some("other"));
-        assert_eq!(settings(&connection).unwrap().library_folder, "/saved/library");
+        assert_eq!(
+            require_product(&connection, "9001")
+                .unwrap()
+                .genre
+                .as_deref(),
+            Some("other")
+        );
+        assert_eq!(
+            settings(&connection).unwrap().library_folder,
+            "/saved/library"
+        );
         assert_eq!(managed_products(&connection).unwrap().len(), 1);
         assert!(!product_excluded(&connection, "9001").unwrap());
         assert_eq!(
@@ -6644,11 +6825,13 @@ mod tests {
         let excluded = load_snapshot(&connection).unwrap();
         assert_eq!(excluded.products.len(), before.products.len() - 1);
         assert!(excluded.links.iter().all(|link| link.product_id != "1004"));
-        assert!(avatar_detail(&excluded, "manuka")
-            .unwrap()
-            .unsupported_outfits
-            .iter()
-            .all(|item| item.booth_id != "1004"));
+        assert!(
+            avatar_detail(&excluded, "manuka")
+                .unwrap()
+                .unsupported_outfits
+                .iter()
+                .all(|item| item.booth_id != "1004")
+        );
         assert!(
             crate::view::product_options(&excluded)
                 .iter()
@@ -6687,11 +6870,13 @@ mod tests {
         set_product_excluded(&mut connection, "1004", false).unwrap();
         let restored = load_snapshot(&connection).unwrap();
         assert_eq!(restored.products.len(), before.products.len());
-        assert!(avatar_detail(&restored, "manuka")
-            .unwrap()
-            .unsupported_outfits
-            .iter()
-            .any(|item| item.booth_id == "1004"));
+        assert!(
+            avatar_detail(&restored, "manuka")
+                .unwrap()
+                .unsupported_outfits
+                .iter()
+                .any(|item| item.booth_id == "1004")
+        );
         assert!(
             restored
                 .links
@@ -6712,7 +6897,13 @@ mod tests {
         let mut connection = open_memory().unwrap();
         import_products(&mut connection, &parse_export(SAMPLE).unwrap()).unwrap();
         mark_owned_body(&mut connection, "1001").unwrap();
-        apply_extraction(&mut connection, "1004", &extraction(Category::Outfit, &["ライム"], false, 0.99), 0.6).unwrap();
+        apply_extraction(
+            &mut connection,
+            "1004",
+            &extraction(Category::Outfit, &["ライム"], false, 0.99),
+            0.6,
+        )
+        .unwrap();
         let same = |connection: &Connection| {
             let snapshot = load_snapshot(connection).unwrap();
             assert_eq!(
@@ -6748,7 +6939,12 @@ mod tests {
                 [],
             )
             .unwrap();
-        connection.execute("UPDATE products SET category = 'retired' WHERE booth_id = '1005'", []).unwrap();
+        connection
+            .execute(
+                "UPDATE products SET category = 'retired' WHERE booth_id = '1005'",
+                [],
+            )
+            .unwrap();
         same(&connection);
         let before = library_stats(&connection).unwrap();
         assert!(before.owned_avatars >= 1);
@@ -6865,10 +7061,12 @@ mod tests {
     #[test]
     fn truncated_scans_replace_only_visited_automatic_rows() {
         let mut connection = open_memory().unwrap();
-        connection.execute_batch(
-            "INSERT INTO products (booth_id, title, imported_at, updated_at) VALUES
+        connection
+            .execute_batch(
+                "INSERT INTO products (booth_id, title, imported_at, updated_at) VALUES
              ('4242', 'Synthetic package', 't', 't'), ('4243', 'Excluded package', 't', 't');",
-        ).unwrap();
+            )
+            .unwrap();
         set_product_excluded(&mut connection, "4243", true).unwrap();
         let root = "/dummy-library";
         for (name, product, source) in [
@@ -6885,22 +7083,44 @@ mod tests {
             ).unwrap();
         }
         let entry = |name: &str| crate::scan::ScanEntry {
-            path: format!("{root}/{name}"), filename: name.into(), is_dir: false,
-            size: 99, labels: vec![name.into()],
+            path: format!("{root}/{name}"),
+            filename: name.into(),
+            is_dir: false,
+            size: 99,
+            labels: vec![name.into()],
         };
-        let report = apply_scan(&mut connection, root, &ScanOutcome {
-            entries: vec![entry("seen-4242.zip"), entry("manual-4242.zip")],
-            truncated: true,
-        }).unwrap();
+        let report = apply_scan(
+            &mut connection,
+            root,
+            &ScanOutcome {
+                entries: vec![entry("seen-4242.zip"), entry("manual-4242.zip")],
+                truncated: true,
+            },
+        )
+        .unwrap();
 
         assert!(report.truncated);
         let files = load_files(&connection).unwrap();
         assert_eq!(files.len(), 5);
-        assert_eq!(files.iter().find(|f| f.filename == "seen-4242.zip").unwrap().size, 99);
-        let manual = files.iter().find(|f| f.filename == "manual-4242.zip").unwrap();
+        assert_eq!(
+            files
+                .iter()
+                .find(|f| f.filename == "seen-4242.zip")
+                .unwrap()
+                .size,
+            99
+        );
+        let manual = files
+            .iter()
+            .find(|f| f.filename == "manual-4242.zip")
+            .unwrap();
         assert_eq!(manual.size, 99);
         assert_eq!(manual.link_source.as_deref(), Some("manual"));
-        for name in ["unseen-4242.zip", "unseen-manual-4242.zip", "unseen-4243.zip"] {
+        for name in [
+            "unseen-4242.zip",
+            "unseen-manual-4242.zip",
+            "unseen-4243.zip",
+        ] {
             assert_eq!(files.iter().find(|f| f.filename == name).unwrap().size, 5);
         }
     }
@@ -6908,13 +7128,21 @@ mod tests {
     #[test]
     fn a_complete_scan_still_removes_unseen_automatic_rows() {
         let mut connection = open_memory().unwrap();
-        connection.execute_batch(
-            "INSERT INTO local_files (path, filename, link_source, scanned_at)
+        connection
+            .execute_batch(
+                "INSERT INTO local_files (path, filename, link_source, scanned_at)
              VALUES ('/dummy-library/unseen.zip', 'unseen.zip', 'auto', 't');",
-        ).unwrap();
-        apply_scan(&mut connection, "/dummy-library", &ScanOutcome {
-            entries: vec![], truncated: false,
-        }).unwrap();
+            )
+            .unwrap();
+        apply_scan(
+            &mut connection,
+            "/dummy-library",
+            &ScanOutcome {
+                entries: vec![],
+                truncated: false,
+            },
+        )
+        .unwrap();
         assert!(load_files(&connection).unwrap().is_empty());
     }
 
@@ -6951,12 +7179,21 @@ mod tests {
         let connection = open_memory().unwrap();
         set_setting(&connection, "appearance", "liquid").unwrap();
         ensure_ready(&connection).unwrap();
-        let saved = update_settings(&connection, &SettingsPatch {
-            confidence_threshold: Some(0.75),
-            ..Default::default()
-        }).unwrap();
+        let saved = update_settings(
+            &connection,
+            &SettingsPatch {
+                confidence_threshold: Some(0.75),
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert_eq!(saved.confidence_threshold, 0.75);
-        assert!(serde_json::to_value(saved).unwrap().get("appearance").is_none());
+        assert!(
+            serde_json::to_value(saved)
+                .unwrap()
+                .get("appearance")
+                .is_none()
+        );
     }
 
     #[test]
@@ -6985,8 +7222,14 @@ mod tests {
         assert_eq!(saved.avatar_hero, "small");
         assert_eq!(saved.confidence_threshold, 0.75);
         assert!(saved.builtin_browser);
-        assert_eq!(saved.background_mode, crate::presence::background_supported());
-        assert_eq!(saved.launch_at_login, crate::presence::background_supported());
+        assert_eq!(
+            saved.background_mode,
+            crate::presence::background_supported()
+        );
+        assert_eq!(
+            saved.launch_at_login,
+            crate::presence::background_supported()
+        );
         let invalid = SettingsPatch {
             library_folder: Some(String::new()),
             route_downloads: Some(true),
@@ -7033,15 +7276,14 @@ mod tests {
         ensure_ready(&connection).unwrap();
         assert_eq!(settings(&connection).unwrap().booth_link_target, "builtin");
         connection
-            .execute(
-                "DELETE FROM settings WHERE key = 'booth_link_target'",
-                [],
-            )
+            .execute("DELETE FROM settings WHERE key = 'booth_link_target'", [])
             .unwrap();
         assert_eq!(settings(&connection).unwrap().booth_link_target, "external");
         ensure_ready(&connection).unwrap();
         assert_eq!(
-            setting(&connection, "booth_link_target").unwrap().as_deref(),
+            setting(&connection, "booth_link_target")
+                .unwrap()
+                .as_deref(),
             Some("external")
         );
         let saved = update_settings(
@@ -7315,41 +7557,74 @@ mod tests {
     fn manual_genre_lock_survives_extraction_and_genre_query_excludes_products() {
         let mut connection = open_memory().unwrap();
         import_products(&mut connection, &parse_export(SAMPLE).unwrap()).unwrap();
-        update_product(&mut connection, &ProductUpdate {
+        update_product(
+            &mut connection,
+            &ProductUpdate {
                 purchased_editions: None,
-            booth_id: "1004".into(), category: Some("outfit".into()), genre: Some("shader".into()),
-            reset_genre: false, is_generic: None, avatar_ids: None,
-        }).unwrap();
-        apply_extraction(&mut connection, "1004", &Extraction {
-            category: Category::Outfit, genre: Some("outfit".into()), compatible_avatars: vec![],
-            is_generic: false, confidence: 0.9,
-        }, 0.6).unwrap();
+                booth_id: "1004".into(),
+                category: Some("outfit".into()),
+                genre: Some("shader".into()),
+                reset_genre: false,
+                is_generic: None,
+                avatar_ids: None,
+            },
+        )
+        .unwrap();
+        apply_extraction(
+            &mut connection,
+            "1004",
+            &Extraction {
+                category: Category::Outfit,
+                genre: Some("outfit".into()),
+                compatible_avatars: vec![],
+                is_generic: false,
+                confidence: 0.9,
+            },
+            0.6,
+        )
+        .unwrap();
         let product = require_product(&connection, "1004").unwrap();
         assert_eq!(product.genre.as_deref(), Some("shader"));
         assert!(product.genre_locked);
-        assert!(product_ids_by_genre(&connection, "asset", Some("shader")).unwrap().contains(&"1004".into()));
+        assert!(
+            product_ids_by_genre(&connection, "asset", Some("shader"))
+                .unwrap()
+                .contains(&"1004".into())
+        );
         set_product_excluded(&mut connection, "1004", true).unwrap();
-        assert!(!product_ids_by_genre(&connection, "asset", Some("shader")).unwrap().contains(&"1004".into()));
+        assert!(
+            !product_ids_by_genre(&connection, "asset", Some("shader"))
+                .unwrap()
+                .contains(&"1004".into())
+        );
     }
 
     #[test]
     fn automatic_genre_is_separate_from_unchanged_and_fixed() {
         let mut connection = open_memory().unwrap();
         import_products(&mut connection, &parse_export(SAMPLE).unwrap()).unwrap();
-        let update = |genre: Option<&str>, category: Option<&str>, reset_genre: bool| ProductUpdate {
+        let update =
+            |genre: Option<&str>, category: Option<&str>, reset_genre: bool| ProductUpdate {
                 purchased_editions: None,
-            booth_id: "1004".into(),
-            category: category.map(str::to_string),
-            genre: genre.map(str::to_string),
-            reset_genre,
-            is_generic: None,
-            avatar_ids: None,
-        };
-        update_product(&mut connection, &update(Some("shader"), Some("outfit"), false)).unwrap();
+                booth_id: "1004".into(),
+                category: category.map(str::to_string),
+                genre: genre.map(str::to_string),
+                reset_genre,
+                is_generic: None,
+                avatar_ids: None,
+            };
+        update_product(
+            &mut connection,
+            &update(Some("shader"), Some("outfit"), false),
+        )
+        .unwrap();
         // Nothing about the genre sent: the fixed genre stays fixed.
         update_product(&mut connection, &update(None, None, false)).unwrap();
         let product = require_product(&connection, "1004").unwrap();
-        assert_eq!((product.genre.as_deref(), product.genre_locked), (Some("shader"), true));
+        assert_eq!(
+            (product.genre.as_deref(), product.genre_locked),
+            (Some("shader"), true)
+        );
 
         // 「自動」 unlocks the genre and chooses it again from the category and text.
         update_product(&mut connection, &update(None, None, true)).unwrap();
@@ -7357,16 +7632,27 @@ mod tests {
         assert!(!product.genre_locked);
         let auto = product.genre.clone().unwrap();
         assert_ne!(auto, "shader");
-        assert!(crate::genre::ASSET_GENRES.iter().any(|(key, _)| *key == auto));
+        assert!(
+            crate::genre::ASSET_GENRES
+                .iter()
+                .any(|(key, _)| *key == auto)
+        );
         assert!(product.category_locked, "the category stays fixed");
-        assert!(!classification_pinned(&product), "reclassification may change the genre again");
+        assert!(
+            !classification_pinned(&product),
+            "reclassification may change the genre again"
+        );
 
         // A category change with 「自動」 picks a genre of the new category, not a leftover.
         update_product(&mut connection, &update(None, Some("world"), true)).unwrap();
         let product = require_product(&connection, "1004").unwrap();
         assert_eq!(product.category, Some(Category::World));
         assert!(!product.genre_locked);
-        assert!(crate::genre::WORLD_GENRES.iter().any(|(key, _)| Some(*key) == product.genre.as_deref()));
+        assert!(
+            crate::genre::WORLD_GENRES
+                .iter()
+                .any(|(key, _)| Some(*key) == product.genre.as_deref())
+        );
 
         assert!(update_product(&mut connection, &update(Some("skybox"), None, true)).is_err());
     }
@@ -7375,21 +7661,71 @@ mod tests {
     fn world_genre_query_lists_missing_or_foreign_genres_as_unset() {
         let mut connection = open_memory().unwrap();
         import_products(&mut connection, &parse_export(SAMPLE).unwrap()).unwrap();
-        update_product(&mut connection, &ProductUpdate {
+        update_product(
+            &mut connection,
+            &ProductUpdate {
                 purchased_editions: None,
-            booth_id: "1004".into(), category: Some("world".into()), genre: Some("skybox".into()),
-            reset_genre: false, is_generic: None, avatar_ids: None,
-        }).unwrap();
+                booth_id: "1004".into(),
+                category: Some("world".into()),
+                genre: Some("skybox".into()),
+                reset_genre: false,
+                is_generic: None,
+                avatar_ids: None,
+            },
+        )
+        .unwrap();
         let has = |ids: Vec<String>| ids.contains(&"1004".to_string());
-        assert!(has(product_ids_by_genre(&connection, "world", Some("skybox")).unwrap()));
-        assert!(!has(product_ids_by_genre(&connection, "world", Some(crate::genre::UNSET)).unwrap()));
-        connection.execute("UPDATE products SET genre = 'hair' WHERE booth_id = '1004'", []).unwrap();
-        assert!(has(product_ids_by_genre(&connection, "world", Some(crate::genre::UNSET)).unwrap()));
-        assert!(has(product_ids_by_genre(&connection, "world", None).unwrap()));
-        assert!(!has(product_ids_by_genre(&connection, "asset", Some(crate::genre::UNSET)).unwrap()));
-        connection.execute("UPDATE products SET genre = NULL WHERE booth_id = '1004'", []).unwrap();
-        assert!(has(product_ids_by_genre(&connection, "world", Some(crate::genre::UNSET)).unwrap()));
-        assert!(!has(product_ids_by_genre(&connection, "world", Some("skybox")).unwrap()));
+        assert!(has(product_ids_by_genre(
+            &connection,
+            "world",
+            Some("skybox")
+        )
+        .unwrap()));
+        assert!(!has(product_ids_by_genre(
+            &connection,
+            "world",
+            Some(crate::genre::UNSET)
+        )
+        .unwrap()));
+        connection
+            .execute(
+                "UPDATE products SET genre = 'hair' WHERE booth_id = '1004'",
+                [],
+            )
+            .unwrap();
+        assert!(has(product_ids_by_genre(
+            &connection,
+            "world",
+            Some(crate::genre::UNSET)
+        )
+        .unwrap()));
+        assert!(has(
+            product_ids_by_genre(&connection, "world", None).unwrap()
+        ));
+        assert!(!has(product_ids_by_genre(
+            &connection,
+            "asset",
+            Some(crate::genre::UNSET)
+        )
+        .unwrap()));
+        connection
+            .execute(
+                "UPDATE products SET genre = NULL WHERE booth_id = '1004'",
+                [],
+            )
+            .unwrap();
+        assert!(has(product_ids_by_genre(
+            &connection,
+            "world",
+            Some(crate::genre::UNSET)
+        )
+        .unwrap()));
+        assert!(!has(product_ids_by_genre(
+            &connection,
+            "world",
+            Some("skybox")
+        )
+        .unwrap()));
     }
 
     #[test]
@@ -7494,7 +7830,13 @@ mod tests {
         assert_eq!(settled.category, Some(Category::Other));
         assert_eq!(settled.genre.as_deref(), Some("tool_editor"));
         assert!(!apply_booth_settlement(&mut connection, "424243").unwrap());
-        assert!(product_by_id(&connection, "424243").unwrap().unwrap().category.is_none());
+        assert!(
+            product_by_id(&connection, "424243")
+                .unwrap()
+                .unwrap()
+                .category
+                .is_none()
+        );
         move_product_genre(&mut connection, "424245", "asset", "hair").unwrap();
         assert!(!apply_booth_settlement(&mut connection, "424245").unwrap());
         let locked = product_by_id(&connection, "424245").unwrap().unwrap();
@@ -7525,7 +7867,11 @@ mod tests {
             missing.description_snippet,
             crate::model::UNAVAILABLE_DESCRIPTION
         );
-        assert!(products_needing_booth_detail(&connection).unwrap().is_empty());
+        assert!(
+            products_needing_booth_detail(&connection)
+                .unwrap()
+                .is_empty()
+        );
         let again = store_booth_detail(
             &mut connection,
             "424243",
@@ -7774,14 +8120,25 @@ mod tests {
         assert!(apply_booth_settlement(&mut connection, "7702206").unwrap());
         expect(&connection, "7702206", Category::Texture, "eye_texture");
         assert!(!apply_booth_settlement(&mut connection, "7702207").unwrap());
-        assert!(require_product(&connection, "7702207").unwrap().category.is_none());
+        assert!(
+            require_product(&connection, "7702207")
+                .unwrap()
+                .category
+                .is_none()
+        );
         assert!(apply_booth_settlement(&mut connection, "7702208").unwrap());
         expect(&connection, "7702208", Category::World, "furniture_props");
         assert!(apply_booth_settlement(&mut connection, "7702209").unwrap());
         expect(&connection, "7702209", Category::Outfit, "outfit");
         for id in ["7702210", "7702211", "7702212"] {
-            assert!(!apply_booth_settlement(&mut connection, id).unwrap(), "{id}");
-            assert!(require_product(&connection, id).unwrap().category.is_none(), "{id}");
+            assert!(
+                !apply_booth_settlement(&mut connection, id).unwrap(),
+                "{id}"
+            );
+            assert!(
+                require_product(&connection, id).unwrap().category.is_none(),
+                "{id}"
+            );
         }
         move_product_genre(&mut connection, "7702201", "asset", "gimmick").unwrap();
         assert!(!apply_booth_settlement(&mut connection, "7702201").unwrap());
@@ -7855,7 +8212,12 @@ mod tests {
         assert_eq!(owned.category, Some(Category::Avatar));
         assert!(owned.extracted_at.is_some());
         assert_eq!(classifier_version_of(&connection, "8800882"), current);
-        assert!(require_product(&connection, "8800883").unwrap().extracted_at.is_none());
+        assert!(
+            require_product(&connection, "8800883")
+                .unwrap()
+                .extracted_at
+                .is_none()
+        );
         assert_eq!(classifier_version_of(&connection, "8800883"), 1);
 
         connection
@@ -7866,7 +8228,10 @@ mod tests {
             .unwrap();
         note_unavailable(&connection, "8800884").unwrap();
         let ended = require_product(&connection, "8800884").unwrap();
-        assert_eq!(ended.description_snippet, crate::model::UNAVAILABLE_DESCRIPTION);
+        assert_eq!(
+            ended.description_snippet,
+            crate::model::UNAVAILABLE_DESCRIPTION
+        );
         assert!(ended.extracted_at.is_some());
         assert_eq!(classifier_version_of(&connection, "8800884"), 1);
 
@@ -7923,8 +8288,16 @@ mod tests {
             stale_ids.len()
         );
         assert_eq!(classifier_version_of(&connection, "8800885"), 1);
-        assert!(require_product(&connection, "8800885").unwrap().category_locked);
-        assert!(require_product(&connection, "8800885").unwrap().genre_locked);
+        assert!(
+            require_product(&connection, "8800885")
+                .unwrap()
+                .category_locked
+        );
+        assert!(
+            require_product(&connection, "8800885")
+                .unwrap()
+                .genre_locked
+        );
 
         connection
             .execute(
@@ -8040,7 +8413,14 @@ mod tests {
             owned_ids,
             vec!["lime".to_string(), "manuka".to_string(), "plum".to_string()]
         );
-        assert_eq!(before.products.iter().filter(|product| product.category.is_none()).count(), 4);
+        assert_eq!(
+            before
+                .products
+                .iter()
+                .filter(|product| product.category.is_none())
+                .count(),
+            4
+        );
         assert!(
             before
                 .products
@@ -8179,7 +8559,12 @@ mod tests {
         );
         assert!(manuka.siblings.is_empty());
 
-        assert!(snapshot.products.iter().all(|product| product.category.is_some()));
+        assert!(
+            snapshot
+                .products
+                .iter()
+                .all(|product| product.category.is_some())
+        );
         let review: Vec<&Product> = snapshot
             .products
             .iter()
@@ -8346,7 +8731,6 @@ mod tests {
     }
 
     #[test]
-
     #[test]
     fn avatar_hero_defaults_to_small_and_accepts_large_or_off() {
         let connection = open_memory().unwrap();
@@ -8448,7 +8832,11 @@ mod tests {
         connection
             .execute("DELETE FROM settings WHERE key = 'browser_force_dark'", [])
             .unwrap();
-        assert!(setting(&connection, "browser_force_dark").unwrap().is_none());
+        assert!(
+            setting(&connection, "browser_force_dark")
+                .unwrap()
+                .is_none()
+        );
         assert!(!settings(&connection).unwrap().browser_force_dark);
         let saved = update_settings(
             &connection,
@@ -8557,7 +8945,10 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(broken.right_panel_tabs, r#"{"tabs":["preview"],"active":0}"#);
+        assert_eq!(
+            broken.right_panel_tabs,
+            r#"{"tabs":["preview"],"active":0}"#
+        );
         let empty = update_settings(
             &connection,
             &crate::model::SettingsPatch {
@@ -8643,16 +9034,34 @@ mod tests {
     #[test]
     fn unclassified_work_matches_the_unclassified_target() {
         let mut connection = open_memory().unwrap();
-        assert!(!has_unclassified_work(&connection).unwrap(), "an empty library has nothing to classify");
+        assert!(
+            !has_unclassified_work(&connection).unwrap(),
+            "an empty library has nothing to classify"
+        );
         let json = r#"{"products":[{"boothId":"1000","title":"見本の衣装","shop":"shop","description":"説明"}]}"#;
         import_products(&mut connection, &parse_export(json).unwrap()).unwrap();
         assert!(has_unclassified_work(&connection).unwrap());
-        assert_eq!(products_for_extract(&connection, ExtractTarget::Unclassified).unwrap().len(), 1);
+        assert_eq!(
+            products_for_extract(&connection, ExtractTarget::Unclassified)
+                .unwrap()
+                .len(),
+            1
+        );
         connection
-            .execute("INSERT INTO product_exclusions (booth_id, excluded_at) VALUES ('1000', 't')", [])
+            .execute(
+                "INSERT INTO product_exclusions (booth_id, excluded_at) VALUES ('1000', 't')",
+                [],
+            )
             .unwrap();
-        assert!(!has_unclassified_work(&connection).unwrap(), "an excluded product is not classified");
-        assert!(products_for_extract(&connection, ExtractTarget::Unclassified).unwrap().is_empty());
+        assert!(
+            !has_unclassified_work(&connection).unwrap(),
+            "an excluded product is not classified"
+        );
+        assert!(
+            products_for_extract(&connection, ExtractTarget::Unclassified)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -8681,7 +9090,8 @@ mod tests {
             )
             .unwrap();
         assert_eq!(kept, Some(1));
-        let gone = r#"{"boothId":"515151","title":"消えたダミー","description":"公開終了（取得できず）"}"#;
+        let gone =
+            r#"{"boothId":"515151","title":"消えたダミー","description":"公開終了（取得できず）"}"#;
         import_products(&mut connection, &parse_export(gone).unwrap()).unwrap();
         let closed: (Option<String>, Option<i64>) = connection
             .query_row(
@@ -9059,9 +9469,21 @@ mod tests {
         )
         .unwrap();
         let snapshot = load_snapshot(&mut connection).unwrap();
-        let texture = snapshot.products.iter().find(|product| product.booth_id == "7001").unwrap();
-        let gimmick = snapshot.products.iter().find(|product| product.booth_id == "7002").unwrap();
-        let named = snapshot.products.iter().find(|product| product.booth_id == "7003").unwrap();
+        let texture = snapshot
+            .products
+            .iter()
+            .find(|product| product.booth_id == "7001")
+            .unwrap();
+        let gimmick = snapshot
+            .products
+            .iter()
+            .find(|product| product.booth_id == "7002")
+            .unwrap();
+        let named = snapshot
+            .products
+            .iter()
+            .find(|product| product.booth_id == "7003")
+            .unwrap();
         assert!(texture.is_generic);
         assert!(gimmick.is_generic);
         assert!(!named.is_generic);
@@ -9268,21 +9690,63 @@ mod tests {
         import_products(&mut connection, &parse_export(json).unwrap()).unwrap();
         reresolve_all(&mut connection).unwrap();
         let snapshot = load_snapshot(&mut connection).unwrap();
-        let body = snapshot.products.iter().find(|p| p.booth_id == "8800771").unwrap();
+        let body = snapshot
+            .products
+            .iter()
+            .find(|p| p.booth_id == "8800771")
+            .unwrap();
         assert_eq!(body.category, Some(Category::Avatar));
         assert!(!body.needs_review);
-        let kaguya = snapshot.avatars.iter().find(|a| a.display_name == "輝夜").unwrap();
+        let kaguya = snapshot
+            .avatars
+            .iter()
+            .find(|a| a.display_name == "輝夜")
+            .unwrap();
         assert!(kaguya.owned);
-        assert!(kaguya.aliases.iter().any(|alias| alias.eq_ignore_ascii_case("kaguya")));
-        assert!(snapshot.links.iter().any(|link| link.product_id == "8800771" && link.avatar_id == kaguya.id));
-        assert!(snapshot.links.iter().any(|link| link.product_id == "8800772" && link.avatar_id == kaguya.id));
-        assert!(!snapshot.avatars.iter().find(|a| a.id == "lime").unwrap().owned);
+        assert!(
+            kaguya
+                .aliases
+                .iter()
+                .any(|alias| alias.eq_ignore_ascii_case("kaguya"))
+        );
+        assert!(
+            snapshot
+                .links
+                .iter()
+                .any(|link| link.product_id == "8800771" && link.avatar_id == kaguya.id)
+        );
+        assert!(
+            snapshot
+                .links
+                .iter()
+                .any(|link| link.product_id == "8800772" && link.avatar_id == kaguya.id)
+        );
+        assert!(
+            !snapshot
+                .avatars
+                .iter()
+                .find(|a| a.id == "lime")
+                .unwrap()
+                .owned
+        );
         // Reimport and reopening must not duplicate or forget the owned body.
         import_products(&mut connection, &parse_export(json).unwrap()).unwrap();
         settle_dictionary(&mut connection).unwrap();
         let after = load_snapshot(&mut connection).unwrap();
-        assert_eq!(after.avatars.iter().filter(|a| a.display_name == "輝夜").count(), 1);
-        assert!(after.avatars.iter().any(|a| a.display_name == "輝夜" && a.owned));
+        assert_eq!(
+            after
+                .avatars
+                .iter()
+                .filter(|a| a.display_name == "輝夜")
+                .count(),
+            1
+        );
+        assert!(
+            after
+                .avatars
+                .iter()
+                .any(|a| a.display_name == "輝夜" && a.owned)
+        );
     }
 
     #[test]
@@ -9301,14 +9765,29 @@ mod tests {
         import_products(&mut connection, &parse_export(json).unwrap()).unwrap();
         let kept = require_product(&connection, "8800773").unwrap();
         assert_eq!(kept.category, Some(Category::Outfit));
-        assert!(link_ids(&connection, "8800773").unwrap().iter().any(|id| id == "lime"));
+        assert!(
+            link_ids(&connection, "8800773")
+                .unwrap()
+                .iter()
+                .any(|id| id == "lime")
+        );
     }
 
     #[test]
     fn quoted_body_identity_wins_over_known_names_outside_the_quotation() {
         for (index, title, expected_name, expected_id) in [
-            (0, "オリジナル3Dモデル「輝夜」 ライム対応", "輝夜", "owned-8800780"),
-            (1, "オリジナル3Dモデル「プラム」 ライム対応", "プラム", "plum"),
+            (
+                0,
+                "オリジナル3Dモデル「輝夜」 ライム対応",
+                "輝夜",
+                "owned-8800780",
+            ),
+            (
+                1,
+                "オリジナル3Dモデル「プラム」 ライム対応",
+                "プラム",
+                "plum",
+            ),
         ] {
             let mut connection = open_memory().unwrap();
             let booth_id = format!("880078{index}");
@@ -9316,11 +9795,25 @@ mod tests {
             import_products(&mut connection, &parse_export(&json).unwrap()).unwrap();
             reresolve_all(&mut connection).unwrap();
             let snapshot = load_snapshot(&mut connection).unwrap();
-            let owned = snapshot.avatars.iter().find(|a| a.id == expected_id).unwrap();
+            let owned = snapshot
+                .avatars
+                .iter()
+                .find(|a| a.id == expected_id)
+                .unwrap();
             assert_eq!(owned.display_name, expected_name);
             assert!(owned.owned);
-            assert_eq!(link_ids(&connection, &booth_id).unwrap(), vec![expected_id.to_string()]);
-            assert!(!snapshot.avatars.iter().find(|a| a.id == "lime").unwrap().owned);
+            assert_eq!(
+                link_ids(&connection, &booth_id).unwrap(),
+                vec![expected_id.to_string()]
+            );
+            assert!(
+                !snapshot
+                    .avatars
+                    .iter()
+                    .find(|a| a.id == "lime")
+                    .unwrap()
+                    .owned
+            );
         }
     }
 
@@ -9364,12 +9857,15 @@ mod tests {
     #[test]
     fn automatic_body_registration_propagates_database_errors_and_rolls_back() {
         let mut connection = open_memory().unwrap();
-        let parsed = parse_export(r#"{"boothId":"8800783","title":"オリジナル3Dモデル「輝夜」"}"#).unwrap();
+        let parsed =
+            parse_export(r#"{"boothId":"8800783","title":"オリジナル3Dモデル「輝夜」"}"#).unwrap();
         upsert(&connection, &parsed.products[0]).unwrap();
-        connection.execute_batch(
-            "CREATE TRIGGER fail_body_link BEFORE INSERT ON product_avatars
-             BEGIN SELECT RAISE(ABORT, 'fixture body link failure'); END;"
-        ).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TRIGGER fail_body_link BEFORE INSERT ON product_avatars
+             BEGIN SELECT RAISE(ABORT, 'fixture body link failure'); END;",
+            )
+            .unwrap();
         let error = settle_dictionary(&mut connection).unwrap_err();
         assert!(error.contains("fixture body link failure"));
         assert!(!avatar_exists(&connection, "owned-8800783").unwrap());
@@ -9381,22 +9877,43 @@ mod tests {
     #[test]
     fn named_original_bodies_settle_existing_imports_but_preserve_manual_decisions() {
         let mut connection = open_memory().unwrap();
-        let parsed = parse_export(r#"{"boothId":"8800773","title":"九尾オリジナル3Dモデル「輝夜」-kaguya-"}"#).unwrap();
+        let parsed = parse_export(
+            r#"{"boothId":"8800773","title":"九尾オリジナル3Dモデル「輝夜」-kaguya-"}"#,
+        )
+        .unwrap();
         upsert(&connection, &parsed.products[0]).unwrap();
         connection.execute("UPDATE products SET category = 'outfit', category_locked = 1 WHERE booth_id = '8800773'", []).unwrap();
         settle_dictionary(&mut connection).unwrap();
-        assert_eq!(require_product(&connection, "8800773").unwrap().category, Some(Category::Outfit));
+        assert_eq!(
+            require_product(&connection, "8800773").unwrap().category,
+            Some(Category::Outfit)
+        );
         assert!(link_ids(&connection, "8800773").unwrap().is_empty());
         connection.execute("UPDATE products SET category = NULL, category_locked = 0, links_locked = 1 WHERE booth_id = '8800773'", []).unwrap();
         settle_dictionary(&mut connection).unwrap();
         assert!(link_ids(&connection, "8800773").unwrap().is_empty());
-        connection.execute("UPDATE products SET links_locked = 0 WHERE booth_id = '8800773'", []).unwrap();
+        connection
+            .execute(
+                "UPDATE products SET links_locked = 0 WHERE booth_id = '8800773'",
+                [],
+            )
+            .unwrap();
         settle_dictionary(&mut connection).unwrap();
         let snapshot = load_snapshot(&mut connection).unwrap();
-        assert!(snapshot.avatars.iter().any(|a| a.display_name == "輝夜" && a.owned));
+        assert!(
+            snapshot
+                .avatars
+                .iter()
+                .any(|a| a.display_name == "輝夜" && a.owned)
+        );
     }
 
-    fn insert_dummy_product(connection: &Connection, booth_id: &str, title: &str, description: &str) {
+    fn insert_dummy_product(
+        connection: &Connection,
+        booth_id: &str,
+        title: &str,
+        description: &str,
+    ) {
         let json = serde_json::json!({
             "boothId": booth_id,
             "title": title,
@@ -9552,12 +10069,42 @@ mod tests {
     fn quoted_original_body_guards_stay_unowned() {
         let mut connection = open_memory().unwrap();
         let cases = [
-            ("7701101", "オリジナル3Dモデル「テスト錠」-testjo-", "テスト錠", "locked"),
-            ("7701102", "オリジナル3Dモデル「テスト鎖」-testsa-", "テスト鎖", "links"),
-            ("7701103", "オリジナル3Dモデル「テスト認」-testnin-", "テスト認", "confirmed"),
-            ("7701104", "オリジナル3Dモデル「テスト甲」「テスト乙」", "テスト甲", "quotes"),
-            ("7701105", "オリジナル3Dモデル「テスト除」-testjo-", "テスト除", "excluded"),
-            ("7701106", "オリジナル3Dモデル「テスト無」-testmu-", "テスト無", "unavailable"),
+            (
+                "7701101",
+                "オリジナル3Dモデル「テスト錠」-testjo-",
+                "テスト錠",
+                "locked",
+            ),
+            (
+                "7701102",
+                "オリジナル3Dモデル「テスト鎖」-testsa-",
+                "テスト鎖",
+                "links",
+            ),
+            (
+                "7701103",
+                "オリジナル3Dモデル「テスト認」-testnin-",
+                "テスト認",
+                "confirmed",
+            ),
+            (
+                "7701104",
+                "オリジナル3Dモデル「テスト甲」「テスト乙」",
+                "テスト甲",
+                "quotes",
+            ),
+            (
+                "7701105",
+                "オリジナル3Dモデル「テスト除」-testjo-",
+                "テスト除",
+                "excluded",
+            ),
+            (
+                "7701106",
+                "オリジナル3Dモデル「テスト無」-testmu-",
+                "テスト無",
+                "unavailable",
+            ),
         ];
         for (booth_id, title, display, _kind) in cases {
             insert_dummy_product(&connection, booth_id, title, "ダミー説明です。");
@@ -10237,7 +10784,8 @@ mod tests {
     #[test]
     fn browser_download_needs_the_opt_in_and_routing_before_any_file_moves() {
         let mut connection = open_memory().unwrap();
-        let root = crate::library_files::resolved_temp_dir().join(format!("vrclibman-browser-dl-{}", std::process::id()));
+        let root = crate::library_files::resolved_temp_dir()
+            .join(format!("vrclibman-browser-dl-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let library = root.join("library");
         let downloads = root.join("Downloads");
@@ -10245,17 +10793,23 @@ mod tests {
         std::fs::create_dir_all(&downloads).unwrap();
         let payload = r#"{"boothId":"424242","title":"架空の服","downloads":[{"filename":"2336025","variation":"通常","downloadableId":"2336025"},{"filename":"note.txt","variation":"","downloadableId":""}]}"#;
         import_products(&mut connection, &parse_export(payload).unwrap()).unwrap();
-        assert!(plan_browser_download(&connection, "424242", "通常", "2336025")
-            .unwrap_err()
-            .contains("オフです。拡張"));
+        assert!(
+            plan_browser_download(&connection, "424242", "通常", "2336025")
+                .unwrap_err()
+                .contains("オフです。拡張")
+        );
         browser_settings(&connection, &library, true, false).unwrap();
-        assert!(plan_browser_download(&connection, "424242", "通常", "2336025")
-            .unwrap_err()
-            .contains("自動整理はオフ"));
+        assert!(
+            plan_browser_download(&connection, "424242", "通常", "2336025")
+                .unwrap_err()
+                .contains("自動整理はオフ")
+        );
         browser_settings(&connection, &library, true, true).unwrap();
-        assert!(plan_browser_download(&connection, "424242", "", "note.txt")
-            .unwrap_err()
-            .contains("ダウンロード番号"));
+        assert!(
+            plan_browser_download(&connection, "424242", "", "note.txt")
+                .unwrap_err()
+                .contains("ダウンロード番号")
+        );
         let plan = plan_browser_download(&connection, "424242", "通常", "2336025").unwrap();
         assert_eq!(plan.downloadable_id, "2336025");
         let legacy = r#"{"boothId":"515151","title":"架空の服","downloads":[{"filename":"8187247","variation":""}]}"#;
@@ -10273,7 +10827,11 @@ mod tests {
         crate::library_files::set_test_downloads(Some(downloads.clone()));
         let staging = crate::library_files::prepare_staging_dir(&downloads, "424242").unwrap();
         let html = staging.join("login.html");
-        std::fs::write(&html, b"<!doctype html><html><head><title>login</title></head></html>").unwrap();
+        std::fs::write(
+            &html,
+            b"<!doctype html><html><head><title>login</title></head></html>",
+        )
+        .unwrap();
         let html_plan = BrowserFilePlan {
             filename: "2336025".into(),
             ..plan.clone()
@@ -10488,7 +11046,7 @@ mod tests {
             route_downloads: false,
             background_mode: false,
             launch_at_login: true,
-                classification_dismissed_version: 0,
+            classification_dismissed_version: 0,
             ui_rail_width: 232,
             ui_rail_collapsed: false,
             ui_genre_width: 200,
@@ -10519,8 +11077,14 @@ mod tests {
         )
         .unwrap();
         let saved = settings(&connection).unwrap();
-        assert_eq!(saved.background_mode, crate::presence::background_supported());
-        assert_eq!(saved.launch_at_login, crate::presence::background_supported());
+        assert_eq!(
+            saved.background_mode,
+            crate::presence::background_supported()
+        );
+        assert_eq!(
+            saved.launch_at_login,
+            crate::presence::background_supported()
+        );
         assert_eq!(
             crate::presence::autostart_should_enable(saved.background_mode, saved.launch_at_login),
             crate::presence::background_supported()
@@ -10559,10 +11123,8 @@ mod tests {
     #[test]
     fn opening_the_database_and_the_sweep_do_not_require_booth() {
         let mut connection = open_memory().unwrap();
-        let root = std::env::temp_dir().join(format!(
-            "vrclibman-sweep-empty-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("vrclibman-sweep-empty-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("Downloads")).unwrap();
         struct ClearDownloads;
@@ -10622,7 +11184,8 @@ mod tests {
     #[test]
     fn startup_sweep_moves_only_the_staged_file_without_network() {
         let mut connection = open_memory().unwrap();
-        let root = crate::library_files::resolved_temp_dir().join(format!("vrclibman-sweep-on-{}", std::process::id()));
+        let root = crate::library_files::resolved_temp_dir()
+            .join(format!("vrclibman-sweep-on-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let downloads = root.join("Downloads");
         let library = root.join("library");
@@ -10662,10 +11225,16 @@ mod tests {
         std::fs::write(&pocket, b"via").unwrap();
         #[cfg(unix)]
         {
-            std::os::unix::fs::symlink(&outside, source.parent().unwrap().join("link.unitypackage"))
-                .unwrap();
-            std::os::unix::fs::symlink(pocket.parent().unwrap(), downloads.join("VRCLibMan").join("717171"))
-                .unwrap();
+            std::os::unix::fs::symlink(
+                &outside,
+                source.parent().unwrap().join("link.unitypackage"),
+            )
+            .unwrap();
+            std::os::unix::fs::symlink(
+                pocket.parent().unwrap(),
+                downloads.join("VRCLibMan").join("717171"),
+            )
+            .unwrap();
             let linked_root = root.join("linked-downloads");
             std::fs::create_dir_all(&linked_root).unwrap();
             std::os::unix::fs::symlink(root.join("pocket"), linked_root.join("VRCLibMan")).unwrap();
@@ -10717,7 +11286,12 @@ mod tests {
         assert_eq!(report.moved, 1);
         assert!(rejected_html.exists());
         assert!(!library.join("616161/login.zip").exists());
-        assert!(report.left.iter().any(|entry| entry.filename == "login.zip"));
+        assert!(
+            report
+                .left
+                .iter()
+                .any(|entry| entry.filename == "login.zip")
+        );
         assert!(!source.exists());
         let placed = library.join("616161").join("body.unitypackage");
         assert_eq!(std::fs::read(&placed).unwrap(), b"pkg");
@@ -10833,7 +11407,8 @@ mod tests {
         assert_eq!(classified.category, Some(Category::Outfit));
         assert!(!classified.user_confirmed);
 
-        let previous = move_product_genre(&mut connection, "424242", "world", "furniture_props").unwrap();
+        let previous =
+            move_product_genre(&mut connection, "424242", "world", "furniture_props").unwrap();
         assert_eq!(previous.category.as_deref(), Some("outfit"));
         assert!(!previous.category_locked && !previous.genre_locked);
         let moved = require_product(&connection, "424242").unwrap();
@@ -10841,12 +11416,16 @@ mod tests {
         assert_eq!(moved.genre.as_deref(), Some("furniture_props"));
         assert!(moved.category_locked && moved.genre_locked);
         assert_eq!(moved.extracted_at.as_deref(), Some(extracted_at.as_str()));
-        assert!(product_ids_by_genre(&connection, "world", Some("furniture_props"))
-            .unwrap()
-            .contains(&"424242".into()));
-        assert!(!product_ids_by_genre(&connection, "asset", None)
-            .unwrap()
-            .contains(&"424242".into()));
+        assert!(
+            product_ids_by_genre(&connection, "world", Some("furniture_props"))
+                .unwrap()
+                .contains(&"424242".into())
+        );
+        assert!(
+            !product_ids_by_genre(&connection, "asset", None)
+                .unwrap()
+                .contains(&"424242".into())
+        );
 
         // A row confirmed from the old queue keeps its flags.
         connection
@@ -10877,7 +11456,10 @@ mod tests {
         assert!(!kept.needs_review);
         assert_eq!(kept.extracted_at.as_deref(), Some(extracted_at.as_str()));
         assert!(kept.description_snippet.contains("ライム"));
-        assert_eq!(link_ids(&connection, "424242").unwrap(), vec!["lime".to_string()]);
+        assert_eq!(
+            link_ids(&connection, "424242").unwrap(),
+            vec!["lime".to_string()]
+        );
 
         apply_extraction(
             &mut connection,
@@ -10891,7 +11473,11 @@ mod tests {
         assert_eq!(still.genre.as_deref(), Some("furniture_props"));
         assert!(still.user_confirmed);
 
-        for target in [ExtractTarget::Unclassified, ExtractTarget::Stale, ExtractTarget::All] {
+        for target in [
+            ExtractTarget::Unclassified,
+            ExtractTarget::Stale,
+            ExtractTarget::All,
+        ] {
             assert!(
                 !products_for_extract(&connection, target)
                     .unwrap()
@@ -10924,14 +11510,18 @@ mod tests {
             classification_status(&connection).unwrap().stale_count,
             pinned_stale + 1
         );
-        assert!(products_for_extract(&connection, ExtractTarget::Stale)
-            .unwrap()
-            .iter()
-            .any(|job| job.booth_id == "424242"));
-        assert!(products_for_extract(&connection, ExtractTarget::All)
-            .unwrap()
-            .iter()
-            .any(|job| job.booth_id == "424242"));
+        assert!(
+            products_for_extract(&connection, ExtractTarget::Stale)
+                .unwrap()
+                .iter()
+                .any(|job| job.booth_id == "424242")
+        );
+        assert!(
+            products_for_extract(&connection, ExtractTarget::All)
+                .unwrap()
+                .iter()
+                .any(|job| job.booth_id == "424242")
+        );
 
         restore_product_classification(&mut connection, &previous).unwrap();
         let restored = require_product(&connection, "424242").unwrap();
@@ -10998,8 +11588,14 @@ mod tests {
         let before = require_product(&connection, "424302").unwrap();
         match register_manual_owned_body(&mut connection, "424302", None).unwrap() {
             RegisterOwnedBodyResult::NeedsName { candidates, .. } => {
-                assert!(candidates.iter().any(|name| name == "ライム"), "{candidates:?}");
-                assert!(candidates.iter().any(|name| name == "プラム"), "{candidates:?}");
+                assert!(
+                    candidates.iter().any(|name| name == "ライム"),
+                    "{candidates:?}"
+                );
+                assert!(
+                    candidates.iter().any(|name| name == "プラム"),
+                    "{candidates:?}"
+                );
             }
             RegisterOwnedBodyResult::Registered { .. } => panic!("ambiguous name was registered"),
         }
@@ -11021,7 +11617,8 @@ mod tests {
         assert!(register_manual_owned_body(&mut connection, "424303", Some("")).is_err());
         assert!(register_manual_owned_body(&mut connection, "424303", Some("汎用")).is_err());
 
-        let created = register_manual_owned_body(&mut connection, "424303", Some("見本丸")).unwrap();
+        let created =
+            register_manual_owned_body(&mut connection, "424303", Some("見本丸")).unwrap();
         let (snapshot, avatar_id) = match created {
             RegisterOwnedBodyResult::Registered {
                 snapshot,
@@ -11044,12 +11641,16 @@ mod tests {
             vec![("owned-424303".to_string(), "owned".to_string())]
         );
         assert_eq!(owned_flag(&connection, "owned-424303"), 1);
-        assert!(!product_ids_by_genre(&connection, "asset", Some("other"))
-            .unwrap()
-            .contains(&"424303".into()));
-        assert!(avatar_cards(&load_snapshot(&connection).unwrap())
-            .iter()
-            .any(|card| card.id == "owned-424303" && card.owned));
+        assert!(
+            !product_ids_by_genre(&connection, "asset", Some("other"))
+                .unwrap()
+                .contains(&"424303".into())
+        );
+        assert!(
+            avatar_cards(&load_snapshot(&connection).unwrap())
+                .iter()
+                .any(|card| card.id == "owned-424303" && card.owned)
+        );
 
         apply_extraction(
             &mut connection,
@@ -11078,7 +11679,11 @@ mod tests {
             link_rows(&connection, "424303"),
             vec![("owned-424303".to_string(), "owned".to_string())]
         );
-        for target in [ExtractTarget::Unclassified, ExtractTarget::Stale, ExtractTarget::All] {
+        for target in [
+            ExtractTarget::Unclassified,
+            ExtractTarget::Stale,
+            ExtractTarget::All,
+        ] {
             assert!(
                 !products_for_extract(&connection, target)
                     .unwrap()
@@ -11112,11 +11717,15 @@ mod tests {
                 assert_eq!(avatar_id, "owned-424301");
                 snapshot
             }
-            RegisterOwnedBodyResult::NeedsName { .. } => panic!("one extracted name should register"),
+            RegisterOwnedBodyResult::NeedsName { .. } => {
+                panic!("one extracted name should register")
+            }
         };
-        assert!(register_manual_owned_body(&mut connection, "424301", None)
-            .unwrap_err()
-            .contains("すでにアバター"));
+        assert!(
+            register_manual_owned_body(&mut connection, "424301", None)
+                .unwrap_err()
+                .contains("すでにアバター")
+        );
         let released = unpin_product_classification(&mut connection, "424301").unwrap();
         let open = require_product(&connection, "424301").unwrap();
         assert_eq!(open.category, Some(Category::Other));
@@ -11207,14 +11816,20 @@ mod tests {
         assert!(!quoted_back.category_locked && !quoted_back.genre_locked);
 
         set_product_excluded(&mut connection, "424306", true).unwrap();
-        assert!(register_manual_owned_body(&mut connection, "424306", Some("見本丸"))
-            .unwrap_err()
-            .contains("除外"));
+        assert!(
+            register_manual_owned_body(&mut connection, "424306", Some("見本丸"))
+                .unwrap_err()
+                .contains("除外")
+        );
     }
 
     fn owned_flag(connection: &Connection, id: &str) -> i64 {
         connection
-            .query_row("SELECT owned FROM avatars WHERE id = ?1", params![id], |row| row.get(0))
+            .query_row(
+                "SELECT owned FROM avatars WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
             .unwrap()
     }
 
@@ -11284,7 +11899,12 @@ mod tests {
             ]
         );
         let detail = avatar_detail(&load_snapshot(&connection).unwrap(), "lime").unwrap();
-        assert!(detail.unset_edition_items.iter().any(|item| item.booth_id == "515151"));
+        assert!(
+            detail
+                .unset_edition_items
+                .iter()
+                .any(|item| item.booth_id == "515151")
+        );
 
         apply_extraction(
             &mut connection,
@@ -11297,21 +11917,53 @@ mod tests {
         assert_eq!(reclassified.category, Some(Category::Hair));
         assert!(!reclassified.category_locked && !reclassified.genre_locked);
         assert!(reclassified.links_locked);
-        assert!(link_rows(&connection, "515151").iter().any(|(avatar, source)| avatar == "lime" && source == "manual"));
+        assert!(
+            link_rows(&connection, "515151")
+                .iter()
+                .any(|(avatar, source)| avatar == "lime" && source == "manual")
+        );
 
         let world = add_free_product(&mut connection, "https://booth.pm/ja/items/525252").unwrap();
-        apply_extraction(&mut connection, &world, &extraction(Category::World, &[], false, 0.9), 0.6).unwrap();
-        assert!(attach_product_to_avatar(&mut connection, "lime", "525252").unwrap_err().contains("ワールド"));
+        apply_extraction(
+            &mut connection,
+            &world,
+            &extraction(Category::World, &[], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        assert!(
+            attach_product_to_avatar(&mut connection, "lime", "525252")
+                .unwrap_err()
+                .contains("ワールド")
+        );
         assert!(link_rows(&connection, "525252").is_empty());
 
         let body = add_free_product(&mut connection, "https://booth.pm/ja/items/535353").unwrap();
-        apply_extraction(&mut connection, &body, &extraction(Category::Avatar, &["ライム"], false, 0.9), 0.6).unwrap();
-        assert!(attach_product_to_avatar(&mut connection, "plum", "535353").unwrap_err().contains("アバター本体"));
-        assert!(!link_rows(&connection, "535353").iter().any(|(avatar, _)| avatar == "plum"));
+        apply_extraction(
+            &mut connection,
+            &body,
+            &extraction(Category::Avatar, &["ライム"], false, 0.9),
+            0.6,
+        )
+        .unwrap();
+        assert!(
+            attach_product_to_avatar(&mut connection, "plum", "535353")
+                .unwrap_err()
+                .contains("アバター本体")
+        );
+        assert!(
+            !link_rows(&connection, "535353")
+                .iter()
+                .any(|(avatar, _)| avatar == "plum")
+        );
 
         let hidden = add_free_product(&mut connection, "https://booth.pm/ja/items/545454").unwrap();
         set_product_excluded(&mut connection, &hidden, true).unwrap();
-        assert!(attach_product_to_avatar(&mut connection, "lime", "545454").unwrap_err().contains("除外"));
+        assert!(
+            attach_product_to_avatar(&mut connection, "lime", "545454")
+                .unwrap_err()
+                .contains("除外")
+        );
         assert!(attach_product_to_avatar(&mut connection, "missing", "515151").is_err());
         assert!(attach_product_to_avatar(&mut connection, "lime", "999999").is_err());
     }
@@ -11393,7 +12045,8 @@ mod tests {
         assert_eq!(moves, 3);
 
         let both: serde_json::Value =
-            serde_json::from_str(&classification_feedback_json(&connection, "both").unwrap()).unwrap();
+            serde_json::from_str(&classification_feedback_json(&connection, "both").unwrap())
+                .unwrap();
         assert_eq!(both["format"], "vrclibman.classification-feedback");
         assert_eq!(both["version"], 1);
         assert_eq!(both["scope"], "both");
@@ -11412,8 +12065,16 @@ mod tests {
             .iter()
             .find(|row| row["boothId"] == "8800201")
             .unwrap();
-        assert_eq!(long["descriptionHead"].as_str().unwrap().chars().count(), 400);
-        assert!(!long["descriptionHead"].as_str().unwrap().contains("末尾マーカー"));
+        assert_eq!(
+            long["descriptionHead"].as_str().unwrap().chars().count(),
+            400
+        );
+        assert!(
+            !long["descriptionHead"]
+                .as_str()
+                .unwrap()
+                .contains("末尾マーカー")
+        );
         assert_eq!(long["classificationStatus"], "classified");
         assert_eq!(long["category"], "other");
         assert_eq!(long["genre"], "shader");
@@ -11456,7 +12117,8 @@ mod tests {
         assert_eq!(manual, vec!["8800203"]);
 
         let other: serde_json::Value =
-            serde_json::from_str(&classification_feedback_json(&connection, "other").unwrap()).unwrap();
+            serde_json::from_str(&classification_feedback_json(&connection, "other").unwrap())
+                .unwrap();
         let other_ids: Vec<&str> = other["products"]
             .as_array()
             .unwrap()
@@ -11467,8 +12129,10 @@ mod tests {
         assert_eq!(other["manualClassifications"].as_array().unwrap().len(), 1);
         assert_eq!(other["corrections"].as_array().unwrap().len(), 3);
 
-        let unclassified: serde_json::Value =
-            serde_json::from_str(&classification_feedback_json(&connection, "unclassified").unwrap()).unwrap();
+        let unclassified: serde_json::Value = serde_json::from_str(
+            &classification_feedback_json(&connection, "unclassified").unwrap(),
+        )
+        .unwrap();
         let unclassified_ids: Vec<&str> = unclassified["products"]
             .as_array()
             .unwrap()
@@ -11511,7 +12175,15 @@ mod tests {
         }
         let mut found = Vec::new();
         keys(&both, &mut found);
-        for key in ["url", "thumbnailUrl", "thumbnailPath", "path", "token", "localPath", "filename"] {
+        for key in [
+            "url",
+            "thumbnailUrl",
+            "thumbnailPath",
+            "path",
+            "token",
+            "localPath",
+            "filename",
+        ] {
             assert!(!found.iter().any(|item| item == key), "{key}");
         }
 
@@ -11531,12 +12203,14 @@ mod tests {
         assert!(saved.contains("8800201"));
         assert!(save_classification_feedback(&connection, "both", &dir.join("notes.txt")).is_err());
         assert!(save_classification_feedback(&connection, "nope", &destination).is_err());
-        assert!(save_classification_feedback(
-            &connection,
-            "both",
-            &dir.join("missing").join("out.json")
-        )
-        .is_err());
+        assert!(
+            save_classification_feedback(
+                &connection,
+                "both",
+                &dir.join("missing").join("out.json")
+            )
+            .is_err()
+        );
         #[cfg(unix)]
         {
             let secret = dir.join("secret.json");
@@ -11674,13 +12348,21 @@ mod tests {
     #[test]
     fn seed_base_bodies_have_sources_and_unique_members() {
         let seed = seed_file().unwrap();
-        let bodies: HashSet<&str> = seed.base_bodies.iter().map(|body| body.id.as_str()).collect();
+        let bodies: HashSet<&str> = seed
+            .base_bodies
+            .iter()
+            .map(|body| body.id.as_str())
+            .collect();
         assert_eq!(bodies.len(), seed.base_bodies.len());
         for body in &seed.base_bodies {
             assert!(valid_id(&body.id), "{}", body.id);
             assert!(body.revision <= seed.revision, "{}", body.id);
             assert!(body.note.chars().count() <= 400, "{}", body.id);
-            assert!(body.note.contains("https://booth.pm/"), "{} の note に出典が無い", body.id);
+            assert!(
+                body.note.contains("https://booth.pm/"),
+                "{} の note に出典が無い",
+                body.id
+            );
             let members = seed
                 .avatars
                 .iter()
@@ -11693,7 +12375,11 @@ mod tests {
         for avatar in &seed.avatars {
             if let Some(body) = avatar.base_body.as_deref() {
                 assert!(bodies.contains(body), "{} の素体 {body} が無い", avatar.id);
-                assert!(avatar.booth_id.is_some(), "{} に Booth ID が無い", avatar.id);
+                assert!(
+                    avatar.booth_id.is_some(),
+                    "{} に Booth ID が無い",
+                    avatar.id
+                );
             }
             if let Some(booth) = avatar.booth_id.as_deref() {
                 assert!(booths.insert(booth), "Booth ID {booth} が重複");
@@ -11701,7 +12387,11 @@ mod tests {
             for name in std::iter::once(&avatar.display_name).chain(avatar.aliases.iter()) {
                 let key = crate::normalize::normalize_label(name);
                 if let Some(other) = keys.insert(key.clone(), &avatar.id) {
-                    assert_eq!(other, avatar.id, "名前 {name} が {other} と {} に当たる", avatar.id);
+                    assert_eq!(
+                        other, avatar.id,
+                        "名前 {name} が {other} と {} に当たる",
+                        avatar.id
+                    );
                 }
             }
         }
@@ -11711,7 +12401,10 @@ mod tests {
             .filter(|avatar| avatar.base_body.as_deref() == Some("komado"))
             .map(|avatar| avatar.id.as_str())
             .collect();
-        assert_eq!(komado, vec!["lime", "plum", "chiffon", "chocolat", "mf-8962830"]);
+        assert_eq!(
+            komado,
+            vec!["lime", "plum", "chiffon", "chocolat", "mf-8962830"]
+        );
         for id in ["manuka", "shinano"] {
             let avatar = seed.avatars.iter().find(|avatar| avatar.id == id).unwrap();
             assert_eq!(avatar.base_body, None);
@@ -11726,7 +12419,13 @@ mod tests {
     #[test]
     fn fresh_library_groups_catalog_avatars_by_seed_base_body() {
         let connection = open_memory().unwrap();
-        for name in ["まめひなた", "キプフェル", "ルキフェル", "ライム", "リーファ"] {
+        for name in [
+            "まめひなた",
+            "キプフェル",
+            "ルキフェル",
+            "ライム",
+            "リーファ",
+        ] {
             assert_eq!(avatars_named(&connection, name).len(), 1, "{name}");
         }
         for avatar in seed_file().unwrap().avatars {
@@ -11734,16 +12433,35 @@ mod tests {
                 continue;
             };
             assert_eq!(
-                avatar_id_for_booth(&connection, booth_id).unwrap().as_deref(),
+                avatar_id_for_booth(&connection, booth_id)
+                    .unwrap()
+                    .as_deref(),
                 Some(avatar.id.as_str()),
                 "{booth_id}"
             );
-            assert_eq!(base_body_of(&connection, &avatar.id), avatar.base_body, "{}", avatar.id);
+            assert_eq!(
+                base_body_of(&connection, &avatar.id),
+                avatar.base_body,
+                "{}",
+                avatar.id
+            );
         }
-        assert_eq!(base_body_of(&connection, "mf-4340548").as_deref(), Some("mamefriends"));
-        assert_eq!(base_body_of(&connection, "mf-5813187").as_deref(), Some("mamefriends"));
-        assert_eq!(base_body_of(&connection, "mf-2040716").as_deref(), Some("ym-body-women-m"));
-        assert_eq!(base_body_of(&connection, "mf-2040691").as_deref(), Some("ym-body-women-s"));
+        assert_eq!(
+            base_body_of(&connection, "mf-4340548").as_deref(),
+            Some("mamefriends")
+        );
+        assert_eq!(
+            base_body_of(&connection, "mf-5813187").as_deref(),
+            Some("mamefriends")
+        );
+        assert_eq!(
+            base_body_of(&connection, "mf-2040716").as_deref(),
+            Some("ym-body-women-m")
+        );
+        assert_eq!(
+            base_body_of(&connection, "mf-2040691").as_deref(),
+            Some("ym-body-women-s")
+        );
         assert_eq!(base_body_of(&connection, "lime").as_deref(), Some("komado"));
         assert_eq!(base_body_of(&connection, "manuka"), None);
         assert_eq!(base_body_of(&connection, "shinano"), None);
@@ -11751,8 +12469,18 @@ mod tests {
         let karin = avatars_named(&connection, "カリン");
         assert_eq!(karin.len(), 1);
         assert_eq!(base_body_of(&connection, &karin[0]), None);
-        assert_eq!(avatar_id_for_booth(&connection, "4340548").unwrap().as_deref(), Some("mf-4340548"));
-        assert_eq!(avatar_id_for_booth(&connection, "4876459").unwrap().as_deref(), Some("lime"));
+        assert_eq!(
+            avatar_id_for_booth(&connection, "4340548")
+                .unwrap()
+                .as_deref(),
+            Some("mf-4340548")
+        );
+        assert_eq!(
+            avatar_id_for_booth(&connection, "4876459")
+                .unwrap()
+                .as_deref(),
+            Some("lime")
+        );
         assert_eq!(
             setting(&connection, "seed_revision").unwrap(),
             Some(seed_file().unwrap().revision.to_string())
@@ -11775,8 +12503,14 @@ mod tests {
         let inserted = ensure_ready(&connection).unwrap();
         assert_eq!(inserted, 0);
         assert_eq!(load_avatars(&connection).unwrap().len(), before);
-        assert_eq!(base_body_of(&connection, "mf-4340548").as_deref(), Some("mamefriends"));
-        assert_eq!(base_body_of(&connection, "mf-7163384").as_deref(), Some("chiwado-palfy"));
+        assert_eq!(
+            base_body_of(&connection, "mf-4340548").as_deref(),
+            Some("mamefriends")
+        );
+        assert_eq!(
+            base_body_of(&connection, "mf-7163384").as_deref(),
+            Some("chiwado-palfy")
+        );
         // こまどは以前からある素体なので、ユーザーが外したシフォンは戻さない。
         assert_eq!(base_body_of(&connection, "chiffon"), None);
 
@@ -11787,7 +12521,10 @@ mod tests {
         // 「初期データを追加」は消した素体と、その素体の空欄を戻す。
         let added = restore_seed(&mut connection).unwrap();
         assert!(added >= 15, "{added}");
-        assert_eq!(base_body_of(&connection, "mf-4340548").as_deref(), Some("mamefriends"));
+        assert_eq!(
+            base_body_of(&connection, "mf-4340548").as_deref(),
+            Some("mamefriends")
+        );
         assert_eq!(base_body_of(&connection, "chiffon"), None);
         assert_eq!(avatars_named(&connection, "まめひなた").len(), 1);
     }
@@ -11801,16 +12538,27 @@ mod tests {
              UPDATE settings SET value = '1' WHERE key = 'seed_revision';";
         connection.execute_batch(forget_salt).unwrap();
         assert_eq!(ensure_ready(&connection).unwrap(), 1);
-        assert_eq!(base_body_of(&connection, "mf-8962830").as_deref(), Some("komado"));
         assert_eq!(
-            avatar_id_for_booth(&connection, "8962830").unwrap().as_deref(),
+            base_body_of(&connection, "mf-8962830").as_deref(),
+            Some("komado")
+        );
+        assert_eq!(
+            avatar_id_for_booth(&connection, "8962830")
+                .unwrap()
+                .as_deref(),
             Some("mf-8962830")
         );
-        assert_eq!(avatars_named(&connection, "Salt"), vec!["mf-8962830".to_string()]);
+        assert_eq!(
+            avatars_named(&connection, "Salt"),
+            vec!["mf-8962830".to_string()]
+        );
 
         // 二度目の起動では足さない。
         assert_eq!(ensure_ready(&connection).unwrap(), 0);
-        assert_eq!(avatars_named(&connection, "ソルト"), vec!["mf-8962830".to_string()]);
+        assert_eq!(
+            avatars_named(&connection, "ソルト"),
+            vec!["mf-8962830".to_string()]
+        );
 
         // こまどを消してあれば、ソルトは素体なしで足す。
         connection.execute_batch(forget_salt).unwrap();
@@ -11829,8 +12577,14 @@ mod tests {
             )
             .unwrap();
         assert_eq!(ensure_ready(&connection).unwrap(), 0);
-        assert_eq!(base_body_of(&connection, "my-salt").as_deref(), Some("komado"));
-        assert_eq!(avatars_named(&connection, "ソルト"), vec!["my-salt".to_string()]);
+        assert_eq!(
+            base_body_of(&connection, "my-salt").as_deref(),
+            Some("komado")
+        );
+        assert_eq!(
+            avatars_named(&connection, "ソルト"),
+            vec!["my-salt".to_string()]
+        );
     }
 
     #[test]
@@ -11846,11 +12600,22 @@ mod tests {
             )
             .unwrap();
         assert_eq!(ensure_ready(&connection).unwrap(), 0);
-        assert_eq!(avatars_named(&connection, "ネメシス"), vec!["nemesis-user".to_string()]);
-        assert_eq!(base_body_of(&connection, "nemesis-user").as_deref(), Some("komainu-nemesis"));
-        assert_eq!(base_body_of(&connection, "mf-6663666").as_deref(), Some("komainu-nemesis"));
         assert_eq!(
-            avatar_id_for_booth(&connection, "5986971").unwrap().as_deref(),
+            avatars_named(&connection, "ネメシス"),
+            vec!["nemesis-user".to_string()]
+        );
+        assert_eq!(
+            base_body_of(&connection, "nemesis-user").as_deref(),
+            Some("komainu-nemesis")
+        );
+        assert_eq!(
+            base_body_of(&connection, "mf-6663666").as_deref(),
+            Some("komainu-nemesis")
+        );
+        assert_eq!(
+            avatar_id_for_booth(&connection, "5986971")
+                .unwrap()
+                .as_deref(),
             Some("nemesis-user")
         );
     }
@@ -11869,7 +12634,10 @@ mod tests {
             .unwrap();
         assert_eq!(ensure_ready(&connection).unwrap(), 1);
         assert_eq!(base_body_of(&connection, "other-nemesis"), None);
-        assert_eq!(base_body_of(&connection, "mf-5986971").as_deref(), Some("komainu-nemesis"));
+        assert_eq!(
+            base_body_of(&connection, "mf-5986971").as_deref(),
+            Some("komainu-nemesis")
+        );
     }
 
     #[test]
@@ -11894,7 +12662,12 @@ mod tests {
         connection.execute_batch("INSERT OR REPLACE INTO purchased_editions SELECT booth_id, '{\"mode\":\"all\",\"avatarIds\":[]}' FROM products").unwrap();
         let snapshot = load_snapshot(&mut connection).unwrap();
         let kipfel = avatar_detail(&snapshot, "mf-5813187").unwrap();
-        assert!(kipfel.siblings.iter().any(|sibling| sibling.id == "mf-4340548"));
+        assert!(
+            kipfel
+                .siblings
+                .iter()
+                .any(|sibling| sibling.id == "mf-4340548")
+        );
         assert_eq!(
             section_items(&kipfel, "outfit"),
             vec![("8800501".to_string(), true)]
@@ -12031,23 +12804,36 @@ pub(crate) fn browser_auto_finish(connection: &mut Connection, id: &str) -> Resu
     connection
         .execute(
             "DELETE FROM settings WHERE key IN (?1, ?2)",
-            [format!("browser_auto_pending:{id}"), format!("extension_import_pending:{id}")],
+            [
+                format!("browser_auto_pending:{id}"),
+                format!("extension_import_pending:{id}"),
+            ],
         )
         .sql()?;
     Ok(())
 }
 
 /// Explicit extension download import; independent of native browser preferences.
-pub(crate) fn extension_import_product(connection: &mut Connection, text: &str) -> Result<ImportReport, String> {
-    let product: serde_json::Value = serde_json::from_str(text).map_err(|_| "商品情報を読めません".to_string())?;
-    let id = product.get("boothId").and_then(|v| v.as_str()).unwrap_or("");
+pub(crate) fn extension_import_product(
+    connection: &mut Connection,
+    text: &str,
+) -> Result<ImportReport, String> {
+    let product: serde_json::Value =
+        serde_json::from_str(text).map_err(|_| "商品情報を読めません".to_string())?;
+    let id = product
+        .get("boothId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     if !crate::library_files::valid_booth_id(id) {
         return Err("商品IDを特定できません".into());
     }
     if product_excluded(connection, id)? {
         return Err("除外中の商品はインポートできません".into());
     }
-    let report = import_export_json(connection, &crate::browser::export_json(serde_json::json!([product])))?;
+    let report = import_export_json(
+        connection,
+        &crate::browser::export_json(serde_json::json!([product])),
+    )?;
     let p = require_product(connection, id)?;
     if !p.user_confirmed && !classification_pinned(&p) {
         set_setting(connection, &format!("extension_import_pending:{id}"), "1")?;
@@ -12063,15 +12849,30 @@ pub(crate) struct AvatarSuggestions {
 }
 
 /// Read only: candidates come from explicit page evidence and the editable dictionary.
-pub(crate) fn product_avatar_suggestions(connection: &Connection, id: &str) -> Result<AvatarSuggestions, String> {
+pub(crate) fn product_avatar_suggestions(
+    connection: &Connection,
+    id: &str,
+) -> Result<AvatarSuggestions, String> {
     let product = require_product(connection, id)?;
     let avatars = load_avatars(connection)?;
-    let names = crate::compat::names_for_extraction(&product.title, &product.description_snippet, &[], &avatars);
-    let mut result = AvatarSuggestions { avatar_ids: vec![], unresolved_names: vec![] };
+    let names = crate::compat::names_for_extraction(
+        &product.title,
+        &product.description_snippet,
+        &[],
+        &avatars,
+    );
+    let mut result = AvatarSuggestions {
+        avatar_ids: vec![],
+        unresolved_names: vec![],
+    };
     for name in names {
         if let Some(avatar) = crate::resolve::resolve_name(&name, &avatars) {
-            if !result.avatar_ids.contains(&avatar.id) { result.avatar_ids.push(avatar.id.clone()); }
-        } else if !result.unresolved_names.contains(&name) { result.unresolved_names.push(name); }
+            if !result.avatar_ids.contains(&avatar.id) {
+                result.avatar_ids.push(avatar.id.clone());
+            }
+        } else if !result.unresolved_names.contains(&name) {
+            result.unresolved_names.push(name);
+        }
     }
     Ok(result)
 }
@@ -12090,19 +12891,34 @@ pub(crate) struct GenreSuggestion {
 
 /// 分類と同じ順（自動の分類の結果、BOOTH のカテゴリとタグ、タイトルと説明の規則）で候補を決める。
 /// 規則で何も手がかりが無い「その他」は候補にしない。見本の「衣装」のような決め打ちの初期値を確定させないため。
-pub(crate) fn product_genre_suggestion(connection: &Connection, id: &str) -> Result<GenreSuggestion, String> {
+pub(crate) fn product_genre_suggestion(
+    connection: &Connection,
+    id: &str,
+) -> Result<GenreSuggestion, String> {
     let product = require_product(connection, id)?;
-    let pick = |category: Category, genre: Option<String>, source: &str| -> Option<GenreSuggestion> {
-        let kind = match category {
-            Category::Avatar => return Some(GenreSuggestion { kind: Some("avatar".into()), genre: None, source: Some(source.into()) }),
-            Category::World => "world",
-            _ => "asset",
+    let pick =
+        |category: Category, genre: Option<String>, source: &str| -> Option<GenreSuggestion> {
+            let kind = match category {
+                Category::Avatar => {
+                    return Some(GenreSuggestion {
+                        kind: Some("avatar".into()),
+                        genre: None,
+                        source: Some(source.into()),
+                    });
+                }
+                Category::World => "world",
+                _ => "asset",
+            };
+            let genre = genre.filter(|value| {
+                crate::genre::kind_genres(kind)
+                    .is_some_and(|list| list.iter().any(|(key, _)| key == value))
+            })?;
+            Some(GenreSuggestion {
+                kind: Some(kind.into()),
+                genre: Some(genre),
+                source: Some(source.into()),
+            })
         };
-        let genre = genre.filter(|value| {
-            crate::genre::kind_genres(kind).is_some_and(|list| list.iter().any(|(key, _)| key == value))
-        })?;
-        Some(GenreSuggestion { kind: Some(kind.into()), genre: Some(genre), source: Some(source.into()) })
-    };
     if product.extracted_at.is_some() {
         if let Some(category) = product.category {
             if let Some(found) = pick(category, product.genre.clone(), "classified") {
@@ -12113,28 +12929,38 @@ pub(crate) fn product_genre_suggestion(connection: &Connection, id: &str) -> Res
     let meta = booth_meta(connection, id)?;
     if let Some(mut settlement) = crate::booth_category::settle(meta.id, &meta.name, &meta.tags) {
         if crate::booth_category::is_coarse_tool(meta.id, &meta.name) {
-            if let Some((category, genre)) =
-                crate::classifier::coarse_tool_override(&product.title, &product.description_snippet)
-            {
+            if let Some((category, genre)) = crate::classifier::coarse_tool_override(
+                &product.title,
+                &product.description_snippet,
+            ) {
                 settlement.category = category;
                 settlement.genre = Some(genre);
             }
         }
-        let genre = settlement.genre.clone().or_else(|| Some(crate::genre::validate(settlement.category, None)));
+        let genre = settlement
+            .genre
+            .clone()
+            .or_else(|| Some(crate::genre::validate(settlement.category, None)));
         if let Some(found) = pick(settlement.category, genre, "booth") {
             return Ok(found);
         }
     }
     if product.description_snippet != crate::model::UNAVAILABLE_DESCRIPTION {
-        let extraction = crate::classifier::rule_extraction(&product.title, &product.description_snippet);
-        let no_signal = extraction.category == Category::Other && extraction.genre.as_deref() == Some("other");
+        let extraction =
+            crate::classifier::rule_extraction(&product.title, &product.description_snippet);
+        let no_signal =
+            extraction.category == Category::Other && extraction.genre.as_deref() == Some("other");
         if !no_signal {
             if let Some(found) = pick(extraction.category, extraction.genre, "rules") {
                 return Ok(found);
             }
         }
     }
-    Ok(GenreSuggestion { kind: None, genre: None, source: None })
+    Ok(GenreSuggestion {
+        kind: None,
+        genre: None,
+        source: None,
+    })
 }
 
 #[cfg(test)]
@@ -12158,15 +12984,33 @@ mod browser_auto_tests {
         ]}"#;
         import_products(&mut c, &crate::import_data::parse_export(json).unwrap()).unwrap();
         let outfit = product_genre_suggestion(&c, "1001").unwrap();
-        assert_eq!((outfit.kind.as_deref(), outfit.genre.as_deref(), outfit.source.as_deref()), (Some("asset"), Some("outfit"), Some("rules")));
+        assert_eq!(
+            (
+                outfit.kind.as_deref(),
+                outfit.genre.as_deref(),
+                outfit.source.as_deref()
+            ),
+            (Some("asset"), Some("outfit"), Some("rules"))
+        );
         let blank = product_genre_suggestion(&c, "1002").unwrap();
-        assert_eq!(blank, GenreSuggestion { kind: None, genre: None, source: None }, "no evidence: the person chooses");
+        assert_eq!(
+            blank,
+            GenreSuggestion {
+                kind: None,
+                genre: None,
+                source: None
+            },
+            "no evidence: the person chooses"
+        );
         let world = product_genre_suggestion(&c, "1003").unwrap();
         assert_eq!(world.kind.as_deref(), Some("world"));
         // BOOTH のカテゴリが決まっていれば、それを先に使う。
         c.execute("UPDATE products SET booth_category_id = 209, booth_category_name = '3D衣装' WHERE booth_id = '1002'", []).unwrap();
         let booth = product_genre_suggestion(&c, "1002").unwrap();
-        assert_eq!((booth.kind.as_deref(), booth.source.as_deref()), (Some("asset"), Some("booth")));
+        assert_eq!(
+            (booth.kind.as_deref(), booth.source.as_deref()),
+            (Some("asset"), Some("booth"))
+        );
         // 読むだけで、分類も固定もしない。
         let product = require_product(&c, "1001").unwrap();
         assert!(product.category.is_none() && !product.category_locked && !product.genre_locked);
@@ -12181,20 +13025,35 @@ mod browser_auto_tests {
         extension_import_product(&mut c, &text).unwrap();
         assert_eq!(browser_auto_pending(&c).unwrap().len(), 1);
         assert!(browser_auto_finish(&mut c, "123456").is_err());
-        move_product_genre_with_avatars(&mut c, "123456", "asset", "hair", Some(vec!["lime".into()])).unwrap();
+        move_product_genre_with_avatars(
+            &mut c,
+            "123456",
+            "asset",
+            "hair",
+            Some(vec!["lime".into()]),
+        )
+        .unwrap();
         browser_auto_finish(&mut c, "123456").unwrap();
         extension_import_product(&mut c, &text).unwrap();
         assert!(browser_auto_pending(&c).unwrap().is_empty());
-        assert_eq!(require_product(&c, "123456").unwrap().genre.as_deref(), Some("hair"));
+        assert_eq!(
+            require_product(&c, "123456").unwrap().genre.as_deref(),
+            Some("hair")
+        );
         assert_eq!(link_ids(&c, "123456").unwrap(), vec!["lime".to_string()]);
     }
     #[test]
     fn page_avatar_extraction_is_read_only_and_does_not_expand_shared_bodies() {
         let mut c = open_memory().unwrap();
-        extension_import_product(&mut c, &serde_json::json!({
-            "boothId":"123456", "title":"【ライム対応】見本の衣装",
-            "description":"対応アバター\nライム\nマヌカ\n架空ちゃん\n利用規約\nテスト用の文章"
-        }).to_string()).unwrap();
+        extension_import_product(
+            &mut c,
+            &serde_json::json!({
+                "boothId":"123456", "title":"【ライム対応】見本の衣装",
+                "description":"対応アバター\nライム\nマヌカ\n架空ちゃん\n利用規約\nテスト用の文章"
+            })
+            .to_string(),
+        )
+        .unwrap();
         let before = link_ids(&c, "123456").unwrap();
         let result = product_avatar_suggestions(&c, "123456").unwrap();
         assert!(result.avatar_ids.contains(&"lime".to_string()));
@@ -12208,7 +13067,16 @@ mod browser_auto_tests {
         let mut c = open_memory().unwrap();
         extension_import_product(&mut c, &product("123456").to_string()).unwrap();
         let before = require_product(&c, "123456").unwrap();
-        assert!(move_product_genre_with_avatars(&mut c, "123456", "asset", "hair", Some(vec!["missing-avatar".into()])).is_err());
+        assert!(
+            move_product_genre_with_avatars(
+                &mut c,
+                "123456",
+                "asset",
+                "hair",
+                Some(vec!["missing-avatar".into()])
+            )
+            .is_err()
+        );
         let after = require_product(&c, "123456").unwrap();
         assert_eq!(before.category, after.category);
         assert_eq!(before.genre, after.genre);
@@ -12317,13 +13185,20 @@ mod builtin_browser_cache_tests {
         let source = include_str!("db.rs").replace("\r\n", "\n");
         let save = &source[source.find("fn save_settings_values(").unwrap()..];
         let save = &save[..save.find("\n}\n").unwrap()];
-        let forget = save.find("forget_builtin_browser();").expect("settings save clears the flag");
-        let write = save.find("\"builtin_browser\",").expect("settings save writes the flag");
+        let forget = save
+            .find("forget_builtin_browser();")
+            .expect("settings save clears the flag");
+        let write = save
+            .find("\"builtin_browser\",")
+            .expect("settings save writes the flag");
         assert!(forget < write);
         let integration = include_str!("integration.rs").replace("\r\n", "\n");
         let mode = &integration[integration.find("pub fn set_mode(").unwrap()..];
         let mode = &mode[..mode.find("\n}\n").unwrap()];
-        assert!(mode.find("forget_builtin_browser();").unwrap() < mode.find("\"builtin_browser\",").unwrap());
+        assert!(
+            mode.find("forget_builtin_browser();").unwrap()
+                < mode.find("\"builtin_browser\",").unwrap()
+        );
         // The browser commands use the kept value.
         let browser = include_str!("browser.rs").replace("\r\n", "\n");
         let enabled = &browser[browser.find("pub(crate) fn browser_enabled(").unwrap()..];

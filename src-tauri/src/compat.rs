@@ -805,7 +805,17 @@ fn file_label_pieces(label: &str) -> Vec<String> {
 
 fn usable_file_piece(piece: &str) -> bool {
     const EXTENSIONS: &[&str] = &[
-        "zip", "unitypackage", "7z", "rar", "fbx", "blend", "psd", "png", "jpg", "pdf", "txt",
+        "zip",
+        "unitypackage",
+        "7z",
+        "rar",
+        "fbx",
+        "blend",
+        "psd",
+        "png",
+        "jpg",
+        "pdf",
+        "txt",
     ];
     static VERSION: OnceLock<Regex> = OnceLock::new();
     let version = VERSION
@@ -843,7 +853,9 @@ pub fn says_generic(title: &str, description: &str) -> bool {
 
 fn compatibility_section(description: &str) -> Option<String> {
     let lines: Vec<&str> = description.lines().collect();
-    let start = lines.iter().position(|line| is_section_heading(line.trim()))?;
+    let start = lines
+        .iter()
+        .position(|line| is_section_heading(line.trim()))?;
     let mut section = String::new();
     for line in lines.iter().skip(start + 1) {
         let trimmed = line.trim();
@@ -1827,7 +1839,11 @@ Avatar
         ];
         assert_eq!(
             avatar_names_in_files(&labels, &avatars),
-            vec!["マヌカ".to_string(), "ショコラ".to_string(), "ライム".to_string()]
+            vec![
+                "マヌカ".to_string(),
+                "ショコラ".to_string(),
+                "ライム".to_string()
+            ]
         );
     }
 
@@ -1838,7 +1854,12 @@ Avatar
         assert_eq!(files, vec!["プラム".to_string()]);
         let listed = names_for_extraction("ワンピース", LIST, &files, &avatars);
         assert!(listed.iter().any(|name| name == "しなの"));
-        let open = names_for_extraction("【4アバター対応】ワンピース", "布の服です。", &files, &avatars);
+        let open = names_for_extraction(
+            "【4アバター対応】ワンピース",
+            "布の服です。",
+            &files,
+            &avatars,
+        );
         assert_eq!(open, vec!["プラム".to_string()]);
     }
 
@@ -1935,8 +1956,7 @@ Avatar
             listed_avatar_names(linked, &[]),
             vec!["うらら".to_string(), "プラム".to_string()]
         );
-        let mixed =
-            "対応アバター\nライム_ver1.00 https://booth.pm/ja/items/1001\nうらら / オリジナル3Dモデル\n";
+        let mixed = "対応アバター\nライム_ver1.00 https://booth.pm/ja/items/1001\nうらら / オリジナル3Dモデル\n";
         assert_eq!(
             listed_avatar_names(mixed, &[]),
             vec!["ライム".to_string(), "うらら".to_string()]

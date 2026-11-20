@@ -2,12 +2,12 @@
 //! Several hosts can be open at once. Moving a tab reparents that webview, so history and sign-in stay.
 use crate::{
     browser, browser_dark,
-    browser_tabs::{self, Bookmark, BrowserState, HostKind, MoveToken, TabSession, PANEL_HOST_ID},
+    browser_tabs::{self, Bookmark, BrowserState, HostKind, MoveToken, PANEL_HOST_ID, TabSession},
 };
 use std::collections::BTreeMap;
 use std::sync::{
-    atomic::{AtomicBool, AtomicU64, Ordering},
     Mutex,
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use tauri::{
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Webview, WebviewBuilder, WebviewUrl,
@@ -52,7 +52,10 @@ impl SurfaceArea {
     /// A rectangle measured by the main window's right panel. Rejects non-finite values and
     /// keeps the rectangle inside a sane range.
     pub fn from_panel(left: f64, top: f64, width: f64, height: f64) -> Result<Self, String> {
-        if ![left, top, width, height].iter().all(|value| value.is_finite()) {
+        if ![left, top, width, height]
+            .iter()
+            .all(|value| value.is_finite())
+        {
             return Err("ブラウザの表示位置が不正です".into());
         }
         Ok(Self {
@@ -354,10 +357,12 @@ pub fn booth_view(app: &AppHandle) -> Option<Webview> {
     ids.into_iter()
         .filter_map(|id| app.get_webview(&id))
         .find(|view| {
-            crate::browser_url::current_url(view).ok().is_some_and(|url| {
-                let host = url.host_str().unwrap_or("");
-                url.scheme() == "https" && (host == "booth.pm" || host.ends_with(".booth.pm"))
-            })
+            crate::browser_url::current_url(view)
+                .ok()
+                .is_some_and(|url| {
+                    let host = url.host_str().unwrap_or("");
+                    url.scheme() == "https" && (host == "booth.pm" || host.ends_with(".booth.pm"))
+                })
         })
 }
 
@@ -408,16 +413,21 @@ fn refresh_history(view: &Webview) {
     let app = view.app_handle().clone();
     let id = view.label().to_string();
     let _ = view.with_webview(move |native| {
-        let zoom = native_zoom(&native).ok().filter(|zoom| zoom.is_finite() && *zoom > 0.0);
+        let zoom = native_zoom(&native)
+            .ok()
+            .filter(|zoom| zoom.is_finite() && *zoom > 0.0);
         if let Ok((back, forward)) = native_history(&native, None) {
             let updated = {
                 let mut state = surface();
                 if let Some(tab) = state.session.tabs.iter_mut().find(|tab| tab.id == id) {
-                    let different = tab.can_go_back != back || tab.can_go_forward != forward
+                    let different = tab.can_go_back != back
+                        || tab.can_go_forward != forward
                         || zoom.is_some_and(|zoom| (tab.zoom_factor - zoom).abs() > 0.001);
                     tab.can_go_back = back;
                     tab.can_go_forward = forward;
-                    if let Some(zoom) = zoom { tab.zoom_factor = zoom; }
+                    if let Some(zoom) = zoom {
+                        tab.zoom_factor = zoom;
+                    }
                     different
                 } else {
                     false
@@ -439,7 +449,10 @@ fn native_zoom(native: &tauri::webview::PlatformWebview) -> Result<f64, String> 
     #[cfg(windows)]
     unsafe {
         let mut zoom = 1.0;
-        native.controller().ZoomFactor(&mut zoom).map_err(|error| error.to_string())?;
+        native
+            .controller()
+            .ZoomFactor(&mut zoom)
+            .map_err(|error| error.to_string())?;
         Ok(zoom)
     }
     #[cfg(target_os = "macos")]
@@ -482,7 +495,8 @@ fn native_history(
         }
         let mut back = Default::default();
         let mut forward = Default::default();
-        view.CanGoBack(&mut back).map_err(|error| error.to_string())?;
+        view.CanGoBack(&mut back)
+            .map_err(|error| error.to_string())?;
         view.CanGoForward(&mut forward)
             .map_err(|error| error.to_string())?;
         Ok((back.as_bool(), forward.as_bool()))
@@ -529,7 +543,9 @@ pub fn state(app: &AppHandle) -> Result<BrowserState, String> {
                         .iter()
                         .find(|tab| tab.id == id)
                         .map(|tab| tab.url.clone());
-                    state.session.update(view.label(), |tab| tab.url = url.clone());
+                    state
+                        .session
+                        .update(view.label(), |tab| tab.url = url.clone());
                     before.is_some_and(|before| before != url)
                 };
                 refresh_history(&view);
@@ -564,7 +580,8 @@ fn set_view_bounds(
     }
     // Standalone browser windows deliberately use an overlay titlebar; their
     // toolbar and page rectangles already include that area. Windows is unchanged.
-    view.set_bounds(area.rect()).map_err(|error| error.to_string())
+    view.set_bounds(area.rect())
+        .map_err(|error| error.to_string())
 }
 
 #[cfg(target_os = "linux")]
@@ -667,7 +684,11 @@ fn place_tabs(
 
 /// What a page needs from `before` to be at `bounds` with `shown`: a new rectangle, a new
 /// visibility, both or neither. `bounds` None leaves the rectangle as it is.
-fn placement_steps(before: Placed, bounds: Option<SurfaceArea>, shown: bool) -> (Option<SurfaceArea>, Option<bool>) {
+fn placement_steps(
+    before: Placed,
+    bounds: Option<SurfaceArea>,
+    shown: bool,
+) -> (Option<SurfaceArea>, Option<bool>) {
     let move_to = bounds.filter(|bounds| before.bounds != Some(*bounds));
     let show = (before.shown != Some(shown)).then_some(shown);
     (move_to, show)
@@ -677,7 +698,12 @@ fn placement_steps(before: Placed, bounds: Option<SurfaceArea>, shown: bool) -> 
 /// time. Each call into a native view is a message to its process; a panel with many tabs
 /// otherwise sends one per tab on every rectangle report. A failed step is forgotten, so the
 /// next layout sends it again.
-fn place_view(view: &Webview, bounds: Option<SurfaceArea>, shown: bool, fill_host: bool) -> Result<(), String> {
+fn place_view(
+    view: &Webview,
+    bounds: Option<SurfaceArea>,
+    shown: bool,
+    fill_host: bool,
+) -> Result<(), String> {
     let id = view.label().to_string();
     let before = surface().placed.get(&id).copied().unwrap_or_default();
     let (move_to, show) = placement_steps(before, bounds, shown);
@@ -880,7 +906,11 @@ fn mount_tab(app: &AppHandle, host_id: &str, window: &Window, url: Url) -> Resul
                 view.app_handle(),
                 &format!(
                     "{} {}",
-                    if loading { "読み始め" } else { "読み終わり" },
+                    if loading {
+                        "読み始め"
+                    } else {
+                        "読み終わり"
+                    },
                     payload.url().origin().ascii_serialization()
                 ),
             );
@@ -989,15 +1019,22 @@ fn shortcut_name(id: &str) -> Option<&str> {
     })
 }
 
-fn install_browser_menu(app: &AppHandle, window: &Window, host_id: &str, slot: u64) -> Result<(), String> {
+fn install_browser_menu(
+    app: &AppHandle,
+    window: &Window,
+    host_id: &str,
+    slot: u64,
+) -> Result<(), String> {
     use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
     let item = |name: &str, title: &str, key: &str| {
         MenuItem::with_id(app, format!("{name}-{slot}"), title, true, Some(key))
     };
-    let new_item = item("browser-new-tab", "新しいタブ", "CmdOrCtrl+T").map_err(|error| error.to_string())?;
-    let close_item =
-        item("browser-close-tab", "タブを閉じる", "CmdOrCtrl+W").map_err(|error| error.to_string())?;
-    let address = item("browser-address", "アドレスバー", "CmdOrCtrl+L").map_err(|error| error.to_string())?;
+    let new_item =
+        item("browser-new-tab", "新しいタブ", "CmdOrCtrl+T").map_err(|error| error.to_string())?;
+    let close_item = item("browser-close-tab", "タブを閉じる", "CmdOrCtrl+W")
+        .map_err(|error| error.to_string())?;
+    let address = item("browser-address", "アドレスバー", "CmdOrCtrl+L")
+        .map_err(|error| error.to_string())?;
     let reload_item =
         item("browser-reload", "再読み込み", "CmdOrCtrl+R").map_err(|error| error.to_string())?;
     #[cfg(target_os = "macos")]
@@ -1006,10 +1043,14 @@ fn install_browser_menu(app: &AppHandle, window: &Window, host_id: &str, slot: u
     let keys = ("Alt+Left", "Alt+Right");
     let back = item("browser-back", "戻る", keys.0).map_err(|error| error.to_string())?;
     let forward = item("browser-forward", "進む", keys.1).map_err(|error| error.to_string())?;
-    let zoom_in = item("browser-zoom-in", "拡大", "CmdOrCtrl+Shift+Equal").map_err(|error| error.to_string())?;
-    let zoom_in_equal = item("browser-zoom-in-equal", "拡大", "CmdOrCtrl+Equal").map_err(|error| error.to_string())?;
-    let zoom_out = item("browser-zoom-out", "縮小", "CmdOrCtrl+Minus").map_err(|error| error.to_string())?;
-    let zoom_reset = item("browser-zoom-reset", "実際のサイズ", "CmdOrCtrl+0").map_err(|error| error.to_string())?;
+    let zoom_in = item("browser-zoom-in", "拡大", "CmdOrCtrl+Shift+Equal")
+        .map_err(|error| error.to_string())?;
+    let zoom_in_equal = item("browser-zoom-in-equal", "拡大", "CmdOrCtrl+Equal")
+        .map_err(|error| error.to_string())?;
+    let zoom_out =
+        item("browser-zoom-out", "縮小", "CmdOrCtrl+Minus").map_err(|error| error.to_string())?;
+    let zoom_reset = item("browser-zoom-reset", "実際のサイズ", "CmdOrCtrl+0")
+        .map_err(|error| error.to_string())?;
     let menu = Menu::new(app).map_err(|error| error.to_string())?;
     #[cfg(target_os = "macos")]
     menu.append(
@@ -1049,8 +1090,18 @@ fn install_browser_menu(app: &AppHandle, window: &Window, host_id: &str, slot: u
         app,
         "ブラウザ",
         true,
-        &[&new_item, &close_item, &address, &reload_item, &back, &forward,
-          &zoom_in, &zoom_in_equal, &zoom_out, &zoom_reset],
+        &[
+            &new_item,
+            &close_item,
+            &address,
+            &reload_item,
+            &back,
+            &forward,
+            &zoom_in,
+            &zoom_in_equal,
+            &zoom_out,
+            &zoom_reset,
+        ],
     )
     .map_err(|error| error.to_string())?;
     menu.append(&controls).map_err(|error| error.to_string())?;
@@ -1198,7 +1249,9 @@ fn build_browser_window(
             )
             .map_err(|error| format!("操作バーを開けません: {error}"))?;
         #[cfg(windows)]
-        window.set_resizable(true).map_err(|error| error.to_string())?;
+        window
+            .set_resizable(true)
+            .map_err(|error| error.to_string())?;
         Ok::<_, String>(())
     })();
     if let Err(error) = result {
@@ -1352,7 +1405,8 @@ fn open_panel(app: &AppHandle, area: Option<SurfaceArea>) -> Result<(), String> 
         .ok_or("メインウィンドウが見つかりません")?;
     crate::browser::release_probe_for_displayed_browser(app);
     ensure_panel_live(area, area.is_some());
-    if let Err(error) = checked_url(app, browser::LIBRARY_URL).and_then(|url| mount_tab(app, PANEL_HOST_ID, &main, url))
+    if let Err(error) = checked_url(app, browser::LIBRARY_URL)
+        .and_then(|url| mount_tab(app, PANEL_HOST_ID, &main, url))
     {
         let ids = surface().session.take_host(PANEL_HOST_ID);
         forget_live(PANEL_HOST_ID);
@@ -1405,9 +1459,7 @@ fn reparent_tab(app: &AppHandle, tab_id: &str, target: &Window) -> Result<(), St
         .iter()
         .find(|tab| tab.id == tab_id)
         .map(|tab| tab.zoom_factor);
-    let view = app
-        .get_webview(tab_id)
-        .ok_or("タブが見つかりません")?;
+    let view = app.get_webview(tab_id).ok_or("タブが見つかりません")?;
     forget_placement(&[tab_id.to_string()]);
     // The same webview moves, so its history and the shared data store stay.
     // Reapply the stored page zoom in case the new host reset it. Do not navigate.
@@ -1425,10 +1477,7 @@ fn restore_moves(tokens: Vec<MoveToken>) {
     }
 }
 
-fn move_ids(
-    tab_ids: &[String],
-    to_host: &str,
-) -> Result<Vec<MoveToken>, String> {
+fn move_ids(tab_ids: &[String], to_host: &str) -> Result<Vec<MoveToken>, String> {
     let mut tokens = Vec::new();
     for id in tab_ids {
         let moved = surface().session.move_tab(id, to_host, usize::MAX);
@@ -1467,7 +1516,11 @@ fn reparent_ids(
 }
 
 /// Moves every page of one window onto the right panel, or starts a panel session.
-pub fn dock(app: &AppHandle, area: Option<SurfaceArea>, from_host: Option<String>) -> Result<(), String> {
+pub fn dock(
+    app: &AppHandle,
+    area: Option<SurfaceArea>,
+    from_host: Option<String>,
+) -> Result<(), String> {
     browser::browser_enabled(app)?;
     mutable()?;
     if !panel_supported() {
@@ -1496,7 +1549,11 @@ pub fn dock(app: &AppHandle, area: Option<SurfaceArea>, from_host: Option<String
     if pending.is_empty() {
         if surface().session.coarse_host() == Some("panel") {
             if let Some(area) = area {
-                if let Some(host) = surface().live.iter_mut().find(|host| host.id == PANEL_HOST_ID) {
+                if let Some(host) = surface()
+                    .live
+                    .iter_mut()
+                    .find(|host| host.id == PANEL_HOST_ID)
+                {
                     host.area = Some(area);
                     host.visible = true;
                 }
@@ -1523,7 +1580,9 @@ pub fn dock(app: &AppHandle, area: Option<SurfaceArea>, from_host: Option<String
             .map(|host| host.order.clone())
             .unwrap_or_default();
         let window_label = live_label(&surface(), &source_id);
-        let source = window_label.as_ref().and_then(|label| app.get_window(label));
+        let source = window_label
+            .as_ref()
+            .and_then(|label| app.get_window(label));
         let tokens = move_tab_ids(app, &ids, PANEL_HOST_ID)?;
         if let Err(error) = reparent_ids(app, &ids, &main, source.as_ref(), tokens) {
             layout(app)?;
@@ -1645,7 +1704,11 @@ pub fn panel_area(app: &AppHandle, area: Option<SurfaceArea>, visible: bool) -> 
     Ok(())
 }
 
-pub fn new_tab_on(app: &AppHandle, url: Option<&str>, host_id: Option<String>) -> Result<(), String> {
+pub fn new_tab_on(
+    app: &AppHandle,
+    url: Option<&str>,
+    host_id: Option<String>,
+) -> Result<(), String> {
     browser::browser_enabled(app)?;
     mutable()?;
     let target = checked_url(app, url.unwrap_or(browser::LIBRARY_URL))?;
@@ -1657,10 +1720,7 @@ pub fn new_tab_on(app: &AppHandle, url: Option<&str>, host_id: Option<String>) -
             None => open(app)?,
         }
         if target.as_str() != browser::LIBRARY_URL {
-            let id = surface()
-                .session
-                .focused_tab()
-                .ok_or("タブがありません")?;
+            let id = surface().session.focused_tab().ok_or("タブがありません")?;
             view_for(app, &id)?
                 .navigate(target)
                 .map_err(|error| error.to_string())?;
@@ -1681,9 +1741,7 @@ pub fn new_tab_on(app: &AppHandle, url: Option<&str>, host_id: Option<String>) -
         ensure_panel_live(None, false);
     }
     let label = live_label(&surface(), &host).ok_or("表示先が見つかりません")?;
-    let window = app
-        .get_window(&label)
-        .ok_or("表示先が見つかりません")?;
+    let window = app.get_window(&label).ok_or("表示先が見つかりません")?;
     mount_tab(app, &host, &window, target)?;
     if host == PANEL_HOST_ID {
         if let Some(id) = surface().session.active_of(PANEL_HOST_ID) {
@@ -1860,7 +1918,9 @@ pub fn dock_tab(app: &AppHandle, tab_id: &str, index: Option<usize>) -> Result<(
         Err(error) => return Err(error),
     };
     let source_label = live_label(&surface(), &from);
-    let source = source_label.as_ref().and_then(|label| app.get_window(label));
+    let source = source_label
+        .as_ref()
+        .and_then(|label| app.get_window(label));
     if let Err(error) = reparent_tab(app, tab_id, &main) {
         let _ = surface().session.restore(token);
         layout(app)?;
@@ -1936,14 +1996,27 @@ pub fn history(app: &AppHandle, forward: bool) -> Result<(), String> {
     history_on(app, active_view(app)?, forward)
 }
 
-pub fn zoom_tab(app: &AppHandle, tab_id: &str, change: browser_tabs::ZoomChange) -> Result<(), String> {
+pub fn zoom_tab(
+    app: &AppHandle,
+    tab_id: &str,
+    change: browser_tabs::ZoomChange,
+) -> Result<(), String> {
     browser::browser_enabled(app)?;
     mutable()?;
-    let current = surface().session.tabs.iter().find(|tab| tab.id == tab_id)
-        .map(|tab| tab.zoom_factor).ok_or("ブラウザのタブが見つかりません")?;
+    let current = surface()
+        .session
+        .tabs
+        .iter()
+        .find(|tab| tab.id == tab_id)
+        .map(|tab| tab.zoom_factor)
+        .ok_or("ブラウザのタブが見つかりません")?;
     let zoom = browser_tabs::next_zoom(current, change);
-    view_for(app, tab_id)?.set_zoom(zoom).map_err(|error| format!("表示倍率を変更できません: {error}"))?;
-    surface().session.update(tab_id, |tab| tab.zoom_factor = zoom);
+    view_for(app, tab_id)?
+        .set_zoom(zoom)
+        .map_err(|error| format!("表示倍率を変更できません: {error}"))?;
+    surface()
+        .session
+        .update(tab_id, |tab| tab.zoom_factor = zoom);
     changed(app);
     Ok(())
 }
@@ -1976,7 +2049,8 @@ pub fn stop_tab(app: &AppHandle, tab_id: &str) -> Result<(), String> {
     browser::browser_enabled(app)?;
     mutable()?;
     let view = view_for(app, tab_id)?;
-    view.eval("window.stop() ").map_err(|error| error.to_string())?;
+    view.eval("window.stop() ")
+        .map_err(|error| error.to_string())?;
     update_page(app, view.label(), None, None, Some(false));
     Ok(())
 }
@@ -2036,15 +2110,29 @@ mod tests {
     }
 
     fn area(left: f64, width: f64) -> SurfaceArea {
-        SurfaceArea { left, top: 40.0, width, height: 600.0 }
+        SurfaceArea {
+            left,
+            top: 40.0,
+            width,
+            height: 600.0,
+        }
     }
 
     #[test]
     fn a_page_already_in_place_gets_no_native_call() {
-        let placed = Placed { bounds: Some(area(800.0, 400.0)), shown: Some(true) };
-        assert_eq!(placement_steps(placed, Some(area(800.0, 400.0)), true), (None, None));
+        let placed = Placed {
+            bounds: Some(area(800.0, 400.0)),
+            shown: Some(true),
+        };
+        assert_eq!(
+            placement_steps(placed, Some(area(800.0, 400.0)), true),
+            (None, None)
+        );
         // A tab change only flips visibility; a new rectangle only moves.
-        assert_eq!(placement_steps(placed, Some(area(800.0, 400.0)), false), (None, Some(false)));
+        assert_eq!(
+            placement_steps(placed, Some(area(800.0, 400.0)), false),
+            (None, Some(false))
+        );
         assert_eq!(
             placement_steps(placed, Some(area(780.0, 420.0)), true),
             (Some(area(780.0, 420.0)), None)
@@ -2055,14 +2143,23 @@ mod tests {
             placement_steps(Placed::default(), Some(area(800.0, 400.0)), false),
             (Some(area(800.0, 400.0)), Some(false))
         );
-        assert_eq!(placement_steps(Placed::default(), None, false), (None, Some(false)));
+        assert_eq!(
+            placement_steps(Placed::default(), None, false),
+            (None, Some(false))
+        );
     }
 
     #[test]
     fn placements_are_forgotten_when_a_page_moves_closes_or_the_window_resizes() {
         let source = include_str!("browser_surface.rs");
-        assert!(function_body(source, "fn reparent_tab").contains("forget_placement(&[tab_id.to_string()])"));
-        assert!(function_body(source, "pub fn close_tab").contains("forget_placement(&[id.to_string()])"));
+        assert!(
+            function_body(source, "fn reparent_tab")
+                .contains("forget_placement(&[tab_id.to_string()])")
+        );
+        assert!(
+            function_body(source, "pub fn close_tab")
+                .contains("forget_placement(&[id.to_string()])")
+        );
         assert!(function_body(source, "fn close_webviews").contains("forget_placement(ids)"));
         assert!(function_body(source, "fn mount_tab").contains("forget_placement(&[id.clone()])"));
         assert!(function_body(source, "pub fn relayout").contains("placed.clear()"));
@@ -2070,7 +2167,10 @@ mod tests {
         assert!(watch.contains("let _ = relayout(&handle);"));
         let main = function_body(source, "pub fn handle_window_event");
         assert!(main.contains("let _ = relayout(window.app_handle());"));
-        assert!(include_str!("browser_linux.rs").contains("dispatch_ui(handle, browser_surface::relayout)"));
+        assert!(
+            include_str!("browser_linux.rs")
+                .contains("dispatch_ui(handle, browser_surface::relayout)")
+        );
     }
 
     #[test]
@@ -2078,10 +2178,16 @@ mod tests {
         surface().bookmarks = Some(Vec::new());
         let first = snapshot().expect("bookmarks known");
         let second = snapshot().expect("bookmarks known");
-        assert!(second.revision > first.revision, "a later state has a larger number");
+        assert!(
+            second.revision > first.revision,
+            "a later state has a larger number"
+        );
         let source = include_str!("browser_surface.rs");
         let snapshot_body = function_body(source, "fn snapshot");
-        assert!(!snapshot_body.contains(".db"), "the event payload never waits for the database");
+        assert!(
+            !snapshot_body.contains(".db"),
+            "the event payload never waits for the database"
+        );
         assert!(!snapshot_body.contains("current_url"), "nor for the pages");
         // The number is taken while the surface is locked, so it follows the order of changes.
         let lock = snapshot_body.find("let state = surface();").expect("lock");
@@ -2105,7 +2211,10 @@ mod tests {
 
             assert_eq!(new_tab_host(&state, None), second);
             assert_eq!(new_tab_host(&state, Some(first.clone())), first);
-            assert!(state.try_lock().is_ok(), "host lookup must release the lock");
+            assert!(
+                state.try_lock().is_ok(),
+                "host lookup must release the lock"
+            );
 
             state.lock().unwrap().session.take_host(&second);
             assert_eq!(new_tab_host(&state, None), first);
@@ -2130,7 +2239,9 @@ mod tests {
 
         with_active_tab(&state, &host, |id| {
             assert_eq!(id, selected);
-            let mut state = state.try_lock().expect("close action must be able to read the surface");
+            let mut state = state
+                .try_lock()
+                .expect("close action must be able to read the surface");
             state.session.remove(id)?;
             Ok(())
         })
@@ -2141,7 +2252,9 @@ mod tests {
     }
 
     fn function_body<'a>(source: &'a str, name: &str) -> &'a str {
-        let start = source.find(name).unwrap_or_else(|| panic!("missing {name}"));
+        let start = source
+            .find(name)
+            .unwrap_or_else(|| panic!("missing {name}"));
         let rest = &source[start..];
         let after = rest.find('\n').unwrap() + 1;
         let tail = &rest[after..];
@@ -2197,7 +2310,10 @@ mod tests {
         assert!(SurfaceArea::from_panel(f64::NAN, 0.0, 10.0, 10.0).is_err());
         assert!(SurfaceArea::from_panel(0.0, 0.0, f64::INFINITY, 10.0).is_err());
         let area = SurfaceArea::from_panel(-5.0, -1.0, 1e9, 30.0).unwrap();
-        assert_eq!((area.left, area.top, area.width), (0.0, 0.0, MAX_PANEL_EDGE));
+        assert_eq!(
+            (area.left, area.top, area.width),
+            (0.0, 0.0, MAX_PANEL_EDGE)
+        );
     }
 
     #[test]
@@ -2206,7 +2322,10 @@ mod tests {
         assert!(!start_in_panel(false, false, true));
         assert!(!start_in_panel(true, true, true));
         assert!(!start_in_panel(true, false, false));
-        assert_eq!(panel_supported(), cfg!(any(windows, target_os = "macos", target_os = "linux")));
+        assert_eq!(
+            panel_supported(),
+            cfg!(any(windows, target_os = "macos", target_os = "linux"))
+        );
         assert_eq!(HostKind::Window.name(), "window");
         assert_eq!(HostKind::Panel.name(), "panel");
     }
@@ -2216,7 +2335,9 @@ mod tests {
         assert_eq!(PANEL_WINDOW_LABEL, crate::presence::MAIN_WINDOW);
         let source = include_str!("browser_surface.rs");
         let retire = function_body(source, "fn retire_if_empty");
-        let destroyed = retire.find("source.destroy()").expect("destroy empty window");
+        let destroyed = retire
+            .find("source.destroy()")
+            .expect("destroy empty window");
         let kind = retire.find("HostKind::Window").expect("only windows");
         assert!(kind < destroyed);
     }
@@ -2240,7 +2361,9 @@ mod tests {
         let reparent = body.find("reparent_tab(").expect("reparent");
         let restore = body.find("session.restore").expect("restore");
         let retire = body.find("retire_if_empty").expect("retire");
-        assert!(restore < reparent || body.find("if let Err(error) = reparent_tab").unwrap() < retire);
+        assert!(
+            restore < reparent || body.find("if let Err(error) = reparent_tab").unwrap() < retire
+        );
         assert!(reparent < retire);
         assert!(body.contains("session.restore"));
         assert!(!body.contains("age_verification"));
@@ -2254,14 +2377,20 @@ mod tests {
             width: 30.4,
             height: 40.5,
         });
-        assert_eq!((area.left, area.top, area.width, area.height), (11.0, 20.0, 30.0, 41.0));
+        assert_eq!(
+            (area.left, area.top, area.width, area.height),
+            (11.0, 20.0, 30.0, 41.0)
+        );
         let exact = snap_logical_points(SurfaceArea {
             left: 10.0,
             top: 12.0,
             width: 20.0,
             height: 24.0,
         });
-        assert_eq!((exact.left, exact.top, exact.width, exact.height), (10.0, 12.0, 20.0, 24.0));
+        assert_eq!(
+            (exact.left, exact.top, exact.width, exact.height),
+            (10.0, 12.0, 20.0, 24.0)
+        );
         let sliver = snap_logical_points(SurfaceArea {
             left: 1.2,
             top: 1.2,
@@ -2308,12 +2437,20 @@ mod tests {
         assert!(!body.contains("WebviewBuilder"));
         assert!(!body.contains(".navigate("));
         let panel_at = source.find("pub fn panel_area(").expect("panel_area");
-        let panel = &source[panel_at..source[panel_at..].find("\npub fn new_tab_on").expect("new_tab_on") + panel_at];
+        let panel = &source[panel_at
+            ..source[panel_at..]
+                .find("\npub fn new_tab_on")
+                .expect("new_tab_on")
+                + panel_at];
         assert!(panel.contains("layout(app)"));
         assert!(!panel.contains(".close("));
         assert!(!panel.contains("destroy"));
         let close_at = source.find("pub fn close_tab(").expect("close_tab");
-        let close = &source[close_at..source[close_at..].find("\npub fn reorder").expect("reorder") + close_at];
+        let close = &source[close_at
+            ..source[close_at..]
+                .find("\npub fn reorder")
+                .expect("reorder")
+                + close_at];
         assert!(close.contains(".close()"));
     }
 
@@ -2324,7 +2461,9 @@ mod tests {
         let rest = &source[start..];
         let end = rest.find("\npub fn navigate_tab").expect("navigate");
         let body = &rest[..end];
-        let raised = body.rfind("host_window(app)").expect("focus the existing window");
+        let raised = body
+            .rfind("host_window(app)")
+            .expect("focus the existing window");
         let focus = &body[raised..];
         assert!(focus.contains(".show()"));
         assert!(focus.contains("unminimize()"));

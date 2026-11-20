@@ -1,7 +1,7 @@
 use crate::db;
 use crate::library_walk::{
-    self, PageSnapshot, WalkMachine, WalkSection, WalkStop, final_counts_line,
-    same_library_page, section_label, settled_stop, walk_block_reason,
+    self, PageSnapshot, WalkMachine, WalkSection, WalkStop, final_counts_line, same_library_page,
+    section_label, settled_stop, walk_block_reason,
 };
 use crate::model::ImportReport;
 use crate::progress::ProgressGuard;
@@ -149,7 +149,11 @@ pub fn classification_done_line(
     rule_filled: u32,
     cancelled: bool,
 ) -> String {
-    let head = if cancelled { "分類中断" } else { "分類完了" };
+    let head = if cancelled {
+        "分類中断"
+    } else {
+        "分類完了"
+    };
     format!("{head} 処理{processed} カテゴリとタグ{booth_settled} タイトルと説明{rule_filled}")
 }
 
@@ -162,7 +166,9 @@ pub fn unknown_category_line(id: Option<i64>, name: &str, parent: &str) -> Optio
         return None;
     }
     let id = id.map(|value| value.to_string()).unwrap_or_default();
-    Some(format!("未対応カテゴリ id={id} name={name} parent={parent}"))
+    Some(format!(
+        "未対応カテゴリ id={id} name={name} parent={parent}"
+    ))
 }
 
 fn category_log_field(value: &str) -> String {
@@ -368,7 +374,9 @@ fn import_current_page_inner(
     tab_id: Option<String>,
 ) -> Result<ImportReport, String> {
     browser_enabled(app)?;
-    if library_walk_running() { return Err(walk_busy_message().into()); }
+    if library_walk_running() {
+        return Err(walk_busy_message().into());
+    }
     browser_log(app, "インポートを開始");
     let tab_id = crate::browser_surface::tab_for_caller(caller, tab_id, None)?;
     let window = app
@@ -382,9 +390,9 @@ fn import_current_page_inner(
             let _ = sender.send(result);
         })
         .map_err(|err| format!("ページを読めません: {err}"))?;
-    let raw = receiver
-        .recv_timeout(Duration::from_secs(8))
-        .map_err(|_| "ページの読み取りがタイムアウトしました。もう一度お試しください".to_string())?;
+    let raw = receiver.recv_timeout(Duration::from_secs(8)).map_err(|_| {
+        "ページの読み取りがタイムアウトしました。もう一度お試しください".to_string()
+    })?;
     let (href, products) = parse_page_read(&raw)?;
     if let Ok(url) = Url::parse(&href) {
         browser_log(app, &format!("インポート対象 {}", public_url(&url)));
@@ -592,7 +600,9 @@ static DOWNLOAD_SLOTS: tokio::sync::Semaphore =
     tokio::sync::Semaphore::const_new(PARALLEL_DOWNLOADS);
 
 fn active_downloads() -> std::sync::MutexGuard<'static, Vec<String>> {
-    ACTIVE_DOWNLOADS.lock().unwrap_or_else(|err| err.into_inner())
+    ACTIVE_DOWNLOADS
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
 }
 
 /// 1件でも受け取り中か順番待ちなら真。全取得、タブの変更、アプリ更新の適用を止める。
@@ -749,7 +759,14 @@ impl FileReport {
         }
         let _ = self.app.emit(
             FILE_EVENT,
-            file_status(&self.booth_id, &self.variation, &self.filename, phase, message, path),
+            file_status(
+                &self.booth_id,
+                &self.variation,
+                &self.filename,
+                phase,
+                message,
+                path,
+            ),
         );
     }
 }
@@ -1083,14 +1100,9 @@ async fn receive_without_window<F: FnMut(u64, Option<u64>) + Send>(
     if header.is_empty() {
         return Err(crate::quiet::QuietError::Login);
     }
-    let fetched = crate::quiet::fetch_staged_file(
-        &header,
-        &download_url,
-        &dir,
-        &row_filename,
-        on_progress,
-    )
-    .await?;
+    let fetched =
+        crate::quiet::fetch_staged_file(&header, &download_url, &dir, &row_filename, on_progress)
+            .await?;
     drop(header);
     browser_log(app, &host_log(&fetched.host));
     Ok(fetched.path)
@@ -1146,8 +1158,7 @@ pub async fn download_one_file(
                     )?
                 };
                 let downloads = crate::library_files::downloads_folder()?;
-                let dir =
-                    crate::library_files::prepare_staging_dir(&downloads, &request.booth_id)?;
+                let dir = crate::library_files::prepare_staging_dir(&downloads, &request.booth_id)?;
                 Ok::<_, String>((request, dir))
             })
             .await
@@ -1405,7 +1416,10 @@ fn parse_probe(raw: &str) -> Result<PageProbe, String> {
         .and_then(|item| item.as_str())
         .unwrap_or("")
         .to_string();
-    let stale = value.get("stale").and_then(|item| item.as_bool()).unwrap_or(false);
+    let stale = value
+        .get("stale")
+        .and_then(|item| item.as_bool())
+        .unwrap_or(false);
     Ok(PageProbe { href, ready, stale })
 }
 
@@ -1428,7 +1442,13 @@ async fn mark_walk_page_left(app: &AppHandle) {
     let Ok(label) = pinned_walk_tab(app) else {
         return;
     };
-    let _ = eval_label_within(app, &label, LEAVE_MARK_JS.to_string(), Duration::from_secs(3)).await;
+    let _ = eval_label_within(
+        app,
+        &label,
+        LEAVE_MARK_JS.to_string(),
+        Duration::from_secs(3),
+    )
+    .await;
 }
 
 fn emit_walk_progress(progress: &ProgressGuard, current: u32, total: u32, message: &str) {
@@ -1574,7 +1594,10 @@ async fn open_and_read_once(
         return Err(ACCOUNT_UNCONFIRMED.into());
     }
     let library = Url::parse(LIBRARY_URL).map_err(|_| "ページのURLを読めません".to_string())?;
-    let opened = dispatch_ui(app.clone(), move |handle| open_profile_probe(handle, library)).await?;
+    let opened = dispatch_ui(app.clone(), move |handle| {
+        open_profile_probe(handle, library)
+    })
+    .await?;
     let Some(epoch) = opened else {
         return Err(ACCOUNT_UNCONFIRMED.into());
     };
@@ -1599,7 +1622,13 @@ async fn reload_resident_probe(
     started: std::time::Instant,
 ) -> Result<crate::quiet::BoothAccount, String> {
     let budget = account_budget(started);
-    let marked = eval_label_within(app, PROBE_LABEL, PROBE_MARK_JS.to_string(), budget.min(Duration::from_secs(3))).await;
+    let marked = eval_label_within(
+        app,
+        PROBE_LABEL,
+        PROBE_MARK_JS.to_string(),
+        budget.min(Duration::from_secs(3)),
+    )
+    .await;
     if !matches!(marked, Ok(ref value) if value.contains("true")) {
         return Err(ACCOUNT_UNCONFIRMED.into());
     }
@@ -1811,7 +1840,10 @@ pub async fn import_library(app: AppHandle) -> Result<LibraryWalkReport, String>
     let progress = ProgressGuard::new(app.clone(), "browser-library");
     let page_delay = {
         let state = app.state::<crate::AppState>();
-        let connection = state.db.lock().map_err(|_| "データベースをロックできません".to_string())?;
+        let connection = state
+            .db
+            .lock()
+            .map_err(|_| "データベースをロックできません".to_string())?;
         Duration::from_millis(db::booth_page_interval_ms(&connection)?)
     };
     WALK_CANCEL.store(false, Ordering::SeqCst);
@@ -1886,8 +1918,7 @@ pub async fn import_library(app: AppHandle) -> Result<LibraryWalkReport, String>
                 .db
                 .lock()
                 .map_err(|_| "データベースをロックできません".to_string())?;
-            let report =
-                db::import_export_json_with_mode(&mut connection, &json, authoritative)?;
+            let report = db::import_export_json_with_mode(&mut connection, &json, authoritative)?;
             let _ = crate::integration::record_import(&connection, "browser", &report);
             Ok::<_, String>(report)
         })
@@ -1971,7 +2002,9 @@ where
 fn purchase_script(call: &str) -> String {
     let mut script = String::from("(function () {\n  try {\n    var module = { exports: {} };\n");
     script.push_str(PURCHASE_JS);
-    script.push_str("\n    var api = module.exports;\n    var href = String(location.href || \"\");\n");
+    script.push_str(
+        "\n    var api = module.exports;\n    var href = String(location.href || \"\");\n",
+    );
     script.push_str(call);
     script.push_str(
         "\n  } catch (error) {\n    return { ok: false, error: String(error && error.message ? error.message : error) };\n  }\n})()",
@@ -1993,7 +2026,11 @@ pub(crate) fn purchase_detail_script() -> String {
 
 fn purchase_eval(raw: &str) -> Result<serde_json::Value, String> {
     let value = unwrap_eval_json(raw)?;
-    if !value.get("ok").and_then(|item| item.as_bool()).unwrap_or(false) {
+    if !value
+        .get("ok")
+        .and_then(|item| item.as_bool())
+        .unwrap_or(false)
+    {
         return Err(value
             .get("error")
             .and_then(|item| item.as_str())
@@ -2015,7 +2052,9 @@ pub(crate) fn parse_purchase_list(raw: &str) -> Result<ListSnapshot, String> {
     let value = purchase_eval(raw)?;
     Ok(ListSnapshot {
         href: purchase_href(&value),
-        orders: purchase_walk::parse_list_orders(value.get("orders").unwrap_or(&serde_json::Value::Null)),
+        orders: purchase_walk::parse_list_orders(
+            value.get("orders").unwrap_or(&serde_json::Value::Null),
+        ),
         last_page: value
             .get("lastPage")
             .and_then(|item| item.as_u64())
@@ -2028,7 +2067,9 @@ pub(crate) fn parse_purchase_detail(raw: &str) -> Result<DetailSnapshot, String>
     let value = purchase_eval(raw)?;
     Ok(DetailSnapshot {
         href: purchase_href(&value),
-        detail: purchase_walk::parse_detail(value.get("detail").unwrap_or(&serde_json::Value::Null)),
+        detail: purchase_walk::parse_detail(
+            value.get("detail").unwrap_or(&serde_json::Value::Null),
+        ),
     })
 }
 
@@ -2103,7 +2144,10 @@ pub async fn import_purchases(app: AppHandle) -> Result<PurchaseWalkReport, Stri
             break;
         }
         if walk.needs_detail_queue() {
-            let queue = with_db(&app, |connection| crate::purchases::pending_detail_ids(connection)).await?;
+            let queue = with_db(&app, |connection| {
+                crate::purchases::pending_detail_ids(connection)
+            })
+            .await?;
             walk.start_details(queue);
             continue;
         }
@@ -2198,7 +2242,10 @@ pub async fn import_purchases(app: AppHandle) -> Result<PurchaseWalkReport, Stri
     let report = walk.report(db::BROWSER_AGE_MESSAGE);
     let list_complete = walk.list_complete();
     if list_complete || report.pages > 0 || report.details > 0 {
-        with_db(&app, move |connection| crate::purchases::finish_walk(connection, list_complete)).await?;
+        with_db(&app, move |connection| {
+            crate::purchases::finish_walk(connection, list_complete)
+        })
+        .await?;
     }
     let summary = purchase_walk::summary_line(&report);
     browser_log(&app, &summary);
@@ -2240,7 +2287,11 @@ pub(crate) fn read_order_later(app: &AppHandle, source_label: &str, order_id: &s
     });
 }
 
-async fn read_order_in_background(app: &AppHandle, source_label: &str, order_id: &str) -> Result<(), String> {
+async fn read_order_in_background(
+    app: &AppHandle,
+    source_label: &str,
+    order_id: &str,
+) -> Result<(), String> {
     if !order_reader_supported() {
         return Err("この OS では裏で読みません".into());
     }
@@ -2255,7 +2306,10 @@ async fn read_order_in_background(app: &AppHandle, source_label: &str, order_id:
     let (loaded, arrived) = std::sync::mpsc::channel::<()>();
     let source = source_label.to_string();
     let target = url.clone();
-    dispatch_ui(app.clone(), move |handle| open_order_reader(handle, &source, target, loaded)).await?;
+    dispatch_ui(app.clone(), move |handle| {
+        open_order_reader(handle, &source, target, loaded)
+    })
+    .await?;
     let result = read_order_reader(app, &url, order_id, arrived).await;
     let _ = dispatch_ui(app.clone(), |handle| {
         if let Some(view) = handle.get_webview(ORDER_READER_LABEL) {
@@ -2289,17 +2343,18 @@ fn open_order_reader(
     }
     let loaded = Mutex::new(loaded);
     #[allow(unused_mut)]
-    let mut builder = tauri::webview::WebviewBuilder::new(ORDER_READER_LABEL, WebviewUrl::External(url))
-        .on_navigation(|url| url.scheme() == "https" || url.as_str() == "about:blank")
-        .on_page_load(move |_view, payload| {
-            if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
-                if let Ok(sender) = loaded.lock() {
-                    let _ = sender.send(());
+    let mut builder =
+        tauri::webview::WebviewBuilder::new(ORDER_READER_LABEL, WebviewUrl::External(url))
+            .on_navigation(|url| url.scheme() == "https" || url.as_str() == "about:blank")
+            .on_page_load(move |_view, payload| {
+                if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+                    if let Ok(sender) = loaded.lock() {
+                        let _ = sender.send(());
+                    }
                 }
-            }
-        })
-        .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
-        .on_download(|_, _| false);
+            })
+            .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+            .on_download(|_, _| false);
     #[cfg(not(target_os = "macos"))]
     {
         let root = local_data_dir(app)?;
@@ -2330,9 +2385,10 @@ async fn read_order_reader(
     order_id: &str,
     arrived: std::sync::mpsc::Receiver<()>,
 ) -> Result<(), String> {
-    let first = tauri::async_runtime::spawn_blocking(move || arrived.recv_timeout(Duration::from_secs(20)))
-        .await
-        .map_err(|_| "ページを読めません".to_string())?;
+    let first =
+        tauri::async_runtime::spawn_blocking(move || arrived.recv_timeout(Duration::from_secs(20)))
+            .await
+            .map_err(|_| "ページを読めません".to_string())?;
     if first.is_err() {
         return Err("ページの読み込みがタイムアウトしました".into());
     }
@@ -2341,7 +2397,13 @@ async fn read_order_reader(
         if started.elapsed() > Duration::from_secs(20) {
             return Err("ページの読み込みがタイムアウトしました".into());
         }
-        let raw = eval_label_within(app, ORDER_READER_LABEL, PROBE_JS.to_string(), Duration::from_secs(3)).await?;
+        let raw = eval_label_within(
+            app,
+            ORDER_READER_LABEL,
+            PROBE_JS.to_string(),
+            Duration::from_secs(3),
+        )
+        .await?;
         let PageProbe { href, ready, .. } = parse_probe(&raw)?;
         if ready == "complete" {
             if purchase_block_reason(&href).is_some() {
@@ -2351,15 +2413,26 @@ async fn read_order_reader(
                 break;
             }
         }
-        let _ = tauri::async_runtime::spawn_blocking(|| std::thread::sleep(Duration::from_millis(200))).await;
+        let _ =
+            tauri::async_runtime::spawn_blocking(|| std::thread::sleep(Duration::from_millis(200)))
+                .await;
     }
-    let raw = eval_label_within(app, ORDER_READER_LABEL, purchase_detail_script(), Duration::from_secs(10)).await?;
+    let raw = eval_label_within(
+        app,
+        ORDER_READER_LABEL,
+        purchase_detail_script(),
+        Duration::from_secs(10),
+    )
+    .await?;
     let snapshot = parse_purchase_detail(&raw)?;
     let detail = snapshot
         .detail
         .filter(|detail| detail.order_id == order_id)
         .ok_or_else(|| purchase_walk::DETAIL_UNREADABLE.to_string())?;
-    with_db(app, move |connection| crate::purchases::apply_detail(connection, &detail)).await?;
+    with_db(app, move |connection| {
+        crate::purchases::apply_detail(connection, &detail)
+    })
+    .await?;
     let _ = app.emit("purchases-changed", ());
     Ok(())
 }
@@ -2375,7 +2448,10 @@ enum DetailFill {
 
 pub const DETAIL_STOPPED_NOTICE: &str = "BOOTH の公開情報の確認を途中で止めました。次の「ライブラリ全取得」で続きから確認します。今すぐ分類するときは「2. 分類」の「未分類を分類」を押してください";
 
-async fn fill_public_details(app: &AppHandle, progress: &ProgressGuard) -> Result<DetailFill, String> {
+async fn fill_public_details(
+    app: &AppHandle,
+    progress: &ProgressGuard,
+) -> Result<DetailFill, String> {
     if walk_cancel_requested() {
         return Ok(DetailFill::Cancelled);
     }
@@ -2483,8 +2559,14 @@ mod tests {
         let library = url::Url::parse("https://accounts.booth.pm/library?page=1").unwrap();
         // 移動を頼んだ直前の BOOTH のトップは、読み終わっていてもログイン切れとして止めない。
         let left = || probe("https://booth.pm/ja", "complete", true);
-        assert_eq!(arrived_href(left(), &orders, same_orders_page, purchase_settled_stop), None);
-        assert_eq!(arrived_href(left(), &library, same_library_page, settled_stop), None);
+        assert_eq!(
+            arrived_href(left(), &orders, same_orders_page, purchase_settled_stop),
+            None
+        );
+        assert_eq!(
+            arrived_href(left(), &library, same_library_page, settled_stop),
+            None
+        );
         // 同じ URL を読み直すときも、前の文書は読まない。
         assert_eq!(
             arrived_href(
@@ -2529,12 +2611,18 @@ mod tests {
 
     #[test]
     fn walks_mark_the_current_page_before_moving() {
-        let production = include_str!("browser.rs").split("mod tests").next().unwrap();
+        let production = include_str!("browser.rs")
+            .split("mod tests")
+            .next()
+            .unwrap();
         for reader in ["async fn read_library_page", "async fn read_purchase_page"] {
             let body = &production[production.find(reader).expect(reader)..];
             let mark = body.find("mark_walk_page_left(app).await").expect("mark");
             let navigate = body.find("navigate_").expect("navigate");
-            assert!(mark < navigate, "{reader} must mark the old page before navigating");
+            assert!(
+                mark < navigate,
+                "{reader} must mark the old page before navigating"
+            );
         }
         assert!(PROBE_JS.contains("__vrclibmanWalkLeft"));
         assert!(LEAVE_MARK_JS.contains("__vrclibmanWalkLeft = true"));
@@ -2546,8 +2634,13 @@ mod tests {
         assert!(library_page_for_import("https://accounts.booth.pm/library?page=2").is_ok());
         assert!(library_page_for_import("https://accounts.booth.pm/library/gifts").is_ok());
         assert!(library_page_for_import("https://accounts.booth.pm/library/gifts?page=2").is_ok());
-        assert!(library_page_for_import("https://accounts.booth.pm/library/free_downloads").is_ok());
-        assert!(library_page_for_import("https://accounts.booth.pm/library/free_downloads?page=2").is_ok());
+        assert!(
+            library_page_for_import("https://accounts.booth.pm/library/free_downloads").is_ok()
+        );
+        assert!(
+            library_page_for_import("https://accounts.booth.pm/library/free_downloads?page=2")
+                .is_ok()
+        );
         assert!(library_page_for_import("https://booth.pm/ja/items/4876459").is_err());
         assert!(library_page_for_import("https://accounts.pixiv.net/login").is_err());
         assert!(library_page_for_import("http://accounts.booth.pm/library").is_err());
@@ -2622,7 +2715,10 @@ mod tests {
     #[test]
     fn unknown_category_lines_are_unique_and_omit_product_text() {
         let line = unknown_category_line(Some(157), "架空カテゴリ", "架空の親").unwrap();
-        assert_eq!(line, "未対応カテゴリ id=157 name=架空カテゴリ parent=架空の親");
+        assert_eq!(
+            line,
+            "未対応カテゴリ id=157 name=架空カテゴリ parent=架空の親"
+        );
         assert!(unknown_category_line(None, "  \n  ", "親だけ").is_none());
         let broken = unknown_category_line(Some(6), "架空\n改行", "親\t名").unwrap();
         assert!(!broken.contains('\n'));
@@ -2721,7 +2817,9 @@ mod tests {
         let other = claim_download(download_key("424242", "", "hair.unitypackage")).unwrap();
         assert!(download_job_armed());
         assert_eq!(
-            claim_download(download_key(" 424242 ", "", "body.unitypackage")).err().as_deref(),
+            claim_download(download_key(" 424242 ", "", "body.unitypackage"))
+                .err()
+                .as_deref(),
             Some(db::BROWSER_SAME_FILE_MESSAGE)
         );
         let quest = claim_download(download_key("424242", "Quest", "body.unitypackage")).unwrap();
@@ -2757,12 +2855,11 @@ mod tests {
                 drop(permit);
             });
             let second = std::pin::pin!(async {
-                let (_, permit) =
-                    prepare_in_line(&slots, async { Ok::<_, String>(()) }, || {
-                        waited.lock().unwrap().push("second")
-                    })
-                    .await
-                    .unwrap();
+                let (_, permit) = prepare_in_line(&slots, async { Ok::<_, String>(()) }, || {
+                    waited.lock().unwrap().push("second")
+                })
+                .await
+                .unwrap();
                 order.lock().unwrap().push("second");
                 drop(permit);
             });
@@ -2905,13 +3002,32 @@ mod tests {
     #[test]
     fn finished_download_status_carries_the_library_path() {
         let placed = std::path::Path::new("/lib/4242/pack.zip");
-        let done = serde_json::to_value(file_status("4242", "", "pack.zip", "done", "ライブラリに移しました", Some(placed))).unwrap();
+        let done = serde_json::to_value(file_status(
+            "4242",
+            "",
+            "pack.zip",
+            "done",
+            "ライブラリに移しました",
+            Some(placed),
+        ))
+        .unwrap();
         assert_eq!(done["phase"], "done");
         assert_eq!(done["boothId"], "4242");
         assert_eq!(done["path"], placed.display().to_string());
-        let receiving = serde_json::to_value(file_status("4242", "", "pack.zip", "receiving", "ダウンロード中", None)).unwrap();
+        let receiving = serde_json::to_value(file_status(
+            "4242",
+            "",
+            "pack.zip",
+            "receiving",
+            "ダウンロード中",
+            None,
+        ))
+        .unwrap();
         assert!(receiving["path"].is_null());
-        let production = include_str!("browser.rs").split("mod tests").next().unwrap();
+        let production = include_str!("browser.rs")
+            .split("mod tests")
+            .next()
+            .unwrap();
         let download = function_body(production, "fn download_one_file");
         assert!(download.contains("Ok(placed) =>"));
         assert!(download.contains("Some(&placed)"));
@@ -3106,7 +3222,10 @@ mod tests {
         assert!(!drop_probe_after_account_read(true));
         assert!(drop_probe_after_account_read(false));
 
-        let production = include_str!("browser.rs").split("mod tests").next().unwrap();
+        let production = include_str!("browser.rs")
+            .split("mod tests")
+            .next()
+            .unwrap();
         let reused = bounded_function(production, "fn reload_resident_probe");
         assert!(reused.contains("PROBE_LABEL"));
         assert!(reused.contains("probe_reload_script"));
@@ -3162,7 +3281,12 @@ mod tests {
         }
         assert_eq!(
             reloads,
-            ["main", "booth-toolbar-1", "booth-tab-1", "booth-probe-other"]
+            [
+                "main",
+                "booth-toolbar-1",
+                "booth-tab-1",
+                "booth-probe-other"
+            ]
         );
 
         recover_web_content_process(PROBE_LABEL, || {

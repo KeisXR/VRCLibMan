@@ -519,21 +519,30 @@ mod tests {
         for _ in 0..2 {
             run_pass(app.handle()).unwrap();
             let current = status();
-            assert_eq!((current.copied, current.skipped, current.conflicts), (0, 0, 1));
+            assert_eq!(
+                (current.copied, current.skipped, current.conflicts),
+                (0, 0, 1)
+            );
             assert_eq!(current.conflict_files[0].file, "9001/file.zip");
             assert_eq!(current.conflict_files[0].local_size, 17);
             assert_eq!(current.conflict_files[0].remote_size, 5);
             assert_eq!((current.source_missing, current.failed), (1, 0));
             assert_eq!(current.source_missing_files, ["9002/gone.zip"]);
             assert!(current.error.is_none());
-            assert_eq!(std::fs::read(remote.join("9001/file.zip")).unwrap(), b"older");
+            assert_eq!(
+                std::fs::read(remote.join("9001/file.zip")).unwrap(),
+                b"older"
+            );
             assert_eq!(std::fs::read_dir(remote.join("9001")).unwrap().count(), 1);
         }
         // A conflict is not recorded: once the person removes the other file, the next pass copies.
         std::fs::remove_file(remote.join("9001/file.zip")).unwrap();
         run_pass(app.handle()).unwrap();
         assert_eq!((status().copied, status().conflicts), (1, 0));
-        assert_eq!(std::fs::read(remote.join("9001/file.zip")).unwrap(), b"synthetic package");
+        assert_eq!(
+            std::fs::read(remote.join("9001/file.zip")).unwrap(),
+            b"synthetic package"
+        );
     }
 
     #[test]
@@ -567,10 +576,22 @@ mod tests {
         let app = sync_app(directory.path(), connection);
         run_pass(app.handle()).unwrap();
         let current = app.state::<SyncState>().status.lock().unwrap().clone();
-        assert_eq!((current.copied, current.source_missing, current.failed), (1, 0, 2));
-        let files: Vec<&str> = current.failures.iter().map(|failure| failure.file.as_str()).collect();
+        assert_eq!(
+            (current.copied, current.source_missing, current.failed),
+            (1, 0, 2)
+        );
+        let files: Vec<&str> = current
+            .failures
+            .iter()
+            .map(|failure| failure.file.as_str())
+            .collect();
         assert_eq!(files, ["9001/a.zip", "9001/b.zip"]);
-        assert!(current.failures.iter().all(|failure| !failure.error.is_empty()));
+        assert!(
+            current
+                .failures
+                .iter()
+                .all(|failure| !failure.error.is_empty())
+        );
         assert!(current.error.is_none());
         assert!(remote.join("9002/c.zip").is_file());
     }

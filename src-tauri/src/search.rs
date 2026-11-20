@@ -86,12 +86,25 @@ mod tests {
             )
             .unwrap();
         connection
-            .execute("INSERT INTO product_exclusions (booth_id, excluded_at) VALUES ('100003', 't')", [])
+            .execute(
+                "INSERT INTO product_exclusions (booth_id, excluded_at) VALUES ('100003', 't')",
+                [],
+            )
             .unwrap();
         assert_eq!(product_ids(&connection, "ライム").unwrap(), ["100001"]);
-        assert_eq!(product_ids(&connection, "sample  ライム").unwrap(), ["100001"]);
-        assert_eq!(product_ids(&connection, "SHOP").unwrap(), ["100001", "100002"]);
-        assert_eq!(product_ids(&connection, "髪型").unwrap(), ["100002"], "genre label");
+        assert_eq!(
+            product_ids(&connection, "sample  ライム").unwrap(),
+            ["100001"]
+        );
+        assert_eq!(
+            product_ids(&connection, "SHOP").unwrap(),
+            ["100001", "100002"]
+        );
+        assert_eq!(
+            product_ids(&connection, "髪型").unwrap(),
+            ["100002"],
+            "genre label"
+        );
         assert_eq!(product_ids(&connection, "100002").unwrap(), ["100002"]);
         assert!(product_ids(&connection, "ライム 短い").unwrap().is_empty());
         assert!(product_ids(&connection, "   ").unwrap().is_empty());
@@ -101,4 +114,3 @@ mod tests {
         assert_eq!(tokens("ライム\u{3000}衣装"), ["ライム", "衣装"]);
     }
 }
-

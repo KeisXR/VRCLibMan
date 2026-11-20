@@ -10,7 +10,7 @@
 //!   `-importPackage` やプロジェクトへの書き込みはしない。
 //! - パスやファイル名はログに書かない。
 
-use crate::file_browser::{optional_root, read_zip, requested_path, resolve, NO_ANSWER};
+use crate::file_browser::{NO_ANSWER, optional_root, read_zip, requested_path, resolve};
 use crate::library_files::wait_for;
 use serde::Serialize;
 use std::fs::File;
@@ -149,12 +149,18 @@ pub(crate) fn list_packages(path: &Path) -> Result<UnityPackageList, String> {
         return Ok(UnityPackageList {
             path: display,
             kind: "package",
-            packages: vec![UnityPackageEntry { entry: String::new(), name, size }],
+            packages: vec![UnityPackageEntry {
+                entry: String::new(),
+                name,
+                size,
+            }],
             truncated: false,
         });
     }
     let read_from = path.to_path_buf();
-    let (entries, truncated) = match wait_for(crate::file_browser::LIST_TIMEOUT, move || read_zip(read_from)) {
+    let (entries, truncated) = match wait_for(crate::file_browser::LIST_TIMEOUT, move || {
+        read_zip(read_from)
+    }) {
         None => return Err(NO_ANSWER.into()),
         Some(result) => result?,
     };
@@ -167,7 +173,12 @@ pub(crate) fn list_packages(path: &Path) -> Result<UnityPackageList, String> {
             size: entry.size,
         })
         .collect();
-    Ok(UnityPackageList { path: display, kind: "zip", packages, truncated })
+    Ok(UnityPackageList {
+        path: display,
+        kind: "zip",
+        packages,
+        truncated,
+    })
 }
 
 /// 取り出し先のファイル名。zip 内のパスの最後の部分だけを使い、Windows で使えない文字を置き換える。
@@ -188,7 +199,10 @@ pub(crate) fn safe_file_name(entry: &str) -> Option<String> {
     // 長すぎる名前は先頭を残して縮める（拡張子は残す）。
     const MAX_CHARS: usize = 120;
     if cleaned.chars().count() > MAX_CHARS {
-        let stem: String = cleaned.chars().take(MAX_CHARS - ".unitypackage".len()).collect();
+        let stem: String = cleaned
+            .chars()
+            .take(MAX_CHARS - ".unitypackage".len())
+            .collect();
         cleaned = format!("{}.unitypackage", stem.trim_end_matches(['.', ' ']));
     }
     Some(cleaned)
@@ -236,7 +250,9 @@ pub(crate) fn extract_packages(
     // 表示用の名前（Shift_JIS を考慮して読んだもの）から番号を引く。
     let mut index_of = std::collections::HashMap::new();
     for index in 0..archive.len().min(crate::file_browser::MAX_ZIP_ENTRIES) {
-        let Ok(entry) = archive.by_index_raw(index) else { continue };
+        let Ok(entry) = archive.by_index_raw(index) else {
+            continue;
+        };
         let name = crate::file_browser::decode_zip_name(entry.name_raw(), entry.name());
         let path = crate::file_browser::clean_zip_path(&name);
         if entry.is_dir() || path.is_empty() {
@@ -271,11 +287,14 @@ pub(crate) fn extract_packages(
         }
         let partial = dest.join(format!("{name}.part"));
         let written = (|| -> Result<u64, String> {
-            let mut out = File::create(&partial).map_err(|_| "取り出し先に書き込めません".to_string())?;
+            let mut out =
+                File::create(&partial).map_err(|_| "取り出し先に書き込めません".to_string())?;
             let mut limited = (&mut entry).take(declared.min(max_bytes) + 1);
-            let copied = std::io::copy(&mut limited, &mut out)
-                .map_err(|_| "zip から取り出せません。壊れているか、対応していない形式です".to_string())?;
-            out.flush().map_err(|_| "取り出し先に書き込めません".to_string())?;
+            let copied = std::io::copy(&mut limited, &mut out).map_err(|_| {
+                "zip から取り出せません。壊れているか、対応していない形式です".to_string()
+            })?;
+            out.flush()
+                .map_err(|_| "取り出し先に書き込めません".to_string())?;
             Ok(copied)
         })();
         match written {
@@ -306,10 +325,14 @@ pub(crate) fn extract_packages(
 /// キャッシュの中の古いファイルを消し、空のフォルダも消す。リンクはたどらない。
 pub(crate) fn clean_cache(root: &Path, max_age: Duration, now: SystemTime) -> usize {
     let mut removed = 0;
-    let Ok(children) = std::fs::read_dir(root) else { return 0 };
+    let Ok(children) = std::fs::read_dir(root) else {
+        return 0;
+    };
     for child in children.flatten() {
         let path = child.path();
-        let Ok(meta) = std::fs::symlink_metadata(&path) else { continue };
+        let Ok(meta) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
         if meta.is_dir() {
             removed += clean_cache(&path, max_age, now);
             let _ = std::fs::remove_dir(&path);
@@ -328,7 +351,12 @@ pub(crate) fn clean_cache(root: &Path, max_age: Duration, now: SystemTime) -> us
 }
 
 /// 渡すファイルは、キャッシュの取り出し先か、ライブラリ内の `.unitypackage` だけ。
-pub(crate) fn allowed_launch_path(raw: &str, cache_root: &Path, library: &str, remote: &str) -> Result<PathBuf, String> {
+pub(crate) fn allowed_launch_path(
+    raw: &str,
+    cache_root: &Path,
+    library: &str,
+    remote: &str,
+) -> Result<PathBuf, String> {
     let requested = requested_path(raw, "")?;
     if !has_extension(&requested, "unitypackage") {
         return Err("Unity パッケージ（.unitypackage）だけを Unity に渡せます".into());
@@ -341,7 +369,11 @@ pub(crate) fn allowed_launch_path(raw: &str, cache_root: &Path, library: &str, r
         .map(|path| crate::library_files::without_verbatim_prefix(&path))
         .ok();
     let roots = [cache, optional_root(library), optional_root(remote)];
-    if roots.iter().flatten().any(|root| resolved.starts_with(root)) {
+    if roots
+        .iter()
+        .flatten()
+        .any(|root| resolved.starts_with(root))
+    {
         Ok(resolved)
     } else {
         Err(OUTSIDE.into())
@@ -364,7 +396,10 @@ pub(crate) fn editor_from_setting(selected: &str) -> Result<PathBuf, String> {
 /// `-openfile` は起動中のエディタにだけ届く。エディタが無いと Unity は Hub を開いて正常終了するので、
 /// 終了コードでは渡せなかったことが分からない。渡す前に、設定した Unity が起動しているかを確かめる。
 /// 起動中のプロセスを調べられなかったとき（`None`）は、確かめずに渡す。
-pub(crate) fn require_running_editor(editor: &Path, running: Option<&[PathBuf]>) -> Result<(), String> {
+pub(crate) fn require_running_editor(
+    editor: &Path,
+    running: Option<&[PathBuf]>,
+) -> Result<(), String> {
     let Some(running) = running else {
         return Ok(());
     };
@@ -425,12 +460,21 @@ mod running_editors {
         fn Process32FirstW(snapshot: *mut c_void, entry: *mut ProcessEntry32W) -> i32;
         fn Process32NextW(snapshot: *mut c_void, entry: *mut ProcessEntry32W) -> i32;
         fn OpenProcess(access: u32, inherit: i32, process_id: u32) -> *mut c_void;
-        fn QueryFullProcessImageNameW(process: *mut c_void, flags: u32, name: *mut u16, size: *mut u32) -> i32;
+        fn QueryFullProcessImageNameW(
+            process: *mut c_void,
+            flags: u32,
+            name: *mut u16,
+            size: *mut u32,
+        ) -> i32;
         fn CloseHandle(handle: *mut c_void) -> i32;
     }
 
     fn exe_name(entry: &ProcessEntry32W) -> String {
-        let end = entry.exe_file.iter().position(|unit| *unit == 0).unwrap_or(MAX_PATH);
+        let end = entry
+            .exe_file
+            .iter()
+            .position(|unit| *unit == 0)
+            .unwrap_or(MAX_PATH);
         String::from_utf16_lossy(&entry.exe_file[..end])
     }
 
@@ -469,7 +513,9 @@ mod running_editors {
         while more {
             if exe_name(&entry).eq_ignore_ascii_case("unity.exe") {
                 // 権限の違いでパスを読めない Unity も、起動していることは数える。
-                found.push(image_path(entry.process_id).unwrap_or_else(|| PathBuf::from("Unity.exe")));
+                found.push(
+                    image_path(entry.process_id).unwrap_or_else(|| PathBuf::from("Unity.exe")),
+                );
             }
             more = unsafe { Process32NextW(snapshot, &mut entry) } != 0;
         }
@@ -486,7 +532,13 @@ mod running_editors {
         let entries = std::fs::read_dir("/proc").ok()?;
         let found = entries
             .flatten()
-            .filter(|entry| entry.file_name().to_string_lossy().bytes().all(|byte| byte.is_ascii_digit()))
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit())
+            })
             .filter_map(|entry| std::fs::read_link(entry.path().join("exe")).ok())
             .filter(|exe| exe.file_name().is_some_and(|name| name == "Unity"))
             .collect();
@@ -552,16 +604,18 @@ pub(crate) fn launch_with_editor(
 ) -> Result<LaunchResult, String> {
     let mut launched = 0;
     for (index, package) in packages.iter().enumerate() {
-        let mut child = openfile_command(editor, package)
-            .spawn()
-            .map_err(|_| "Unity を起動できませんでした。設定の「Unity」を確かめてください".to_string())?;
+        let mut child = openfile_command(editor, package).spawn().map_err(|_| {
+            "Unity を起動できませんでした。設定の「Unity」を確かめてください".to_string()
+        })?;
         let last = index + 1 == packages.len();
         let started = std::time::Instant::now();
         let finished = loop {
             match child.try_wait() {
                 Ok(Some(status)) if status.success() => break true,
                 Ok(Some(_)) => {
-                    return Err("Unity が異常終了しました。Unity の起動状態と設定を確かめてください".into());
+                    return Err(
+                        "Unity が異常終了しました。Unity の起動状態と設定を確かめてください".into(),
+                    );
                 }
                 Ok(None) if started.elapsed() >= handoff_timeout => break false,
                 Ok(None) => std::thread::sleep(Duration::from_millis(200)),
@@ -569,7 +623,10 @@ pub(crate) fn launch_with_editor(
                     std::thread::spawn(move || {
                         let _ = child.wait();
                     });
-                    return Err("Unity の起動状態を確認できませんでした。Unity の画面を確かめてください".into());
+                    return Err(
+                        "Unity の起動状態を確認できませんでした。Unity の画面を確かめてください"
+                            .into(),
+                    );
                 }
             }
         };
@@ -580,13 +637,19 @@ pub(crate) fn launch_with_editor(
                 let _ = child.wait();
             });
             if !last {
-                return Ok(LaunchResult { launched, waiting: true });
+                return Ok(LaunchResult {
+                    launched,
+                    waiting: true,
+                });
             }
         } else if !last {
             std::thread::sleep(gap);
         }
     }
-    Ok(LaunchResult { launched, waiting: false })
+    Ok(LaunchResult {
+        launched,
+        waiting: false,
+    })
 }
 
 #[cfg(test)]
@@ -599,7 +662,10 @@ mod tests {
         let root = resolved_temp_dir().join(format!(
             "vrclibman-unity-import-{name}-{}-{}",
             std::process::id(),
-            SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+            SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         std::fs::create_dir_all(&root).unwrap();
         root
@@ -615,7 +681,10 @@ mod tests {
                 zip::CompressionMethod::Stored
             };
             writer
-                .start_file(*name, SimpleFileOptions::default().compression_method(method))
+                .start_file(
+                    *name,
+                    SimpleFileOptions::default().compression_method(method),
+                )
                 .unwrap();
             writer.write_all(data).unwrap();
         }
@@ -639,15 +708,30 @@ mod tests {
         assert_eq!(
             list.packages,
             vec![
-                UnityPackageEntry { entry: "Sample/Sample_Outfit.unitypackage".into(), name: "Sample_Outfit.unitypackage".into(), size: 4 },
-                UnityPackageEntry { entry: "Sample_PhysBone.UNITYPACKAGE".into(), name: "Sample_PhysBone.UNITYPACKAGE".into(), size: 3 },
+                UnityPackageEntry {
+                    entry: "Sample/Sample_Outfit.unitypackage".into(),
+                    name: "Sample_Outfit.unitypackage".into(),
+                    size: 4
+                },
+                UnityPackageEntry {
+                    entry: "Sample_PhysBone.UNITYPACKAGE".into(),
+                    name: "Sample_PhysBone.UNITYPACKAGE".into(),
+                    size: 3
+                },
             ]
         );
         let single = root.join("Sample_Hair.unitypackage");
         std::fs::write(&single, b"12345").unwrap();
         let list = list_packages(&single).unwrap();
         assert_eq!(list.kind, "package");
-        assert_eq!(list.packages, vec![UnityPackageEntry { entry: String::new(), name: "Sample_Hair.unitypackage".into(), size: 5 }]);
+        assert_eq!(
+            list.packages,
+            vec![UnityPackageEntry {
+                entry: String::new(),
+                name: "Sample_Hair.unitypackage".into(),
+                size: 5
+            }]
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -666,14 +750,36 @@ mod tests {
             ],
         );
         let dest = root.join("cache").join("unity-import").join("1000001");
-        let entries: Vec<String> = list_packages(&zip_path).unwrap().packages.into_iter().map(|p| p.entry).collect();
-        assert!(entries.iter().any(|entry| entry == "../../evil.unitypackage"));
+        let entries: Vec<String> = list_packages(&zip_path)
+            .unwrap()
+            .packages
+            .into_iter()
+            .map(|p| p.entry)
+            .collect();
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry == "../../evil.unitypackage")
+        );
         let prepared = extract_packages(&zip_path, &entries, &dest, MAX_PACKAGE_BYTES).unwrap();
         let names: Vec<String> = prepared
             .iter()
-            .map(|p| Path::new(&p.path).file_name().unwrap().to_string_lossy().into_owned())
+            .map(|p| {
+                Path::new(&p.path)
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
             .collect();
-        assert_eq!(names, vec!["One.unitypackage", "evil.unitypackage", "One (2).unitypackage"]);
+        assert_eq!(
+            names,
+            vec![
+                "One.unitypackage",
+                "evil.unitypackage",
+                "One (2).unitypackage"
+            ]
+        );
         for package in &prepared {
             // 返すパスは Windows の `\\?\` を外した表示用なので、両方を canonicalize して比べる。
             let parent = std::fs::canonicalize(Path::new(&package.path).parent().unwrap()).unwrap();
@@ -683,11 +789,27 @@ mod tests {
         assert!(!root.join("evil.unitypackage").exists());
         assert!(!root.parent().unwrap().join("evil.unitypackage").exists());
         // 選んだものだけ。txt は取り出せない。zip に無い名前も断る。
-        assert!(extract_packages(&zip_path, &["z/notes.txt".into()], &dest, MAX_PACKAGE_BYTES).is_err());
-        assert!(extract_packages(&zip_path, &["missing.unitypackage".into()], &dest, MAX_PACKAGE_BYTES).is_err());
+        assert!(
+            extract_packages(&zip_path, &["z/notes.txt".into()], &dest, MAX_PACKAGE_BYTES).is_err()
+        );
+        assert!(
+            extract_packages(
+                &zip_path,
+                &["missing.unitypackage".into()],
+                &dest,
+                MAX_PACKAGE_BYTES
+            )
+            .is_err()
+        );
         assert!(extract_packages(&zip_path, &[], &dest, MAX_PACKAGE_BYTES).is_err());
         // 上限を超えるものは取り出さず、途中のファイルも残さない。
-        let err = extract_packages(&zip_path, &["y/One.unitypackage".into()], &root.join("small"), 1024).unwrap_err();
+        let err = extract_packages(
+            &zip_path,
+            &["y/One.unitypackage".into()],
+            &root.join("small"),
+            1024,
+        )
+        .unwrap_err();
         assert!(err.contains("大きすぎる"));
         let leftovers: Vec<_> = std::fs::read_dir(root.join("small")).unwrap().collect();
         assert!(leftovers.is_empty());
@@ -696,10 +818,22 @@ mod tests {
 
     #[test]
     fn safe_names_drop_folders_and_bad_characters() {
-        assert_eq!(safe_file_name("a/b/c.unitypackage").as_deref(), Some("c.unitypackage"));
-        assert_eq!(safe_file_name("..\\..\\c.unitypackage").as_deref(), Some("c.unitypackage"));
-        assert_eq!(safe_file_name("a:b?.unitypackage").as_deref(), Some("a_b_.unitypackage"));
-        assert_eq!(safe_file_name("見本 衣装.unitypackage").as_deref(), Some("見本 衣装.unitypackage"));
+        assert_eq!(
+            safe_file_name("a/b/c.unitypackage").as_deref(),
+            Some("c.unitypackage")
+        );
+        assert_eq!(
+            safe_file_name("..\\..\\c.unitypackage").as_deref(),
+            Some("c.unitypackage")
+        );
+        assert_eq!(
+            safe_file_name("a:b?.unitypackage").as_deref(),
+            Some("a_b_.unitypackage")
+        );
+        assert_eq!(
+            safe_file_name("見本 衣装.unitypackage").as_deref(),
+            Some("見本 衣装.unitypackage")
+        );
         assert_eq!(safe_file_name(".unitypackage"), None);
         assert_eq!(safe_file_name("x.txt"), None);
         assert_eq!(safe_file_name(".."), None);
@@ -712,10 +846,22 @@ mod tests {
     #[test]
     fn cache_folder_uses_digits_only() {
         let root = Path::new("/cache");
-        assert_eq!(cache_folder(root, Some("1000001")), root.join("unity-import").join("1000001"));
-        assert_eq!(cache_folder(root, Some("../x")), root.join("unity-import").join("other"));
-        assert_eq!(cache_folder(root, None), root.join("unity-import").join("other"));
-        assert_eq!(cache_folder(root, Some("1234567890123")), root.join("unity-import").join("other"));
+        assert_eq!(
+            cache_folder(root, Some("1000001")),
+            root.join("unity-import").join("1000001")
+        );
+        assert_eq!(
+            cache_folder(root, Some("../x")),
+            root.join("unity-import").join("other")
+        );
+        assert_eq!(
+            cache_folder(root, None),
+            root.join("unity-import").join("other")
+        );
+        assert_eq!(
+            cache_folder(root, Some("1234567890123")),
+            root.join("unity-import").join("other")
+        );
     }
 
     #[test]
@@ -733,20 +879,39 @@ mod tests {
         std::fs::write(&text, b"").unwrap();
         let lib = library.display().to_string();
         assert!(allowed_source(&inside_zip.display().to_string(), &lib, "").is_ok());
-        assert_eq!(allowed_source(&outside_pkg.display().to_string(), &lib, "").unwrap_err(), OUTSIDE);
-        assert!(allowed_source(&outside_pkg.display().to_string(), &lib, &outside.display().to_string()).is_ok());
-        assert_eq!(allowed_source(&text.display().to_string(), &lib, "").unwrap_err(), NOT_PACKAGE);
+        assert_eq!(
+            allowed_source(&outside_pkg.display().to_string(), &lib, "").unwrap_err(),
+            OUTSIDE
+        );
+        assert!(
+            allowed_source(
+                &outside_pkg.display().to_string(),
+                &lib,
+                &outside.display().to_string()
+            )
+            .is_ok()
+        );
+        assert_eq!(
+            allowed_source(&text.display().to_string(), &lib, "").unwrap_err(),
+            NOT_PACKAGE
+        );
         assert!(allowed_source("relative/a.zip", &lib, "").is_err());
         let sneaky = format!("{}/1000001/../../outside/b.unitypackage", lib);
         assert!(allowed_source(&sneaky, &lib, "").is_err());
-        assert_eq!(allowed_source(&inside_zip.display().to_string(), "", "").unwrap_err(), OUTSIDE);
+        assert_eq!(
+            allowed_source(&inside_zip.display().to_string(), "", "").unwrap_err(),
+            OUTSIDE
+        );
 
         let cache = root.join("cache");
         std::fs::create_dir_all(cache.join(CACHE_DIR).join("other")).unwrap();
         let cached = cache.join(CACHE_DIR).join("other").join("d.unitypackage");
         std::fs::write(&cached, b"").unwrap();
         assert!(allowed_launch_path(&cached.display().to_string(), &cache, &lib, "").is_ok());
-        assert_eq!(allowed_launch_path(&outside_pkg.display().to_string(), &cache, &lib, "").unwrap_err(), OUTSIDE);
+        assert_eq!(
+            allowed_launch_path(&outside_pkg.display().to_string(), &cache, &lib, "").unwrap_err(),
+            OUTSIDE
+        );
         assert!(allowed_launch_path(&inside_zip.display().to_string(), &cache, &lib, "").is_err());
         let _ = std::fs::remove_dir_all(root);
     }
@@ -761,7 +926,14 @@ mod tests {
         std::fs::write(cache.join("1000002").join("new.unitypackage"), b"x").unwrap();
         let later = SystemTime::now() + Duration::from_secs(2 * 24 * 60 * 60);
         // 「今」を 2 日後にすると両方古い。1 時間後なら両方残る。
-        assert_eq!(clean_cache(&cache, CACHE_MAX_AGE, SystemTime::now() + Duration::from_secs(3600)), 0);
+        assert_eq!(
+            clean_cache(
+                &cache,
+                CACHE_MAX_AGE,
+                SystemTime::now() + Duration::from_secs(3600)
+            ),
+            0
+        );
         assert!(cache.join("1000002").join("new.unitypackage").exists());
         assert_eq!(clean_cache(&cache, CACHE_MAX_AGE, later), 2);
         assert!(!cache.join("1000001").exists());
@@ -773,7 +945,10 @@ mod tests {
     #[test]
     fn editor_setting_must_point_to_a_file() {
         assert_eq!(editor_from_setting("  ").unwrap_err(), NO_EDITOR);
-        assert_eq!(editor_from_setting("/no/such/Unity").unwrap_err(), EDITOR_MISSING);
+        assert_eq!(
+            editor_from_setting("/no/such/Unity").unwrap_err(),
+            EDITOR_MISSING
+        );
         assert_eq!(LaunchMode::parse("unity"), Ok(LaunchMode::Unity));
         assert_eq!(LaunchMode::parse("system"), Ok(LaunchMode::System));
         assert!(LaunchMode::parse("sh -c").is_err());
@@ -789,7 +964,10 @@ mod tests {
             std::fs::write(path, b"x").unwrap();
         }
         // エディタが無いと Unity は Hub を開いて正常終了するので、渡す前に止める。
-        assert_eq!(require_running_editor(&chosen, Some(&[])).unwrap_err(), EDITOR_NOT_RUNNING);
+        assert_eq!(
+            require_running_editor(&chosen, Some(&[])).unwrap_err(),
+            EDITOR_NOT_RUNNING
+        );
         assert_eq!(
             require_running_editor(&chosen, Some(&[other.clone()])).unwrap_err(),
             OTHER_EDITOR_RUNNING
@@ -814,7 +992,9 @@ mod tests {
     fn a_running_unity_exe_is_found_with_its_full_path() {
         let root = temp_root("process");
         let fake = root.join("Unity.exe");
-        let system = std::env::var_os("SystemRoot").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+        let system = std::env::var_os("SystemRoot")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
         std::fs::copy(system.join("System32").join("ping.exe"), &fake).unwrap();
         let mut child = Command::new(&fake)
             .args(["-n", "30", "127.0.0.1"])
@@ -825,7 +1005,10 @@ mod tests {
         let found = running_editor_paths().expect("process list");
         let _ = child.kill();
         let _ = child.wait();
-        assert!(found.iter().any(|path| same_editor(path, &fake)), "{found:?}");
+        assert!(
+            found.iter().any(|path| same_editor(path, &fake)),
+            "{found:?}"
+        );
         assert!(require_running_editor(&fake, Some(&found)).is_ok());
         let _ = std::fs::remove_dir_all(root);
     }
@@ -835,15 +1018,25 @@ mod tests {
         // CI にも開発機にも Unity が起動しているとは限らないので、一覧を作れることだけを見る。
         let listed = running_editor_paths().expect("process list");
         assert!(listed.iter().all(|path| {
-            let name = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+            let name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_lowercase();
             name == "unity.exe" || name == "unity"
         }));
     }
 
     #[test]
     fn openfile_passes_arguments_without_a_shell() {
-        let command = openfile_command(Path::new("/opt/Unity/Editor/Unity"), Path::new("/tmp/a b;$(x).unitypackage"));
-        let args: Vec<String> = command.get_args().map(|arg| arg.to_string_lossy().into_owned()).collect();
+        let command = openfile_command(
+            Path::new("/opt/Unity/Editor/Unity"),
+            Path::new("/tmp/a b;$(x).unitypackage"),
+        );
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
         assert_eq!(args, vec!["-openfile", "/tmp/a b;$(x).unitypackage"]);
         assert_eq!(command.get_program(), "/opt/Unity/Editor/Unity");
     }
@@ -857,7 +1050,10 @@ mod tests {
         let editor = root.join("Unity");
         std::fs::write(
             &editor,
-            format!("#!/bin/sh\nprintf '%s\\n' \"$2\" >> '{}'\nexit 23\n", log.display()),
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$2\" >> '{}'\nexit 23\n",
+                log.display()
+            ),
         )
         .unwrap();
         std::fs::set_permissions(&editor, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -873,7 +1069,10 @@ mod tests {
             );
             assert!(result.unwrap_err().contains("異常終了"));
             let passed = std::fs::read_to_string(&log).unwrap();
-            assert_eq!(passed.lines().collect::<Vec<_>>(), vec![packages[0].to_str().unwrap()]);
+            assert_eq!(
+                passed.lines().collect::<Vec<_>>(),
+                vec![packages[0].to_str().unwrap()]
+            );
         }
         let _ = std::fs::remove_dir_all(root);
     }
@@ -885,11 +1084,30 @@ mod tests {
         let root = temp_root("launch");
         let log = root.join("log.txt");
         let quick = root.join("quick-editor");
-        std::fs::write(&quick, format!("#!/bin/sh\nprintf '%s|%s\\n' \"$1\" \"$2\" >> '{}'\n", log.display())).unwrap();
+        std::fs::write(
+            &quick,
+            format!(
+                "#!/bin/sh\nprintf '%s|%s\\n' \"$1\" \"$2\" >> '{}'\n",
+                log.display()
+            ),
+        )
+        .unwrap();
         std::fs::set_permissions(&quick, std::fs::Permissions::from_mode(0o755)).unwrap();
         let packages = vec![root.join("a b.unitypackage"), root.join("c.unitypackage")];
-        let result = launch_with_editor(&quick, &packages, Duration::from_secs(5), Duration::from_millis(10)).unwrap();
-        assert_eq!(result, LaunchResult { launched: 2, waiting: false });
+        let result = launch_with_editor(
+            &quick,
+            &packages,
+            Duration::from_secs(5),
+            Duration::from_millis(10),
+        )
+        .unwrap();
+        assert_eq!(
+            result,
+            LaunchResult {
+                launched: 2,
+                waiting: false
+            }
+        );
         let text = std::fs::read_to_string(&log).unwrap();
         assert_eq!(
             text.lines().collect::<Vec<_>>(),
@@ -901,8 +1119,20 @@ mod tests {
         let slow = root.join("slow-editor");
         std::fs::write(&slow, "#!/bin/sh\nsleep 2\n").unwrap();
         std::fs::set_permissions(&slow, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let result = launch_with_editor(&slow, &packages, Duration::from_millis(300), Duration::from_millis(10)).unwrap();
-        assert_eq!(result, LaunchResult { launched: 1, waiting: true });
+        let result = launch_with_editor(
+            &slow,
+            &packages,
+            Duration::from_millis(300),
+            Duration::from_millis(10),
+        )
+        .unwrap();
+        assert_eq!(
+            result,
+            LaunchResult {
+                launched: 1,
+                waiting: true
+            }
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 }
