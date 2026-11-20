@@ -43,15 +43,24 @@ jobs:
       - name: type check
         run: npx tsc --noEmit
 
+      # Some tests drive headless Chrome (preinstalled on ubuntu-latest).
+      # CHROME_PATH is pinned so a missing Chrome fails instead of skipping them.
       - name: test
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
         run: npm test
-        
-      # Drives real pointer input in headless Chrome (preinstalled on ubuntu-latest).
-      # CHROME_PATH is pinned so a missing Chrome fails instead of skipping the test.
+
+      # Drives real pointer input in headless Chrome.
       - name: test right panel tab click
         env:
           CHROME_PATH: /usr/bin/google-chrome
         run: npm run test:tab-click
+
+      # Loads the extension's content script and popup in headless Chrome.
+      - name: test extension pages
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: npm run test:extension-ui
 
   rust:
     name: rust (${{ matrix.platform }})

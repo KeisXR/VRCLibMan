@@ -34,6 +34,8 @@ npm run build
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
+`npm test` は `scripts/run-tests.mjs` が `test/*.test.mjs` をすべて実行します。テストのファイルを足すときに一覧へ書き足す必要はありません。Chrome や Xvfb が要る `test:tab-click`・`test:extension-ui`・`test:browser-layout` だけは別のコマンドで、CI でも実行します。Chrome を使うテストは、Chrome が見つからないと省略されます。`CHROME_PATH` を指定すると、見つからないときに失敗します。
+
 Rust のコンパイル前に `npm run build` が必要です。Tauri がフロントエンドの成果物を参照します。CI の Mac ライブラリテストはランナーの CPU 向けにビルドして実行します。配布版の実機確認の代わりにはなりません。
 
 ## Linux AppImage のビルド
@@ -118,6 +120,12 @@ npm run test:tab-click
 ```
 
 ヘッドレスの Chromium に実際のポインター入力を送り、固定タブとページタブのクリック切替、閾値未満の揺れ、ドラッグ後のクリックを確認します。WebView2 と同じエンジンのクリックの宛先を検証します。
+
+拡張の BOOTH 上の表示やポップアップを変更したときは、同じく Chrome で次も実行します。
+
+```sh
+npm run test:extension-ui
+```
 
 ## 画面の読み込みの計測
 
