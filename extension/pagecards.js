@@ -47,21 +47,26 @@
     }
     const product = view.products?.[0];
     const row = product ? view.statuses.get(String(product.boothId)) : null;
+    // 送り先を言う。アプリに登録済みの商品は、開くのが主な操作で、送り直しは商品情報の更新になる。
+    const send = (kind, text) => h("button", {
+      class: `btn ${kind} grow`,
+      type: "button",
+      text,
+      disabled: view.busy || !product,
+      on: { click: () => act.startJob("page") },
+    });
+    const actions = row?.registered
+      ? [
+        h("button", { class: "btn primary grow", type: "button", text: "アプリで開く", on: { click: () => openInApp(act, product.boothId) } }),
+        send("secondary", "商品情報を更新"),
+      ]
+      : [send("primary", row ? "VRCLibMan に登録" : "VRCLibMan に送る")];
     return h("section", { class: "card" },
       h("span", { class: "label", text: "開いている商品" }),
       h("span", { class: "title", text: product?.title || "商品ページ" }),
       row ? h("div", { class: "wrap" }, ui.statusMarks(row, companion)) : null,
       extra || null,
-      h("button", {
-        class: "btn primary block",
-        type: "button",
-        text: "この商品を送る",
-        disabled: view.busy || !product,
-        on: { click: () => act.startJob("page") },
-      }),
-      row?.registered
-        ? h("button", { class: "btn secondary block", type: "button", text: "アプリで開く", on: { click: () => openInApp(act, product.boothId) } })
-        : null,
+      h("div", { class: "row actions" }, actions),
       Array.isArray(view.products) && !product ? h("p", { class: "note", text: "このページから商品を見つけられませんでした。" }) : null,
       act.message(),
     );

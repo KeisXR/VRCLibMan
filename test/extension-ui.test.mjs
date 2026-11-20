@@ -173,9 +173,9 @@ test('BOOTH page marks, unknown-preserving filter, explicit file buttons, discon
       ${source('sidepanel.js')}
     })()`);
     const cardsText="document.querySelector('#cards').textContent";
-    const scopes="[...document.querySelectorAll('.scope')]";
-    const pressed=`${scopes}.find(b=>b.getAttribute('aria-pressed')==='true')?.querySelector('.scope-name').textContent`;
-    const rows="document.querySelectorAll('.genre[open] .prod').length";
+    const scopes="[...document.querySelectorAll('.av')]";
+    const pressed=`${scopes}.find(b=>b.getAttribute('aria-pressed')==='true')?.querySelector('.av-name').textContent`;
+    const rows="document.querySelectorAll('.genre[open] .tile').length";
     await wait(`${cardsText}.includes('購入した対応版')`);
     const card=await evaluate(cardsText);
     assert.match(card,/開いている商品見本衣装123456/);
@@ -190,7 +190,7 @@ test('BOOTH page marks, unknown-preserving filter, explicit file buttons, discon
     await wait(`${cardsText}.includes('VRCLibMan でこの商品を開きました')`);
     // The page's avatars lead the list (direct before shared-body), and the first is selected.
     await wait(`${pressed}==='マヌカ'`);
-    assert.deepEqual(await evaluate(`${scopes}.map(b=>b.querySelector('.scope-name').textContent+(b.querySelector('.scope-page')?'*':''))`),['マヌカ*','プラム*','ライム','すべて','ワールド']);
+    assert.deepEqual(await evaluate(`${scopes}.map(b=>b.querySelector('.av-name').textContent+(b.querySelector('.av-page')?'*':''))`),['マヌカ*','プラム*','ライム','すべて','ワールド']);
     await wait(`${rows}===31`);
     assert.deepEqual(await evaluate("[...document.querySelectorAll('.genre summary')].map(s=>s.textContent)"),['アバター本体1','衣装35']);
     assert.equal(await evaluate("document.querySelector('.more').textContent"),'さらに表示（残り 5 件）');
@@ -198,14 +198,14 @@ test('BOOTH page marks, unknown-preserving filter, explicit file buttons, discon
     await press("document.querySelector('.more')");
     await wait(`${rows}===36`);
     // Thumbnails come from the app with the pairing code, one request per saved image.
-    await wait("document.querySelector('.prod .thumb img')?.src.startsWith('blob:')");
+    await wait("document.querySelector('.tile .thumb img')?.src.startsWith('blob:')");
     assert.ok(await evaluate("window.fetched.length>0&&window.fetched.every(row=>row.url==='http://127.0.0.1:17321/library/thumb'&&row.auth==='Bearer ABCD-2345'&&row.credentials==='omit')"));
     assert.equal(await evaluate("window.fetched.some(row=>row.body==='{\"id\":\"200001\"}')"),true);
     // A product opens in the BOOTH tab being viewed; Ctrl opens a background tab instead.
-    await press("document.querySelector('.genre[open] .prod')");
+    await press("document.querySelector('.genre[open] .tile')");
     await wait("window.moved.length===1");
     assert.deepEqual(await evaluate("window.moved[0]"),[1,{url:'https://booth.pm/ja/items/200001'}]);
-    const point=await evaluate("(() => {const node=document.querySelectorAll('.genre[open] .prod')[1];node.scrollIntoView({block:'center'});const r=node.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()");
+    const point=await evaluate("(() => {const node=document.querySelectorAll('.genre[open] .tile')[1];node.scrollIntoView({block:'center'});const r=node.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()");
     await page('Input.dispatchMouseEvent',{type:'mousePressed',...point,button:'left',clickCount:1,modifiers:2});
     await page('Input.dispatchMouseEvent',{type:'mouseReleased',...point,button:'left',clickCount:1,modifiers:2});
     await wait("window.opened.length===1");
@@ -222,7 +222,7 @@ test('BOOTH page marks, unknown-preserving filter, explicit file buttons, discon
     await evaluate("window.currentTab={...window.currentTab,url:'https://booth.pm/ja/items/234567'};window.listeners.updated[0](1,{url:window.currentTab.url},window.currentTab)");
     await wait(`${pressed}==='プラム'`);
     await wait(`${rows}===31`);
-    assert.match(await evaluate("document.querySelector('.genre[open]:nth-of-type(2) .prod').textContent"),/共通素体/);
+    assert.match(await evaluate("document.querySelector('.genre[open]:nth-of-type(2) .tile').textContent"),/共通素体/);
     assert.equal(await evaluate("window.saved.at(-1).panelScope"),'avatar:lime','following a page is not saved as the user\'s choice');
     // The filter narrows by name and shop.
     await evaluate("(() => {const input=document.querySelector('.lib input');input.value='衣装 35';input.dispatchEvent(new Event('input'));})()");
@@ -230,7 +230,7 @@ test('BOOTH page marks, unknown-preserving filter, explicit file buttons, discon
     await evaluate("(() => {const input=document.querySelector('.lib input');input.value='';input.dispatchEvent(new Event('input'));})()");
     // Opting out: the app's order, no page mark, and the selection stays when the page changes.
     await evaluate("window.listeners.storage[0]({followPageAvatar:{newValue:false}},'local')");
-    assert.deepEqual(await evaluate(`${scopes}.map(b=>b.querySelector('.scope-name').textContent+(b.querySelector('.scope-page')?'*':''))`),['ライム','プラム','マヌカ','すべて','ワールド']);
+    assert.deepEqual(await evaluate(`${scopes}.map(b=>b.querySelector('.av-name').textContent+(b.querySelector('.av-page')?'*':''))`),['ライム','プラム','マヌカ','すべて','ワールド']);
     await evaluate("window.currentTab={...window.currentTab,url:'https://booth.pm/ja/items/123456'};window.listeners.updated[0](1,{url:window.currentTab.url},window.currentTab)");
     await wait(`${cardsText}.includes('見本衣装123456')`);
     await pause(300);
@@ -244,7 +244,7 @@ test('BOOTH page marks, unknown-preserving filter, explicit file buttons, discon
     // Away from BOOTH there is no page card, the library stays, and a product opens in a new tab.
     await evaluate("window.currentTab={id:2,windowId:1,status:'complete',active:true};window.listeners.activated[0]({tabId:2,windowId:1})");
     await wait(`${cardsText}===''`);
-    await press("document.querySelector('.genre[open] .prod')");
+    await press("document.querySelector('.genre[open] .tile')");
     await wait("window.opened.length===2");
     assert.deepEqual(await evaluate("window.opened[1]"),{url:'https://booth.pm/ja/items/200001',active:true});
     // 「記録」 replaces the library.
@@ -256,8 +256,8 @@ test('BOOTH page marks, unknown-preserving filter, explicit file buttons, discon
     // With the app stopped, nothing old stays on screen.
     await evaluate("window.online=false;window.dispatchEvent(new Event('focus'))");
     await wait("document.querySelector('.sections').textContent.includes('アプリを起動すると')");
-    assert.equal(await evaluate("document.querySelectorAll('.prod').length"),0);
-    assert.equal(await evaluate("document.querySelector('.scopes').hidden"),true);
+    assert.equal(await evaluate("document.querySelectorAll('.tile').length"),0);
+    assert.equal(await evaluate("document.querySelector('.rail').hidden"),true);
   }finally{
     socket?.close();chrome.kill();await vite.close();await pause(200);await rm(profile,{recursive:true,force:true,maxRetries:3,retryDelay:100});
   }

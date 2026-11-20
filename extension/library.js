@@ -10,8 +10,8 @@
   const THUMB_PARALLEL = 4;
   const THUMB_KEEP = 600;
   const KINDS = [
-    { scope: "kind:asset", label: "すべて", count: "assetCount" },
-    { scope: "kind:world", label: "ワールド", count: "worldCount" },
+    { scope: "kind:asset", label: "すべて", count: "assetCount", icon: "grid" },
+    { scope: "kind:world", label: "ワールド", count: "worldCount", icon: "globe" },
   ];
 
   function fold(text) {
@@ -137,7 +137,23 @@
     let generation = 0;
 
     const refreshButton = h("button", { class: "iconbtn", type: "button", "aria-label": "ライブラリを読み直す", title: "ライブラリを読み直す", on: { click: () => refresh() } }, ui.icon("refresh"));
-    const chips = h("div", { class: "scopes", role: "group", "aria-label": "アバター" });
+    // アバターは横に並べて流し、「すべて」「ワールド」は右端に固定する。
+    const avatarRail = h("div", { class: "rail-scroll", role: "group", "aria-label": "アバター" });
+    const kindRail = h("div", { class: "rail-fixed", role: "group", "aria-label": "アバター以外" });
+    const rail = h("div", { class: "rail" }, avatarRail, kindRail);
+    // 縦のホイールでも横へ流せるようにする。流せないときはページのスクロールに任せる。
+    avatarRail.addEventListener("wheel", (event) => {
+      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+      const before = avatarRail.scrollLeft;
+      avatarRail.scrollLeft += event.deltaY;
+      if (avatarRail.scrollLeft !== before) event.preventDefault();
+    }, { passive: false });
+    // 右に続きがあるときだけ、右端を薄くして流せることを示す。
+    const markOverflow = () => {
+      rail.classList.toggle("has-more", avatarRail.scrollWidth - avatarRail.clientWidth - avatarRail.scrollLeft > 1);
+    };
+    avatarRail.addEventListener("scroll", markOverflow, { passive: true });
+    new ResizeObserver(markOverflow).observe(avatarRail);
     const filterInput = h("input", {
       class: "field",
       type: "search",
@@ -152,13 +168,9 @@
         },
       },
     });
+    const tools = h("div", { class: "tools" }, filterInput, refreshButton);
     const list = h("div", { class: "sections" });
-    const node = h("section", { class: "lib", "aria-label": "ライブラリ" },
-      h("div", { class: "row" }, h("span", { class: "sec grow", text: "ライブラリ" }), refreshButton),
-      chips,
-      filterInput,
-      list,
-    );
+    const node = h("section", { class: "lib", "aria-label": "ライブラリ" }, rail, tools, list);
 
     const watcher = new IntersectionObserver((entries) => {
       for (const entry of entries) {
@@ -173,8 +185,8 @@
       if (url && holder.isConnected) holder.replaceChildren(h("img", { src: url, alt: "", loading: "lazy", decoding: "async" }));
     }
 
-    function thumb(id, has) {
-      const holder = h("span", { class: "thumb", "aria-hidden": "true" });
+    function thumb(id, has, name = "thumb") {
+      const holder = h("span", { class: name, "aria-hidden": "true" });
       if (has && id) {
         holder.dataset.thumb = id;
         watcher.observe(holder);
@@ -182,52 +194,56 @@
       return holder;
     }
 
-    function renderChips() {
-      const pageIds = state.follow ? state.pageIds : [];
-      const buttons = orderAvatars(state.avatars, pageIds).map((avatar) => {
-        const scope = `avatar:${avatar.id}`;
-        return h("button", {
-          class: "scope",
-          type: "button",
-          "aria-pressed": state.scope === scope ? "true" : "false",
-          title: avatar.displayName,
-          on: { click: () => select(scope, true) },
-        },
-          avatar.thumbnailId ? thumb(avatar.thumbnailId, true) : null,
-          h("span", { class: "scope-name", text: avatar.displayName }),
-          h("span", { class: "num scope-count", text: String(avatar.itemCount) }),
-          avatar.onPage ? h("span", { class: "scope-page", text: "このページ" }) : null,
-        );
-      });
-      for (const kind of KINDS) {
-        buttons.push(h("button", {
-          class: "scope",
-          type: "button",
-          "aria-pressed": state.scope === kind.scope ? "true" : "false",
-          on: { click: () => select(kind.scope, true) },
-        },
-          h("span", { class: "scope-name", text: kind.label }),
-          h("span", { class: "num scope-count", text: String(state.counts[kind.count] || 0) }),
-        ));
-      }
-      chips.replaceChildren(...buttons);
+    function cell(scope, face, name, meta, onPage) {
+      return h("button", {
+        class: "av",
+        type: "button",
+        "aria-pressed": state.scope === scope ? "true" : "false",
+        title: name,
+        on: { click: () => select(scope, true) },
+      },
+        face,
+        h("span", { class: "av-name", text: name }),
+        h("span", { class: onPage ? "av-meta av-page" : "av-meta num", text: meta }),
+      );
     }
 
-    function row(item) {
-      const marks = [
-        item.isAdult ? ui.badge("R-18") : null,
-        item.viaBaseBody ? ui.badge("共通素体") : null,
-        item.unpublished ? ui.badge("非公開") : null,
+    function renderRail() {
+      const pageIds = state.follow ? state.pageIds : [];
+      avatarRail.replaceChildren(...orderAvatars(state.avatars, pageIds).map((avatar) => {
+        // 画像の無いアバターは、名前の最初の 1 文字を顔の代わりにする。
+        const face = avatar.thumbnailId
+          ? thumb(avatar.thumbnailId, true, "face")
+          : h("span", { class: "face", "aria-hidden": "true", text: [...String(avatar.displayName || "")][0] || "" });
+        return cell(`avatar:${avatar.id}`, face, avatar.displayName, avatar.onPage ? "このページ" : String(avatar.itemCount), avatar.onPage);
+      }));
+      kindRail.replaceChildren(...KINDS.map((kind) => cell(
+        kind.scope,
+        h("span", { class: "face", "aria-hidden": "true" }, ui.icon(kind.icon)),
+        kind.label,
+        String(state.counts[kind.count] || 0),
+        false,
+      )));
+      avatarRail.querySelector('[aria-pressed="true"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      markOverflow();
+    }
+
+    function tile(item) {
+      const tags = [
+        item.isAdult ? "R-18" : "",
+        item.viaBaseBody ? "共通素体" : "",
+        item.unpublished ? "非公開" : "",
       ].filter(Boolean);
       const url = shared.itemUrl(item.boothId);
       const open = (event) => {
         event.preventDefault();
         openItem(url, event);
       };
+      const picture = thumb(item.boothId, item.hasThumbnail);
       return h("a", {
-        class: "prod",
+        class: "tile",
         href: url,
-        title: item.title,
+        title: [item.title, item.shop].filter(Boolean).join("\n"),
         on: {
           click: open,
           auxclick: (event) => {
@@ -235,18 +251,16 @@
           },
         },
       },
-        thumb(item.boothId, item.hasThumbnail),
-        h("span", { class: "prod-text" },
-          h("b", { text: item.title }),
-          h("span", { class: "prod-sub" }, item.shop ? h("span", { class: "prod-shop", text: item.shop }) : null, marks),
-        ),
+        h("span", { class: "tile-picture" }, picture, tags.length ? h("span", { class: "tags" }, tags.map((text) => h("span", { class: "tag", text }))) : null),
+        h("b", { text: item.title }),
+        item.shop ? h("span", { class: "tile-shop", text: item.shop }) : null,
       );
     }
 
     function fill(body, section, key) {
       const shown = state.shown.get(key) || PAGE;
       const rest = section.items.length - shown;
-      const nodes = section.items.slice(0, shown).map(row);
+      const nodes = [h("div", { class: "grid" }, section.items.slice(0, shown).map(tile))];
       if (rest > 0) {
         nodes.push(h("button", {
           class: "btn secondary small more num",
@@ -269,9 +283,10 @@
 
     function renderList() {
       const usable = state.reachable && !state.error;
+      // 読み直すボタンは、失敗したときと空のときにも要る。絞り込みは並んでいるときだけ。
+      tools.hidden = !state.reachable;
       filterInput.hidden = !usable || !state.sections?.length;
-      chips.hidden = !usable || !state.avatars;
-      refreshButton.hidden = !state.reachable;
+      rail.hidden = !usable || !state.avatars;
       if (!state.reachable) {
         list.replaceChildren(note("アプリを起動すると、登録済みの商品がここに並びます。"));
         return;
@@ -302,9 +317,9 @@
       list.replaceChildren(...sections.map((section) => {
         const key = `${state.scope}/${section.key}`;
         const open = filtering || (state.open.has(key) ? state.open.get(key) : openByDefault);
-        const body = h("div", { class: "prods" });
+        const body = h("div", { class: "genre-body" });
         const details = h("details", { class: "genre", open },
-          h("summary", null, h("span", { class: "grow", text: section.label }), h("span", { class: "num genre-count", text: String(section.items.length) })),
+          h("summary", null, h("span", { class: "genre-name", text: section.label }), h("span", { class: "num genre-count", text: String(section.items.length) })),
           body,
         );
         if (open) fill(body, section, key);
@@ -340,7 +355,7 @@
       if (scope === state.scope) return;
       state.scope = scope;
       state.sections = null;
-      renderChips();
+      renderRail();
       renderList();
       if (state.reachable && state.avatars) loadItems();
     }
@@ -355,7 +370,7 @@
         state.avatars = null;
         state.sections = null;
         state.error = result?.error || "ライブラリを読み込めませんでした";
-        renderChips();
+        renderRail();
         renderList();
         return;
       }
@@ -363,7 +378,7 @@
       state.counts = { assetCount: Number(result.assetCount) || 0, worldCount: Number(result.worldCount) || 0 };
       state.error = "";
       state.scope = defaultScope(state.avatars, state.scope || savedScope);
-      renderChips();
+      renderRail();
       await loadItems();
     }
 
@@ -377,7 +392,7 @@
         state.sections = null;
         state.error = "";
         thumbs.clear();
-        renderChips();
+        renderRail();
         renderList();
         return;
       }
@@ -393,16 +408,16 @@
       state.pageProduct = productId;
       state.pageIds = ids;
       if (state.follow && changed && productId && ids.length) select(`avatar:${ids[0]}`, false);
-      if (!sameIds) renderChips();
+      if (!sameIds) renderRail();
     }
 
     function setFollow(follow) {
       if (follow === state.follow) return;
       state.follow = follow;
-      renderChips();
+      renderRail();
     }
 
-    renderChips();
+    renderRail();
     renderList();
     return { node, refresh, setReachable, setPage, setFollow, state };
   }
