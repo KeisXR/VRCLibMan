@@ -139,11 +139,11 @@ pub(crate) fn start(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         loop {
-            if let Err(error) = run_pass(&app) {
-                if let Ok(mut status) = app.state::<SyncState>().status.lock() {
-                    status.running = false;
-                    status.error = Some(error);
-                }
+            if let Err(error) = run_pass(&app)
+                && let Ok(mut status) = app.state::<SyncState>().status.lock()
+            {
+                status.running = false;
+                status.error = Some(error);
             }
             if matches!(
                 receiver.recv_timeout(INTERVAL),

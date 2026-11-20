@@ -892,15 +892,13 @@ fn place_verified_file(
     booth_id: &str,
     filename: &str,
 ) -> Result<PathBuf, String> {
-    let dest = library_destination(library, booth_id, &filename)?;
-    if probe_path(&dest, PROBE_TIMEOUT) == Probe::Present {
-        if let (Ok(source_canon), Ok(dest_canon)) =
+    let dest = library_destination(library, booth_id, filename)?;
+    if probe_path(&dest, PROBE_TIMEOUT) == Probe::Present
+        && let (Ok(source_canon), Ok(dest_canon)) =
             (canonicalize_timed(source), canonicalize_timed(&dest))
-        {
-            if source_canon == dest_canon {
-                return Ok(dest);
-            }
-        }
+        && source_canon == dest_canon
+    {
+        return Ok(dest);
     }
     create_dir_timed(library)?;
     let parent = dest
@@ -1198,10 +1196,8 @@ fn copy_confirmed(source: &Path, dest: &Path, overwrite: bool) -> Result<CopyOut
     let source_size = std::fs::metadata(source)
         .map_err(|err| format!("コピー元を確認できません: {err}"))?
         .len();
-    if !overwrite {
-        if let Some(outcome) = compare_with_existing(source, dest, source_size)? {
-            return Ok(outcome);
-        }
+    if !overwrite && let Some(outcome) = compare_with_existing(source, dest, source_size)? {
+        return Ok(outcome);
     }
     let parent = dest
         .parent()

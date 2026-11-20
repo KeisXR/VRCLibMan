@@ -378,10 +378,10 @@ pub(crate) fn observe<T>(
         }
     };
     let result = step(connection);
-    if let Some(before) = before {
-        if let Err(err) = record_product(connection, run, booth_id, &before) {
-            report_failure(&err);
-        }
+    if let Some(before) = before
+        && let Err(err) = record_product(connection, run, booth_id, &before)
+    {
+        report_failure(&err);
     }
     result
 }
@@ -428,10 +428,10 @@ pub(crate) fn observe_all<T>(
         }
     };
     let result = step(connection);
-    if let Some(before) = before {
-        if let Err(err) = record_all(connection, run, &before) {
-            report_failure(&err);
-        }
+    if let Some(before) = before
+        && let Err(err) = record_all(connection, run, &before)
+    {
+        report_failure(&err);
     }
     result
 }

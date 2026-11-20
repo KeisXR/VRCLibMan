@@ -139,10 +139,10 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
             locked,
         },
     );
-    if matches!(gate, Gate::Reject { status: 401, .. }) {
-        if let Ok(mut guard) = state.import_guard.lock() {
-            guard.record_failure(&origin_key, now);
-        }
+    if matches!(gate, Gate::Reject { status: 401, .. })
+        && let Ok(mut guard) = state.import_guard.lock()
+    {
+        guard.record_failure(&origin_key, now);
     }
     if matches!(
         gate,
@@ -164,10 +164,10 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
                 header(request, "X-VRCLibMan-Extension-Version"),
             );
         }
-        if pinned.is_none() {
-            if let Ok(connection) = state.db.lock() {
-                let _ = db::set_extension_origin(&connection, &origin_key);
-            }
+        if pinned.is_none()
+            && let Ok(connection) = state.db.lock()
+        {
+            let _ = db::set_extension_origin(&connection, &origin_key);
         }
     }
     if matches!(gate, Gate::Health) {
@@ -688,10 +688,10 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
             }
             if download {
                 let _ = app.emit_to("main", "browser-auto-pending", ());
-                if let Ok(product) = serde_json::from_str::<serde_json::Value>(&text) {
-                    if let Some(id) = product.get("boothId").and_then(|v| v.as_str()) {
-                        let _ = app.emit_to("main", "extension-import-prompt", id);
-                    }
+                if let Ok(product) = serde_json::from_str::<serde_json::Value>(&text)
+                    && let Some(id) = product.get("boothId").and_then(|v| v.as_str())
+                {
+                    let _ = app.emit_to("main", "extension-import-prompt", id);
                 }
                 crate::arrival_notice::ask_to_classify(app);
             }
@@ -899,17 +899,16 @@ fn response_for(
         }
     };
     let mut response = Response::from_string(body).with_status_code(StatusCode(status));
-    if status == 429 {
-        if let Ok(header) =
+    if status == 429
+        && let Ok(header) =
             Header::from_bytes(b"Retry-After", AUTH_LOCK_SECS.to_string().as_bytes())
-        {
-            response = response.with_header(header);
-        }
+    {
+        response = response.with_header(header);
     }
-    if origin.is_some_and(is_extension_origin) {
-        if let Some(origin) = origin {
-            response = add_cors(response, origin);
-        }
+    if origin.is_some_and(is_extension_origin)
+        && let Some(origin) = origin
+    {
+        response = add_cors(response, origin);
     }
     response
 }

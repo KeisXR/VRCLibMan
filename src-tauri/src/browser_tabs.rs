@@ -571,10 +571,10 @@ impl TabSession {
     }
 
     pub fn focused_tab(&self) -> Option<String> {
-        if let Some(host) = &self.focused {
-            if let Some(tab) = self.active_of(host) {
-                return Some(tab);
-            }
+        if let Some(host) = &self.focused
+            && let Some(tab) = self.active_of(host)
+        {
+            return Some(tab);
         }
         self.primary_host().and_then(|host| self.active_of(host))
     }

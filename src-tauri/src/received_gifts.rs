@@ -108,13 +108,13 @@ pub fn interpret_prices(body: &str) -> PriceOutcome {
             });
         }
     }
-    if prices.is_empty() {
-        if let Some(price) = yen(map.get("price")) {
-            prices.push(VariationPrice {
-                name: String::new(),
-                price_yen: price,
-            });
-        }
+    if prices.is_empty()
+        && let Some(price) = yen(map.get("price"))
+    {
+        prices.push(VariationPrice {
+            name: String::new(),
+            price_yen: price,
+        });
     }
     PriceOutcome::Prices(prices)
 }

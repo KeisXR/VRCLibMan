@@ -237,18 +237,16 @@ impl Catalog {
         Ok(result)
     }
     fn manual_scope(&self, id: &str) -> Option<Choice> {
-        if let Some(choice) = self.manual.get(id) {
-            Some(if choice.mode == "all" {
+        self.manual.get(id).map(|choice| {
+            if choice.mode == "all" {
                 Choice {
                     mode: "all".into(),
                     avatar_ids: self.links.get(id).cloned().unwrap_or_default(),
                 }
             } else {
                 choice.clone()
-            })
-        } else {
-            None
-        }
+            }
+        })
     }
 
     pub fn scope(&self, id: &str) -> Choice {
@@ -297,15 +295,15 @@ impl Catalog {
         if let Some(single) = self.single_compatible_edition(id) {
             return single;
         }
-        if let Some(title) = self.titles.get(id) {
-            if trailing_variation(title).is_none() {
-                let linked = self.linked_avatars(id);
-                if let Some(avatar) = crate::resolve::match_title(title, &linked) {
-                    return Choice {
-                        mode: "specific".into(),
-                        avatar_ids: vec![avatar.id.clone()],
-                    };
-                }
+        if let Some(title) = self.titles.get(id)
+            && trailing_variation(title).is_none()
+        {
+            let linked = self.linked_avatars(id);
+            if let Some(avatar) = crate::resolve::match_title(title, &linked) {
+                return Choice {
+                    mode: "specific".into(),
+                    avatar_ids: vec![avatar.id.clone()],
+                };
             }
         }
         if self.unified_files.contains(id) {
@@ -359,10 +357,10 @@ impl Catalog {
         }
         let stripped = piece.strip_suffix('版').map(str::trim_end);
         for candidate in [Some(piece), stripped].into_iter().flatten() {
-            if !linked.is_empty() {
-                if let Some(avatar) = self.resolve_label(candidate, Some(linked)) {
-                    return Some(avatar.id.clone());
-                }
+            if !linked.is_empty()
+                && let Some(avatar) = self.resolve_label(candidate, Some(linked))
+            {
+                return Some(avatar.id.clone());
             }
             if let Some(avatar) = self.resolve_label(candidate, None) {
                 return Some(avatar.id.clone());

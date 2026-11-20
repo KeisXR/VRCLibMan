@@ -928,10 +928,10 @@ fn matches(
     tokens: &[String],
     label_names: &HashMap<i64, String>,
 ) -> bool {
-    if let Some(gift) = query.gift {
-        if view.gift != gift {
-            return false;
-        }
+    if let Some(gift) = query.gift
+        && view.gift != gift
+    {
+        return false;
     }
     if let Some(year) = query.year {
         let at = view.ordered_at.as_deref().unwrap_or(&view.recorded_at);
@@ -939,23 +939,21 @@ fn matches(
             return false;
         }
     }
-    if let Some(label) = query.label_id {
-        if !view
+    if let Some(label) = query.label_id
+        && !view
             .items
             .iter()
             .any(|item| item.label_ids.contains(&label))
-        {
-            return false;
-        }
+    {
+        return false;
     }
-    if let Some(group) = query.group.as_deref().filter(|group| !group.is_empty()) {
-        if !view
+    if let Some(group) = query.group.as_deref().filter(|group| !group.is_empty())
+        && !view
             .items
             .iter()
             .any(|item| item.groups.iter().any(|candidate| candidate.key == group))
-        {
-            return false;
-        }
+    {
+        return false;
     }
     if tokens.is_empty() {
         return true;

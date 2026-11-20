@@ -36,6 +36,8 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 
 `npm test` は `scripts/run-tests.mjs` が `test/*.test.mjs` をすべて実行します。テストのファイルを足すときに一覧へ書き足す必要はありません。Chrome や Xvfb が要る `test:tab-click`・`test:extension-ui`・`test:browser-layout` だけは別のコマンドで、CI でも実行します。Chrome を使うテストは、Chrome が見つからないと省略されます。`CHROME_PATH` を指定すると、見つからないときに失敗します。
 
+Rust のコードは `cargo fmt` で整形します。CI は `cargo fmt --check` で整形のずれを失敗にします。`cargo clippy` は Linux のジョブで警告を表示するだけで、失敗にはしません（ほかの OS 向けの関数が Linux では未使用として出るため）。
+
 Rust のコンパイル前に `npm run build` が必要です。Tauri がフロントエンドの成果物を参照します。CI の Mac ライブラリテストはランナーの CPU 向けにビルドして実行します。配布版の実機確認の代わりにはなりません。
 
 ## Linux AppImage のビルド

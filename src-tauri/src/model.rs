@@ -567,14 +567,14 @@ pub(crate) fn normalize_right_panel_tabs(raw: &str) -> String {
         if !RIGHT_PANEL_KINDS.contains(&kind.as_str()) {
             continue;
         }
-        if RIGHT_PANEL_SINGLETONS.contains(&kind.as_str()) {
-            if let Some(existing) = tabs.iter().position(|tab| tab == kind) {
-                // An active duplicate keeps focus on the tab it collapsed into.
-                if index == parsed.active {
-                    active = existing;
-                }
-                continue;
+        if RIGHT_PANEL_SINGLETONS.contains(&kind.as_str())
+            && let Some(existing) = tabs.iter().position(|tab| tab == kind)
+        {
+            // An active duplicate keeps focus on the tab it collapsed into.
+            if index == parsed.active {
+                active = existing;
             }
+            continue;
         }
         if index <= parsed.active {
             active = tabs.len();

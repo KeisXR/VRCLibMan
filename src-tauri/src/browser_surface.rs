@@ -329,10 +329,10 @@ pub fn tab_for_caller(
     }
     let host = explicit_host.or_else(|| host_id_for_label(caller));
     let state = surface();
-    if let Some(host) = host.as_deref() {
-        if let Some(id) = state.session.active_of(host) {
-            return Ok(id);
-        }
+    if let Some(host) = host.as_deref()
+        && let Some(id) = state.session.active_of(host)
+    {
+        return Ok(id);
     }
     state
         .session
@@ -532,24 +532,24 @@ fn shown_tab_ids() -> Vec<String> {
 pub fn state(app: &AppHandle) -> Result<BrowserState, String> {
     let mut moved = false;
     for id in shown_tab_ids() {
-        if let Some(view) = app.get_webview(&id) {
-            if let Ok(url) = crate::browser_url::current_url(&view) {
-                let url = url.to_string();
-                moved |= {
-                    let mut state = surface();
-                    let before = state
-                        .session
-                        .tabs
-                        .iter()
-                        .find(|tab| tab.id == id)
-                        .map(|tab| tab.url.clone());
-                    state
-                        .session
-                        .update(view.label(), |tab| tab.url = url.clone());
-                    before.is_some_and(|before| before != url)
-                };
-                refresh_history(&view);
-            }
+        if let Some(view) = app.get_webview(&id)
+            && let Ok(url) = crate::browser_url::current_url(&view)
+        {
+            let url = url.to_string();
+            moved |= {
+                let mut state = surface();
+                let before = state
+                    .session
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.id == id)
+                    .map(|tab| tab.url.clone());
+                state
+                    .session
+                    .update(view.label(), |tab| tab.url = url.clone());
+                before.is_some_and(|before| before != url)
+            };
+            refresh_history(&view);
         }
     }
     if moved {
@@ -634,10 +634,10 @@ fn layout_window(
         height: size.height,
     };
     let (toolbar, content) = area.split(host.toolbar_height);
-    if let Some(label) = &host.toolbar_label {
-        if let Some(view) = app.get_webview(label) {
-            set_view_bounds(&view, toolbar, true, true)?;
-        }
+    if let Some(label) = &host.toolbar_label
+        && let Some(view) = app.get_webview(label)
+    {
+        set_view_bounds(&view, toolbar, true, true)?;
     }
     place_tabs(app, tabs, Some(content), true, active)
 }
@@ -650,10 +650,10 @@ fn layout_panel(
 ) -> Result<(), String> {
     if !host.visible {
         // Hidden pages keep the panel's rectangle, so showing them again moves nothing.
-        if let (Some(area), Some(active)) = (panel_content(host.area, true), active) {
-            if let Some(view) = app.get_webview(active) {
-                let _ = place_view(&view, Some(area), false, false);
-            }
+        if let (Some(area), Some(active)) = (panel_content(host.area, true), active)
+            && let Some(view) = app.get_webview(active)
+        {
+            let _ = place_view(&view, Some(area), false, false);
         }
     }
     place_tabs(
@@ -763,10 +763,10 @@ pub fn toolbar_height(app: &AppHandle, height: f64, host_id: Option<String>) -> 
             .focused_host()
             .filter(|id| state.session.kind_of(id) == Some(HostKind::Window))
     });
-    if let Some(host_id) = host_id {
-        if let Some(host) = surface().live.iter_mut().find(|host| host.id == host_id) {
-            host.toolbar_height = height;
-        }
+    if let Some(host_id) = host_id
+        && let Some(host) = surface().live.iter_mut().find(|host| host.id == host_id)
+    {
+        host.toolbar_height = height;
     }
     layout(app)
 }
@@ -826,12 +826,11 @@ fn retire_if_empty(app: &AppHandle, host_id: &str) {
             .position(|host| host.id == host_id)
             .map(|index| state.live.remove(index))
     };
-    if let Some(host) = retired {
-        if host.kind == HostKind::Window {
-            if let Some(source) = app.get_window(&host.window_label) {
-                let _ = source.destroy();
-            }
-        }
+    if let Some(host) = retired
+        && host.kind == HostKind::Window
+        && let Some(source) = app.get_window(&host.window_label)
+    {
+        let _ = source.destroy();
     }
 }
 
@@ -870,7 +869,7 @@ fn mount_tab(app: &AppHandle, host_id: &str, window: &Window, url: Url) -> Resul
     }
     let id = surface().session.add(host_id, &url)?;
     // A new view starts where the builder put it, whatever an earlier page with this label had.
-    forget_placement(&[id.clone()]);
+    forget_placement(std::slice::from_ref(&id));
     let navigation_app = app.clone();
     let navigation_id = id.clone();
     let popup_app = app.clone();
@@ -879,7 +878,7 @@ fn mount_tab(app: &AppHandle, host_id: &str, window: &Window, url: Url) -> Resul
         .initialization_script_for_all_frames(browser_dark::force_dark_script(
             browser_dark::enabled(),
         ))
-        .initialization_script(&crate::browser_auto::initialization_script())
+        .initialization_script(crate::browser_auto::initialization_script())
         .on_navigation(move |url| {
             if url.as_str() == "about:blank" {
                 return true;
@@ -936,12 +935,10 @@ fn mount_tab(app: &AppHandle, host_id: &str, window: &Window, url: Url) -> Resul
                     let input = url.to_string();
                     let login = browser_tabs::login_popup_in_same_tab(&url);
                     let _ = browser::dispatch_ui(handle, move |app| {
-                        if login {
-                            if let Some(view) = app.get_webview(&source) {
-                                return view
-                                    .navigate(checked_url(app, &input)?)
-                                    .map_err(|error| error.to_string());
-                            }
+                        if login && let Some(view) = app.get_webview(&source) {
+                            return view
+                                .navigate(checked_url(app, &input)?)
+                                .map_err(|error| error.to_string());
                         }
                         let host = surface().session.host_of(&source);
                         new_tab_on(app, Some(&input), host)
@@ -1205,10 +1202,10 @@ fn raise_focused(app: &AppHandle) {
             .flatten();
         (label, panel_tab)
     };
-    if let Some(label) = label {
-        if let Some(window) = app.get_window(&label) {
-            raise(&window);
-        }
+    if let Some(label) = label
+        && let Some(window) = app.get_window(&label)
+    {
+        raise(&window);
     }
     if let Some(id) = panel_tab {
         request_panel(app, &id);
@@ -1342,12 +1339,11 @@ pub fn handle_window_event(window: &Window, event: &tauri::WindowEvent) {
 fn discard_host(app: &AppHandle, host_id: &str, window: Option<&Window>) {
     let ids = surface().session.take_host(host_id);
     close_webviews(app, &ids);
-    if let Some(host) = forget_live(host_id) {
-        if let Some(label) = host.toolbar_label {
-            if let Some(view) = app.get_webview(&label) {
-                let _ = view.close();
-            }
-        }
+    if let Some(host) = forget_live(host_id)
+        && let Some(label) = host.toolbar_label
+        && let Some(view) = app.get_webview(&label)
+    {
+        let _ = view.close();
     }
     if let Some(window) = window {
         let _ = window.destroy();
@@ -1548,15 +1544,14 @@ pub fn dock(
         .collect::<Vec<_>>();
     if pending.is_empty() {
         if surface().session.coarse_host() == Some("panel") {
-            if let Some(area) = area {
-                if let Some(host) = surface()
+            if let Some(area) = area
+                && let Some(host) = surface()
                     .live
                     .iter_mut()
                     .find(|host| host.id == PANEL_HOST_ID)
-                {
-                    host.area = Some(area);
-                    host.visible = true;
-                }
+            {
+                host.area = Some(area);
+                host.visible = true;
             }
             layout(app)?;
             if let Some(id) = surface().session.active_of(PANEL_HOST_ID) {
@@ -1743,10 +1738,10 @@ pub fn new_tab_on(
     let label = live_label(&surface(), &host).ok_or("表示先が見つかりません")?;
     let window = app.get_window(&label).ok_or("表示先が見つかりません")?;
     mount_tab(app, &host, &window, target)?;
-    if host == PANEL_HOST_ID {
-        if let Some(id) = surface().session.active_of(PANEL_HOST_ID) {
-            request_panel(app, &id);
-        }
+    if host == PANEL_HOST_ID
+        && let Some(id) = surface().session.active_of(PANEL_HOST_ID)
+    {
+        request_panel(app, &id);
     }
     Ok(())
 }
@@ -1810,14 +1805,12 @@ pub fn close_tab(app: &AppHandle, id: &str) -> Result<(), String> {
     if let Some(host_id) = emptied {
         // The tab is already gone. Drop the window only when it was the last page there.
         retire_if_empty(app, &host_id);
-        if surface().session.kind_of(&host_id).is_none() {
-            if let Some(host) = forget_live(&host_id) {
-                if host.kind == HostKind::Window {
-                    if let Some(source) = app.get_window(&host.window_label) {
-                        let _ = source.destroy();
-                    }
-                }
-            }
+        if surface().session.kind_of(&host_id).is_none()
+            && let Some(host) = forget_live(&host_id)
+            && host.kind == HostKind::Window
+            && let Some(source) = app.get_window(&host.window_label)
+        {
+            let _ = source.destroy();
         }
     } else {
         layout(app)?;
@@ -1913,10 +1906,7 @@ pub fn dock_tab(app: &AppHandle, tab_id: &str, index: Option<usize>) -> Result<(
         .ok_or("メインウィンドウが見つかりません")?;
     ensure_panel_live(None, false);
     let at = index.unwrap_or(usize::MAX);
-    let token = match surface().session.move_tab(tab_id, PANEL_HOST_ID, at) {
-        Ok(token) => token,
-        Err(error) => return Err(error),
-    };
+    let token = surface().session.move_tab(tab_id, PANEL_HOST_ID, at)?;
     let source_label = live_label(&surface(), &from);
     let source = source_label
         .as_ref()
@@ -1951,15 +1941,15 @@ pub fn close(app: &AppHandle) -> Result<(), String> {
     };
     close_webviews(app, &ids);
     for host in hosts {
-        if let Some(label) = host.toolbar_label {
-            if let Some(view) = app.get_webview(&label) {
-                let _ = view.close();
-            }
+        if let Some(label) = host.toolbar_label
+            && let Some(view) = app.get_webview(&label)
+        {
+            let _ = view.close();
         }
-        if host.kind == HostKind::Window {
-            if let Some(source) = app.get_window(&host.window_label) {
-                let _ = source.destroy();
-            }
+        if host.kind == HostKind::Window
+            && let Some(source) = app.get_window(&host.window_label)
+        {
+            let _ = source.destroy();
         }
     }
     changed(app);
@@ -2161,7 +2151,7 @@ mod tests {
                 .contains("forget_placement(&[id.to_string()])")
         );
         assert!(function_body(source, "fn close_webviews").contains("forget_placement(ids)"));
-        assert!(function_body(source, "fn mount_tab").contains("forget_placement(&[id.clone()])"));
+        assert!(function_body(source, "fn mount_tab").contains("forget_placement("));
         assert!(function_body(source, "pub fn relayout").contains("placed.clear()"));
         let watch = function_body(source, "fn watch_browser_window");
         assert!(watch.contains("let _ = relayout(&handle);"));

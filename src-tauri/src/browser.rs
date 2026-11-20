@@ -214,10 +214,10 @@ fn claim_unknown_category_line(app: &AppHandle, line: &str) -> bool {
     };
     if guard.is_none() {
         let mut seen = HashSet::new();
-        if let Ok(path) = log_path(app) {
-            if let Ok(text) = std::fs::read_to_string(path) {
-                seed_unknown_category_lines(&text, &mut seen);
-            }
+        if let Ok(path) = log_path(app)
+            && let Ok(text) = std::fs::read_to_string(path)
+        {
+            seed_unknown_category_lines(&text, &mut seen);
         }
         *guard = Some(seen);
     }
@@ -234,14 +234,13 @@ pub(crate) fn browser_log(app: &AppHandle, message: &str) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    if let Ok(meta) = std::fs::metadata(&path) {
-        if meta.len() > 200_000 {
-            if let Ok(text) = std::fs::read_to_string(&path) {
-                let lines: Vec<&str> = text.lines().collect();
-                let start = lines.len().saturating_sub(200);
-                let _ = std::fs::write(&path, format!("{}\n", lines[start..].join("\n")));
-            }
-        }
+    if let Ok(meta) = std::fs::metadata(&path)
+        && meta.len() > 200_000
+        && let Ok(text) = std::fs::read_to_string(&path)
+    {
+        let lines: Vec<&str> = text.lines().collect();
+        let start = lines.len().saturating_sub(200);
+        let _ = std::fs::write(&path, format!("{}\n", lines[start..].join("\n")));
     }
     if let Ok(mut file) = std::fs::OpenOptions::new()
         .create(true)
@@ -626,7 +625,7 @@ impl Drop for DownloadClaim {
 /// 同じファイルの二重の受け取りだけを断る。別のファイルは並行してよい。
 fn claim_download(key: String) -> Result<DownloadClaim, String> {
     let mut active = active_downloads();
-    if active.iter().any(|existing| *existing == key) {
+    if active.contains(&key) {
         return Err(db::BROWSER_SAME_FILE_MESSAGE.into());
     }
     active.push(key.clone());
@@ -1181,7 +1180,7 @@ pub async fn download_one_file(
             dir,
             request.filename.clone(),
             |received, total| {
-                let due = last_sent.map_or(true, |at| at.elapsed() >= FILE_PROGRESS_INTERVAL);
+                let due = last_sent.is_none_or(|at| at.elapsed() >= FILE_PROGRESS_INTERVAL);
                 if due || total == Some(received) {
                     last_sent = Some(std::time::Instant::now());
                     report.running("receiving", "ダウンロード中", Some((received, total)));
@@ -1196,7 +1195,7 @@ pub async fn download_one_file(
             Err(err) => {
                 let message = login_message(err);
                 if err == crate::quiet::QuietError::Login {
-                    let _ = dispatch_ui(app.clone(), |handle| open_browser(handle)).await;
+                    let _ = dispatch_ui(app.clone(), open_browser).await;
                     browser_log(&app, "ログインが必要です");
                 } else if err == crate::quiet::QuietError::AgeGate {
                     browser_log(&app, "年齢確認は自動では通過しません");
@@ -1222,7 +1221,7 @@ pub async fn download_one_file(
         .map_err(|err| format!("ファイルを移動できません: {err}"))?;
         if let Err(err) = &committed {
             if err == db::BROWSER_LOGIN_MESSAGE {
-                let _ = dispatch_ui(app.clone(), |handle| open_browser(handle)).await;
+                let _ = dispatch_ui(app.clone(), open_browser).await;
                 browser_log(&app, "ログインが必要です");
             } else {
                 browser_log(&app, "ダウンロードに失敗しました");
@@ -1308,10 +1307,10 @@ pub(crate) fn walk_uses_tab(id: &str) -> bool {
 
 fn pinned_walk_tab(app: &AppHandle) -> Result<String, String> {
     let mut slot = WALK_TAB.lock().unwrap_or_else(|error| error.into_inner());
-    if let Some(id) = slot.clone() {
-        if app.get_webview(&id).is_some() {
-            return Ok(id);
-        }
+    if let Some(id) = slot.clone()
+        && app.get_webview(&id).is_some()
+    {
+        return Ok(id);
     }
     let view = crate::browser_surface::active_view(app)?;
     let id = view.label().to_string();
@@ -2347,10 +2346,10 @@ fn open_order_reader(
         tauri::webview::WebviewBuilder::new(ORDER_READER_LABEL, WebviewUrl::External(url))
             .on_navigation(|url| url.scheme() == "https" || url.as_str() == "about:blank")
             .on_page_load(move |_view, payload| {
-                if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
-                    if let Ok(sender) = loaded.lock() {
-                        let _ = sender.send(());
-                    }
+                if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
+                    && let Ok(sender) = loaded.lock()
+                {
+                    let _ = sender.send(());
                 }
             })
             .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)

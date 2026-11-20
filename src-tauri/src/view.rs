@@ -1,6 +1,6 @@
 use crate::model::{
-    Avatar, BaseBody, Category, DownloadFact, FilePlace, LibraryStats, Link, LocalFile,
-    PlacedDownload, Product, ProductFlag, VariationFact,
+    Avatar, BaseBody, Category, DownloadFact, FilePlace, Link, LocalFile, PlacedDownload, Product,
+    ProductFlag, VariationFact,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -692,7 +692,8 @@ pub fn unlinked_files_page(snapshot: &Snapshot, offset: u32, limit: u32) -> Unli
 /// The counts from a whole snapshot. The app reads them with `db::library_stats`, which must
 /// give the same numbers; tests compare the two.
 #[cfg(test)]
-pub fn library_stats(snapshot: &Snapshot) -> LibraryStats {
+pub fn library_stats(snapshot: &Snapshot) -> crate::model::LibraryStats {
+    use crate::model::LibraryStats;
     let unextracted = snapshot
         .products
         .iter()
@@ -977,10 +978,10 @@ fn numeric_downloadable_id(id: Option<&str>) -> Option<u64> {
 }
 
 fn file_matches_set(set: &HashSet<String>, downloadable_id: Option<&str>, filename: &str) -> bool {
-    if let Some(id) = downloadable_id.map(str::trim).filter(|id| !id.is_empty()) {
-        if set.contains(id) {
-            return true;
-        }
+    if let Some(id) = downloadable_id.map(str::trim).filter(|id| !id.is_empty())
+        && set.contains(id)
+    {
+        return true;
     }
     set.contains(filename.trim())
 }

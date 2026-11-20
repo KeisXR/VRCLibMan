@@ -127,7 +127,7 @@ pub fn run() {
             std::fs::create_dir_all(&previews)?;
             std::fs::create_dir_all(&hero_images)?;
             let connection = db::open(&directory.join("library.sqlite"))
-                .map_err(|err| std::io::Error::other(err))?;
+                .map_err(std::io::Error::other)?;
             // The model classifiers are gone. Their settings go now; a saved cloud API key is
             // removed off the main thread because macOS may ask for Keychain access.
             if retired_classifier::retire_settings(&connection).unwrap_or(false) {
@@ -149,18 +149,15 @@ pub fn run() {
                 staged_left: Mutex::new(Vec::new()),
             });
             arrival_notice::init(app.handle());
-            if let Some(state) = app.try_state::<AppState>() {
-                if let Ok(connection) = state.db.lock() {
+            if let Some(state) = app.try_state::<AppState>()
+                && let Ok(connection) = state.db.lock() {
                     let _ = db::extension_token(&connection);
                 }
-            }
-            if let Err(err) = local_import::start_receiver(app.handle().clone()) {
-                if let Some(state) = app.try_state::<AppState>() {
-                    if let Ok(mut slot) = state.receiver_error.lock() {
+            if let Err(err) = local_import::start_receiver(app.handle().clone())
+                && let Some(state) = app.try_state::<AppState>()
+                    && let Ok(mut slot) = state.receiver_error.lock() {
                         *slot = Some(err);
                     }
-                }
-            }
             #[cfg(target_os = "linux")]
             if app.deep_link().register("vrclibman").is_err() {
                 // URL registration uses external desktop tools. Receiving imports in an
@@ -190,7 +187,7 @@ pub fn run() {
                     .lock()
                     .map_err(|err| std::io::Error::other(err.to_string()))?;
                 let settings =
-                    db::settings(&connection).map_err(|err| std::io::Error::other(err))?;
+                    db::settings(&connection).map_err(std::io::Error::other)?;
                 browser_dark::set_enabled(settings.browser_force_dark);
                 let report = db::sweep_staged_downloads(&mut connection);
                 (
@@ -200,11 +197,10 @@ pub fn run() {
                 )
             };
             presence::remember_background(app.handle(), background_mode);
-            if let Some(state) = app.try_state::<AppState>() {
-                if let Ok(mut slot) = state.staged_left.lock() {
+            if let Some(state) = app.try_state::<AppState>()
+                && let Ok(mut slot) = state.staged_left.lock() {
                     *slot = left;
                 }
-            }
             crate::remote_sync::start(app.handle());
             crate::asset_updates::start(app.handle());
             {
@@ -354,5 +350,5 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
-        .run(|app, event| presence::handle_run_event(app, event));
+        .run(presence::handle_run_event);
 }

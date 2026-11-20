@@ -450,11 +450,11 @@ pub(crate) fn record_imported_files(
             } else {
                 None
             };
-            if let Some(current) = &current {
-                if previous.as_ref() != Some(current) {
-                    row.history_library_files = Some(current.clone());
-                    dirty = true;
-                }
+            if let Some(current) = &current
+                && previous.as_ref() != Some(current)
+            {
+                row.history_library_files = Some(current.clone());
+                dirty = true;
             }
             dirty |= match (previous, current) {
                 (Some(before), Some(after)) => {
@@ -795,48 +795,47 @@ async fn check_inner(app: &AppHandle, manual: bool) -> Result<(), String> {
         {
             let mut c = state.db.lock().map_err(|_| "設定を読めません")?;
             let mut w = load(&c)?;
-            if let Some(row) = w.rows.iter().find(|r| &r.booth_id == id) {
-                if allowed(&w, row, generation, manual)
-                    && row.generation == revision
-                    && active(&c, id)?
+            if let Some(row) = w.rows.iter().find(|r| &r.booth_id == id)
+                && allowed(&w, row, generation, manual)
+                && row.generation == revision
+                && active(&c, id)?
+            {
+                if let Ok(obs) = &result
+                    && !obs.free_files.is_empty()
                 {
-                    if let Ok(obs) = &result {
-                        if !obs.free_files.is_empty() {
-                            let _ = db::store_free_files(
-                                &mut c,
-                                id,
-                                &obs.free_files,
-                                obs.is_free,
-                                obs.is_adult,
-                            );
-                            files_updated = true;
-                            w = load(&c)?;
-                        }
-                    }
-                    let row = w.rows.iter_mut().find(|r| &r.booth_id == id).unwrap();
-                    let previous = row.latest.clone();
-                    record(row, result.map(|obs| obs.snapshot));
-                    if row.error.is_none() {
-                        if let (Some(before), Some(after)) = (previous, row.latest.as_ref()) {
-                            let refs = |s: &Snapshot| {
-                                s.files
-                                    .iter()
-                                    .map(|(id, v, name)| update_file(id, v, name))
-                                    .collect::<Vec<_>>()
-                            };
-                            let (old, new, desc) = (
-                                refs(&before),
-                                refs(after),
-                                before.description != after.description,
-                            );
-                            record_delta(&mut w, id, "public", &old, &new, desc);
-                        }
-                    }
-                    if stop {
-                        w.retry_after = Some(chrono::Utc::now().timestamp() + 3600);
-                    }
-                    save(&mut c, &w)?;
+                    let _ = db::store_free_files(
+                        &mut c,
+                        id,
+                        &obs.free_files,
+                        obs.is_free,
+                        obs.is_adult,
+                    );
+                    files_updated = true;
+                    w = load(&c)?;
                 }
+                let row = w.rows.iter_mut().find(|r| &r.booth_id == id).unwrap();
+                let previous = row.latest.clone();
+                record(row, result.map(|obs| obs.snapshot));
+                if row.error.is_none()
+                    && let (Some(before), Some(after)) = (previous, row.latest.as_ref())
+                {
+                    let refs = |s: &Snapshot| {
+                        s.files
+                            .iter()
+                            .map(|(id, v, name)| update_file(id, v, name))
+                            .collect::<Vec<_>>()
+                    };
+                    let (old, new, desc) = (
+                        refs(&before),
+                        refs(after),
+                        before.description != after.description,
+                    );
+                    record_delta(&mut w, id, "public", &old, &new, desc);
+                }
+                if stop {
+                    w.retry_after = Some(chrono::Utc::now().timestamp() + 3600);
+                }
+                save(&mut c, &w)?;
             }
         }
         if files_updated {

@@ -201,11 +201,11 @@ pub(crate) fn install_from(
         write_replacing(&target.join(file), &bytes)?;
         written.insert(file.clone());
     }
-    if let Some(license) = license {
-        if let Ok(bytes) = std::fs::read(license) {
-            write_replacing(&target.join("LICENSE"), &bytes)?;
-            written.insert(PathBuf::from("LICENSE"));
-        }
+    if let Some(license) = license
+        && let Ok(bytes) = std::fs::read(license)
+    {
+        write_replacing(&target.join("LICENSE"), &bytes)?;
+        written.insert(PathBuf::from("LICENSE"));
     }
     let manifest_bytes =
         std::fs::read(source.join(&manifest)).map_err(|_| "同梱した拡張機能を読めません")?;

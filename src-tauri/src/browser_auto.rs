@@ -14,23 +14,21 @@ const SCRIPT: &str = include_str!("../../extension/auto-register.js");
 const EXTRACT: &str = include_str!("../../extension/extract.js");
 
 pub(crate) fn initialization_script() -> String {
-    format!(
-        r#"(function() {{
-      document.addEventListener('click', function(event) {{
+    r#"(function() {
+      document.addEventListener('click', function(event) {
         if (!event.isTrusted) return;
         globalThis.__vrclibmanDownload = null;
         const anchor = event.target.closest?.('a[href]');
         if (!anchor) return;
-        try {{
+        try {
           const url = new URL(anchor.href, location.href);
           if (url.protocol !== 'https:' || !(url.hostname === 'booth.pm' || url.hostname.endsWith('.booth.pm'))) return;
-          const match = url.pathname.match(/^\/downloadables\/(\d{{4,12}})$/);
+          const match = url.pathname.match(/^\/downloadables\/(\d{4,12})$/);
           if (!match) return;
-          globalThis.__vrclibmanDownload = {{ downloadableId: match[1], href: location.href, at: Date.now() }};
-        }} catch (_) {{}}
-      }}, true);
-    }})()"#
-    )
+          globalThis.__vrclibmanDownload = { downloadableId: match[1], href: location.href, at: Date.now() };
+        } catch (_) {}
+      }, true);
+    })()"#.to_string()
 }
 
 fn booth_url(url: &Url) -> bool {
@@ -342,10 +340,10 @@ pub(crate) fn handle_download(view: &Webview, event: &mut DownloadEvent<'_>) {
                     changed(&app, prompt);
                     Ok::<_, String>(())
                 })();
-                if let Ok(mut map) = pending().lock() {
-                    if map.get(&key).is_some_and(|p| p.token == token) {
-                        map.remove(&key);
-                    }
+                if let Ok(mut map) = pending().lock()
+                    && map.get(&key).is_some_and(|p| p.token == token)
+                {
+                    map.remove(&key);
                 }
                 if result.is_err() {
                     browser::browser_log(
@@ -358,13 +356,12 @@ pub(crate) fn handle_download(view: &Webview, event: &mut DownloadEvent<'_>) {
         DownloadEvent::Finished {
             url, path, success, ..
         } => {
-            if let Ok(mut map) = pending().lock() {
-                if let Some(job) = map.remove(&(view.label().to_string(), url.as_str().to_string()))
-                {
-                    let _ = job
-                        .finished
-                        .send(completed_path(*success, path.clone(), job.expected));
-                }
+            if let Ok(mut map) = pending().lock()
+                && let Some(job) = map.remove(&(view.label().to_string(), url.as_str().to_string()))
+            {
+                let _ = job
+                    .finished
+                    .send(completed_path(*success, path.clone(), job.expected));
             }
         }
         _ => {}
@@ -385,12 +382,12 @@ fn complete_download(
     path: &PathBuf,
     token: u64,
 ) -> Result<bool, String> {
-    let meta = std::fs::symlink_metadata(&path).map_err(|_| "保存ファイルを確認できません")?;
+    let meta = std::fs::symlink_metadata(path).map_err(|_| "保存ファイルを確認できません")?;
     if !meta.file_type().is_file()
         || !crate::library_files::is_packaged_asset(
             path.file_name().and_then(|s| s.to_str()).unwrap_or(""),
         )
-        || crate::library_files::file_looks_like_login_page(&path)
+        || crate::library_files::file_looks_like_login_page(path)
     {
         return Err("アセットファイルではありません".into());
     }
@@ -407,7 +404,7 @@ fn complete_download(
         let dir = crate::library_files::prepare_staging_dir(&downloads, &id)?;
         let mut tmp =
             tempfile::NamedTempFile::new_in(&dir).map_err(|_| "整理用ファイルを作れません")?;
-        let mut input = std::fs::File::open(&path).map_err(|_| "保存ファイルを読めません")?;
+        let mut input = std::fs::File::open(path).map_err(|_| "保存ファイルを読めません")?;
         std::io::copy(&mut input, tmp.as_file_mut())
             .map_err(|_| "整理用ファイルをコピーできません")?;
         let filename = path
@@ -441,7 +438,7 @@ fn complete_download(
     c.execute("UPDATE product_files SET downloadable_id = ?1 WHERE booth_id = ?2 AND variation = ?3 AND local_path = ?4",
     rusqlite::params![choice.downloadable_id, id, choice.variation, placed.display().to_string()]).map_err(|_| "ファイル番号を保存できません")?;
     if routed && placed != *path {
-        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path);
     }
     Ok(db::browser_auto_pending(c)?.len() > before)
 }

@@ -152,7 +152,7 @@ fn finish_open(mut connection: Connection, wal: bool) -> Result<Connection, Stri
     if wal {
         let _ = connection.execute_batch("PRAGMA journal_mode = WAL;");
     }
-    migrate(&mut connection)?;
+    migrate(&connection)?;
     // One transaction. A new library gets a few thousand seed and catalog rows, and a commit per
     // row syncs the file every time. Immediate, so a second connection waits instead of failing.
     let tx = connection
@@ -882,10 +882,10 @@ pub(crate) fn import_export_json_with_mode(
 }
 
 pub(crate) fn extension_token(connection: &Connection) -> Result<String, String> {
-    if let Some(existing) = setting(connection, "extension_token")? {
-        if crate::local_import::stored_token_ok(&existing) {
-            return Ok(existing);
-        }
+    if let Some(existing) = setting(connection, "extension_token")?
+        && crate::local_import::stored_token_ok(&existing)
+    {
+        return Ok(existing);
     }
     let token = crate::local_import::generate_token();
     set_setting(connection, "extension_token", &token)?;
@@ -995,12 +995,11 @@ fn import_products_unlogged(
 ) -> Result<ImportReport, String> {
     let mut before_files = std::collections::HashMap::new();
     for product in &parsed.products {
-        if !product.downloads.is_empty() {
-            if let Ok(keys) =
+        if !product.downloads.is_empty()
+            && let Ok(keys) =
                 crate::asset_updates::existing_file_keys(connection, &product.booth_id)
-            {
-                before_files.insert(product.booth_id.clone(), keys);
-            }
+        {
+            before_files.insert(product.booth_id.clone(), keys);
         }
     }
     let tx = connection.transaction().sql()?;
@@ -2246,10 +2245,10 @@ pub(crate) fn restore_product_classification(
     snapshot: &ClassificationSnapshot,
 ) -> Result<(), String> {
     let product = require_product(connection, &snapshot.booth_id)?;
-    if let Some(category) = snapshot.category.as_deref() {
-        if Category::parse(category).is_none() {
-            return Err("カテゴリが不正です".into());
-        }
+    if let Some(category) = snapshot.category.as_deref()
+        && Category::parse(category).is_none()
+    {
+        return Err("カテゴリが不正です".into());
     }
     let from = placement_of(&product);
     let to = ClassificationPlacement {
@@ -2843,10 +2842,10 @@ pub(crate) fn link_file(
             )
             .sql()?;
         crate::sync_meta::touch_file_links(connection, &product.booth_id)?;
-        if let Some(prev) = previous.as_deref() {
-            if prev != product.booth_id {
-                crate::sync_meta::touch_file_links(connection, prev)?;
-            }
+        if let Some(prev) = previous.as_deref()
+            && prev != product.booth_id
+        {
+            crate::sync_meta::touch_file_links(connection, prev)?;
         }
     } else {
         connection
@@ -3190,13 +3189,12 @@ pub(crate) fn apply_booth_settlement(
     };
     // 201 / 215 are a coarse tool bucket. Placement and avatar-gimmick text
     // move the row. A specific category such as outfit still ignores the title.
-    if crate::booth_category::is_coarse_tool(meta.id, &meta.name) {
-        if let Some((category, genre)) =
+    if crate::booth_category::is_coarse_tool(meta.id, &meta.name)
+        && let Some((category, genre)) =
             crate::classifier::coarse_tool_override(&existing.title, &existing.description_snippet)
-        {
-            settlement.category = category;
-            settlement.genre = Some(genre);
-        }
+    {
+        settlement.category = category;
+        settlement.genre = Some(genre);
     }
     if existing.category_locked && existing.category != Some(settlement.category) {
         return Ok(false);
@@ -3912,10 +3910,10 @@ pub(crate) fn prepare_download(
     let Some(filename) = actual_name else {
         return Err("ファイル名を読めません".into());
     };
-    if let Some(claimed) = crate::library_files::safe_filename(&notice.filename) {
-        if filename != claimed {
-            return Err("ファイル名がパスと一致しません".into());
-        }
+    if let Some(claimed) = crate::library_files::safe_filename(&notice.filename)
+        && filename != claimed
+    {
+        return Err("ファイル名がパスと一致しません".into());
     }
     let variation = crate::library_files::clean_variation(&notice.variation).unwrap_or_default();
     let title = notice
@@ -4884,10 +4882,11 @@ fn merge_seed(connection: &Connection, after: u32) -> Result<SeedMerge, String> 
             )
             .sql()?;
         merged.inserted += rows as u32;
-        if let Some(booth_id) = avatar.booth_id.as_deref().filter(|id| !id.is_empty()) {
-            if rows > 0 && avatar_id_for_booth(connection, booth_id)?.is_none() {
-                bind_booth(connection, &avatar.id, booth_id)?;
-            }
+        if let Some(booth_id) = avatar.booth_id.as_deref().filter(|id| !id.is_empty())
+            && rows > 0
+            && avatar_id_for_booth(connection, booth_id)?.is_none()
+        {
+            bind_booth(connection, &avatar.id, booth_id)?;
         }
     }
     Ok(merged)
@@ -4903,10 +4902,10 @@ fn existing_seed_avatar(connection: &Connection, avatar: &SeedAvatar) -> Result<
     if avatar_exists(connection, &avatar.id)? {
         return Ok(SeedMatch::Found(avatar.id.clone()));
     }
-    if let Some(booth_id) = avatar.booth_id.as_deref().filter(|id| !id.is_empty()) {
-        if let Some(id) = avatar_id_for_booth(connection, booth_id)? {
-            return Ok(SeedMatch::Found(id));
-        }
+    if let Some(booth_id) = avatar.booth_id.as_deref().filter(|id| !id.is_empty())
+        && let Some(id) = avatar_id_for_booth(connection, booth_id)?
+    {
+        return Ok(SeedMatch::Found(id));
     }
     let keys: HashSet<String> = std::iter::once(&avatar.display_name)
         .chain(avatar.aliases.iter())
@@ -5476,7 +5475,7 @@ fn write_catalog_body(
              classifier_version = ?3
              WHERE booth_id = ?4 AND category_locked = 0",
             params![
-                to_json(&vec![display.to_string()])?,
+                to_json(&[display.to_string()])?,
                 now,
                 crate::classifier::CLASSIFIER_VERSION,
                 booth_id
@@ -5914,7 +5913,7 @@ fn save_owned_body(
             params![avatar_id],
         )
         .sql()?;
-    let display = avatar_display(connection, &avatar_id)?;
+    let display = avatar_display(connection, avatar_id)?;
     let now = now_iso();
     connection
         .execute(
@@ -5924,7 +5923,7 @@ fn save_owned_body(
              classifier_version = ?3
              WHERE booth_id = ?4 AND category_locked = 0",
             params![
-                to_json(&vec![display])?,
+                to_json(&[display])?,
                 now,
                 crate::classifier::CLASSIFIER_VERSION,
                 booth_id
@@ -6476,10 +6475,12 @@ fn generate_id(connection: &Connection, display: &str) -> Result<String, String>
         base = format!("a{:08x}", fnv(display));
     }
     base.truncate(48);
-    if !base.starts_with("owned-") && valid_id(&base) && !avatar_exists(connection, &base)? {
-        if !base_exists(connection, &base)? {
-            return Ok(base);
-        }
+    if !base.starts_with("owned-")
+        && valid_id(&base)
+        && !avatar_exists(connection, &base)?
+        && !base_exists(connection, &base)?
+    {
+        return Ok(base);
     }
     for number in 2..500 {
         let id = format!("{base}-{number}");
@@ -12919,23 +12920,22 @@ pub(crate) fn product_genre_suggestion(
                 source: Some(source.into()),
             })
         };
-    if product.extracted_at.is_some() {
-        if let Some(category) = product.category {
-            if let Some(found) = pick(category, product.genre.clone(), "classified") {
-                return Ok(found);
-            }
-        }
+    if product.extracted_at.is_some()
+        && let Some(category) = product.category
+        && let Some(found) = pick(category, product.genre.clone(), "classified")
+    {
+        return Ok(found);
     }
     let meta = booth_meta(connection, id)?;
     if let Some(mut settlement) = crate::booth_category::settle(meta.id, &meta.name, &meta.tags) {
-        if crate::booth_category::is_coarse_tool(meta.id, &meta.name) {
-            if let Some((category, genre)) = crate::classifier::coarse_tool_override(
+        if crate::booth_category::is_coarse_tool(meta.id, &meta.name)
+            && let Some((category, genre)) = crate::classifier::coarse_tool_override(
                 &product.title,
                 &product.description_snippet,
-            ) {
-                settlement.category = category;
-                settlement.genre = Some(genre);
-            }
+            )
+        {
+            settlement.category = category;
+            settlement.genre = Some(genre);
         }
         let genre = settlement
             .genre
@@ -12950,10 +12950,8 @@ pub(crate) fn product_genre_suggestion(
             crate::classifier::rule_extraction(&product.title, &product.description_snippet);
         let no_signal =
             extraction.category == Category::Other && extraction.genre.as_deref() == Some("other");
-        if !no_signal {
-            if let Some(found) = pick(extraction.category, extraction.genre, "rules") {
-                return Ok(found);
-            }
+        if !no_signal && let Some(found) = pick(extraction.category, extraction.genre, "rules") {
+            return Ok(found);
         }
     }
     Ok(GenreSuggestion {

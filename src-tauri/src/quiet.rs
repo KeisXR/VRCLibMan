@@ -106,10 +106,10 @@ pub fn account_document_is_fresh(raw: &str) -> bool {
         };
         value = parsed;
     }
-    match value.get("fresh").and_then(|item| item.as_bool()) {
-        Some(fresh) => fresh,
-        None => true,
-    }
+    value
+        .get("fresh")
+        .and_then(|item| item.as_bool())
+        .unwrap_or(true)
 }
 
 pub fn parse_account_eval(raw: &str) -> Result<BoothAccount, String> {
@@ -654,10 +654,10 @@ fn download_user_agent() -> &'static str {
 }
 
 fn suggested_filename(disposition: Option<&str>, url: &Url) -> String {
-    if let Some(header) = disposition {
-        if let Some(name) = filename_from_content_disposition(header) {
-            return name;
-        }
+    if let Some(header) = disposition
+        && let Some(name) = filename_from_content_disposition(header)
+    {
+        return name;
     }
     url.path().rsplit('/').next().unwrap_or("").to_string()
 }

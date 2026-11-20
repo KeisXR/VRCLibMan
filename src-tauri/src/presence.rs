@@ -184,10 +184,10 @@ pub(crate) fn handle_main_close<R: Runtime>(window: &tauri::Window<R>, event: &t
 
 pub(crate) fn handle_run_event<R: Runtime>(app: &AppHandle<R>, event: tauri::RunEvent) {
     match event {
-        tauri::RunEvent::ExitRequested { api, code, .. } => {
-            if code.is_none() && background_mode_enabled(app) {
-                api.prevent_exit();
-            }
+        tauri::RunEvent::ExitRequested { api, code, .. }
+            if code.is_none() && background_mode_enabled(app) =>
+        {
+            api.prevent_exit();
         }
         #[cfg(target_os = "macos")]
         tauri::RunEvent::Reopen { .. } => {
@@ -234,7 +234,7 @@ pub(crate) fn sync_login_item<R: Runtime>(app: &AppHandle<R>, enabled: bool) -> 
     let enabled = background_supported() && enabled;
     #[cfg(target_os = "linux")]
     {
-        return crate::presence_linux::sync_login_item(app, enabled);
+        crate::presence_linux::sync_login_item(app, enabled)
     }
     #[cfg(not(target_os = "linux"))]
     {

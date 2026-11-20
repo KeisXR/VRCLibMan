@@ -154,10 +154,10 @@ impl NameIndex {
 pub fn match_title<'a>(title: &str, avatars: &'a [Avatar]) -> Option<&'a Avatar> {
     let mut quoted_hits: Vec<&Avatar> = Vec::new();
     for segment in quoted_segments(title) {
-        if let Some(avatar) = resolve_name(&segment, avatars) {
-            if !quoted_hits.iter().any(|hit| hit.id == avatar.id) {
-                quoted_hits.push(avatar);
-            }
+        if let Some(avatar) = resolve_name(&segment, avatars)
+            && !quoted_hits.iter().any(|hit| hit.id == avatar.id)
+        {
+            quoted_hits.push(avatar);
         }
     }
     if quoted_hits.len() == 1 {
@@ -272,10 +272,10 @@ fn consider_compatible_name(
     if is_reading_pair(&pieces) {
         let mut hits = Vec::new();
         for piece in &pieces {
-            if let Some(avatar) = resolve_piece(piece, avatars) {
-                if !hits.iter().any(|id: &String| id == &avatar.id) {
-                    hits.push(avatar.id.clone());
-                }
+            if let Some(avatar) = resolve_piece(piece, avatars)
+                && !hits.iter().any(|id: &String| id == &avatar.id)
+            {
+                hits.push(avatar.id.clone());
             }
         }
         if hits.len() == 1 {
@@ -412,10 +412,10 @@ fn usable_names(raw_names: &[String]) -> Vec<String> {
 fn resolved_ids(names: &[String], avatars: &[Avatar]) -> Vec<String> {
     let mut ids = Vec::new();
     for name in names {
-        if let Some(avatar) = resolve_name(name, avatars) {
-            if !ids.contains(&avatar.id) {
-                ids.push(avatar.id.clone());
-            }
+        if let Some(avatar) = resolve_name(name, avatars)
+            && !ids.contains(&avatar.id)
+        {
+            ids.push(avatar.id.clone());
         }
     }
     ids
@@ -427,10 +427,10 @@ fn single_unresolved_label(names: &[String], avatars: &[Avatar]) -> Option<Strin
         if resolve_name(name, avatars).is_some() || !keep_unresolved(name, avatars) {
             continue;
         }
-        if let Some(label) = preferred_display_name(name) {
-            if !labels.iter().any(|existing: &String| existing == &label) {
-                labels.push(label);
-            }
+        if let Some(label) = preferred_display_name(name)
+            && !labels.iter().any(|existing: &String| existing == &label)
+        {
+            labels.push(label);
         }
     }
     if labels.len() == 1 {
@@ -600,10 +600,10 @@ fn keep_unresolved(raw: &str, avatars: &[Avatar]) -> bool {
 fn unresolved_label(raw: &str) -> String {
     let mut text = raw.trim().to_string();
     for suffix in ["対応", "専用", "向け"] {
-        if let Some(stripped) = text.strip_suffix(suffix) {
-            if stripped.chars().count() >= 2 {
-                text = stripped.trim().to_string();
-            }
+        if let Some(stripped) = text.strip_suffix(suffix)
+            && stripped.chars().count() >= 2
+        {
+            text = stripped.trim().to_string();
         }
     }
     preferred_display_name(&text).unwrap_or(text)

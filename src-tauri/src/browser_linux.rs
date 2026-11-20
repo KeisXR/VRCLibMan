@@ -112,10 +112,10 @@ fn install_resize_handlers(view: &webkit2gtk::WebView) {
             }
             return Propagation::Stop;
         }
-        if had_cursor.replace(false) {
-            if let Some(native) = view.window() {
-                native.set_cursor(None);
-            }
+        if had_cursor.replace(false)
+            && let Some(native) = view.window()
+        {
+            native.set_cursor(None);
         }
         Propagation::Proceed
     });

@@ -195,8 +195,8 @@ pub fn library_stats(state: State<'_, AppState>) -> Result<LibraryStats, String>
 
 #[tauri::command(async)]
 pub fn list_avatars(state: State<'_, AppState>) -> Result<Vec<AvatarCard>, String> {
-    let mut connection = db(&state)?;
-    let snapshot = db::load_snapshot(&mut connection)?;
+    let connection = db(&state)?;
+    let snapshot = db::load_snapshot(&connection)?;
     Ok(view::avatar_cards(&snapshot))
 }
 
@@ -206,10 +206,10 @@ pub fn list_products_by_category(
     category: String,
 ) -> Result<Vec<ItemView>, String> {
     let category = Category::parse(&category).ok_or_else(|| "商品の種類が不正です".to_string())?;
-    let mut connection = db(&state)?;
+    let connection = db(&state)?;
     let ids = db::product_ids_by_category(&connection, category)?;
-    let mut snapshot = db::load_snapshot(&mut connection)?;
-    let remote = db::settings(&mut connection)?.remote_library_folder;
+    let mut snapshot = db::load_snapshot(&connection)?;
+    let remote = db::settings(&connection)?.remote_library_folder;
     crate::library_files::fill_local_places(&mut snapshot, &remote);
     Ok(view::products_by_ids(&snapshot, &ids))
 }
@@ -220,12 +220,12 @@ pub fn list_products_by_genre(
     kind: String,
     genre: Option<String>,
 ) -> Result<GenreProducts, String> {
-    let mut connection = db(&state)?;
+    let connection = db(&state)?;
     let genres =
         crate::genre::kind_genres(&kind).ok_or_else(|| "ジャンルの種類が不正です".to_string())?;
     let all_ids = db::product_ids_by_genre(&connection, &kind, None)?;
-    let mut snapshot = db::load_snapshot(&mut connection)?;
-    let remote = db::settings(&mut connection)?.remote_library_folder;
+    let mut snapshot = db::load_snapshot(&connection)?;
+    let remote = db::settings(&connection)?.remote_library_folder;
     crate::library_files::fill_local_places(&mut snapshot, &remote);
     Ok(view::genre_products(
         &snapshot,
@@ -238,12 +238,12 @@ pub fn list_products_by_genre(
 fn load_avatar(app: &AppHandle, id: &str, probe_remote: bool) -> Result<AvatarDetail, String> {
     let state = app.state::<AppState>();
     let (mut snapshot, remote) = {
-        let mut connection = state
+        let connection = state
             .db
             .lock()
             .map_err(|_| "データベースをロックできません".to_string())?;
-        let snapshot = db::load_snapshot(&mut connection)?;
-        let remote = db::settings(&mut connection)?.remote_library_folder;
+        let snapshot = db::load_snapshot(&connection)?;
+        let remote = db::settings(&connection)?.remote_library_folder;
         (snapshot, remote)
     };
     if probe_remote {
@@ -295,12 +295,12 @@ fn probe_remote_products_blocking(
     }
     let state = app.state::<AppState>();
     let (mut snapshot, remote) = {
-        let mut connection = state
+        let connection = state
             .db
             .lock()
             .map_err(|_| "データベースをロックできません".to_string())?;
-        let snapshot = db::load_snapshot(&mut connection)?;
-        let remote = db::settings(&mut connection)?.remote_library_folder;
+        let snapshot = db::load_snapshot(&connection)?;
+        let remote = db::settings(&connection)?.remote_library_folder;
         (snapshot, remote)
     };
     let probes = crate::library_files::probe_remote_for_products(&mut snapshot, &remote, &ids);
@@ -469,8 +469,8 @@ pub fn list_product_options(state: State<'_, AppState>) -> Result<Vec<ProductOpt
 
 #[tauri::command(async)]
 pub fn list_knowledge(state: State<'_, AppState>) -> Result<Knowledge, String> {
-    let mut connection = db(&state)?;
-    db::knowledge(&mut connection)
+    let connection = db(&state)?;
+    db::knowledge(&connection)
 }
 
 #[tauri::command]
@@ -497,8 +497,8 @@ pub fn search_product_ids(
 
 #[tauri::command(async)]
 pub fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
-    let mut connection = db(&state)?;
-    db::settings(&mut connection)
+    let connection = db(&state)?;
+    db::settings(&connection)
 }
 
 /// Off the UI thread: a save waits for the database and the disk, and the native pages in the
@@ -976,12 +976,12 @@ pub async fn push_remote_file(
 
 #[tauri::command]
 pub async fn open_booth_browser(app: tauri::AppHandle) -> Result<(), String> {
-    crate::browser::dispatch_ui(app, |handle| crate::browser::open_browser(handle)).await
+    crate::browser::dispatch_ui(app, crate::browser::open_browser).await
 }
 
 #[tauri::command]
 pub async fn show_booth_library(app: tauri::AppHandle) -> Result<(), String> {
-    crate::browser::dispatch_ui(app, |handle| crate::browser::show_library(handle)).await
+    crate::browser::dispatch_ui(app, crate::browser::show_library).await
 }
 
 #[tauri::command]
@@ -1139,7 +1139,7 @@ pub async fn clear_booth_session(app: tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn close_booth_browser(app: tauri::AppHandle) -> Result<(), String> {
-    crate::browser::dispatch_ui(app, |handle| crate::browser::close_browser(handle)).await
+    crate::browser::dispatch_ui(app, crate::browser::close_browser).await
 }
 
 #[tauri::command]
@@ -1183,9 +1183,9 @@ pub fn asset_update_downloads(
         })
         .collect();
     let (mut snapshot, remote) = {
-        let mut connection = db(&state)?;
-        let snapshot = db::load_snapshot(&mut connection)?;
-        let remote = db::settings(&mut connection)?.remote_library_folder;
+        let connection = db(&state)?;
+        let snapshot = db::load_snapshot(&connection)?;
+        let remote = db::settings(&connection)?.remote_library_folder;
         (snapshot, remote)
     };
     // リモートにあるファイルは受け取り直さない。確かめるのは頼まれた商品だけ。
@@ -1435,8 +1435,8 @@ pub fn link_file(
     path: String,
     productId: Option<String>,
 ) -> Result<(), String> {
-    let mut connection = db(&state)?;
-    db::link_file(&mut connection, &path, productId.as_deref())
+    let connection = db(&state)?;
+    db::link_file(&connection, &path, productId.as_deref())
 }
 
 #[tauri::command]
@@ -1498,14 +1498,14 @@ pub fn clear_avatar_hero_image(
 
 #[tauri::command]
 pub fn save_base_body(state: State<'_, AppState>, body: BaseBodyInput) -> Result<String, String> {
-    let mut connection = db(&state)?;
-    db::save_base_body(&mut connection, &body)
+    let connection = db(&state)?;
+    db::save_base_body(&connection, &body)
 }
 
 #[tauri::command]
 pub fn delete_base_body(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    let mut connection = db(&state)?;
-    db::delete_base_body(&mut connection, &id)
+    let connection = db(&state)?;
+    db::delete_base_body(&connection, &id)
 }
 
 #[tauri::command]
@@ -1587,14 +1587,14 @@ pub(crate) async fn run_extract(app: &AppHandle, target: &str) -> Result<Extract
     let _clear = ClearRunning(running);
     let progress = ProgressGuard::new(app.clone(), "extract");
     let (jobs, threshold) = {
-        let mut connection = db(&state)?;
-        let jobs = db::products_for_extract(&mut connection, db::parse_extract_target(&target)?)?;
+        let connection = db(&state)?;
+        let jobs = db::products_for_extract(&connection, db::parse_extract_target(target)?)?;
         (jobs, db::settings(&connection)?.confidence_threshold)
     };
     // The log's run. Each product locks the database and logs on its own, so an edit made
     // between two products is not attributed to this run.
     let mut run =
-        db::ClassificationRun::new(db::KIND_RECLASSIFY, db::CLASSIFIER_RULES).with_note(&target);
+        db::ClassificationRun::new(db::KIND_RECLASSIFY, db::CLASSIFIER_RULES).with_note(target);
     let total = jobs.len() as u32;
     let mut processed = 0;
     let mut booth_settled = 0;
@@ -1606,7 +1606,7 @@ pub(crate) async fn run_extract(app: &AppHandle, target: &str) -> Result<Extract
             break;
         }
         classify_job(
-            &app,
+            app,
             &state,
             &mut run,
             job,
@@ -1626,7 +1626,7 @@ pub(crate) async fn run_extract(app: &AppHandle, target: &str) -> Result<Extract
         tokio::task::yield_now().await;
     }
     crate::browser::browser_log(
-        &app,
+        app,
         &crate::browser::classification_done_line(processed, booth_settled, rule_filled, cancelled),
     );
     if processed > 0 {
@@ -1785,8 +1785,8 @@ pub fn mark_owned_avatar(state: State<'_, AppState>, boothId: String) -> Result<
 #[tauri::command]
 pub async fn cache_thumbnails(app: AppHandle, state: State<'_, AppState>) -> Result<u32, String> {
     let jobs = {
-        let mut connection = db(&state)?;
-        db::thumbnail_jobs(&mut connection)?
+        let connection = db(&state)?;
+        db::thumbnail_jobs(&connection)?
     };
     let progress = ProgressGuard::new(app.clone(), "thumbs");
     let thumbs = state.thumbs_dir.clone();
@@ -1794,10 +1794,10 @@ pub async fn cache_thumbnails(app: AppHandle, state: State<'_, AppState>) -> Res
     let total = jobs.len() as u32;
     let mut saved = 0u32;
     for (index, job) in jobs.iter().enumerate() {
-        if let Some(path) = &job.thumbnail_path {
-            if Path::new(path).is_file() {
-                continue;
-            }
+        if let Some(path) = &job.thumbnail_path
+            && Path::new(path).is_file()
+        {
+            continue;
         }
         progress.update(
             index as u32,
@@ -1808,8 +1808,8 @@ pub async fn cache_thumbnails(app: AppHandle, state: State<'_, AppState>) -> Res
             crate::thumb::download_thumbnail(&client, &job.thumbnail_url, &thumbs, &job.booth_id)
                 .await
         {
-            let mut connection = db(&state)?;
-            db::set_thumbnail_path(&mut connection, &job.booth_id, &path)?;
+            let connection = db(&state)?;
+            db::set_thumbnail_path(&connection, &job.booth_id, &path)?;
             saved += 1;
         }
     }

@@ -100,10 +100,10 @@ pub(crate) fn scan_block_reason(canon: &Path) -> Result<(), String> {
             "ドライブ直下はスキャンできません。アセットの入ったフォルダを選んでください".into(),
         );
     }
-    if let Some(first) = normals.first() {
-        if first == "windows" || first.starts_with("program files") {
-            return Err("システムフォルダはスキャンできません".into());
-        }
+    if let Some(first) = normals.first()
+        && (first == "windows" || first.starts_with("program files"))
+    {
+        return Err("システムフォルダはスキャンできません".into());
     }
     #[cfg(target_os = "macos")]
     if let Some(message) = macos_scan_block(
@@ -242,12 +242,12 @@ fn labels_for(path: &Path, is_dir: bool) -> Vec<String> {
         }
     } else if let Some(stem) = path.file_stem().and_then(|name| name.to_str()) {
         labels.push(stem.to_string());
-        if let Some(parent) = path.parent().and_then(|parent| parent.file_name()) {
-            if let Some(parent) = parent.to_str() {
-                if !generic_dir(OsStr::new(parent)) && !skip_dir(OsStr::new(parent)) {
-                    labels.push(parent.to_string());
-                }
-            }
+        if let Some(parent) = path.parent().and_then(|parent| parent.file_name())
+            && let Some(parent) = parent.to_str()
+            && !generic_dir(OsStr::new(parent))
+            && !skip_dir(OsStr::new(parent))
+        {
+            labels.push(parent.to_string());
         }
     }
     labels
