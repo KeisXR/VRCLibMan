@@ -370,16 +370,4 @@ mod tests {
         assert!(!line.contains("導入動画"));
         assert!(!line.contains("8722239"));
     }
-
-    #[test]
-    fn this_module_sends_no_session() {
-        let source = include_str!("free_files.rs");
-        let production = source
-            .split("mod tests")
-            .next()
-            .unwrap()
-            .to_ascii_lowercase();
-        assert!(!production.contains("cookie"));
-        assert!(!production.contains("credentials"));
-    }
 }

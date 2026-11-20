@@ -3082,7 +3082,8 @@ mod tests {
         assert_eq!(seen.len(), 1, "the kept note is still read back at startup");
     }
 
-    #[cfg(unix)]
+    // macOS keeps the profile in a WebKit data store, not in a folder.
+    #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     fn the_profile_folder_is_private_to_its_owner() {
         use std::os::unix::fs::PermissionsExt;

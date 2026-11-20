@@ -8752,7 +8752,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn avatar_hero_defaults_to_small_and_accepts_large_or_off() {
         let connection = open_memory().unwrap();
         assert_eq!(settings(&connection).unwrap().avatar_hero, "small");
@@ -8786,6 +8785,7 @@ mod tests {
         assert!(!settings(&connection).unwrap().preview_pane);
     }
 
+    #[test]
     fn preview_pane_defaults_off_without_a_schema_change() {
         let connection = open_memory().unwrap();
         let version: i64 = connection

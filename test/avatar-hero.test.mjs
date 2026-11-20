@@ -52,29 +52,29 @@ test("avatar hero helpers normalize size, height, layout, and contrast", async (
   }
 });
 
-test("avatar hero CSS uses hybrid layouts, veil, and no curved accent on the title", () => {
+// Only what has to agree with something else is checked here: the heights the script computes,
+// the colors the contrast test above measures, and the rules with a reason in the design guide.
+// Values that are only a look (blur, tints, radii) are not pinned; docs/design/tokens.css has them.
+test("avatar hero CSS agrees with the script and keeps the accessibility rules", async () => {
   const css = readFileSync("src/styles.css", "utf8");
-  assert.match(css, /\.avatar-hero\[data-size="large"\]\s*\{\s*--avatar-hero-h:\s*400px/);
-  assert.match(css, /\.avatar-hero\[data-size="small"\]\s*\{\s*--avatar-hero-h:\s*320px/);
-  assert.match(css, /@media \(max-width: 860px\)[\s\S]*--avatar-hero-h:\s*220px/);
-  assert.match(css, /backdrop-filter:\s*blur\(2px\)/);
-  assert.match(css, /backdrop-filter:\s*blur\(8px\)/);
-  assert.match(css, /backdrop-filter:\s*blur\(24px\)/);
-  assert.match(css, /color-mix\(in srgb, var\(--bg\) 45%, transparent\)/);
-  assert.match(css, /color-mix\(in srgb, var\(--bg\) 82%, transparent\) 60%/);
+  const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  try {
+    const hero = await server.ssrLoadModule("/src/avatarHero.ts");
+    for (const size of ["large", "small"]) {
+      const height = hero.avatarHeroHeightPx(size, 1200);
+      assert.match(css, new RegExp(`\\.avatar-hero\\[data-size="${size}"\\]\\s*\\{\\s*--avatar-hero-h:\\s*${height}px`));
+    }
+    const narrow = hero.avatarHeroHeightPx("large", 800);
+    assert.match(css, new RegExp(`@media \\(max-width: 860px\\)[\\s\\S]*--avatar-hero-h:\\s*${narrow}px`));
+  } finally {
+    await server.close();
+  }
+  // The sub text colors whose contrast is measured above.
   assert.match(css, /--avatar-hero-sub:\s*#5d616c/);
   assert.match(css, /--avatar-hero-sub:\s*#b4b4be/);
-  assert.match(css, /\.avatar-hero-copy/);
-  assert.match(css, /\.avatar-hero-nav/);
-  assert.match(css, /\.avatar-hero-block/);
-  assert.match(css, /\.avatar-hero-sharp/);
-  assert.match(css, /border-radius:\s*12px/);
-  assert.match(css, /\.avatar-hero-toolbar/);
-  assert.match(css, /\.avatar-assets/);
-  assert.doesNotMatch(css, /\.avatar-hero-scrim\s*\{/);
-  assert.doesNotMatch(css, /\.avatar-hero-actions/);
-  assert.match(css, /avatar-hero[\s\S]*border-radius:\s*0/);
+  // No accent on a curve (design guide, 線のアクセント).
   assert.match(css, /\.avatar-hero-title::before\s*\{\s*content:\s*none/);
+  // Reduced motion and browsers without backdrop-filter keep a readable hero.
   assert.match(css, /prefers-reduced-motion: reduce[\s\S]*\.avatar-hero-media/);
   assert.match(css, /@supports not \(\(backdrop-filter/);
 });
