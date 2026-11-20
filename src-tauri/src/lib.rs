@@ -329,6 +329,7 @@ pub fn run() {
             commands::set_purchase_item_labels,
             commands::set_purchase_gift,
             commands::clear_booth_session,
+            commands::booth_session_stored,
             commands::close_booth_browser,
             commands::booth_browser_log,
             commands::download_booth_file,

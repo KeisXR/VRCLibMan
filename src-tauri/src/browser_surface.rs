@@ -862,6 +862,22 @@ fn close_webviews(app: &AppHandle, ids: &[String]) {
     }
 }
 
+/// What a page in the built-in browser may ask the device for. BOOTH needs none of these, and
+/// without an answer macOS grants camera and microphone requests without asking.
+fn page_permission(kind: tauri::webview::PermissionKind) -> tauri::webview::PermissionResponse {
+    use tauri::webview::{PermissionKind, PermissionResponse};
+    match kind {
+        PermissionKind::Microphone
+        | PermissionKind::Camera
+        | PermissionKind::Geolocation
+        | PermissionKind::Notifications
+        | PermissionKind::DisplayCapture
+        | PermissionKind::Midi
+        | PermissionKind::Sensors => PermissionResponse::Deny,
+        _ => PermissionResponse::Default,
+    }
+}
+
 fn mount_tab(app: &AppHandle, host_id: &str, window: &Window, url: Url) -> Result<String, String> {
     #[cfg(target_os = "linux")]
     if window.label() == PANEL_WINDOW_LABEL {
@@ -953,7 +969,8 @@ fn mount_tab(app: &AppHandle, host_id: &str, window: &Window, url: Url) -> Resul
                 crate::browser_auto::handle_download(&view, &mut event);
             }
             browser::handle_booth_download(event)
-        });
+        })
+        .on_permission_request(|_, kind| page_permission(kind));
     #[cfg(not(target_os = "macos"))]
     {
         let root = browser::local_data_dir(app)?;
@@ -962,7 +979,7 @@ fn mount_tab(app: &AppHandle, host_id: &str, window: &Window, url: Url) -> Resul
             let _ = surface().session.remove(&id);
             return Err("セッションの場所が不正です".into());
         }
-        if let Err(error) = std::fs::create_dir_all(&dir) {
+        if let Err(error) = browser::create_session_dir(&dir) {
             let _ = surface().session.remove(&id);
             return Err(format!("セッション用のフォルダを作れません: {error}"));
         }
@@ -2137,6 +2154,29 @@ mod tests {
             placement_steps(Placed::default(), None, false),
             (None, Some(false))
         );
+    }
+
+    #[test]
+    fn pages_cannot_take_the_camera_microphone_location_or_notifications() {
+        use tauri::webview::{PermissionKind, PermissionResponse};
+        for kind in [
+            PermissionKind::Microphone,
+            PermissionKind::Camera,
+            PermissionKind::Geolocation,
+            PermissionKind::Notifications,
+            PermissionKind::DisplayCapture,
+            PermissionKind::Midi,
+            PermissionKind::Sensors,
+        ] {
+            assert!(matches!(page_permission(kind), PermissionResponse::Deny));
+        }
+        // Pasting and protected video keep the engine's own behavior.
+        for kind in [
+            PermissionKind::ClipboardRead,
+            PermissionKind::MediaKeySystemAccess,
+        ] {
+            assert!(matches!(page_permission(kind), PermissionResponse::Default));
+        }
     }
 
     #[test]

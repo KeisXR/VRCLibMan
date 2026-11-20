@@ -265,6 +265,7 @@ export const api = {
     call<void>("set_purchase_item_labels", { itemId, labelIds }),
   setPurchaseGift: (orderId: string, gift: boolean | null) => call<void>("set_purchase_gift", { orderId, gift }),
   clearBoothSession: () => call<void>("clear_booth_session"),
+  boothSessionStored: () => call<boolean>("booth_session_stored"),
   closeBoothBrowser: () => call<void>("close_booth_browser"),
   boothBrowserLog: () => call<BrowserDiagnostic>("booth_browser_log"),
   importExport: (json: string) => call<ImportReport>("import_export", { json }),

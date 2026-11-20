@@ -412,7 +412,15 @@ fn import_current_page_inner(
 
 pub fn close_browser(app: &AppHandle) -> Result<(), String> {
     request_library_walk_cancel();
-    crate::browser_surface::close(app)
+    crate::browser_surface::close(app)?;
+    // With the feature off nothing asks for the account again, so the hidden check (kept alive
+    // on macOS) is not left holding a BOOTH page.
+    if browser_enabled(app).is_err()
+        && let Some(probe) = app.get_webview_window(PROBE_LABEL)
+    {
+        let _ = probe.destroy();
+    }
+    Ok(())
 }
 
 /// WINDOW_LABEL が残っているあいだは、同じユーザーデータに二本目の WebView を作らない。
@@ -497,7 +505,59 @@ pub async fn clear_session(app: &AppHandle) -> Result<(), String> {
     crate::browser_linux::clear_profile_cache(app).await?;
     match logout_order(existed) {
         LogoutOrder::DestroyThenClear | LogoutOrder::ClearOnly => clear_stored_profile(app).await,
+    }?;
+    forget_visited_sites(app);
+    Ok(())
+}
+
+/// The log names every site that was opened, so deleting the browsing data drops those lines too.
+/// Only the unknown category notes stay: they hold category names, and are read back at startup
+/// so each is written once.
+fn forget_visited_sites(app: &AppHandle) {
+    if let Ok(path) = log_path(app)
+        && let Ok(text) = std::fs::read_to_string(&path)
+    {
+        let _ = std::fs::write(&path, log_without_visited_sites(&text));
     }
+    browser_log(app, "閲覧データと、開いたサイトの記録を消しました");
+}
+
+fn log_without_visited_sites(text: &str) -> String {
+    text.lines()
+        .filter(|line| line.contains(" 未対応カテゴリ "))
+        .map(|line| format!("{line}\n"))
+        .collect()
+}
+
+/// Whether the built-in browser's profile is on this device. Its data can be deleted while the
+/// feature is off, because turning the feature off keeps the login.
+pub async fn session_stored(app: &AppHandle) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        app.fetch_data_store_identifiers()
+            .await
+            .map(|ids| ids.iter().any(|id| id == &BOOTH_DATA_STORE_ID))
+            .unwrap_or(false)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        local_data_dir(app)
+            .map(|root| session_dir(&root).exists())
+            .unwrap_or(false)
+    }
+}
+
+/// Creates the profile folder for the owner only. On Linux the cookies in it are plain text, and
+/// a new folder would otherwise be readable by other users of the computer.
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn create_session_dir(dir: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
 }
 
 async fn clear_stored_profile(app: &AppHandle) -> Result<(), String> {
@@ -975,7 +1035,9 @@ fn open_profile_probe(app: &AppHandle, url: Url) -> Result<Option<u64>, String> 
         .skip_taskbar(true)
         .decorations(false)
         .always_on_bottom(true)
-        .on_download(|_webview, event| handle_booth_download(event))
+        // The hidden check only reads the account. It saves no file and opens no window.
+        .on_download(|_, _| false)
+        .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
         .on_page_load(move |_window, payload| {
             if PROBE_EPOCH.load(Ordering::SeqCst) != epoch {
                 return;
@@ -992,7 +1054,7 @@ fn open_profile_probe(app: &AppHandle, url: Url) -> Result<Option<u64>, String> 
         if !session_dir_is_safe(&root, &dir) {
             return Err("セッションの場所が不正です".into());
         }
-        std::fs::create_dir_all(&dir).map_err(|_| "ログイン状態を確認できません".to_string())?;
+        create_session_dir(&dir).map_err(|_| "ログイン状態を確認できません".to_string())?;
         builder = builder.data_directory(dir);
     }
     #[cfg(target_os = "macos")]
@@ -1467,6 +1529,43 @@ async fn pause_for(total: Duration) {
     }
 }
 
+/// The page's own script reported `href`. A page on another site could report anything, so the
+/// tab's real address is compared before the page is read. When the address cannot be read the
+/// walk goes on as before; it stops only when the tab is known to be somewhere else.
+async fn confirm_walk_page(app: &AppHandle, href: &str) -> Result<(), String> {
+    let label = pinned_walk_tab(app)?;
+    let native = dispatch_ui(app.clone(), move |handle| {
+        let view = if label == WINDOW_LABEL {
+            crate::browser_surface::active_view(handle)?
+        } else {
+            handle
+                .get_webview(&label)
+                .ok_or("ブラウザが開いていません")?
+        };
+        Ok(crate::browser_url::current_url(&view).ok())
+    })
+    .await?;
+    if native_page_matches(native.as_ref(), href) {
+        Ok(())
+    } else {
+        Err("BOOTH のページを確認できませんでした。もう一度お試しください".into())
+    }
+}
+
+fn native_page_matches(native: Option<&Url>, href: &str) -> bool {
+    let Some(native) = native else {
+        return true;
+    };
+    let Ok(reported) = Url::parse(href) else {
+        return false;
+    };
+    native.scheme() == "https"
+        && native.host_str() == reported.host_str()
+        && native
+            .host_str()
+            .is_some_and(|host| host == "booth.pm" || host.ends_with(".booth.pm"))
+}
+
 async fn eval_booth(app: &AppHandle, script: String) -> Result<String, String> {
     let label = pinned_walk_tab(app)?;
     eval_label(app, &label, script).await
@@ -1815,6 +1914,7 @@ async fn read_library_page(
             last_page: 1,
         });
     }
+    confirm_walk_page(app, &href).await?;
     let raw = eval_booth(app, walk_page_script()).await?;
     let mut snapshot = parse_walk_snapshot(&raw)?;
     if snapshot.href.is_empty() {
@@ -2109,6 +2209,7 @@ async fn read_purchase_page(
     if purchase_block_reason(&href).is_some() {
         return Ok((href, None));
     }
+    confirm_walk_page(app, &href).await?;
     let raw = eval_booth(app, script).await?;
     Ok((href, Some(raw)))
 }
@@ -2937,6 +3038,68 @@ mod tests {
         assert!(!walk_production.contains("reqwest"));
         assert!(!walk_production.contains("downloadables"));
         assert_eq!(library_walk::PAGE_DELAY_MS, 1000);
+    }
+
+    #[test]
+    fn a_walk_reads_a_page_only_when_the_tab_is_really_on_booth() {
+        let library = "https://accounts.booth.pm/library?page=2";
+        let on_booth = Url::parse("https://accounts.booth.pm/library?page=2").unwrap();
+        assert!(native_page_matches(Some(&on_booth), library));
+        // The page says BOOTH, the tab is somewhere else.
+        let elsewhere = Url::parse("https://example.test/library?page=2").unwrap();
+        assert!(!native_page_matches(Some(&elsewhere), library));
+        let lookalike = Url::parse("https://accounts.booth.pm.example.test/library").unwrap();
+        assert!(!native_page_matches(
+            Some(&lookalike),
+            "https://accounts.booth.pm.example.test/library"
+        ));
+        let other_booth = Url::parse("https://booth.pm/ja").unwrap();
+        assert!(!native_page_matches(Some(&other_booth), library));
+        let plain = Url::parse("http://accounts.booth.pm/library").unwrap();
+        assert!(!native_page_matches(
+            Some(&plain),
+            "http://accounts.booth.pm/library"
+        ));
+        assert!(!native_page_matches(Some(&on_booth), "not a url"));
+        // An address that cannot be read does not stop the walk.
+        assert!(native_page_matches(None, library));
+    }
+
+    #[test]
+    fn deleting_browsing_data_drops_the_visited_sites_from_the_log() {
+        let log = "2026-11-20 10:00:00 読み始め https://example.test\n\
+                   2026-11-20 10:00:01 未対応カテゴリ id=999 name=架空 parent=3D\n\
+                   2026-11-20 10:00:02 読み終わり https://accounts.booth.pm\n\
+                   2026-11-20 10:00:03 ダウンロード先ホスト cdn.example.test\n";
+        let kept = log_without_visited_sites(log);
+        assert_eq!(
+            kept,
+            "2026-11-20 10:00:01 未対応カテゴリ id=999 name=架空 parent=3D\n"
+        );
+        assert_eq!(log_without_visited_sites(""), "");
+        let mut seen = HashSet::new();
+        seed_unknown_category_lines(&kept, &mut seen);
+        assert_eq!(seen.len(), 1, "the kept note is still read back at startup");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_profile_folder_is_private_to_its_owner() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let dir = session_dir(root.path());
+        create_session_dir(&dir).unwrap();
+        assert_eq!(
+            std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        // An existing folder made by an older version is tightened as well.
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        create_session_dir(&dir).unwrap();
+        assert_eq!(
+            std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
     }
 
     #[test]

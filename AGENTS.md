@@ -182,9 +182,17 @@ macOS の終了ハンドラは Tauri 標準の自動再読み込みを置き換�
 
 ファイル情報が 1 件もない商品のカードには、内蔵ブラウザが有効で非公開でないときだけ「無料配布のファイルを探す」を出す（説明文は付けない。押しても本体はダウンロードせず、ファイル行を加えるだけなので、ダウンロードと取り違えない名前にする）。押したときだけ `fetch_free_files` が公開の `https://booth.pm/ja/items/{id}.json` を 1 回、Cookie なしで読む（`free_files.rs`。取得は `booth_detail.rs` と共用）。`status` が `free_download` のバリエーションのファイルだけを、`downloadable_id` 付きの未ダウンロード行（`product_files`）として既存の取り込みと同じ経路で加え、無料と年齢制限の印だけ更新する。名前、ショップ、説明、カテゴリ、タグは書かない。年齢制限の商品でも本文は保存しない。有料、年齢確認、404、429 / 503 は何も保存せず理由を返す。有料と一覧なしは失敗ではないので、エラーではなく `notice` で返し、画面は通常の通知で出す。確認できなかったとき（年齢確認、404、429 / 503、通信の失敗）だけをエラーにする。ダウンロード、購入、BOOTH のライブラリへの追加はしない。取得は上の「ダウンロード」を本人が 1 件ずつ押したときだけで、ログインや年齢確認の扱いも同じ。記録は ID の末尾 4 桁、HTTP の状態、件数だけ。
 
-Windows では、BOOTH の窓を同期コマンドの中で作らない。WebView2 は再入できず、IPC のコールバックから `WebviewWindowBuilder::build` すると新しい窓だけが応答しなくなる（メインの窓は動いたままに見える）。開く・ライブラリへ移動する・戻る進む・閉じるは async コマンドにし、コールバックが返ったあとメインスレッドで行う。データベースのロックを持ったまま窓を作らない。ページ読み取りの待ちも UI スレッドに載せない。`booth-browser` をメイン画面の `EBWebView` と同じ data_directory にしない。操作とページの移動先はアプリデータの `booth-browser.log` に残す。一般サイトのページ読み込みは origin だけを記録し、パス・クエリ・断片は残さない。BOOTH のインポートや巡回の記録は検証済みライブラリのパスまでとする。BOOTH / pixiv のログイン用別窓要求は元のタブで開き、ほかの http / https の別窓要求は新しいタブで開く。年齢確認を自動通過しない。
+Windows では、BOOTH の窓を同期コマンドの中で作らない。WebView2 は再入できず、IPC のコールバックから `WebviewWindowBuilder::build` すると新しい窓だけが応答しなくなる（メインの窓は動いたままに見える）。開く・ライブラリへ移動する・戻る進む・閉じるは async コマンドにし、コールバックが返ったあとメインスレッドで行う。データベースのロックを持ったまま窓を作らない。ページ読み取りの待ちも UI スレッドに載せない。`booth-browser` をメイン画面の `EBWebView` と同じ data_directory にしない。操作とページの移動先はアプリデータの `booth-browser.log` に残す。一般サイトのページ読み込みは origin だけを記録し、パス・クエリ・断片は残さない。閲覧データを削除するときは、この記録からも開いたサイトの行を消し、未対応カテゴリの行だけを残す（`log_without_visited_sites`）。BOOTH のインポートや巡回の記録は検証済みライブラリのパスまでとする。BOOTH / pixiv のログイン用別窓要求は元のタブで開き、ほかの http / https の別窓要求は新しいタブで開く。年齢確認を自動通過しない。
 
 メイン画面にブラウザの子 WebView があると `get_webview_window("main")` は取得できないため、トレイ・深いリンク・単一起動からの再表示は `get_window("main")` で既存ウィンドウを取得する。
+
+内蔵ブラウザのログイン状態と、ほかのサイトに渡す権限は次のとおり守る（確認の範囲は [検証記録](docs/verification.md#内蔵ブラウザのログイン状態と権限の見直し2026-11-20)）。
+
+- ページ（`booth-tab-N`）からのカメラ・マイク・位置情報・通知・画面共有・MIDI・センサーの要求は `page_permission` で拒否する。応答を決めないと、macOS の wry はカメラとマイクを確認なしで許可するため。
+- 確認用 WebView（`booth-probe`）はダウンロードを保存せず、新しい窓も開かない。機能をオフにして閉じるときは確認用も捨てる。
+- 専用プロファイルのフォルダは `create_session_dir` で作り、Unix では所有者だけが読める 0700 にする。Linux では Cookie が平文で入るため。
+- 設定の「内蔵ブラウザの閲覧データを削除」は、機能がオフでもプロファイルが残っていれば出す（`booth_session_stored`）。オフにしてもログイン状態は端末に残るため。
+- 全取得と購入履歴の読み込みは、ページを読む前に、タブの本当のアドレスがページの申告と同じ BOOTH のホストであることを確かめる（`confirm_walk_page`）。アドレスを読めないときは止めない。
 
 ### 購入履歴
 
@@ -390,7 +398,7 @@ BOOTH のカテゴリとタグで決まらなかったときは、`classify_list
 
 Windows の配布は未署名の NSIS（`.exe`）である。実行ファイルは `VRCLibMan.exe`。Mac は Apple Silicon（`aarch64-apple-darwin`）と macOS 14 以降だけの未署名 dmg で、ad-hoc 署名（`signingIdentity` が `-`）だけを付ける。公証はしない。Intel と universal は作らない。`v*` タグが `package.json`、`package-lock.json`、`tauri.conf.json`、`Cargo.toml`、`Cargo.lock` の版と一致し、タグのコミットが main に含まれるとき、`.github/workflows/release.yml` が下書き Release を 1 回だけ作り（`scripts/check-release-version.mjs` で照合）、その release id に Windows、Mac、Linux 両 CPU のビルドを載せる。公開済みの同じタグには載せない。拡張の版はアプリの版と同じで、タグと一緒に照合する。拡張 zip は ubuntu の別ジョブが作る。`manifest.json` と `popup.html` が参照するファイルが無いときは失敗する。Mac は `macos-latest` ランナーで作る。`workflow_dispatch` はタグも Release も作らない試しビルドで、成果物は Artifacts に置く。コード署名の秘密情報は置かない。
 
-Mac の内蔵ブラウザは `data_directory` を使わない。固定の 16 バイト `data_store_identifier`（`vrclibman-booth!`）でメイン画面と分ける。ログアウトはフォルダ削除ではなく、そのデータストアの `clear_all_browsing_data` と `remove_data_store` である。`vrclibman://` は `.app` を `/Applications` に置いたときだけ動く。
+Mac の内蔵ブラウザは `data_directory` を使わない。固定の 16 バイト `data_store_identifier`（`vrclibman-booth!`）でメイン画面と分ける。ログアウトはフォルダ削除ではなく、同じデータストアの WebView をすべて閉じてからの `remove_data_store` である。`vrclibman://` は `.app` を `/Applications` に置いたときだけ動く。
 
 実ページの変化に合わせて拡張の解析を更新する。自動ダウンロードは、この方針の外にある。Unity との連携は、利用者が選んだ unitypackage を既定の Unity で開くところまでに留め、プロジェクトへの自動転送はしない。
 

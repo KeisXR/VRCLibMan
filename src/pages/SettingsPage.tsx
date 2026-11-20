@@ -41,6 +41,7 @@ export function SettingsPage() {
   const [version, setVersion] = useState("");
   const [catalog, setCatalog] = useState<CatalogInfo | null>(null);
   const [remoteSync, setRemoteSync] = useState<RemoteSyncStatus | null>(null);
+  const [sessionStored, setSessionStored] = useState(false);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [loadingSettings, setLoadingSettings] = useState(true);
   const [loadErrors, setLoadErrors] = useState<Record<string, string>>({});
@@ -88,6 +89,19 @@ export function SettingsPage() {
       cancelled = true;
     };
   }, [revision, loadAttempt, hydrate, ticket]);
+
+  // Turning the built-in browser off keeps its login on this device, so the delete button has to
+  // stay reachable. Asked again whenever the feature is switched.
+  const builtinBrowserOn = settings?.builtinBrowser;
+  useEffect(() => {
+    if (builtinBrowserOn == null) return;
+    let cancelled = false;
+    void api.boothSessionStored().then(
+      (stored) => { if (!cancelled) setSessionStored(stored); },
+      () => { if (!cancelled) setSessionStored(false); },
+    );
+    return () => { cancelled = true; };
+  }, [builtinBrowserOn]);
 
   function flushSettings() { void flush().catch(() => {}); }
 
@@ -271,7 +285,7 @@ export function SettingsPage() {
                 <p>Windows・macOS・Linux で同じ方法を使います。Windows の WebView2 での見た目は実機未確認です。macOS と Linux も未検証です。</p>
               </details>
             )}
-            {settings.builtinBrowser && <div className="section-actions" id="settings-clear-browser-data"><button className="button danger" type="button" onClick={() => void (async () => { if (!window.confirm("ブラウザを閉じ、内蔵ブラウザで開いたすべてのサイトのログイン状態と閲覧データを消します。ブックマークは残ります。")) return; try { await api.clearBoothSession(); notify("閲覧データを削除しました"); } catch (err) { fail(errorText(err)); } })()}>内蔵ブラウザの閲覧データを削除</button></div>}
+            {(settings.builtinBrowser || sessionStored) && <div className="section-actions" id="settings-clear-browser-data"><button className="button danger" type="button" onClick={() => void (async () => { if (!window.confirm("ブラウザを閉じ、内蔵ブラウザで開いたすべてのサイトのログイン状態と閲覧データ、開いたサイトの記録を消します。ブックマークは残ります。")) return; try { await api.clearBoothSession(); setSessionStored(false); notify("閲覧データを削除しました"); } catch (err) { fail(errorText(err)); } })()}>内蔵ブラウザの閲覧データを削除</button>{!settings.builtinBrowser && <p className="note-strong">内蔵ブラウザを使っていたときのログイン状態と閲覧データが、この端末に残っています。</p>}</div>}
           </section>
 
           <section className="settings-section" id="settings-data">

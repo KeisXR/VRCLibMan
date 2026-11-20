@@ -1137,6 +1137,13 @@ pub async fn clear_booth_session(app: tauri::AppHandle) -> Result<(), String> {
     crate::browser::clear_session(&app).await
 }
 
+/// Whether the built-in browser left a profile on this device. The settings screen offers to
+/// delete it even while the feature is off.
+#[tauri::command]
+pub async fn booth_session_stored(app: tauri::AppHandle) -> bool {
+    crate::browser::session_stored(&app).await
+}
+
 #[tauri::command]
 pub async fn close_booth_browser(app: tauri::AppHandle) -> Result<(), String> {
     crate::browser::dispatch_ui(app, crate::browser::close_browser).await
