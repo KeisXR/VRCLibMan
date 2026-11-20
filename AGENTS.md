@@ -53,6 +53,7 @@ PC 間の移行は [データ移行](docs/remote-sync.md) に従う。現在は�
 - アンインストールの `src-tauri/windows/hooks.nsh` は `NSIS_HOOK_POSTUNINSTALL` で `HKCU\Software\VRCLibMan` だけを消す。アプリデータのディレクトリは消さない。
 - `user_version` が 0 のときだけ `SCHEMA` を流す。既存 DB の列を変えるときは、新しい版の移行を足す。`SCHEMA` 定数の書き換えだけでは入らない。版を上げたら `db::SCHEMA_VERSION` も同じ番号にする（テストがこの定数と比べる）。
 - 変更系の関数は `&mut Connection`。`transaction()` が可変借用を要求するため。
+- `db` の関数は分野ごとに `src-tauri/src/db/` のファイルへ置き、呼び出しは `db::名前` のままにする（`db.rs` が各ファイルを `pub(crate) use` で再公開する）。ほかのファイルから使う非公開の項目は `pub(super)` にする。1 つのファイルに戻さない。12,000 行を超えて、変更のたびに全体を読む必要があったため。
 - 起動時の設定の既定値、初期データ、カタログの投入（`finish_open`）は1つのトランザクションで行う。1行ごとにコミットすると、ディスク上の DB ではそのたびにファイルを同期し、新しいライブラリを開くのに Windows で数十秒かかるため（[検証記録](docs/verification.md#新しいライブラリを開くときの同期回数2026-11-13)）。
 - DB の `MutexGuard` を `.await` の間に持たない。抽出の実行中フラグは `Arc<AtomicBool>`。
 - 画面が DB を読むだけのコマンドは `#[tauri::command(async)]` にする。同期コマンドは UI スレッドで DB のロックを待ち、その間アプリ全体が止まるため（`commands.rs` の `read_commands_run_off_the_ui_thread`）。
@@ -422,7 +423,20 @@ Mac の内蔵ブラウザは `data_directory` を使わない。固定の 16 バ
 
 | 場所 | 役割 |
 | --- | --- |
-| `src-tauri/src/db.rs` | SQLite、抽出の保存、再解決、シード |
+| `src-tauri/src/db.rs` | DB の入口。`db/` の各ファイルを `db::名前` で呼べるようにまとめ、商品やアバターの読み出しなど共通の部品を持つ |
+| `src-tauri/src/db/schema.rs` | 最初のスキーマ、移行（`SCHEMA_VERSION`）、起動時の既定値 |
+| `src-tauri/src/db/settings.rs` | 設定、ブックマーク、ペアリングコード |
+| `src-tauri/src/db/import.rs` | 商品の取り込みと、BOOTH から届いた値のマージ |
+| `src-tauri/src/db/extraction.rs` | 分類の適用と再解決 |
+| `src-tauri/src/db/extract_jobs.rs` | 次に分類する商品、BOOTH のカテゴリと公開情報での確定 |
+| `src-tauri/src/db/classification_edit.rs` | 手動の分類（ジャンル移動、取り消し、編集）と分類改善用 JSON |
+| `src-tauri/src/db/owned_body.rs` | 所持アバター本体の判定と名前 |
+| `src-tauri/src/db/knowledge.rs` | 対応表（アバター、素体、統合、シード、カタログ） |
+| `src-tauri/src/db/downloads.rs` | バリエーションとダウンロードの行、無料ファイル、ステージング |
+| `src-tauri/src/db/local_files.rs` | スキャンしたファイルと商品の結び付け |
+| `src-tauri/src/db/queries.rs` | 画面用の一覧と件数、サムネイル、除外 |
+| `src-tauri/src/db/auto_register.rs` | 内蔵ブラウザと拡張が登録した商品の分類待ち |
+| `src-tauri/src/db/tests.rs` | `db` 全体のテスト |
 | `src-tauri/src/db/classification_log.rs` | 分類記録の実行と明細 |
 | `src-tauri/src/resolve.rs` | 名前の解決、仮アバター、`needs_review` の判定 |
 | `src-tauri/src/compat.rs` | 対応リスト、タイトルの別名、ファイル名の名前、汎用の文言、強いカテゴリ上書き |

@@ -651,7 +651,7 @@ interface RightPanelTab { id: string; kind: RightPanelKind | "web"; tabId?: stri
 
 ## 9. 設定と DB のキー
 
-settings はキーと値の表です。どのキーも `INSERT OR IGNORE` で足したもので、スキーマ版は変えていません（`src-tauri/src/db.rs`）。
+settings はキーと値の表です。どのキーも `INSERT OR IGNORE` で足したもので、スキーマ版は変えていません（`src-tauri/src/db/schema.rs`）。
 
 | キー | 既定 | 型と範囲 | TS の名前 | 意味 |
 | --- | --- | --- | --- | --- |
@@ -1060,6 +1060,6 @@ Rust のテストの例（`browser_surface.rs` の `mod tests`）は次のとお
 | `src-tauri/src/browser_linux.rs` | GtkOverlay、GtkLayout、Linux のキーとリサイズ |
 | `src-tauri/src/browser_tabs.rs` | `TabSession`、ズームの段階、URL の検査、ブックマーク |
 | `src-tauri/src/browser_dark.rs` | 強制ダーク |
-| `src-tauri/src/model.rs`、`src-tauri/src/db.rs` | `right_panel_tabs` の正規化、設定のキー |
+| `src-tauri/src/model.rs`、`src-tauri/src/db/settings.rs` | `right_panel_tabs` の正規化、設定のキー |
 | `src-tauri/capabilities/default.json`、`browser-toolbar.json` | 権限 |
 | `test/right-panel*.mjs`、`test/browser-panel*.mjs`、`test/macos-browser-panel-layout.swift`、`test/fixtures/` | テスト |

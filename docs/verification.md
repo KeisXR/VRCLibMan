@@ -1,5 +1,17 @@
 # 検証記録
 
+## `db.rs` の分割と、整形・テストの見直し（2026-11-20）
+
+対象はブランチ `claude/eloquent-gauss-wu42w3`。Linux のコンテナ（Ubuntu 24.04）で確かめた。
+
+- `src-tauri/src/db.rs`（13,226 行）を、分野ごとに `src-tauri/src/db/` の 12 ファイルとテスト 1 ファイルへ移した。`db.rs` は 763 行になった。項目の移動だけで、関数の中身は変えていない。移動の前後で行を突き合わせ、違いが整形による折り返しと宣言の追加だけであることを確かめた。呼び出し側の `db::名前` は変えていない。
+- その前に `cargo fmt` を全体へかけ（約 45 ファイル）、clippy が機械的に直せる指摘を適用した（168 件から 26 件）。CI は `cargo fmt --check` を失敗にし、clippy は表示だけにした。
+- `cargo test --lib --features tauri/custom-protocol`：559 件成功。`npm test`：326 件成功。
+- Windows 向け（`x86_64-pc-windows-gnu`）に `cargo check --lib --tests` が通った。型の検査だけで、リンクと実行はしていない。CI と配布は MSVC なので、その代わりにはならない。
+- macOS ではビルドもテストもしていない。
+- `#[test]` が付いておらず実行されていなかった `preview_pane_defaults_off_without_a_schema_change` を実行されるようにした（成功）。
+- `npm test` は `test/*.test.mjs` を自動で集めるようにし、どこからも実行されていなかった `test:extension-ui` を CI に足した。
+
 ## 内蔵ブラウザのログイン状態と権限の見直し（2026-11-20）
 
 対象はブランチ `claude/eloquent-gauss-wu42w3`。Linux のコンテナ（Ubuntu 24.04、WebKitGTK 2.52）で、テストと見本の画面だけを確かめた。実際の WebView（WebView2、WKWebView、WebKitGTK）での動作は確かめていない。
