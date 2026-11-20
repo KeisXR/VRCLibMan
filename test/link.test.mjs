@@ -50,7 +50,7 @@ test("the extension wakes the app, never reads cookies and carries the app's ver
   assert.match(background, /credentials: "omit"/);
   assert.match(shared, /vrclibman:\/\/import/);
   assert.match(shared, /https:\/\/accounts\.booth\.pm\/library/);
-  for (const file of ["background.js", "content.js", "popup.js", "offscreen.js", "walker.js", "options.js", "sidepanel.js"]) {
+  for (const file of ["background.js", "content.js", "popup.js", "offscreen.js", "walker.js", "options.js", "sidepanel.js", "library.js", "pagecards.js"]) {
     assert.equal(readFileSync(`extension/${file}`, "utf8").includes("chrome.cookies"), false, file);
   }
   assert.equal(manifest.permissions.includes("cookies"), false);
@@ -120,7 +120,7 @@ async function popupHarness({ stored = {}, tab = { id: 1, url: "https://booth.pm
       },
     },
   });
-  for (const file of ["shared.js", "companion.js", "ui.js", "popup.js"]) {
+  for (const file of ["shared.js", "companion.js", "ui.js", "pagecards.js", "popup.js"]) {
     runInContext(readFileSync(`extension/${file}`, "utf8"), context, { filename: file });
   }
   for (let i = 0; i < 20; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
@@ -160,12 +160,20 @@ test("on an item page the popup shows the product's state, one send action and t
   assert.equal(h.chip(), "接続中");
   assert.match(h.text(), /見本の衣装/);
   assert.match(h.text(), /所持.*保存記録あり.*見本アバター/);
-  assert.deepEqual(h.buttons(), ["この商品を送る", "取得"], "the saved file and non-asset files have no button");
+  assert.deepEqual(h.buttons(), ["この商品を送る", "アプリで開く", "取得", "アプリで開く"], "a saved file opens in the app instead of being fetched; non-asset files have no button");
+  assert.match(h.text(), /sample_b\.zipB用・保存記録あり/);
   assert.match(h.text(), /sample_b\.zip/);
   assert.doesNotMatch(h.text(), /readme\.pdf/);
   h.document.querySelector("#main button").dispatchEvent(new h.document.defaultView.Event("click"));
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(structuredClone(h.sent.find((message) => message.type === "job-start")), { type: "job-start", kind: "page", tabId: 1 });
+  [...h.document.querySelectorAll("#main button")].at(-1).dispatchEvent(new h.document.defaultView.Event("click"));
+  for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(structuredClone(h.sent.find((message) => message.type === "open-in-app")), { type: "open-in-app", id: "123456" });
+  assert.match(h.text(), /VRCLibMan でこの商品を開きました/);
+  // An unregistered product has nothing to open in the app.
+  const unknown = await popupHarness({ products: [product], statuses: [{ boothId: "123456", registered: false, avatars: [] }] });
+  assert.deepEqual(unknown.buttons(), ["この商品を送る", "取得", "取得"]);
 });
 
 test("on a tab opened before the extension was installed or updated, the popup says why and offers a reload", async () => {

@@ -67,6 +67,14 @@
           </div>
         </section>
 
+        <section class="card" aria-labelledby="h-panel">
+          <h2 id="h-panel" class="h">サイドパネル</h2>
+          <div class="setrow">
+            <label class="settext" for="follow-page-avatar"><b>見ている商品の対応アバターを先頭に出して選ぶ</b><span class="note">BOOTH で見ている商品に対応する所持アバターを、ライブラリのアバターの並びの先頭に出して選びます。オフにすると、ページを移っても選んだアバターのままです。</span></label>
+            <input id="follow-page-avatar" class="switch" type="checkbox" />
+          </div>
+        </section>
+
         <section class="card" aria-labelledby="h-help">
           <h2 id="h-help" class="h">困ったとき</h2>
           <div class="setrow">
@@ -80,6 +88,7 @@
               <p class="note">本拡張には、利用者の情報を開発者へ送信する機能はありません。</p>
               <p class="note">操作した BOOTH のページの商品情報・購入情報を、同じ PC の VRCLibMan に送ります。アプリへ送れない場合は JSON ファイルとして保存します。</p>
               <p class="note">ライブラリと購入履歴の読み込みでは、ブラウザに既にある BOOTH のログインを使ってページを読みます。商品の説明は、ログインを使わずに公開ページから読みます。パスワードや Cookie はアプリへ送りません。</p>
+              <p class="note">サイドパネルのライブラリは、同じ PC の VRCLibMan から登録済みの商品の名前・サムネイル・購入日を受け取って表示します。一覧と画像はブラウザに保存しません。BOOTH の画像サーバーへは通信しません。</p>
               <p class="note">ペアリングコードと設定、取得中の商品・ファイル情報、未送信通知（保存パスを含む）、最近の取り込みの件数をブラウザ内に保存し、拡張の削除で消せます。書き出した JSON とアプリに送った情報は、拡張を削除しても残ります。</p>
             </div>
           </details>

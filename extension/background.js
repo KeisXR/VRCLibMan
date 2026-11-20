@@ -849,6 +849,13 @@ async function productStatus(ids) {
   return appRequest("/product-status", { token: stored.pairingToken, body: { ids }, timeoutMs: 8000 });
 }
 
+// サイドパネルのライブラリ。アバターの並び、アバターやジャンルごとの商品、見ている商品の購入の記録を読む。
+async function libraryRequest(path, body) {
+  const stored = await settings();
+  if (!stored.pairingToken) throw new Error("アプリとの接続を設定してください");
+  return appRequest(path, { token: stored.pairingToken, body, timeoutMs: 15000 });
+}
+
 async function pageState() {
   const stored = await settings();
   return {
@@ -939,6 +946,18 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
         })(), respond);
       case "product-status":
         return answer(exclusive(() => productStatus(message.ids)), respond, "アプリに接続できません");
+      // ライブラリの一覧と購入の記録は拡張自身のページにだけ返す。BOOTH のページへは渡さない。
+      case "library-avatars":
+        return answer(libraryRequest("/library/avatars"), respond);
+      case "library-items":
+        return answer(libraryRequest("/library/items", typeof message.avatar === "string"
+          ? { avatar: message.avatar }
+          : { kind: message.kind === "world" ? "world" : "asset" }), respond);
+      case "library-product":
+        return answer(libraryRequest("/library/product", { id: String(message.id || "") }), respond);
+      // 本人が押した「アプリで開く」。アプリのメイン画面を、登録済みの商品 1 件の場所へ移す。
+      case "open-in-app":
+        return answer(libraryRequest("/library/open", { id: String(message.id || "") }), respond);
       default:
         return undefined;
     }

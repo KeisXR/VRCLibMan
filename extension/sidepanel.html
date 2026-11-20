@@ -4,19 +4,32 @@
     <meta charset="UTF-8" />
     <title>VRCLibMan</title>
     <link rel="stylesheet" href="ui.css" />
+    <link rel="stylesheet" href="sidepanel.css" />
   </head>
   <body>
-    <header class="head">
-      <img class="logo" src="icons/icon-32.png" alt="" width="22" height="22" />
-      <span class="name">VRCLibMan</span>
-      <span id="link-chip" class="chip">確認中</span>
-      <span class="grow"></span>
-      <button id="open-settings" class="iconbtn" type="button" aria-label="設定" title="設定"></button>
-    </header>
-    <main id="main" class="body"></main>
+    <div class="top">
+      <header class="head">
+        <img class="logo" src="icons/icon-32.png" alt="" width="22" height="22" />
+        <span class="name">VRCLibMan</span>
+        <span id="link-chip" class="chip">確認中</span>
+        <span class="grow"></span>
+        <button id="open-settings" class="iconbtn" type="button" aria-label="設定" title="設定"></button>
+      </header>
+      <div id="views" class="views" role="tablist" aria-label="表示の切り替え">
+        <button id="view-library" class="view" type="button" role="tab" aria-controls="panel-library">ライブラリ</button>
+        <button id="view-log" class="view num" type="button" role="tab" aria-controls="panel-log">記録</button>
+      </div>
+    </div>
+    <main class="body">
+      <div id="cards" class="stack"></div>
+      <div id="panel-library" role="tabpanel" aria-labelledby="view-library"></div>
+      <div id="panel-log" class="stack" role="tabpanel" aria-labelledby="view-log" hidden></div>
+    </main>
     <script src="shared.js"></script>
     <script src="companion.js"></script>
     <script src="ui.js"></script>
+    <script src="pagecards.js"></script>
+    <script src="library.js"></script>
     <script src="sidepanel.js"></script>
   </body>
 </html>

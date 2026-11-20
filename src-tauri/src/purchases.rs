@@ -287,6 +287,14 @@ pub(crate) fn history_complete(connection: &Connection) -> Result<bool, String> 
     Ok(setting(connection, COMPLETE_KEY)?.as_deref() == Some("1"))
 }
 
+/// 購入履歴を一度でも読んだか（読み込みを終えた記録があるか、注文が 1 件でもあるか）。
+pub(crate) fn history_read(connection: &Connection) -> Result<bool, String> {
+    if setting(connection, READ_AT_KEY)?.is_some() {
+        return Ok(true);
+    }
+    sql(connection.query_row("SELECT EXISTS(SELECT 1 FROM purchase_orders)", [], |row| row.get(0)))
+}
+
 pub(crate) fn finish_walk(connection: &Connection, list_complete: bool) -> Result<(), String> {
     if list_complete {
         set_setting(connection, COMPLETE_KEY, "1")?;

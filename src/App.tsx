@@ -47,6 +47,7 @@ import { BrandMark, NavIcon, SidebarToggleIcon, type NavIconName } from "./compo
 import { RightPanelColumn, RightPanelLauncher, RightPanelProvider, useRightPanelState } from "./components/RightPanel";
 import { errorText } from "./ui";
 import { BrowserAutoClassification } from "./components/BrowserAutoClassification";
+import { useExtensionRoute } from "./extensionRoute";
 import { ErrorBanner, NoticeBanner } from "./components/NoticeBanner";
 import { ProgressStripBar } from "./components/ProgressStripBar";
 import type { NoticeAction, NotifyOptions } from "./notice";
@@ -170,6 +171,7 @@ export default function App() {
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
+  useExtensionRoute();
 
   useLayoutEffect(() => {
     const pane = contentRef.current;

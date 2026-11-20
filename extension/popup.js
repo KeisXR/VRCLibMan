@@ -3,6 +3,7 @@
 const shared = globalThis.VrcLibManShared;
 const companion = globalThis.VrcLibManCompanion;
 const ui = globalThis.VrcLibManUi;
+const cards = globalThis.VrcLibManPageCards;
 const { h } = ui;
 
 const main = document.querySelector("#main");
@@ -101,7 +102,10 @@ function openUrl(url) {
   window.close();
 }
 
-async function openPanel() {
+// view が "log" のときは、サイドパネルの「記録」（ダウンロード・未送信・最近の取り込み）を出して開く。
+async function openPanel(view) {
+  // 待たずに書く。サイドパネルは本人の操作の直後にしか開けない。
+  if (view === "log") chrome.storage.session.set({ panelView: "log" }).catch(() => {});
   try {
     if (chrome.sidePanel?.open && state.tab?.windowId != null) {
       await chrome.sidePanel.open({ windowId: state.tab.windowId });
@@ -124,15 +128,6 @@ function recentLine() {
 function messageLine() {
   if (!state.message) return recentLine();
   return h("p", { class: `note ${state.tone}`, role: "status", text: state.message });
-}
-
-function lastImport(kinds) {
-  const entry = (state.stored.importHistory || []).find((row) => kinds.includes(row.kind));
-  if (!entry) return null;
-  const counts = entry.kind === "purchases"
-    ? `新しい注文 ${entry.added ?? 0} 件`
-    : `追加 ${entry.inserted ?? 0} 件`;
-  return h("p", { class: "note num", text: `最後の取り込み：${shared.formatTime(entry.at)}（${counts}）` });
 }
 
 function pairingCard() {
@@ -174,7 +169,7 @@ function jobCard() {
     ui.track(job.current, job.total, `${job.label} ${counts}`),
     h("p", { class: "note", text: "ポップアップを閉じても続きます。" }),
     h("div", { class: "row" },
-      h("button", { class: "btn secondary grow", type: "button", text: "サイドパネルで見る", on: { click: openPanel } }),
+      h("button", { class: "btn secondary grow", type: "button", text: "サイドパネルで見る", on: { click: () => openPanel() } }),
       h("button", { class: "btn danger", type: "button", text: "中止", on: { click: () => send({ type: "job-cancel" }) } }),
     ),
   );
@@ -185,115 +180,9 @@ function reloadPage() {
   window.close();
 }
 
-function itemCard() {
-  // 拡張のスクリプトが無いタブでは商品を読めないので、できる操作は再読み込みだけ。
-  if (state.pageStale) {
-    return h("section", { class: "card" },
-      h("span", { class: "label", text: "開いている商品" }),
-      h("span", { class: "title", text: "商品ページ" }),
-      h("p", { class: "note warn", text: "このページは、拡張機能を入れる前か更新する前に開いたものです。再読み込みすると送れます。" }),
-      h("button", { class: "btn primary block", type: "button", text: "ページを再読み込み", on: { click: reloadPage } }),
-    );
-  }
-  const product = state.products?.[0];
-  const row = product ? state.statuses.get(String(product.boothId)) : null;
-  return h("section", { class: "card" },
-    h("span", { class: "label", text: "開いている商品" }),
-    h("span", { class: "title", text: product?.title || "商品ページ" }),
-    row ? h("div", { class: "wrap" }, ui.statusMarks(row, companion)) : null,
-    h("button", {
-      class: "btn primary block",
-      type: "button",
-      text: "この商品を送る",
-      disabled: state.busy || !product,
-      on: { click: () => startJob("page") },
-    }),
-    Array.isArray(state.products) && !product ? h("p", { class: "note", text: "このページから商品を見つけられませんでした。" }) : null,
-    messageLine(),
-  );
-}
-
-function pageFiles() {
-  const products = state.products || [];
-  const files = [];
-  for (const product of products) {
-    for (const file of product.downloads || []) {
-      if (!companion.choose(products, file.downloadableId) || !companion.isAsset(file.filename)) continue;
-      files.push({ product, file });
-    }
-  }
-  return files;
-}
-
-function filesCard() {
-  const files = pageFiles();
-  if (files.length === 0) return null;
-  const routeOn = state.stored.routeDownloads === true;
-  const rows = files.map(({ product, file }) => {
-    const saved = companion.saved(state.statuses.get(String(product.boothId)), file.downloadableId);
-    const sub = [file.variation, shared.formatBytes(file.size)].filter(Boolean).join("・");
-    let action = null;
-    if (saved) action = ui.chip("保存記録あり", "good");
-    else if (routeOn) {
-      action = h("button", {
-        class: "btn secondary small",
-        type: "button",
-        text: "取得",
-        on: {
-          click: async (event) => {
-            event.currentTarget.disabled = true;
-            const result = await send({ type: "start-download", tabId: state.tab.id, downloadableId: file.downloadableId });
-            say(result?.ok ? "ブラウザで取得を始めました。終わるとアプリへ知らせます。" : result?.error || "取得を開始できません", result?.ok ? "good" : "warn");
-          },
-        },
-      });
-    }
-    return h("div", { class: "item" },
-      h("div", { class: "file" }, h("b", { text: file.filename, title: file.filename }), sub ? h("span", { text: sub }) : null),
-      action,
-    );
-  });
-  return h("section", { class: "card" },
-    h("span", { class: "sec", text: "このページのファイル" }),
-    h("div", { class: "list files" }, rows),
-    routeOn ? null : h("p", { class: "note", text: "下の「ダウンロードを自動整理」をオンにすると、ここから取得できます。" }),
-  );
-}
-
-function libraryCard() {
-  return h("section", { class: "card" },
-    h("span", { class: "label", text: "開いているページ" }),
-    h("span", { class: "title", text: shared.librarySectionLabel(state.tab.url) }),
-    lastImport(["library", "library-new"]),
-    h("button", { class: "btn primary block", type: "button", text: "新しい購入を送る", disabled: state.busy, on: { click: () => startJob("library-new") } }),
-    h("div", { class: "row" },
-      h("button", { class: "btn secondary grow", type: "button", text: "すべて読み込む", disabled: state.busy, on: { click: () => startJob("library") } }),
-      h("button", { class: "btn secondary grow", type: "button", text: "購入履歴を読み込む", disabled: state.busy, on: { click: () => startJob("purchases") } }),
-    ),
-    messageLine(),
-  );
-}
-
-function ordersCard() {
-  return h("section", { class: "card" },
-    h("span", { class: "label", text: "開いているページ" }),
-    h("span", { class: "title", text: "購入履歴" }),
-    lastImport(["purchases"]),
-    h("button", { class: "btn primary block", type: "button", text: "購入履歴を読み込む", disabled: state.busy, on: { click: () => startJob("purchases") } }),
-    h("button", { class: "btn secondary block", type: "button", text: "購入ライブラリを開く", on: { click: () => openUrl(shared.LIBRARY_URL) } }),
-    messageLine(),
-  );
-}
-
-function otherCard() {
-  const booth = state.kind === "booth";
-  return h("section", { class: "card" },
-    h("span", { class: "title", text: booth ? "BOOTH" : "BOOTH を開くと使えます" }),
-    h("p", { class: "note", text: "商品ページか購入ライブラリを開くと、VRCLibMan へ商品情報を送れます。" }),
-    h("button", { class: "btn primary block", type: "button", text: "購入ライブラリを開く", on: { click: () => openUrl(shared.LIBRARY_URL) } }),
-    messageLine(),
-  );
-}
+// カードは pagecards.js（サイドパネルと共通）。ここは操作の渡し方だけを決める。
+const act = { startJob, send, say, openUrl, reloadPage, message: messageLine };
+const ROUTE_HINT = "下の「ダウンロードを自動整理」をオンにすると、ここから取得できます。";
 
 function jsonButton() {
   if (!["item", "library"].includes(state.kind) || !state.products?.length) return null;
@@ -347,19 +236,19 @@ function render() {
   pendingCount.textContent = String(pending);
   document.querySelector("#footer").hidden = !status.paired;
   document.querySelector("#open-panel").hidden = !status.paired;
-  const cards = [];
+  const parts = [];
   if (!status.paired) {
-    cards.push(pairingCard(), jsonButton());
+    parts.push(pairingCard(), jsonButton());
   } else {
-    cards.push(updateCard());
-    if (running()) cards.push(jobCard());
-    else if (state.kind === "item") cards.push(itemCard());
-    else if (state.kind === "library") cards.push(libraryCard());
-    else if (state.kind === "orders") cards.push(ordersCard());
-    else cards.push(otherCard());
-    if (state.kind === "item") cards.push(filesCard());
+    parts.push(updateCard());
+    if (running()) parts.push(jobCard());
+    else if (state.kind === "item") parts.push(cards.itemCard(state, act));
+    else if (state.kind === "library") parts.push(cards.libraryCard(state, act));
+    else if (state.kind === "orders") parts.push(cards.ordersCard(state, act));
+    else parts.push(cards.otherCard(state, act));
+    if (state.kind === "item") parts.push(cards.filesCard(state, act, ROUTE_HINT));
   }
-  main.replaceChildren(...cards.filter(Boolean));
+  main.replaceChildren(...parts.filter(Boolean));
 }
 
 routeInput.addEventListener("change", async () => {
@@ -368,8 +257,8 @@ routeInput.addEventListener("change", async () => {
   else if (result?.note) say(result.note);
   else say(result?.enabled ? "ダウンロードしたファイルを自動整理します" : "自動整理をオフにしました");
 });
-pendingButton.addEventListener("click", openPanel);
-document.querySelector("#open-panel").addEventListener("click", openPanel);
+pendingButton.addEventListener("click", () => openPanel("log"));
+document.querySelector("#open-panel").addEventListener("click", () => openPanel());
 document.querySelector("#open-settings").addEventListener("click", () => {
   chrome.runtime.openOptionsPage();
   window.close();

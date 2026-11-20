@@ -343,6 +343,7 @@ mod tests {
             import_guard: Mutex::new(crate::local_import::ImportGuard::default()),
             background_mode: std::sync::atomic::AtomicBool::new(false),
             staged_left: Mutex::new(Vec::new()),
+            extension_route: Mutex::new(None),
         });
         let (sender, _receiver) = mpsc::sync_channel(1);
         app.manage(SyncState {

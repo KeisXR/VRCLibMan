@@ -432,6 +432,7 @@ fn linux_browser_panel_native() {
                 import_guard: Mutex::new(crate::local_import::ImportGuard::default()),
                 background_mode: AtomicBool::new(false),
                 staged_left: Mutex::new(Vec::new()),
+                extension_route: Mutex::new(None),
             });
             tauri::WebviewWindowBuilder::new(
                 app,

@@ -9,7 +9,7 @@ const pause=ms=>new Promise(r=>setTimeout(r,ms));
 const chromePath=process.env.CHROME_PATH || '/usr/bin/chromium';
 const source=file=>readFileSync(`extension/${file}`,'utf8');
 
-test('BOOTH page marks, unknown-preserving filter, explicit file buttons, disconnect recovery and the popup file button', {timeout:60000}, async()=>{
+test('BOOTH page marks, unknown-preserving filter, explicit file buttons, disconnect recovery, the popup file button and the side panel library', {timeout:60000}, async()=>{
   const {createServer}=await import('vite');
   const vite=await createServer({server:{host:'127.0.0.1',port:0,hmr:false},logLevel:'error'});
   await vite.listen();
@@ -116,6 +116,7 @@ test('BOOTH page marks, unknown-preserving filter, explicit file buttons, discon
       ${source('shared.js')}
       ${source('companion.js')}
       ${source('ui.js')}
+      ${source('pagecards.js')}
       ${source('popup.js')}
     })()`);
     await wait("[...document.querySelectorAll('#main button')].some(b=>b.textContent==='取得')");
@@ -124,6 +125,139 @@ test('BOOTH page marks, unknown-preserving filter, explicit file buttons, discon
     await wait("window.started.some(message=>message.type==='start-download')");
     assert.deepEqual(await evaluate("window.started.filter(message=>message.type==='start-download')"),[{type:'start-download',tabId:1,downloadableId:'555555'}]);
     await wait("document.querySelector('#main').textContent.includes('取得を始めました')");
+
+    // The real side panel: the open page's card, then the library by avatar and genre.
+    await page('Page.navigate',{url:base+'/extension/sidepanel.html'});await wait("location.pathname.endsWith('sidepanel.html')&&document.readyState==='complete'");
+    await evaluate(`(() => {
+      // Drop what the page's own scripts built before they stopped at the missing chrome object.
+      document.querySelector('#panel-library').replaceChildren();
+      for(const node of document.querySelectorAll('.view, #open-settings')) node.replaceWith(node.cloneNode(false));
+      document.querySelector('#view-library').textContent='ライブラリ';
+      window.sent=[];window.opened=[];window.moved=[];window.saved=[];window.fetched=[];
+      window.listeners={storage:[],activated:[],updated:[]};
+      window.online=true;
+      window.currentTab={id:1,url:'https://booth.pm/ja/items/123456',windowId:1,status:'complete',active:true};
+      const pageAvatars={
+        '123456':[{id:'plum',name:'プラム',viaBaseBody:true},{id:'manuka',name:'マヌカ',viaBaseBody:false}],
+        '234567':[{id:'plum',name:'プラム',viaBaseBody:false}]};
+      const items=(prefix,count,extra={})=>Array.from({length:count},(_,i)=>({boothId:String(200001+i),title:prefix+(i+1),shop:'見本の店',isAdult:false,unpublished:false,viaBaseBody:false,hasThumbnail:i===0,...extra}));
+      const pageId=()=>/items\\/(\\d+)/.exec(window.currentTab.url||'')?.[1]||'';
+      window.chrome={
+        runtime:{getURL:p=>'chrome-extension://test/'+p,getManifest:()=>({version:'0.9.1'}),openOptionsPage(){},async sendMessage(message){
+          window.sent.push(message);
+          if(message.type==='connection')return {hasToken:true,status:window.online?200:null};
+          if(message.type==='product-status')return {products:message.ids.map(id=>({boothId:id,registered:true,owned:true,localRecorded:false,filesKnown:true,savedFiles:[],avatars:pageAvatars[id]||[]}))};
+          if(message.type==='library-avatars')return {avatars:[{id:'lime',displayName:'ライム',thumbnailId:'100001',itemCount:3},{id:'plum',displayName:'プラム',thumbnailId:null,itemCount:36},{id:'manuka',displayName:'マヌカ',thumbnailId:null,itemCount:35}],assetCount:40,worldCount:2};
+          if(message.type==='library-items'){
+            if(message.kind)return {sections:[{key:'outfit',label:'衣装',items:items('すべての衣装',40)}]};
+            return {sections:[{key:'avatar',label:'アバター本体',items:items(message.avatar+'の本体',1)},{key:'outfit',label:'衣装',items:items(message.avatar+'の衣装',35,{viaBaseBody:message.avatar==='plum'})}]};
+          }
+          if(message.type==='library-product')return {boothId:message.id,historyRead:true,orderCount:2,orders:[{orderId:'12345678',orderedAt:'2026-03-14T21:30:00+09:00',gift:false}],edition:{mode:'specific',avatars:['マヌカ']}};
+          return {ok:true};
+        }},
+        storage:{onChanged:{addListener(fn){window.listeners.storage.push(fn);}},
+          local:{async get(defaults){return {...defaults,pairingToken:'ABCD-2345',routeDownloads:true};},async set(values){window.saved.push(values);}},
+          session:{async get(defaults){return {...defaults};},async remove(){}}},
+        tabs:{async query(){return [window.currentTab];},
+          async sendMessage(){const id=pageId();return {products:id?[{boothId:id,title:'見本衣装'+id,downloads:[{downloadableId:'555555',filename:'sample.zip',variation:'見本A用'}]}]:[]};},
+          create(options){window.opened.push(options);},update(id,options){window.moved.push([id,options]);},reload(){},
+          onActivated:{addListener(fn){window.listeners.activated.push(fn);}},onUpdated:{addListener(fn){window.listeners.updated.push(fn);}}},
+        downloads:{async search(){return [];}}
+      };
+      window.fetch=async(url,options)=>{window.fetched.push({url,body:options.body,auth:options.headers.Authorization,credentials:options.credentials});return {ok:true,async blob(){return new Blob(['x'],{type:'image/png'});}};};
+      ${source('shared.js')}
+      ${source('companion.js')}
+      ${source('ui.js')}
+      ${source('pagecards.js')}
+      ${source('library.js')}
+      ${source('sidepanel.js')}
+    })()`);
+    const cardsText="document.querySelector('#cards').textContent";
+    const scopes="[...document.querySelectorAll('.scope')]";
+    const pressed=`${scopes}.find(b=>b.getAttribute('aria-pressed')==='true')?.querySelector('.scope-name').textContent`;
+    const rows="document.querySelectorAll('.genre[open] .prod').length";
+    await wait(`${cardsText}.includes('購入した対応版')`);
+    const card=await evaluate(cardsText);
+    assert.match(card,/開いている商品見本衣装123456/);
+    assert.match(card,/購入：2026\/3\/14・ほか 1 件/);
+    assert.match(card,/購入した対応版：マヌカ/);
+    assert.doesNotMatch(card,/円|¥/,'no price in the side panel');
+    assert.match(card,/sample\.zip/);
+    // A registered product can be opened in the app; the request carries the product ID only.
+    await press("[...document.querySelectorAll('#cards button')].find(b=>b.textContent==='アプリで開く')");
+    await wait("window.sent.some(m=>m.type==='open-in-app')");
+    assert.deepEqual(await evaluate("window.sent.find(m=>m.type==='open-in-app')"),{type:'open-in-app',id:'123456'});
+    await wait(`${cardsText}.includes('VRCLibMan でこの商品を開きました')`);
+    // The page's avatars lead the list (direct before shared-body), and the first is selected.
+    await wait(`${pressed}==='マヌカ'`);
+    assert.deepEqual(await evaluate(`${scopes}.map(b=>b.querySelector('.scope-name').textContent+(b.querySelector('.scope-page')?'*':''))`),['マヌカ*','プラム*','ライム','すべて','ワールド']);
+    await wait(`${rows}===31`);
+    assert.deepEqual(await evaluate("[...document.querySelectorAll('.genre summary')].map(s=>s.textContent)"),['アバター本体1','衣装35']);
+    assert.equal(await evaluate("document.querySelector('.more').textContent"),'さらに表示（残り 5 件）');
+    assert.doesNotMatch(await evaluate("document.querySelector('.sections').textContent"),/null|undefined/);
+    await press("document.querySelector('.more')");
+    await wait(`${rows}===36`);
+    // Thumbnails come from the app with the pairing code, one request per saved image.
+    await wait("document.querySelector('.prod .thumb img')?.src.startsWith('blob:')");
+    assert.ok(await evaluate("window.fetched.length>0&&window.fetched.every(row=>row.url==='http://127.0.0.1:17321/library/thumb'&&row.auth==='Bearer ABCD-2345'&&row.credentials==='omit')"));
+    assert.equal(await evaluate("window.fetched.some(row=>row.body==='{\"id\":\"200001\"}')"),true);
+    // A product opens in the BOOTH tab being viewed; Ctrl opens a background tab instead.
+    await press("document.querySelector('.genre[open] .prod')");
+    await wait("window.moved.length===1");
+    assert.deepEqual(await evaluate("window.moved[0]"),[1,{url:'https://booth.pm/ja/items/200001'}]);
+    const point=await evaluate("(() => {const node=document.querySelectorAll('.genre[open] .prod')[1];node.scrollIntoView({block:'center'});const r=node.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()");
+    await page('Input.dispatchMouseEvent',{type:'mousePressed',...point,button:'left',clickCount:1,modifiers:2});
+    await page('Input.dispatchMouseEvent',{type:'mouseReleased',...point,button:'left',clickCount:1,modifiers:2});
+    await wait("window.opened.length===1");
+    assert.deepEqual(await evaluate("window.opened[0]"),{url:'https://booth.pm/ja/items/200001',active:false});
+    assert.equal(await evaluate("window.moved.length"),1);
+    // A manual choice is saved and survives a refresh of the same page.
+    await press(`${scopes}.find(b=>b.textContent.includes('ライム'))`);
+    await wait(`${pressed}==='ライム'`);
+    assert.deepEqual(await evaluate("window.saved.at(-1)"),{panelScope:'avatar:lime'});
+    await evaluate("window.dispatchEvent(new Event('focus'))");
+    await pause(300);
+    assert.equal(await evaluate(pressed),'ライム');
+    // Another product: its avatar is selected, and items through the shared body are marked.
+    await evaluate("window.currentTab={...window.currentTab,url:'https://booth.pm/ja/items/234567'};window.listeners.updated[0](1,{url:window.currentTab.url},window.currentTab)");
+    await wait(`${pressed}==='プラム'`);
+    await wait(`${rows}===31`);
+    assert.match(await evaluate("document.querySelector('.genre[open]:nth-of-type(2) .prod').textContent"),/共通素体/);
+    assert.equal(await evaluate("window.saved.at(-1).panelScope"),'avatar:lime','following a page is not saved as the user\'s choice');
+    // The filter narrows by name and shop.
+    await evaluate("(() => {const input=document.querySelector('.lib input');input.value='衣装 35';input.dispatchEvent(new Event('input'));})()");
+    await wait(`${rows}===1`);
+    await evaluate("(() => {const input=document.querySelector('.lib input');input.value='';input.dispatchEvent(new Event('input'));})()");
+    // Opting out: the app's order, no page mark, and the selection stays when the page changes.
+    await evaluate("window.listeners.storage[0]({followPageAvatar:{newValue:false}},'local')");
+    assert.deepEqual(await evaluate(`${scopes}.map(b=>b.querySelector('.scope-name').textContent+(b.querySelector('.scope-page')?'*':''))`),['ライム','プラム','マヌカ','すべて','ワールド']);
+    await evaluate("window.currentTab={...window.currentTab,url:'https://booth.pm/ja/items/123456'};window.listeners.updated[0](1,{url:window.currentTab.url},window.currentTab)");
+    await wait(`${cardsText}.includes('見本衣装123456')`);
+    await pause(300);
+    assert.equal(await evaluate(pressed),'プラム');
+    // 「すべて」 starts with closed headings; opening one lists the first page.
+    await press(`${scopes}.find(b=>b.textContent.startsWith('すべて'))`);
+    await wait("document.querySelector('.genre summary')?.textContent==='衣装40'");
+    assert.equal(await evaluate(rows),0);
+    await press("document.querySelector('.genre summary')");
+    await wait(`${rows}===30`);
+    // Away from BOOTH there is no page card, the library stays, and a product opens in a new tab.
+    await evaluate("window.currentTab={id:2,windowId:1,status:'complete',active:true};window.listeners.activated[0]({tabId:2,windowId:1})");
+    await wait(`${cardsText}===''`);
+    await press("document.querySelector('.genre[open] .prod')");
+    await wait("window.opened.length===2");
+    assert.deepEqual(await evaluate("window.opened[1]"),{url:'https://booth.pm/ja/items/200001',active:true});
+    // 「記録」 replaces the library.
+    await press("document.querySelector('#view-log')");
+    await wait("document.querySelector('#panel-library').hidden");
+    assert.match(await evaluate("document.querySelector('#panel-log').textContent"),/まだ記録はありません/);
+    await press("document.querySelector('#view-library')");
+    await wait("!document.querySelector('#panel-library').hidden");
+    // With the app stopped, nothing old stays on screen.
+    await evaluate("window.online=false;window.dispatchEvent(new Event('focus'))");
+    await wait("document.querySelector('.sections').textContent.includes('アプリを起動すると')");
+    assert.equal(await evaluate("document.querySelectorAll('.prod').length"),0);
+    assert.equal(await evaluate("document.querySelector('.scopes').hidden"),true);
   }finally{
     socket?.close();chrome.kill();await vite.close();await pause(200);await rm(profile,{recursive:true,force:true,maxRetries:3,retryDelay:100});
   }

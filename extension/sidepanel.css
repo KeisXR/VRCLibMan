@@ -1,0 +1,49 @@
+/* サイドパネル。上に表示の切り替え、その下に開いているページのカードとライブラリ、または記録。
+ * 値は ui.css（本体の src/styles.css の写し）の変数だけを使う。 */
+.top { position: sticky; top: 0; z-index: 2; background: var(--bg); }
+.stack { display: flex; flex-direction: column; gap: 10px; }
+.stack:empty { display: none; }
+
+/* 表示の切り替え。選択中は面の色と影、下に朱の直線（角丸には掛けない）。 */
+.views { display: flex; gap: 4px; margin: 0 14px 10px; padding: 3px; border-radius: var(--radius-control); background: var(--sunken); }
+.view { flex: 1; position: relative; font: inherit; color: var(--text-note); background: transparent; border: 0; border-radius: var(--radius-sm); padding: 6px 8px; cursor: pointer; transition: background var(--motion), color var(--motion); }
+.view:hover { color: var(--text); }
+.view[aria-selected="true"] { background: var(--surface); color: var(--text); font-weight: 650; box-shadow: var(--shadow); }
+.view[aria-selected="true"]::after { content: ""; position: absolute; left: 14px; right: 14px; bottom: 2px; height: 2px; border-radius: 2px; background: var(--line-accent); }
+
+.files { max-height: 240px; overflow-y: auto; }
+.buy { display: flex; flex-direction: column; gap: 2px; }
+.buy .row { gap: 6px; }
+.btn.link { text-decoration: underline; text-underline-offset: 2px; }
+
+/* ライブラリ */
+.lib { display: flex; flex-direction: column; gap: 8px; }
+.lib > .row { min-height: 30px; }
+.scopes { display: flex; flex-wrap: wrap; gap: 6px; max-height: 148px; overflow-y: auto; padding: 1px; }
+.scope { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; font: inherit; font-size: 12px; color: var(--text); background: var(--surface-secondary); box-shadow: inset 0 0 0 1px var(--line); border: 0; border-radius: var(--radius-pill); padding: 3px 10px 3px 4px; min-height: 28px; cursor: pointer; transition: background var(--motion), color var(--motion); }
+.scope:hover { background: var(--hover); }
+.scope[aria-pressed="true"] { background: var(--button); color: var(--button-text); box-shadow: none; font-weight: 650; }
+.scope .thumb { width: 20px; height: 20px; border-radius: 50%; }
+.scope-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-left: 6px; }
+.scope .thumb + .scope-name { padding-left: 0; }
+.scope-count { opacity: 0.7; }
+.scope-page { font-size: 10.5px; line-height: 1.6; padding: 0 6px; border-radius: var(--radius-pill); box-shadow: inset 0 0 0 1px currentColor; white-space: nowrap; }
+
+.sections { display: flex; flex-direction: column; gap: 8px; }
+.genre { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); }
+.genre > summary { display: flex; align-items: center; gap: 8px; padding: 9px 12px; cursor: pointer; font-weight: 650; list-style: none; border-radius: var(--radius); }
+.genre > summary::-webkit-details-marker { display: none; }
+.genre > summary::before { content: ""; width: 6px; height: 6px; flex: none; border-right: 1.6px solid var(--text-secondary); border-bottom: 1.6px solid var(--text-secondary); transform: rotate(-45deg); transition: transform var(--motion); }
+.genre[open] > summary::before { transform: rotate(45deg); }
+.genre-count { font-weight: 500; color: var(--text-secondary); }
+.prods { display: flex; flex-direction: column; padding: 0 6px 6px; }
+.prod { display: flex; align-items: center; gap: 10px; padding: 6px; border-radius: var(--radius-sm); color: inherit; text-decoration: none; }
+.prod:hover { background: var(--hover); }
+.thumb { flex: none; width: 44px; height: 44px; border-radius: 8px; background: var(--sunken); overflow: hidden; display: block; }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.prod-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.prod-text b { font-weight: 500; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.prod-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 11.5px; color: var(--text-secondary); }
+.prod-shop { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.prod-sub .badge { font-size: 10.5px; line-height: 1.7; padding: 0 6px; }
+.more { align-self: center; margin: 6px 0 2px; }
