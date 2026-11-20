@@ -32,6 +32,10 @@ pub(crate) use classification_log::{
     search_entries, undo_entry, unresolved_name_counts,
 };
 
+/// The `user_version` of a library after every migration below has run. Raise it together with
+/// a new `if version < N` block in `migrate`; tests compare against this.
+pub(crate) const SCHEMA_VERSION: i64 = 15;
+
 const SCHEMA: &str = "
 CREATE TABLE products (
     booth_id TEXT PRIMARY KEY,
@@ -399,6 +403,22 @@ fn migrate(connection: &Connection) -> Result<(), String> {
         tx.execute_batch("PRAGMA user_version = 14;").sql()?;
         tx.commit().sql()?;
     }
+    // v15 moves the asset update watch out of one settings value into rows per product
+    // (`asset_watch`, `asset_watch_history`). Local state, outside the sync export.
+    if version < 15 {
+        let tx = connection.unchecked_transaction().sql()?;
+        tx.execute_batch(crate::asset_updates::TABLES).sql()?;
+        crate::asset_updates::move_legacy_watch(&tx)?;
+        tx.execute_batch("PRAGMA user_version = 15;").sql()?;
+        tx.commit().sql()?;
+    }
+    debug_assert_eq!(
+        connection
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .ok(),
+        Some(SCHEMA_VERSION),
+        "SCHEMA_VERSION must name the last migration"
+    );
     Ok(())
 }
 
@@ -6750,7 +6770,7 @@ mod tests {
             connection
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
-            14
+            SCHEMA_VERSION
         );
         let detail_at: Option<String> = connection
             .query_row(
@@ -7735,7 +7755,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 14);
+        assert_eq!(version, SCHEMA_VERSION);
         let json = r#"{
             "products": [
                 {
@@ -8399,7 +8419,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 14);
+        assert_eq!(version, SCHEMA_VERSION);
         let report = import_products(&mut connection, &parsed).unwrap();
         assert_eq!(report.inserted, 7);
         assert_eq!(report.skipped, 0);
@@ -8689,7 +8709,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 14);
+        assert_eq!(version, SCHEMA_VERSION);
         assert!(!settings(&connection).unwrap().ui_rail_collapsed);
         let saved = update_settings(
             &connection,
@@ -8771,7 +8791,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 14);
+        assert_eq!(version, SCHEMA_VERSION);
         assert!(!settings(&connection).unwrap().preview_pane);
         assert_eq!(settings(&connection).unwrap().preview_pane_width, 300);
         let saved = update_settings(
@@ -8819,7 +8839,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 14);
+        assert_eq!(version, SCHEMA_VERSION);
     }
 
     #[test]
@@ -8828,7 +8848,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 14);
+        assert_eq!(version, SCHEMA_VERSION);
         assert!(!settings(&connection).unwrap().browser_force_dark);
         connection
             .execute("DELETE FROM settings WHERE key = 'browser_force_dark'", [])
@@ -8879,7 +8899,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 14);
+        assert_eq!(version, SCHEMA_VERSION);
     }
 
     #[test]
@@ -8962,7 +8982,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 14);
+        assert_eq!(version, SCHEMA_VERSION);
     }
 
     #[test]

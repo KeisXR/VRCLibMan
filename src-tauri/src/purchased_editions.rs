@@ -673,7 +673,7 @@ mod tests {
         assert_eq!(
             c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            14
+            crate::db::SCHEMA_VERSION
         );
         save(
             &c,

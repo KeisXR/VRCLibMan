@@ -776,6 +776,7 @@ mod tests {
             "browser_bookmarks",
             "unity_editor_path",
             "asset_update_watch_v1",
+            "asset_update_state_v2",
         ] {
             db::set_setting(&connection, key, &format!("LEAK-{key}")).unwrap();
         }

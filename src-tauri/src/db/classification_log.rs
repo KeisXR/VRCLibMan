@@ -945,7 +945,7 @@ mod tests {
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(run_count(&connection), 0);
-        assert_eq!(version, 14);
+        assert_eq!(version, crate::db::SCHEMA_VERSION);
     }
 
     #[test]
@@ -965,7 +965,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 14);
+        assert_eq!(version, crate::db::SCHEMA_VERSION);
         assert_eq!(
             run_count(&connection),
             0,

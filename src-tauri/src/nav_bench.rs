@@ -289,7 +289,9 @@ fn build(products: usize, watch: bool) -> Built {
     tx.commit().unwrap();
     if watch {
         let blob = serde_json::json!({ "automatic": true, "allProducts": true, "generation": 1, "rows": watch_rows, "history": [] });
+        // Written in the shape of older versions, then moved into rows the way an upgrade does.
         db::set_setting(&connection, "asset_update_watch_v1", &blob.to_string()).unwrap();
+        asset_updates::move_legacy_watch(&connection).unwrap();
     }
     db::set_setting(
         &connection,
@@ -316,7 +318,11 @@ fn report(products: usize, watch: bool, runs: usize) {
             .unwrap()
     };
     let blob: i64 = c
-        .query_row("SELECT COALESCE(MAX(LENGTH(CAST(value AS BLOB))), 0) FROM settings WHERE key = 'asset_update_watch_v1'", [], |r| r.get(0))
+        .query_row(
+            "SELECT COALESCE(SUM(LENGTH(CAST(COALESCE(baseline, '') || COALESCE(latest, '') || new_files || COALESCE(current_files, '') || COALESCE(history_library_files, '') AS BLOB))), 0) FROM asset_watch",
+            [],
+            |r| r.get(0),
+        )
         .unwrap();
     println!(
         "\n=== 商品 {products} 件 / アセット更新の対象 {} / アバター {} (所持 {}) / 対応リンク {} / ファイル行 {} / 手元 {} / 更新確認の保存値 {:.1} MB",
