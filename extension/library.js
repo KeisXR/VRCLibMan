@@ -114,7 +114,8 @@
     return { load, clear };
   }
 
-  function create({ send, getToken, openItem, onScope, savedScope }) {
+  // getSavedScope は一覧を読むたびに呼ぶ。作るときにはまだ保存値を読み込んでいないため。
+  function create({ send, getToken, openItem, onScope, getSavedScope }) {
     const shared = root.VrcLibManShared;
     const ui = root.VrcLibManUi;
     const { h } = ui;
@@ -377,7 +378,7 @@
       state.avatars = result.avatars;
       state.counts = { assetCount: Number(result.assetCount) || 0, worldCount: Number(result.worldCount) || 0 };
       state.error = "";
-      state.scope = defaultScope(state.avatars, state.scope || savedScope);
+      state.scope = defaultScope(state.avatars, state.scope || getSavedScope?.());
       renderRail();
       await loadItems();
     }

@@ -72,9 +72,7 @@ const library = globalThis.VrcLibManLibrary.create({
   getToken: () => state.stored.pairingToken,
   openItem,
   onScope: (scope) => chrome.storage.local.set({ panelScope: scope }),
-  get savedScope() {
-    return state.stored.panelScope;
-  },
+  getSavedScope: () => state.stored.panelScope,
 });
 librarySlot.append(library.node);
 

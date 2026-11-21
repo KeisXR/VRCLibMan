@@ -126,52 +126,56 @@ test('BOOTH page marks, unknown-preserving filter, explicit file buttons, discon
     assert.deepEqual(await evaluate("window.started.filter(message=>message.type==='start-download')"),[{type:'start-download',tabId:1,downloadableId:'555555'}]);
     await wait("document.querySelector('#main').textContent.includes('取得を始めました')");
 
-    // The real side panel: the open page's card, then the library by avatar and genre.
-    await page('Page.navigate',{url:base+'/extension/sidepanel.html'});await wait("location.pathname.endsWith('sidepanel.html')&&document.readyState==='complete'");
-    await evaluate(`(() => {
-      // Drop what the page's own scripts built before they stopped at the missing chrome object.
-      document.querySelector('#panel-library').replaceChildren();
-      for(const node of document.querySelectorAll('.view, #open-settings')) node.replaceWith(node.cloneNode(false));
-      document.querySelector('#view-library').textContent='ライブラリ';
-      window.sent=[];window.opened=[];window.moved=[];window.saved=[];window.fetched=[];
-      window.listeners={storage:[],activated:[],updated:[]};
-      window.online=true;
-      window.currentTab={id:1,url:'https://booth.pm/ja/items/123456',windowId:1,status:'complete',active:true};
-      const pageAvatars={
-        '123456':[{id:'plum',name:'プラム',viaBaseBody:true},{id:'manuka',name:'マヌカ',viaBaseBody:false}],
-        '234567':[{id:'plum',name:'プラム',viaBaseBody:false}]};
-      const items=(prefix,count,extra={})=>Array.from({length:count},(_,i)=>({boothId:String(200001+i),title:prefix+(i+1),shop:'見本の店',isAdult:false,unpublished:false,viaBaseBody:false,hasThumbnail:i===0,...extra}));
-      const pageId=()=>/items\\/(\\d+)/.exec(window.currentTab.url||'')?.[1]||'';
-      window.chrome={
-        runtime:{getURL:p=>'chrome-extension://test/'+p,getManifest:()=>({version:'0.9.1'}),openOptionsPage(){},async sendMessage(message){
-          window.sent.push(message);
-          if(message.type==='connection')return {hasToken:true,status:window.online?200:null};
-          if(message.type==='product-status')return {products:message.ids.map(id=>({boothId:id,registered:true,owned:true,localRecorded:false,filesKnown:true,savedFiles:[],avatars:pageAvatars[id]||[]}))};
-          if(message.type==='library-avatars')return {avatars:[{id:'lime',displayName:'ライム',thumbnailId:'100001',itemCount:3},{id:'plum',displayName:'プラム',thumbnailId:null,itemCount:36},{id:'manuka',displayName:'マヌカ',thumbnailId:null,itemCount:35}],assetCount:40,worldCount:2};
-          if(message.type==='library-items'){
-            if(message.kind)return {sections:[{key:'outfit',label:'衣装',items:items('すべての衣装',40)}]};
-            return {sections:[{key:'avatar',label:'アバター本体',items:items(message.avatar+'の本体',1)},{key:'outfit',label:'衣装',items:items(message.avatar+'の衣装',35,{viaBaseBody:message.avatar==='plum'})}]};
-          }
-          if(message.type==='library-product')return {boothId:message.id,historyRead:true,orderCount:2,orders:[{orderId:'12345678',orderedAt:'2026-03-14T21:30:00+09:00',gift:false}],edition:{mode:'specific',avatars:['マヌカ']}};
-          return {ok:true};
-        }},
-        storage:{onChanged:{addListener(fn){window.listeners.storage.push(fn);}},
-          local:{async get(defaults){return {...defaults,pairingToken:'ABCD-2345',routeDownloads:true};},async set(values){window.saved.push(values);}},
-          session:{async get(defaults){return {...defaults};},async remove(){}}},
-        tabs:{async query(){return [window.currentTab];},
-          async sendMessage(){const id=pageId();return {products:id?[{boothId:id,title:'見本衣装'+id,downloads:[{downloadableId:'555555',filename:'sample.zip',variation:'見本A用'}]}]:[]};},
-          create(options){window.opened.push(options);},update(id,options){window.moved.push([id,options]);},reload(){},
-          onActivated:{addListener(fn){window.listeners.activated.push(fn);}},onUpdated:{addListener(fn){window.listeners.updated.push(fn);}}},
-        downloads:{async search(){return [];}}
-      };
-      window.fetch=async(url,options)=>{window.fetched.push({url,body:options.body,auth:options.headers.Authorization,credentials:options.credentials});return {ok:true,async blob(){return new Blob(['x'],{type:'image/png'});}};};
-      ${source('shared.js')}
-      ${source('companion.js')}
-      ${source('ui.js')}
-      ${source('pagecards.js')}
-      ${source('library.js')}
-      ${source('sidepanel.js')}
-    })()`);
+    // The real side panel, opened with the given saved settings and tab.
+    const openSidePanel=async(stored,tab)=>{
+      await page('Page.navigate',{url:base+'/extension/sidepanel.html'});await wait("location.pathname.endsWith('sidepanel.html')&&document.readyState==='complete'");
+      await evaluate(`(() => {
+        // Drop what the page's own scripts built before they stopped at the missing chrome object.
+        document.querySelector('#panel-library').replaceChildren();
+        for(const node of document.querySelectorAll('.view, #open-settings')) node.replaceWith(node.cloneNode(false));
+        document.querySelector('#view-library').textContent='ライブラリ';
+        window.sent=[];window.opened=[];window.moved=[];window.saved=[];window.fetched=[];
+        window.listeners={storage:[],activated:[],updated:[]};
+        window.online=true;
+        window.currentTab=${JSON.stringify(tab)};
+        const pageAvatars={
+          '123456':[{id:'plum',name:'プラム',viaBaseBody:true},{id:'manuka',name:'マヌカ',viaBaseBody:false}],
+          '234567':[{id:'plum',name:'プラム',viaBaseBody:false}]};
+        const items=(prefix,count,extra={})=>Array.from({length:count},(_,i)=>({boothId:String(200001+i),title:prefix+(i+1),shop:'見本の店',isAdult:false,unpublished:false,viaBaseBody:false,hasThumbnail:i===0,...extra}));
+        const pageId=()=>/items\\/(\\d+)/.exec(window.currentTab.url||'')?.[1]||'';
+        window.chrome={
+          runtime:{getURL:p=>'chrome-extension://test/'+p,getManifest:()=>({version:'0.9.1'}),openOptionsPage(){},async sendMessage(message){
+            window.sent.push(message);
+            if(message.type==='connection')return {hasToken:true,status:window.online?200:null};
+            if(message.type==='product-status')return {products:message.ids.map(id=>({boothId:id,registered:true,owned:true,localRecorded:false,filesKnown:true,savedFiles:[],avatars:pageAvatars[id]||[]}))};
+            if(message.type==='library-avatars')return {avatars:[{id:'lime',displayName:'ライム',thumbnailId:'100001',itemCount:3},{id:'plum',displayName:'プラム',thumbnailId:null,itemCount:36},{id:'manuka',displayName:'マヌカ',thumbnailId:null,itemCount:35}],assetCount:40,worldCount:2};
+            if(message.type==='library-items'){
+              if(message.kind)return {sections:[{key:'outfit',label:'衣装',items:items('すべての衣装',40)}]};
+              return {sections:[{key:'avatar',label:'アバター本体',items:items(message.avatar+'の本体',1)},{key:'outfit',label:'衣装',items:items(message.avatar+'の衣装',35,{viaBaseBody:message.avatar==='plum'})}]};
+            }
+            if(message.type==='library-product')return {boothId:message.id,historyRead:true,orderCount:2,orders:[{orderId:'12345678',orderedAt:'2026-03-14T21:30:00+09:00',gift:false}],edition:{mode:'specific',avatars:['マヌカ']}};
+            return {ok:true};
+          }},
+          storage:{onChanged:{addListener(fn){window.listeners.storage.push(fn);}},
+            local:{async get(defaults){return {...defaults,pairingToken:'ABCD-2345',routeDownloads:true,...${JSON.stringify(stored)}};},async set(values){window.saved.push(values);}},
+            session:{async get(defaults){return {...defaults};},async remove(){}}},
+          tabs:{async query(){return [window.currentTab];},
+            async sendMessage(){const id=pageId();return {products:id?[{boothId:id,title:'見本衣装'+id,downloads:[{downloadableId:'555555',filename:'sample.zip',variation:'見本A用'}]}]:[]};},
+            create(options){window.opened.push(options);},update(id,options){window.moved.push([id,options]);},reload(){},
+            onActivated:{addListener(fn){window.listeners.activated.push(fn);}},onUpdated:{addListener(fn){window.listeners.updated.push(fn);}}},
+          downloads:{async search(){return [];}}
+        };
+        window.fetch=async(url,options)=>{window.fetched.push({url,body:options.body,auth:options.headers.Authorization,credentials:options.credentials});return {ok:true,async blob(){return new Blob(['x'],{type:'image/png'});}};};
+        ${source('shared.js')}
+        ${source('companion.js')}
+        ${source('ui.js')}
+        ${source('pagecards.js')}
+        ${source('library.js')}
+        ${source('sidepanel.js')}
+      })()`);
+    };
+    // The open page's card, then the library by avatar and genre.
+    await openSidePanel({},{id:1,url:'https://booth.pm/ja/items/123456',windowId:1,status:'complete',active:true});
     const cardsText="document.querySelector('#cards').textContent";
     const scopes="[...document.querySelectorAll('.av')]";
     const pressed=`${scopes}.find(b=>b.getAttribute('aria-pressed')==='true')?.querySelector('.av-name').textContent`;
@@ -258,6 +262,10 @@ test('BOOTH page marks, unknown-preserving filter, explicit file buttons, discon
     await wait("document.querySelector('.sections').textContent.includes('アプリを起動すると')");
     assert.equal(await evaluate("document.querySelectorAll('.tile').length"),0);
     assert.equal(await evaluate("document.querySelector('.rail').hidden"),true);
+    // Opened again later away from BOOTH (no page to follow), the panel starts from the saved choice.
+    await openSidePanel({panelScope:'kind:world'},{id:2,windowId:1,status:'complete',active:true});
+    await wait(`${pressed}==='ワールド'`);
+    assert.ok(await evaluate("window.sent.some(m=>m.type==='library-items'&&m.kind==='world')"));
   }finally{
     socket?.close();chrome.kill();await vite.close();await pause(200);await rm(profile,{recursive:true,force:true,maxRetries:3,retryDelay:100});
   }
