@@ -22,6 +22,8 @@
     boothIntervalMs: 1000,
     autoPurchase: true,
     showBadges: true,
+    // サイドパネルで、見ている商品に対応する所持アバターを先頭に出して選ぶ。
+    followPageAvatar: true,
   };
   const JOB_LABELS = {
     page: "このページを送信中",
@@ -88,6 +90,15 @@
     return section ? section.label : "購入ライブラリ";
   }
 
+  // 商品 ID と注文番号は数字だけを受け、BOOTH の決まった場所の URL にする。
+  function itemUrl(id) {
+    return /^\d{4,12}$/.test(String(id)) ? `https://booth.pm/ja/items/${id}` : "";
+  }
+
+  function orderUrl(id) {
+    return /^\d{4,12}$/.test(String(id)) ? `${ORDERS_URL}/${id}` : "";
+  }
+
   function pad(value) {
     return String(value).padStart(2, "0");
   }
@@ -103,6 +114,12 @@
     yesterday.setDate(now.getDate() - 1);
     if (day(date) === day(yesterday)) return `昨日 ${time}`;
     return `${date.getMonth() + 1}/${date.getDate()} ${time}`;
+  }
+
+  // 注文の日時（2026-03-14T21:30:00+09:00）の日付だけ。「2026/3/14」の形。
+  function formatDate(value) {
+    const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value || ""));
+    return match ? `${match[1]}/${Number(match[2])}/${Number(match[3])}` : "";
   }
 
   function formatBytes(value) {
@@ -149,7 +166,10 @@
     boothUrl,
     pageKind,
     librarySectionLabel,
+    itemUrl,
+    orderUrl,
     formatTime,
+    formatDate,
     formatBytes,
     connectionState,
   };

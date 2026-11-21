@@ -18,6 +18,7 @@ mod compat;
 mod db;
 mod existing_import;
 mod extension_delivery;
+mod extension_library;
 mod extension_package;
 mod extension_purchases;
 mod extension_status;
@@ -79,6 +80,8 @@ pub struct AppState {
     pub import_guard: Mutex<local_import::ImportGuard>,
     pub background_mode: AtomicBool,
     pub staged_left: Mutex<Vec<model::StagedLeftover>>,
+    /// 拡張の「アプリで開く」で頼まれた行き先。メイン画面が 1 回だけ受け取る。
+    pub extension_route: Mutex<Option<String>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -147,6 +150,7 @@ pub fn run() {
                 import_guard: Mutex::new(local_import::ImportGuard::default()),
                 background_mode: AtomicBool::new(false),
                 staged_left: Mutex::new(Vec::new()),
+                extension_route: Mutex::new(None),
             });
             arrival_notice::init(app.handle());
             if let Some(state) = app.try_state::<AppState>()
@@ -231,6 +235,7 @@ pub fn run() {
             commands::install_app_update,
             commands::import_export,
             commands::extension_link,
+            commands::take_extension_route,
             commands::extension_package_status,
             commands::install_extension_package,
             commands::integration_status,

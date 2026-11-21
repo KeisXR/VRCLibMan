@@ -52,6 +52,11 @@
       ["line", { x1: 4, y1: 17, x2: 12.5, y2: 17 }], ["line", { x1: 17.5, y1: 17, x2: 20, y2: 17 }], ["circle", { cx: 15, cy: 17, r: 2.5 }],
     ],
     refresh: [["path", { d: "M19.5 12a7.5 7.5 0 1 1-2.2-5.3" }], ["path", { d: "M19.5 4.5v4h-4" }]],
+    grid: [
+      ["rect", { x: 4, y: 4, width: 6.5, height: 6.5, rx: 1.5 }], ["rect", { x: 13.5, y: 4, width: 6.5, height: 6.5, rx: 1.5 }],
+      ["rect", { x: 4, y: 13.5, width: 6.5, height: 6.5, rx: 1.5 }], ["rect", { x: 13.5, y: 13.5, width: 6.5, height: 6.5, rx: 1.5 }],
+    ],
+    globe: [["circle", { cx: 12, cy: 12, r: 8 }], ["line", { x1: 4, y1: 12, x2: 20, y2: 12 }], ["path", { d: "M12 4c2.6 2.2 3.8 4.9 3.8 8s-1.2 5.8-3.8 8c-2.6-2.2-3.8-4.9-3.8-8s1.2-5.8 3.8-8z" }]],
   };
 
   function icon(name) {

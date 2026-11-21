@@ -185,6 +185,8 @@ BOOTH へのアクセス間隔は 1000 / 500 / 250ms から選び、未知の値
 
 拡張の画面、ページ表示、明示的な1件取得、通知の再送は [拡張の仕様](browser-extension.md) を参照してください。`POST /product-status` は同じOrigin固定・Bearer認証の下で100件までのIDだけを受け、保存記録のあるファイルの BOOTH ファイル ID（`savedFiles`）も返します。DB移行は不要です。BOOTHのファイル取得をブラウザに任せ、Cookieをアプリへ送らない構成です。
 
+サイドパネルのライブラリは `POST /library/avatars`・`/library/items`・`/library/thumb`・`/library/product`（`extension_library.rs`）で、同じ Origin 固定と Bearer 認証を通します。読むだけで、商品 ID・商品名・ショップ・印・アバター名・注文番号・日時と保存済みサムネイルを返し、パス・説明・URL・金額は返しません。一覧の並べ方は `view::panel_*` がアプリの画面と同じ規則で決めます。`POST /library/open` は「アプリで開く」で、商品 ID を 1 つ受け、メイン画面をその商品の場所へ移して窓を前に出します。行き先は `AppState.extension_route` に置き、画面が `take_extension_route` で 1 回だけ受け取ります（常駐中で窓が無いときは、作り直した画面が起動時に受け取ります）。
+
 ### 内蔵ブラウザとファイル取得
 
 内蔵ブラウザはメイン画面とは別の WebView データストアでログイン状態を保持します。Windows / Linux はアプリのローカルデータディレクトリ配下の `booth-browser` を `data_directory` に指定し、macOS は固定の `BOOTH_DATA_STORE_ID` を `data_store_identifier` に指定します。Cookie の永続化と保存時の保護は OS・WebView の実装に依存し、アプリ独自の暗号化や OS 資格情報ストアへの Cookie の保存は行いません。専用データストアへの分離は、同じ OS ユーザー権限で動く別のプログラムからのアクセスを防ぐ保証ではありません。商品情報の読み込みには拡張と同じ解析を使い、一般サイトの DOM はインポートしません。

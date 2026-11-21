@@ -689,6 +689,180 @@ pub fn unlinked_files_page(snapshot: &Snapshot, offset: u32, limit: u32) -> Unli
     UnlinkedFilesPage { total, files }
 }
 
+/// 拡張のサイドパネルに出す 1 商品。ID・名前・ショップ・印だけで、パス・説明・URL は持たない。
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PanelItem {
+    pub booth_id: String,
+    pub title: String,
+    pub shop: String,
+    pub is_adult: bool,
+    pub unpublished: bool,
+    pub via_base_body: bool,
+    /// 保存済みのサムネイルがある。画像そのものは別の受信口が ID で返す。
+    pub has_thumbnail: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PanelSection {
+    pub key: String,
+    pub label: String,
+    pub items: Vec<PanelItem>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PanelAvatar {
+    pub id: String,
+    pub display_name: String,
+    /// サムネイルを持つ本体の商品 ID。
+    pub thumbnail_id: Option<String>,
+    pub item_count: u32,
+}
+
+fn panel_item(lookup: &Lookup<'_>, product: &Product, via_base_body: bool) -> PanelItem {
+    let flag = lookup.flags.get(product.booth_id.as_str()).copied();
+    PanelItem {
+        booth_id: product.booth_id.clone(),
+        title: product.title.clone(),
+        shop: product.shop.clone(),
+        is_adult: flag.and_then(|flag| flag.is_adult).unwrap_or(false),
+        unpublished: flag.and_then(|flag| flag.unpublished).unwrap_or(false),
+        via_base_body,
+        has_thumbnail: product
+            .thumbnail_path
+            .as_deref()
+            .is_some_and(|path| !path.is_empty()),
+    }
+}
+
+fn panel_genre_label(genres: &[(&str, &str)], key: &str) -> String {
+    genres
+        .iter()
+        .find(|(known, _)| *known == key)
+        .map(|(_, label)| *label)
+        .unwrap_or(match key {
+            crate::genre::FREE => "無料",
+            _ => "ジャンル未設定",
+        })
+        .to_string()
+}
+
+/// `genres` の順に見出しを並べ、そのあとに無料・ジャンル未設定を置く。空の見出しは出さない。
+fn panel_genre_sections(
+    genres: &[(&str, &str)],
+    rows: Vec<(String, PanelItem)>,
+) -> Vec<PanelSection> {
+    let mut groups: HashMap<String, Vec<PanelItem>> = HashMap::new();
+    for (key, item) in rows {
+        groups.entry(key).or_default().push(item);
+    }
+    genres
+        .iter()
+        .map(|(key, _)| *key)
+        .chain([crate::genre::FREE, crate::genre::UNSET])
+        .filter_map(|key| {
+            groups.remove(key).map(|items| PanelSection {
+                key: key.to_string(),
+                label: panel_genre_label(genres, key),
+                items,
+            })
+        })
+        .collect()
+}
+
+/// アプリのアバター一覧と同じアバター。数えるのはアバター詳細のジャンルの見出しに並ぶ商品。
+pub fn panel_avatars(snapshot: &Snapshot) -> Vec<PanelAvatar> {
+    let lookup = Lookup::new(snapshot);
+    snapshot
+        .avatars
+        .iter()
+        .filter(|avatar| avatar.owned || referenced_only(&lookup, &avatar.id))
+        .map(|avatar| {
+            let classified = classify(snapshot, &lookup, avatar);
+            PanelAvatar {
+                id: avatar.id.clone(),
+                display_name: avatar.display_name.clone(),
+                thumbnail_id: classified
+                    .owned
+                    .iter()
+                    .find(|body| {
+                        body.thumbnail_path
+                            .as_deref()
+                            .is_some_and(|path| !path.is_empty())
+                    })
+                    .map(|body| body.booth_id.clone()),
+                item_count: classified
+                    .sections
+                    .iter()
+                    .map(|(_, items)| items.len() as u32)
+                    .sum(),
+            }
+        })
+        .collect()
+}
+
+/// アバター詳細と同じ並び：本体、ジャンルごとの対応アイテム、汎用、対応版未設定。
+pub fn panel_avatar_sections(snapshot: &Snapshot, id: &str) -> Option<Vec<PanelSection>> {
+    let avatar = snapshot.avatars.iter().find(|avatar| avatar.id == id)?;
+    let lookup = Lookup::new(snapshot);
+    let classified = classify(snapshot, &lookup, avatar);
+    let plain = |key: &str, label: &str, products: &[&Product]| PanelSection {
+        key: key.into(),
+        label: label.into(),
+        items: products
+            .iter()
+            .map(|product| panel_item(&lookup, product, false))
+            .collect(),
+    };
+    let genres = crate::genre::ASSET_GENRES;
+    let mut seen = HashSet::new();
+    let rows = classified
+        .sections
+        .iter()
+        .flat_map(|(_, items)| items.iter())
+        .filter(|(product, _)| seen.insert(product.booth_id.as_str()))
+        .map(|(product, via_base_body)| {
+            let key = product
+                .genre
+                .as_deref()
+                .filter(|genre| genres.iter().any(|(known, _)| known == genre))
+                .unwrap_or(crate::genre::UNSET);
+            (
+                key.to_string(),
+                panel_item(&lookup, product, *via_base_body),
+            )
+        })
+        .collect();
+    let mut sections = vec![plain("avatar", "アバター本体", &classified.owned)];
+    sections.extend(panel_genre_sections(genres, rows));
+    sections.push(plain("generic", "汎用", &classified.generic));
+    sections.push(plain("edition_unset", "対応版未設定", &classified.unset));
+    sections.retain(|section| !section.items.is_empty());
+    Some(sections)
+}
+
+/// アセット・ワールドの一覧と同じ分け方（ダウンロードしていない無料商品は「無料」）。
+pub fn panel_kind_sections(
+    snapshot: &Snapshot,
+    genres: &[(&str, &str)],
+    all_ids: &[String],
+) -> Vec<PanelSection> {
+    let lookup = Lookup::new(snapshot);
+    let rows = all_ids
+        .iter()
+        .filter_map(|id| lookup.products.get(id.as_str()).copied())
+        .map(|product| {
+            (
+                browse_bucket(snapshot, &lookup, product, genres),
+                panel_item(&lookup, product, false),
+            )
+        })
+        .collect();
+    panel_genre_sections(genres, rows)
+}
+
 /// The counts from a whole snapshot. The app reads them with `db::library_stats`, which must
 /// give the same numbers; tests compare the two.
 #[cfg(test)]
@@ -1225,6 +1399,80 @@ mod tests {
             remote_configured: false,
             remote_checked: true,
             remote_reachable: false,
+        }
+    }
+
+    #[test]
+    fn the_side_panel_lists_an_avatar_like_its_detail_page_and_carries_no_paths() {
+        let mut snapshot = with_full_sets(&sample());
+        snapshot.products[0].thumbnail_path = Some("/data/thumbs/1.jpg".into());
+        snapshot.products[3].genre = Some("outfit".into());
+        let avatars = panel_avatars(&snapshot);
+        assert_eq!(
+            avatars
+                .iter()
+                .map(|avatar| avatar.id.as_str())
+                .collect::<Vec<_>>(),
+            avatar_cards(&snapshot)
+                .iter()
+                .map(|card| card.id.as_str())
+                .collect::<Vec<_>>()
+        );
+        let lime = avatars.iter().find(|avatar| avatar.id == "lime").unwrap();
+        assert_eq!(lime.thumbnail_id.as_deref(), Some("1"));
+        assert_eq!(lime.item_count, 1);
+
+        let sections = panel_avatar_sections(&snapshot, "lime").unwrap();
+        let keys: Vec<&str> = sections
+            .iter()
+            .map(|section| section.key.as_str())
+            .collect();
+        assert_eq!(keys, ["avatar", "outfit", "generic"]);
+        assert_eq!(sections[1].label, "衣装");
+        assert!(sections[0].items[0].has_thumbnail && !sections[1].items[0].via_base_body);
+        // The shared body lists the same outfit on the sibling, marked as coming through the body.
+        let plum = panel_avatar_sections(&snapshot, "plum").unwrap();
+        assert!(
+            plum.iter()
+                .find(|section| section.key == "outfit")
+                .unwrap()
+                .items[0]
+                .via_base_body
+        );
+        assert!(panel_avatar_sections(&snapshot, "nobody").is_none());
+        let json = serde_json::to_string(&sections).unwrap();
+        assert!(
+            !json.contains("thumbs") && !json.contains("booth.pm"),
+            "no path or URL leaves the app"
+        );
+    }
+
+    #[test]
+    fn the_side_panel_lists_a_kind_under_the_same_genres_as_the_asset_screen() {
+        let mut snapshot = sample();
+        snapshot.products[3].genre = Some("outfit".into());
+        snapshot.products[4].genre = Some("gimmick".into());
+        snapshot.products[5].genre = Some("hair".into());
+        snapshot.products[6].genre = None;
+        let all: Vec<String> = ["4", "5", "6", "7"]
+            .iter()
+            .map(|id| id.to_string())
+            .collect();
+        let sections = panel_kind_sections(&snapshot, crate::genre::ASSET_GENRES, &all);
+        let keys: Vec<&str> = sections
+            .iter()
+            .map(|section| section.key.as_str())
+            .collect();
+        assert_eq!(keys, ["outfit", "hair", "gimmick", crate::genre::UNSET]);
+        assert_eq!(sections[3].label, "ジャンル未設定");
+        let counts = genre_products(&snapshot, crate::genre::ASSET_GENRES, &all, None).counts;
+        for section in &sections {
+            assert_eq!(
+                counts.get(&section.key),
+                Some(&(section.items.len() as u32)),
+                "{}",
+                section.key
+            );
         }
     }
 

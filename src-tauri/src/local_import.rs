@@ -11,6 +11,8 @@ pub const LOCAL_IMPORT_PORT: u16 = 17321;
 pub const AUTH_FAIL_LIMIT: u32 = 5;
 pub const AUTH_LOCK_SECS: u64 = 30;
 const MAX_BODY: usize = 16 * 1024 * 1024;
+/// サイドパネルのライブラリの問い合わせ（ID かアバター 1 つ）の本文の上限。
+const LIBRARY_BODY: usize = 4096;
 const TOKEN_ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 /// 拡張の manifest.json の `key` から決まる ID。読み込み元のフォルダを移しても変わらないので、
 /// 固定した Origin が別でも受ける（アプリが用意したフォルダへ読み込み直したときにコードを作り直さずに済むため）。
@@ -154,6 +156,7 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
             | Gate::RouteRead
             | Gate::RouteWrite
             | Gate::Purchases(_)
+            | Gate::Library(_)
     ) {
         if let Ok(mut guard) = state.import_guard.lock() {
             guard.record_success(&origin_key);
@@ -244,6 +247,91 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
             200,
             serde_json::json!({ "enabled": enabled }).to_string(),
         );
+    }
+    if let Gate::Library(route) = &gate {
+        let route = *route;
+        let text = if route.reads_body() {
+            // 指定は ID かアバターだけなので、小さい本文しか受けない。
+            if content_length.is_some_and(|length| length > LIBRARY_BODY) {
+                return response_for(
+                    origin.as_deref(),
+                    Gate::reject(413, "JSONが大きすぎます"),
+                    None,
+                );
+            }
+            match read_limited(request.as_reader(), LIBRARY_BODY).map(String::from_utf8) {
+                Ok(Ok(text)) => text,
+                Ok(Err(_)) => {
+                    return response_for(
+                        origin.as_deref(),
+                        Gate::reject(400, "JSONを読めません"),
+                        None,
+                    );
+                }
+                Err(()) => {
+                    return response_for(
+                        origin.as_deref(),
+                        Gate::reject(413, "JSONが大きすぎます"),
+                        None,
+                    );
+                }
+            }
+        } else {
+            discard_body(request);
+            String::new()
+        };
+        use crate::extension_library::{Reply, Route};
+        // サムネイルはファイルを読むだけなので、データベースのロックを取らない。
+        let reply = if route == Route::Thumb {
+            Ok(crate::extension_library::thumbnail(
+                &state.thumbs_dir,
+                &text,
+            ))
+        } else {
+            state
+                .db
+                .lock()
+                .map_err(|_| "データベースをロックできません".to_string())
+                .and_then(|connection| crate::extension_library::handle(&connection, route, &text))
+        };
+        return match reply {
+            Ok(Reply::Json { status, body }) => cors_json(origin.as_deref(), status, body),
+            Ok(Reply::Image {
+                content_type,
+                bytes,
+            }) => {
+                let mut response = Response::from_data(bytes);
+                for (name, value) in [
+                    ("Content-Type", content_type),
+                    ("X-Content-Type-Options", "nosniff"),
+                ] {
+                    if let Ok(header) = Header::from_bytes(name.as_bytes(), value.as_bytes()) {
+                        response = response.with_header(header);
+                    }
+                }
+                match origin
+                    .as_deref()
+                    .filter(|origin| is_extension_origin(origin))
+                {
+                    Some(origin) => add_cors(response, origin),
+                    None => response,
+                }
+            }
+            Ok(Reply::Open { route }) => {
+                // 行き先は画面が受け取りに来る。常駐中で窓が無いときも、作り直した画面が読める。
+                if let Ok(mut pending) = state.extension_route.lock() {
+                    *pending = Some(route);
+                }
+                let _ = app.emit_to("main", "extension-open-product", ());
+                crate::presence::show_main_later(app);
+                cors_json(origin.as_deref(), 200, r#"{"ok":true}"#.into())
+            }
+            Err(error) => cors_json(
+                origin.as_deref(),
+                500,
+                serde_json::json!({ "error": error }).to_string(),
+            ),
+        };
     }
     if let Gate::Purchases(route) = &gate {
         let route = *route;
@@ -772,6 +860,7 @@ enum Gate {
     RouteRead,
     RouteWrite,
     Purchases(crate::extension_purchases::Route),
+    Library(crate::extension_library::Route),
     Reject {
         status: u16,
         message: &'static str,
@@ -823,6 +912,9 @@ fn classify(request: RequestView<'_>, access: Access<'_>) -> Gate {
     let path = request.path.split('?').next().unwrap_or("");
     if let Some(route) = crate::extension_purchases::route(request.method, path) {
         return Gate::Purchases(route);
+    }
+    if let Some(route) = crate::extension_library::route(request.method, path) {
+        return Gate::Library(route);
     }
     // Chrome は、ホスト権限で送る拡張の GET に Origin を付けない。今の拡張は読み取りも POST で送る。
     // GET は Origin を付けて送る相手のために残す（Origin の無い要求は上で 403 になる）。
@@ -884,7 +976,8 @@ fn response_for(
         | Gate::RouteRead
         | Gate::RouteWrite
         | Gate::ProductStatus
-        | Gate::Purchases(_) => (200, "{}".to_string()),
+        | Gate::Purchases(_)
+        | Gate::Library(_) => (200, "{}".to_string()),
         Gate::Import => (
             200,
             serde_json::to_string(&report.expect("import report")).unwrap_or_else(|_| "{}".into()),
@@ -1188,6 +1281,57 @@ mod tests {
             ),
             Gate::Reject { status: 404, .. }
         ));
+    }
+
+    #[test]
+    fn side_panel_library_routes_share_the_origin_and_token_boundary() {
+        let access = || Access {
+            token: "ABCD2345",
+            pinned: None,
+            locked: false,
+        };
+        for path in [
+            "/library/avatars",
+            "/library/items",
+            "/library/thumb",
+            "/library/product",
+        ] {
+            // ウェブページからは、コードが合っていても商品名もサムネイルも読めない。
+            assert!(matches!(
+                classify(
+                    view(
+                        "POST",
+                        path,
+                        Some("https://booth.pm"),
+                        Some("Bearer ABCD2345")
+                    ),
+                    access()
+                ),
+                Gate::Reject { status: 403, .. }
+            ));
+            assert!(matches!(
+                classify(view("POST", path, None, Some("Bearer ABCD2345")), access()),
+                Gate::Reject { status: 403, .. }
+            ));
+            assert!(matches!(
+                classify(view("POST", path, Some(EXTENSION), None), access()),
+                Gate::Reject { status: 401, .. }
+            ));
+            assert!(matches!(
+                classify(
+                    view("POST", path, Some(EXTENSION), Some("Bearer ABCD-2345")),
+                    access()
+                ),
+                Gate::Library(_)
+            ));
+            assert!(matches!(
+                classify(
+                    view("GET", path, Some(EXTENSION), Some("Bearer ABCD2345")),
+                    access()
+                ),
+                Gate::Reject { status: 404, .. }
+            ));
+        }
     }
 
     #[test]

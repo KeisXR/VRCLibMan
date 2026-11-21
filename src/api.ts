@@ -270,6 +270,8 @@ export const api = {
   boothBrowserLog: () => call<BrowserDiagnostic>("booth_browser_log"),
   importExport: (json: string) => call<ImportReport>("import_export", { json }),
   updateProduct: (update: ProductUpdate) => call<void>("update_product", { update }),
+  /** 拡張の「アプリで開く」で頼まれた行き先。1 回読むと消える。 */
+  takeExtensionRoute: () => call<string | null>("take_extension_route"),
   browserAutoPending: () => call<{ boothId: string; title: string }[]>("browser_auto_pending"),
   browserAutoFinish: (boothId: string) => call<void>("browser_auto_finish", { boothId }),
   productAvatarSuggestions: (boothId: string) => call<{ avatarIds: string[]; unresolvedNames: string[] }>("product_avatar_suggestions", { boothId }),
