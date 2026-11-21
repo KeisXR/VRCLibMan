@@ -5,8 +5,7 @@ use std::time::Duration;
 pub const SOURCE_URL: &str = "https://github.com/eringiriri/mochifitter_list";
 pub const DATA_URL: &str =
     "https://raw.githubusercontent.com/eringiriri/mochifitter_list/main/data/profiles.json";
-pub const TERMS_URL: &str =
-    "https://github.com/eringiriri/mochifitter_list/blob/main/terms.html";
+pub const TERMS_URL: &str = "https://github.com/eringiriri/mochifitter_list/blob/main/terms.html";
 pub const AUTHOR: &str = "えりんぎ";
 pub const CREDIT: &str = "もちふぃった～プロファイル一覧";
 
@@ -61,8 +60,11 @@ pub fn parse_catalog_json(text: &str) -> Result<ParsedCatalog, String> {
     let mut order: Vec<String> = Vec::new();
     let mut grouped: Vec<RawGroup> = Vec::new();
     for item in profiles {
-        let Some(booth_id) = booth_id_of(item.get("avatarNameUrl").and_then(Value::as_str).unwrap_or(""))
-        else {
+        let Some(booth_id) = booth_id_of(
+            item.get("avatarNameUrl")
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+        ) else {
             continue;
         };
         let name = item
@@ -73,8 +75,16 @@ pub fn parse_catalog_json(text: &str) -> Result<ParsedCatalog, String> {
         if name.is_empty() {
             continue;
         }
-        let author = clip(item.get("avatarAuthor").and_then(Value::as_str).unwrap_or(""));
-        let shop = clip(item.get("avatarshopname").and_then(Value::as_str).unwrap_or(""));
+        let author = clip(
+            item.get("avatarAuthor")
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+        );
+        let shop = clip(
+            item.get("avatarshopname")
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+        );
         let body = clip(item.get("bodyBase").and_then(Value::as_str).unwrap_or(""));
         if let Some(index) = order.iter().position(|id| id == &booth_id) {
             let group = &mut grouped[index];
@@ -174,7 +184,11 @@ pub fn catalog_note(entry: &CatalogEntry) -> String {
 
 /// 「ルキフェル -Lucifer-」や「Nayu - ナユ」を、日本語の表示名と別名に分ける。
 pub fn split_bilingual_name(raw: &str) -> (String, Vec<String>) {
-    let folded = nfkc(raw).trim().trim_matches(['/', '／']).trim().to_string();
+    let folded = nfkc(raw)
+        .trim()
+        .trim_matches(['/', '／'])
+        .trim()
+        .to_string();
     if folded.is_empty() {
         return (String::new(), Vec::new());
     }
@@ -189,7 +203,9 @@ pub fn split_bilingual_name(raw: &str) -> (String, Vec<String>) {
     if pieces.len() == 1 {
         let tokens: Vec<&str> = pieces[0].split_whitespace().collect();
         let mixed = tokens.len() >= 2
-            && tokens.iter().any(|token| script_of(token) == Script::Japanese)
+            && tokens
+                .iter()
+                .any(|token| script_of(token) == Script::Japanese)
             && tokens.iter().any(|token| script_of(token) == Script::Latin);
         if mixed {
             pieces = tokens.into_iter().map(str::to_string).collect();
@@ -236,7 +252,12 @@ fn preferred_display(pieces: &[String]) -> usize {
         if !japanese {
             continue;
         }
-        let score = kanji * 10 + if piece.chars().any(|ch| ch.is_ascii_alphabetic()) { 0 } else { 1 };
+        let score = kanji * 10
+            + if piece.chars().any(|ch| ch.is_ascii_alphabetic()) {
+                0
+            } else {
+                1
+            };
         if best.is_none_or(|(_, current)| score > current) {
             best = Some((index, score));
         }
@@ -341,7 +362,11 @@ fn split_script_run(text: &str) -> Vec<String> {
             parts.push(part);
         }
     }
-    if parts.len() >= 2 { parts } else { vec![text.to_string()] }
+    if parts.len() >= 2 {
+        parts
+    } else {
+        vec![text.to_string()]
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -387,7 +412,8 @@ fn is_kanji(ch: char) -> bool {
 fn trim_edges(text: &str) -> String {
     text.trim()
         .trim_matches(|ch: char| {
-            ch.is_whitespace() || matches!(ch, '-' | '–' | '—' | '－' | '/' | '／' | '.' | '・' | ':')
+            ch.is_whitespace()
+                || matches!(ch, '-' | '–' | '—' | '－' | '/' | '／' | '.' | '・' | ':')
         })
         .trim()
         .to_string()
@@ -402,7 +428,11 @@ fn strip_version(text: &str) -> String {
             end = index;
         }
     }
-    text[..end].trim().trim_end_matches(['-', ' ']).trim().to_string()
+    text[..end]
+        .trim()
+        .trim_end_matches(['-', ' '])
+        .trim()
+        .to_string()
 }
 
 fn is_noise(text: &str) -> bool {
@@ -488,7 +518,8 @@ mod tests {
             .unwrap();
         assert_eq!(sukiha.display_name, "透羽");
         let lucifer = catalog.entries.iter().find(|entry| {
-            entry.display_name == "ルキフェル" || entry.aliases.iter().any(|alias| alias == "Lucifer")
+            entry.display_name == "ルキフェル"
+                || entry.aliases.iter().any(|alias| alias == "Lucifer")
         });
         assert!(lucifer.is_some());
         let raw = r#"{

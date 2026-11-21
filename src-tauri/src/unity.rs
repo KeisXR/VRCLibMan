@@ -61,7 +61,11 @@ pub(crate) struct Sources {
 impl Sources {
     pub(crate) fn for_current_os() -> Self {
         let os = Os::current();
-        let env = |key: &str| std::env::var_os(key).filter(|value| !value.is_empty()).map(PathBuf::from);
+        let env = |key: &str| {
+            std::env::var_os(key)
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+        };
         let home = env("HOME").or_else(|| env("USERPROFILE"));
         match os {
             Os::Windows => Sources {
@@ -75,9 +79,11 @@ impl Sources {
                 ),
             },
             Os::Macos => Sources {
-                hub_dir: home
-                    .as_ref()
-                    .map(|home| home.join("Library").join("Application Support").join("UnityHub")),
+                hub_dir: home.as_ref().map(|home| {
+                    home.join("Library")
+                        .join("Application Support")
+                        .join("UnityHub")
+                }),
                 default_root: Some(PathBuf::from("/Applications/Unity/Hub/Editor")),
             },
             Os::Linux => Sources {
@@ -103,9 +109,15 @@ pub(crate) fn is_unity_version(text: &str) -> bool {
 fn version_key(version: &str) -> Option<(u32, u32, u32, u8, u32, u32)> {
     static PARTS: OnceLock<Regex> = OnceLock::new();
     let caps = PARTS
-        .get_or_init(|| Regex::new(r"^(\d+)\.(\d+)\.(\d+)([abfp])(\d+)(?:c(\d+))?$").expect("valid regex"))
+        .get_or_init(|| {
+            Regex::new(r"^(\d+)\.(\d+)\.(\d+)([abfp])(\d+)(?:c(\d+))?$").expect("valid regex")
+        })
         .captures(version.trim())?;
-    let num = |i: usize| caps.get(i).and_then(|m| m.as_str().parse::<u32>().ok()).unwrap_or(0);
+    let num = |i: usize| {
+        caps.get(i)
+            .and_then(|m| m.as_str().parse::<u32>().ok())
+            .unwrap_or(0)
+    };
     let kind = match &caps[4] {
         "a" => 0,
         "b" => 1,
@@ -201,7 +213,11 @@ pub(crate) fn executable_in(root: &Path, version: &str, os: Os) -> PathBuf {
     let dir = root.join(version);
     match os {
         Os::Windows => dir.join("Editor").join("Unity.exe"),
-        Os::Macos => dir.join("Unity.app").join("Contents").join("MacOS").join("Unity"),
+        Os::Macos => dir
+            .join("Unity.app")
+            .join("Contents")
+            .join("MacOS")
+            .join("Unity"),
         Os::Linux => dir.join("Editor").join("Unity"),
     }
 }
@@ -231,7 +247,10 @@ pub(crate) fn version_from_path(path: &str) -> String {
 
 /// 選べる実行ファイル名か。Windows は Unity.exe、Mac と Linux は Unity。
 pub(crate) fn is_editor_file_name(path: &Path, os: Os) -> bool {
-    let Some(name) = path.to_str().and_then(|text| text.rsplit(['/', '\\']).next()) else {
+    let Some(name) = path
+        .to_str()
+        .and_then(|text| text.rsplit(['/', '\\']).next())
+    else {
         return false;
     };
     match os {
@@ -272,17 +291,33 @@ pub(crate) fn detect(sources: &Sources, os: Os) -> (Vec<UnityEditor>, bool, Vec<
     if let Some(hub) = sources.hub_dir.as_ref().filter(|_| hub_found) {
         searched.push(hub.display().to_string());
         let read = |name: &str| std::fs::read_to_string(hub.join(name)).ok();
-        let mut entries = read("editors-v2.json").map(|json| parse_editors_v2(&json)).unwrap_or_default();
-        entries.extend(read("editors.json").map(|json| parse_editors_legacy(&json)).unwrap_or_default());
+        let mut entries = read("editors-v2.json")
+            .map(|json| parse_editors_v2(&json))
+            .unwrap_or_default();
+        entries.extend(
+            read("editors.json")
+                .map(|json| parse_editors_legacy(&json))
+                .unwrap_or_default(),
+        );
         for (version, location) in entries {
             let path = normalize_location(&location, os);
             if path.is_file() {
                 let path_text = path.display().to_string();
-                let version = if is_unity_version(&version) { version } else { version_from_path(&path_text) };
-                found.push(UnityEditor { version, path: path_text, source: "hub".into() });
+                let version = if is_unity_version(&version) {
+                    version
+                } else {
+                    version_from_path(&path_text)
+                };
+                found.push(UnityEditor {
+                    version,
+                    path: path_text,
+                    source: "hub".into(),
+                });
             }
         }
-        if let Some(secondary) = read("secondaryInstallPath.json").and_then(|json| parse_secondary_install_path(&json)) {
+        if let Some(secondary) =
+            read("secondaryInstallPath.json").and_then(|json| parse_secondary_install_path(&json))
+        {
             roots.push(PathBuf::from(secondary));
         }
     }
@@ -291,7 +326,9 @@ pub(crate) fn detect(sources: &Sources, os: Os) -> (Vec<UnityEditor>, bool, Vec<
     }
     for root in roots {
         searched.push(root.display().to_string());
-        let Ok(children) = std::fs::read_dir(&root) else { continue };
+        let Ok(children) = std::fs::read_dir(&root) else {
+            continue;
+        };
         for child in children.flatten() {
             let name = child.file_name().to_string_lossy().to_string();
             if !is_unity_version(&name) {
@@ -299,7 +336,11 @@ pub(crate) fn detect(sources: &Sources, os: Os) -> (Vec<UnityEditor>, bool, Vec<
             }
             let path = executable_in(&root, &name, os);
             if path.is_file() {
-                found.push(UnityEditor { version: name, path: path.display().to_string(), source: "folder".into() });
+                found.push(UnityEditor {
+                    version: name,
+                    path: path.display().to_string(),
+                    source: "folder".into(),
+                });
             }
         }
     }
@@ -330,7 +371,10 @@ pub(crate) fn status(selected: &str, sources: &Sources, os: Os) -> UnityStatus {
     let mut selected_missing = false;
     if !selected_path.is_empty() {
         let key = dedupe_key(&selected_path, os);
-        if !editors.iter().any(|editor| dedupe_key(&editor.path, os) == key) {
+        if !editors
+            .iter()
+            .any(|editor| dedupe_key(&editor.path, os) == key)
+        {
             if Path::new(&selected_path).is_file() {
                 editors.push(UnityEditor {
                     version: version_from_path(&selected_path),
@@ -343,7 +387,13 @@ pub(crate) fn status(selected: &str, sources: &Sources, os: Os) -> UnityStatus {
             }
         }
     }
-    UnityStatus { editors, selected_path, selected_missing, hub_found, searched }
+    UnityStatus {
+        editors,
+        selected_path,
+        selected_missing,
+        hub_found,
+        searched,
+    }
 }
 
 #[cfg(test)]
@@ -364,8 +414,14 @@ mod tests {
         assert_eq!(
             parse_editors_v2(json),
             vec![
-                ("2022.3.22f1".into(), r"C:\Program Files\Unity\Hub\Editor\2022.3.22f1\Editor\Unity.exe".into()),
-                ("6000.0.33f1".into(), r"D:\Editors\6000.0.33f1\Editor\Unity.exe".into()),
+                (
+                    "2022.3.22f1".into(),
+                    r"C:\Program Files\Unity\Hub\Editor\2022.3.22f1\Editor\Unity.exe".into()
+                ),
+                (
+                    "6000.0.33f1".into(),
+                    r"D:\Editors\6000.0.33f1\Editor\Unity.exe".into()
+                ),
             ]
         );
         assert!(parse_editors_v2(r#"{"schema_version":"2","data":[]}"#).is_empty());
@@ -385,7 +441,10 @@ mod tests {
         assert_eq!(
             parsed,
             vec![
-                ("2019.4.31f1".into(), "/opt/a/2019.4.31f1/Editor/Unity".into()),
+                (
+                    "2019.4.31f1".into(),
+                    "/opt/a/2019.4.31f1/Editor/Unity".into()
+                ),
                 ("2021.3.8f1".into(), "/opt/b/Editor/Unity".into()),
             ]
         );
@@ -394,7 +453,10 @@ mod tests {
 
     #[test]
     fn parses_secondary_install_path() {
-        assert_eq!(parse_secondary_install_path(r#""D:\\Unity""#), Some(r"D:\Unity".into()));
+        assert_eq!(
+            parse_secondary_install_path(r#""D:\\Unity""#),
+            Some(r"D:\Unity".into())
+        );
         assert_eq!(parse_secondary_install_path(r#""""#), None);
         assert_eq!(parse_secondary_install_path(""), None);
         assert_eq!(parse_secondary_install_path("{}"), None);
@@ -403,17 +465,35 @@ mod tests {
     #[test]
     fn builds_executable_paths_per_os() {
         let root = Path::new("root");
-        assert_eq!(executable_in(root, "2022.3.22f1", Os::Windows), root.join("2022.3.22f1").join("Editor").join("Unity.exe"));
-        assert_eq!(executable_in(root, "2022.3.22f1", Os::Linux), root.join("2022.3.22f1").join("Editor").join("Unity"));
+        assert_eq!(
+            executable_in(root, "2022.3.22f1", Os::Windows),
+            root.join("2022.3.22f1").join("Editor").join("Unity.exe")
+        );
+        assert_eq!(
+            executable_in(root, "2022.3.22f1", Os::Linux),
+            root.join("2022.3.22f1").join("Editor").join("Unity")
+        );
         assert_eq!(
             executable_in(root, "2022.3.22f1", Os::Macos),
-            root.join("2022.3.22f1").join("Unity.app").join("Contents").join("MacOS").join("Unity")
+            root.join("2022.3.22f1")
+                .join("Unity.app")
+                .join("Contents")
+                .join("MacOS")
+                .join("Unity")
         );
         assert_eq!(
-            normalize_location("/Applications/Unity/Hub/Editor/2022.3.22f1/Unity.app/", Os::Macos),
-            PathBuf::from("/Applications/Unity/Hub/Editor/2022.3.22f1/Unity.app/Contents/MacOS/Unity")
+            normalize_location(
+                "/Applications/Unity/Hub/Editor/2022.3.22f1/Unity.app/",
+                Os::Macos
+            ),
+            PathBuf::from(
+                "/Applications/Unity/Hub/Editor/2022.3.22f1/Unity.app/Contents/MacOS/Unity"
+            )
         );
-        assert_eq!(normalize_location("/x/Unity.app", Os::Linux), PathBuf::from("/x/Unity.app"));
+        assert_eq!(
+            normalize_location("/x/Unity.app", Os::Linux),
+            PathBuf::from("/x/Unity.app")
+        );
     }
 
     #[test]
@@ -424,17 +504,30 @@ mod tests {
         assert!(is_unity_version("2023.1.0b5"));
         assert!(!is_unity_version("Editor"));
         assert!(!is_unity_version("2022.3"));
-        assert_eq!(version_from_path(r"C:\Program Files\Unity\Hub\Editor\2022.3.22f1\Editor\Unity.exe"), "2022.3.22f1");
+        assert_eq!(
+            version_from_path(r"C:\Program Files\Unity\Hub\Editor\2022.3.22f1\Editor\Unity.exe"),
+            "2022.3.22f1"
+        );
         assert_eq!(version_from_path("/opt/unity/Editor/Unity"), "");
-        assert!(is_editor_file_name(Path::new(r"C:\x\UNITY.EXE"), Os::Windows));
-        assert!(!is_editor_file_name(Path::new(r"C:\x\Unity Hub.exe"), Os::Windows));
+        assert!(is_editor_file_name(
+            Path::new(r"C:\x\UNITY.EXE"),
+            Os::Windows
+        ));
+        assert!(!is_editor_file_name(
+            Path::new(r"C:\x\Unity Hub.exe"),
+            Os::Windows
+        ));
         assert!(is_editor_file_name(Path::new("/x/Unity"), Os::Linux));
         assert!(!is_editor_file_name(Path::new("/x/unityhub"), Os::Linux));
     }
 
     #[test]
     fn merges_duplicates_and_sorts_newest_first() {
-        let editor = |version: &str, path: &str, source: &str| UnityEditor { version: version.into(), path: path.into(), source: source.into() };
+        let editor = |version: &str, path: &str, source: &str| UnityEditor {
+            version: version.into(),
+            path: path.into(),
+            source: source.into(),
+        };
         let merged = merge_editors(
             vec![
                 editor("2022.3.22f1", r"C:\U\2022.3.22f1\Editor\Unity.exe", "hub"),
@@ -445,8 +538,19 @@ mod tests {
             ],
             Os::Windows,
         );
-        let versions: Vec<_> = merged.iter().map(|e| (e.version.as_str(), e.source.as_str())).collect();
-        assert_eq!(versions, vec![("6000.0.33f1", "hub"), ("2022.3.22f1", "hub"), ("2022.3.6f1", "folder"), ("", "manual")]);
+        let versions: Vec<_> = merged
+            .iter()
+            .map(|e| (e.version.as_str(), e.source.as_str()))
+            .collect();
+        assert_eq!(
+            versions,
+            vec![
+                ("6000.0.33f1", "hub"),
+                ("2022.3.22f1", "hub"),
+                ("2022.3.6f1", "folder"),
+                ("", "manual")
+            ]
+        );
     }
 
     #[test]
@@ -457,10 +561,20 @@ mod tests {
         let secondary = dir.path().join("Secondary");
         let os = Os::Linux;
         // Hub に記録され、実在する
-        let recorded = dir.path().join("Elsewhere").join("2022.3.22f1").join("Editor").join("Unity");
+        let recorded = dir
+            .path()
+            .join("Elsewhere")
+            .join("2022.3.22f1")
+            .join("Editor")
+            .join("Unity");
         touch(&recorded);
         // Hub に記録されているが、消えている
-        let stale = dir.path().join("Gone").join("2019.4.31f1").join("Editor").join("Unity");
+        let stale = dir
+            .path()
+            .join("Gone")
+            .join("2019.4.31f1")
+            .join("Editor")
+            .join("Unity");
         // 既定と追加のインストール先
         touch(&executable_in(&default_root, "2022.3.6f1", os));
         touch(&executable_in(&secondary, "6000.0.33f1", os));
@@ -476,21 +590,43 @@ mod tests {
             .to_string(),
         )
         .unwrap();
-        std::fs::write(hub.join("secondaryInstallPath.json"), serde_json::to_string(&secondary.display().to_string()).unwrap()).unwrap();
+        std::fs::write(
+            hub.join("secondaryInstallPath.json"),
+            serde_json::to_string(&secondary.display().to_string()).unwrap(),
+        )
+        .unwrap();
 
-        let sources = Sources { hub_dir: Some(hub.clone()), default_root: Some(default_root.clone()) };
+        let sources = Sources {
+            hub_dir: Some(hub.clone()),
+            default_root: Some(default_root.clone()),
+        };
         let (editors, hub_found, searched) = detect(&sources, os);
         assert!(hub_found);
         assert_eq!(searched.len(), 3);
-        let summary: Vec<_> = editors.iter().map(|e| (e.version.as_str(), e.source.as_str())).collect();
-        assert_eq!(summary, vec![("6000.0.33f1", "folder"), ("2022.3.22f1", "hub"), ("2022.3.6f1", "folder")]);
+        let summary: Vec<_> = editors
+            .iter()
+            .map(|e| (e.version.as_str(), e.source.as_str()))
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                ("6000.0.33f1", "folder"),
+                ("2022.3.22f1", "hub"),
+                ("2022.3.6f1", "folder")
+            ]
+        );
 
         // 検出に無いが実在するファイルは手動として足す。消えたパスは missing。
         let manual = dir.path().join("Custom").join("Editor").join("Unity");
         touch(&manual);
         let with_manual = status(&manual.display().to_string(), &sources, os);
         assert!(!with_manual.selected_missing);
-        assert!(with_manual.editors.iter().any(|e| e.source == "manual" && e.path == manual.display().to_string()));
+        assert!(
+            with_manual
+                .editors
+                .iter()
+                .any(|e| e.source == "manual" && e.path == manual.display().to_string())
+        );
         let missing = status(&stale.display().to_string(), &sources, os);
         assert!(missing.selected_missing);
         assert_eq!(missing.editors.len(), 3);
@@ -503,8 +639,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let exe = dir.path().join("2022.3.22f1").join("Editor").join("Unity");
         touch(&exe);
-        assert_eq!(validate_manual(&exe.display().to_string(), Os::Linux).unwrap(), exe);
-        assert!(validate_manual(&dir.path().join("Unity").display().to_string(), Os::Linux).is_err());
+        assert_eq!(
+            validate_manual(&exe.display().to_string(), Os::Linux).unwrap(),
+            exe
+        );
+        assert!(
+            validate_manual(&dir.path().join("Unity").display().to_string(), Os::Linux).is_err()
+        );
         let other = dir.path().join("unityhub");
         touch(&other);
         assert!(validate_manual(&other.display().to_string(), Os::Linux).is_err());

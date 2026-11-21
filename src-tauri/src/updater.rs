@@ -136,7 +136,11 @@ fn emit_status<R: Runtime>(app: &AppHandle<R>, status: &Status) {
     let _ = app.emit("updater-changed", status.clone());
 }
 
-pub async fn check<R: Runtime>(app: &AppHandle<R>, state: &UpdateState, manual: bool) -> Result<Status, String> {
+pub async fn check<R: Runtime>(
+    app: &AppHandle<R>,
+    state: &UpdateState,
+    manual: bool,
+) -> Result<Status, String> {
     {
         let mut inner = state.lock()?;
         inner.ensure_idle()?;
@@ -199,7 +203,10 @@ pub async fn check<R: Runtime>(app: &AppHandle<R>, state: &UpdateState, manual: 
     Ok(status)
 }
 
-pub async fn download<R: Runtime>(app: &AppHandle<R>, state: &UpdateState) -> Result<Status, String> {
+pub async fn download<R: Runtime>(
+    app: &AppHandle<R>,
+    state: &UpdateState,
+) -> Result<Status, String> {
     let mut update = {
         let mut inner = state.lock()?;
         inner.ensure_idle()?;
@@ -251,7 +258,10 @@ pub async fn download<R: Runtime>(app: &AppHandle<R>, state: &UpdateState) -> Re
     Ok(status)
 }
 
-pub async fn install<R: Runtime>(app: &AppHandle<R>, state: &UpdateState) -> Result<Status, String> {
+pub async fn install<R: Runtime>(
+    app: &AppHandle<R>,
+    state: &UpdateState,
+) -> Result<Status, String> {
     let (update, bytes) = {
         let mut inner = state.lock()?;
         inner.ensure_idle()?;
@@ -472,7 +482,10 @@ mod tests {
                 include_bytes!("../test-fixtures/updater/payload.txt")
             );
             // Repeated download does not re-fetch or discard the verified package.
-            assert_eq!(download(&app.handle(), &state).await.unwrap().phase, Phase::Ready);
+            assert_eq!(
+                download(&app.handle(), &state).await.unwrap().phase,
+                Phase::Ready
+            );
         });
         sender.join().unwrap();
     }

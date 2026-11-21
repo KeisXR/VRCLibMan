@@ -3,8 +3,8 @@
 
 use crate::library_walk;
 use crate::model::UNAVAILABLE_DESCRIPTION;
-use reqwest::header::{ACCEPT, CONTENT_TYPE, LOCATION, USER_AGENT};
 use reqwest::StatusCode;
+use reqwest::header::{ACCEPT, CONTENT_TYPE, LOCATION, USER_AGENT};
 use serde_json::Value;
 use std::time::Duration;
 use url::Url;
@@ -82,7 +82,12 @@ pub fn is_item_json_url(url: &Url) -> bool {
         && url.path().contains("/items/")
 }
 
-pub fn classify_http(status: u16, final_url: &str, content_type: &str, body: &str) -> DetailOutcome {
+pub fn classify_http(
+    status: u16,
+    final_url: &str,
+    content_type: &str,
+    body: &str,
+) -> DetailOutcome {
     gate_http(status, final_url, content_type, body).unwrap_or_else(|| interpret_json(body))
 }
 
@@ -180,23 +185,37 @@ pub(crate) enum ItemDocument {
     Again,
 }
 
-pub(crate) async fn fetch_item_document(booth_id: &str) -> Result<(Option<u16>, ItemDocument), String> {
-    let mut current = item_json_url(booth_id)?;
-    let client = reqwest::Client::builder()
+/// The client for public item documents. It keeps no cookies and follows no redirect by itself.
+fn public_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(20))
         .connect_timeout(Duration::from_secs(10))
         .build()
-        .map_err(|_| "商品情報を確認できません".to_string())?;
+        .map_err(|_| "商品情報を確認できません".to_string())
+}
+
+/// The one request this module sends, also for the free file list, the asset update check and
+/// gift prices. It says what it wants and which app asks; nothing in it identifies the user.
+/// A test sends it to a local server and reads the headers that arrive.
+fn public_request(client: &reqwest::Client, url: Url) -> reqwest::RequestBuilder {
+    client
+        .get(url)
+        .header(ACCEPT, "application/json")
+        .header(USER_AGENT, "VRCLibMan")
+}
+
+pub(crate) async fn fetch_item_document(
+    booth_id: &str,
+) -> Result<(Option<u16>, ItemDocument), String> {
+    let mut current = item_json_url(booth_id)?;
+    let client = public_client()?;
     let mut last_status = None;
     for _ in 0..3 {
         if age_gate_url(&current) || !is_item_json_url(&current) {
             return Ok((last_status, ItemDocument::AgeGate));
         }
-        let response = client
-            .get(current.clone())
-            .header(ACCEPT, "application/json")
-            .header(USER_AGENT, "VRCLibMan")
+        let response = public_request(&client, current.clone())
             .send()
             .await
             .map_err(|_| "商品情報を確認できません".to_string())?;
@@ -265,7 +284,11 @@ pub async fn fetch_public_item(booth_id: &str) -> Result<FetchReport, String> {
 /// Last four digits only. The line never includes the title, description, tags, or shop.
 pub fn id_tail(booth_id: &str) -> &str {
     let len = booth_id.len();
-    if len <= 4 { booth_id } else { &booth_id[len - 4..] }
+    if len <= 4 {
+        booth_id
+    } else {
+        &booth_id[len - 4..]
+    }
 }
 
 pub fn detail_log_line(
@@ -295,10 +318,7 @@ pub fn unavailable_description() -> &'static str {
 }
 
 fn is_redirect(status: StatusCode) -> bool {
-    matches!(
-        status.as_u16(),
-        301 | 302 | 303 | 307 | 308
-    )
+    matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308)
 }
 
 fn shop_name(value: Option<&Value>) -> String {
@@ -400,15 +420,30 @@ mod tests {
         );
         assert_eq!(html, DetailOutcome::AgeGate);
         assert_eq!(
-            classify_http(401, "https://booth.pm/ja/items/424242.json", "text/html", ""),
+            classify_http(
+                401,
+                "https://booth.pm/ja/items/424242.json",
+                "text/html",
+                ""
+            ),
             DetailOutcome::AgeGate
         );
         assert_eq!(
-            classify_http(404, "https://booth.pm/ja/items/424242.json", "application/json", ""),
+            classify_http(
+                404,
+                "https://booth.pm/ja/items/424242.json",
+                "application/json",
+                ""
+            ),
             DetailOutcome::Missing
         );
         assert_eq!(
-            classify_http(429, "https://booth.pm/ja/items/424242.json", "application/json", ""),
+            classify_http(
+                429,
+                "https://booth.pm/ja/items/424242.json",
+                "application/json",
+                ""
+            ),
             DetailOutcome::RetryLater
         );
     }
@@ -486,12 +521,57 @@ mod tests {
         );
     }
 
+    /// What a real server receives. The first answer sets a cookie and redirects; the client
+    /// must not follow it by itself, and the next request must not carry the cookie back.
     #[test]
-    fn the_fetcher_does_not_attach_a_browser_session() {
-        let source = include_str!("booth_detail.rs");
-        let production = source.split("mod tests").next().unwrap().to_ascii_lowercase();
-        assert!(!production.contains("cookie"));
-        assert!(!production.contains("credentials"));
-        assert!(production.contains("policy::none"));
+    fn the_fetcher_sends_no_cookie_even_after_a_response_sets_one() {
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let port = server.server_addr().to_ip().unwrap().port();
+        let seen = std::thread::spawn(move || {
+            let mut seen = Vec::new();
+            for _ in 0..2 {
+                let request = server.recv().unwrap();
+                seen.push((
+                    request.url().to_string(),
+                    request
+                        .headers()
+                        .iter()
+                        .map(|header| header.field.to_string().to_ascii_lowercase())
+                        .collect::<Vec<_>>(),
+                ));
+                let header = |text: &str| text.parse::<tiny_http::Header>().unwrap();
+                let response = tiny_http::Response::from_string("{}")
+                    .with_status_code(302)
+                    .with_header(header("Set-Cookie: _plaza_session_nktz7u=secret; Path=/"))
+                    .with_header(header("Location: /somewhere-else"));
+                request.respond(response).unwrap();
+            }
+            seen
+        });
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/ja/items/1234.json")).unwrap();
+        tauri::async_runtime::block_on(async {
+            let client = public_client().unwrap();
+            for _ in 0..2 {
+                let response = public_request(&client, url.clone()).send().await.unwrap();
+                assert_eq!(
+                    response.status().as_u16(),
+                    302,
+                    "the redirect is not followed"
+                );
+                assert!(response.headers().contains_key("set-cookie"));
+            }
+        });
+        let seen = seen.join().unwrap();
+        assert_eq!(seen.len(), 2);
+        for (path, headers) in &seen {
+            assert_eq!(path, "/ja/items/1234.json");
+            for forbidden in ["cookie", "authorization", "referer", "origin"] {
+                assert!(
+                    !headers.iter().any(|name| name == forbidden),
+                    "{forbidden} was sent: {headers:?}"
+                );
+            }
+            assert!(headers.iter().any(|name| name == "user-agent"));
+        }
     }
 }

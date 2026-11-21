@@ -1,10 +1,9 @@
 use crate::AppState;
 use crate::db::{self, ExtractJob};
 use crate::model::{
-    AvatarInput, BaseBodyInput, CatalogInfo, CatalogRefresh, ClassificationSnapshot,
-    RegisterOwnedBodyResult,
-    ExtractReport, ImportReport, Knowledge, LibraryStats, ProductUpdate,
-    ScanReport, Category, Settings, SettingsInput, SetupStatus, StagedLeftover,
+    AvatarInput, BaseBodyInput, CatalogInfo, CatalogRefresh, Category, ClassificationSnapshot,
+    ExtractReport, ImportReport, Knowledge, LibraryStats, ProductUpdate, RegisterOwnedBodyResult,
+    ScanReport, Settings, SettingsInput, SetupStatus, StagedLeftover,
 };
 use crate::scan;
 use crate::view::{
@@ -106,7 +105,11 @@ pub fn take_extension_route(view: tauri::Webview, state: State<'_, AppState>) ->
     if view.label() != "main" {
         return None;
     }
-    state.extension_route.lock().ok().and_then(|mut pending| pending.take())
+    state
+        .extension_route
+        .lock()
+        .ok()
+        .and_then(|mut pending| pending.take())
 }
 
 #[tauri::command]
@@ -137,23 +140,33 @@ fn extension_link_view(state: &AppState, token: &str) -> crate::model::Extension
 }
 
 #[tauri::command(async)]
-pub fn integration_status(state: State<'_, AppState>) -> Result<crate::integration::IntegrationStatus, String> {
+pub fn integration_status(
+    state: State<'_, AppState>,
+) -> Result<crate::integration::IntegrationStatus, String> {
     let connection = db(&state)?;
     crate::integration::status(&connection)
 }
 
 #[tauri::command]
-pub fn extension_package_status(app: AppHandle) -> Result<crate::extension_package::PackageStatus, String> {
+pub fn extension_package_status(
+    app: AppHandle,
+) -> Result<crate::extension_package::PackageStatus, String> {
     crate::extension_package::status(&app)
 }
 
 #[tauri::command]
-pub fn install_extension_package(app: AppHandle) -> Result<crate::extension_package::PackageStatus, String> {
+pub fn install_extension_package(
+    app: AppHandle,
+) -> Result<crate::extension_package::PackageStatus, String> {
     crate::extension_package::install(&app)
 }
 
 #[tauri::command]
-pub fn set_booth_import_mode(app: AppHandle, state: State<'_, AppState>, mode: String) -> Result<(), String> {
+pub fn set_booth_import_mode(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    mode: String,
+) -> Result<(), String> {
     let mut connection = db(&state)?;
     crate::integration::set_mode(&mut connection, &mode)?;
     drop(connection);
@@ -196,8 +209,8 @@ pub fn library_stats(state: State<'_, AppState>) -> Result<LibraryStats, String>
 
 #[tauri::command(async)]
 pub fn list_avatars(state: State<'_, AppState>) -> Result<Vec<AvatarCard>, String> {
-    let mut connection = db(&state)?;
-    let snapshot = db::load_snapshot(&mut connection)?;
+    let connection = db(&state)?;
+    let snapshot = db::load_snapshot(&connection)?;
     Ok(view::avatar_cards(&snapshot))
 }
 
@@ -207,34 +220,44 @@ pub fn list_products_by_category(
     category: String,
 ) -> Result<Vec<ItemView>, String> {
     let category = Category::parse(&category).ok_or_else(|| "商品の種類が不正です".to_string())?;
-    let mut connection = db(&state)?;
+    let connection = db(&state)?;
     let ids = db::product_ids_by_category(&connection, category)?;
-    let mut snapshot = db::load_snapshot(&mut connection)?;
-    let remote = db::settings(&mut connection)?.remote_library_folder;
+    let mut snapshot = db::load_snapshot(&connection)?;
+    let remote = db::settings(&connection)?.remote_library_folder;
     crate::library_files::fill_local_places(&mut snapshot, &remote);
     Ok(view::products_by_ids(&snapshot, &ids))
 }
 
 #[tauri::command(async)]
-pub fn list_products_by_genre(state: State<'_, AppState>, kind: String, genre: Option<String>) -> Result<GenreProducts, String> {
-    let mut connection = db(&state)?;
-    let genres = crate::genre::kind_genres(&kind).ok_or_else(|| "ジャンルの種類が不正です".to_string())?;
+pub fn list_products_by_genre(
+    state: State<'_, AppState>,
+    kind: String,
+    genre: Option<String>,
+) -> Result<GenreProducts, String> {
+    let connection = db(&state)?;
+    let genres =
+        crate::genre::kind_genres(&kind).ok_or_else(|| "ジャンルの種類が不正です".to_string())?;
     let all_ids = db::product_ids_by_genre(&connection, &kind, None)?;
-    let mut snapshot = db::load_snapshot(&mut connection)?;
-    let remote = db::settings(&mut connection)?.remote_library_folder;
+    let mut snapshot = db::load_snapshot(&connection)?;
+    let remote = db::settings(&connection)?.remote_library_folder;
     crate::library_files::fill_local_places(&mut snapshot, &remote);
-    Ok(view::genre_products(&snapshot, genres, &all_ids, genre.as_deref()))
+    Ok(view::genre_products(
+        &snapshot,
+        genres,
+        &all_ids,
+        genre.as_deref(),
+    ))
 }
 
 fn load_avatar(app: &AppHandle, id: &str, probe_remote: bool) -> Result<AvatarDetail, String> {
     let state = app.state::<AppState>();
     let (mut snapshot, remote) = {
-        let mut connection = state
+        let connection = state
             .db
             .lock()
             .map_err(|_| "データベースをロックできません".to_string())?;
-        let snapshot = db::load_snapshot(&mut connection)?;
-        let remote = db::settings(&mut connection)?.remote_library_folder;
+        let snapshot = db::load_snapshot(&connection)?;
+        let remote = db::settings(&connection)?.remote_library_folder;
         (snapshot, remote)
     };
     if probe_remote {
@@ -286,12 +309,12 @@ fn probe_remote_products_blocking(
     }
     let state = app.state::<AppState>();
     let (mut snapshot, remote) = {
-        let mut connection = state
+        let connection = state
             .db
             .lock()
             .map_err(|_| "データベースをロックできません".to_string())?;
-        let snapshot = db::load_snapshot(&mut connection)?;
-        let remote = db::settings(&mut connection)?.remote_library_folder;
+        let snapshot = db::load_snapshot(&connection)?;
+        let remote = db::settings(&connection)?.remote_library_folder;
         (snapshot, remote)
     };
     let probes = crate::library_files::probe_remote_for_products(&mut snapshot, &remote, &ids);
@@ -305,10 +328,7 @@ pub fn get_booth_page_interval(state: State<'_, AppState>) -> Result<u64, String
 }
 
 #[tauri::command]
-pub fn set_booth_page_interval(
-    state: State<'_, AppState>,
-    interval_ms: u64,
-) -> Result<(), String> {
+pub fn set_booth_page_interval(state: State<'_, AppState>, interval_ms: u64) -> Result<(), String> {
     if crate::browser::library_walk_running() {
         return Err("インポート中はアクセス間隔を変更できません".into());
     }
@@ -323,7 +343,11 @@ fn unity_status_blocking(app: &AppHandle) -> Result<crate::unity::UnityStatus, S
         db::unity_editor_path(&connection)?
     };
     let os = crate::unity::Os::current();
-    Ok(crate::unity::status(&selected, &crate::unity::Sources::for_current_os(), os))
+    Ok(crate::unity::status(
+        &selected,
+        &crate::unity::Sources::for_current_os(),
+        os,
+    ))
 }
 
 /// インストール済みの Unity を検出する。Unity Hub の記録ファイルと既定のフォルダを読むだけ。
@@ -349,7 +373,9 @@ pub async fn set_unity_editor(
         let value = if path.trim().is_empty() {
             String::new()
         } else {
-            crate::unity::validate_manual(&path, os)?.display().to_string()
+            crate::unity::validate_manual(&path, os)?
+                .display()
+                .to_string()
         };
         {
             let state = app.state::<AppState>();
@@ -381,7 +407,11 @@ pub fn list_unlinked_files(
 ) -> Result<UnlinkedFilesPage, String> {
     let connection = db(&state)?;
     let snapshot = db::load_snapshot(&connection)?;
-    Ok(view::unlinked_files_page(&snapshot, offset, limit.clamp(1, 200)))
+    Ok(view::unlinked_files_page(
+        &snapshot,
+        offset,
+        limit.clamp(1, 200),
+    ))
 }
 
 #[tauri::command(async)]
@@ -453,8 +483,8 @@ pub fn list_product_options(state: State<'_, AppState>) -> Result<Vec<ProductOpt
 
 #[tauri::command(async)]
 pub fn list_knowledge(state: State<'_, AppState>) -> Result<Knowledge, String> {
-    let mut connection = db(&state)?;
-    db::knowledge(&mut connection)
+    let connection = db(&state)?;
+    db::knowledge(&connection)
 }
 
 #[tauri::command]
@@ -471,15 +501,18 @@ pub fn retry_remote_sync(app: AppHandle) -> Result<(), String> {
 
 /// Library search over each product's stored text, including the whole description.
 #[tauri::command(async)]
-pub fn search_product_ids(state: State<'_, AppState>, query: String) -> Result<Vec<String>, String> {
+pub fn search_product_ids(
+    state: State<'_, AppState>,
+    query: String,
+) -> Result<Vec<String>, String> {
     let connection = db(&state)?;
     crate::search::product_ids(&connection, &query)
 }
 
 #[tauri::command(async)]
 pub fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
-    let mut connection = db(&state)?;
-    db::settings(&mut connection)
+    let connection = db(&state)?;
+    db::settings(&connection)
 }
 
 /// Off the UI thread: a save waits for the database and the disk, and the native pages in the
@@ -506,11 +539,19 @@ pub fn save_settings(
 /// removed by the thread that made it), so the settings commands, which run off it, hand this
 /// step back and wait. Never call this while holding the database lock: a command running on the
 /// UI thread may be waiting for that lock.
-fn apply_presence_on_ui(app: &AppHandle, background_mode: bool, launch_at_login: bool) -> Result<(), String> {
+fn apply_presence_on_ui(
+    app: &AppHandle,
+    background_mode: bool,
+    launch_at_login: bool,
+) -> Result<(), String> {
     let (sender, receiver) = std::sync::mpsc::channel();
     let handle = app.clone();
     app.run_on_main_thread(move || {
-        let _ = sender.send(crate::presence::apply_presence(&handle, background_mode, launch_at_login));
+        let _ = sender.send(crate::presence::apply_presence(
+            &handle,
+            background_mode,
+            launch_at_login,
+        ));
     })
     .map_err(|err| format!("画面の処理を予約できません: {err}"))?;
     receiver
@@ -540,7 +581,8 @@ pub fn update_settings(
         crate::remote_sync::wake(&app);
     }
     if presence_changed {
-        if let Err(error) = apply_presence_on_ui(&app, saved.background_mode, saved.launch_at_login) {
+        if let Err(error) = apply_presence_on_ui(&app, saved.background_mode, saved.launch_at_login)
+        {
             {
                 let connection = db(&state)?;
                 db::update_settings(
@@ -579,14 +621,21 @@ pub async fn list_directory(
 }
 
 /// `name（title）` for product folders and registered files. Titles come from the local DB only.
-fn add_folder_labels(app: &AppHandle, listing: &mut crate::file_browser::DirListing) -> Result<(), String> {
+fn add_folder_labels(
+    app: &AppHandle,
+    listing: &mut crate::file_browser::DirListing,
+) -> Result<(), String> {
     let state = app.state::<AppState>();
     let connection = db(&state)?;
     let has_files = listing
         .entries
         .iter()
         .any(|entry| entry.kind == crate::file_browser::EntryKind::File);
-    let linked = if has_files { db::linked_file_products(&connection)? } else { Vec::new() };
+    let linked = if has_files {
+        db::linked_file_products(&connection)?
+    } else {
+        Vec::new()
+    };
     let ids = crate::file_browser::label_ids(listing, &linked);
     if ids.is_empty() {
         return Ok(());
@@ -598,11 +647,16 @@ fn add_folder_labels(app: &AppHandle, listing: &mut crate::file_browser::DirList
 
 /// File tab: a zip file's entries from its central directory. Nothing is extracted.
 #[tauri::command]
-pub async fn list_zip_entries(app: AppHandle, path: String) -> Result<crate::file_browser::ZipListing, String> {
+pub async fn list_zip_entries(
+    app: AppHandle,
+    path: String,
+) -> Result<crate::file_browser::ZipListing, String> {
     let (library, remote) = library_roots(&app)?;
-    tauri::async_runtime::spawn_blocking(move || crate::file_browser::list_zip(&path, &library, &remote))
-        .await
-        .map_err(|err| format!("zip を読めません: {err}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::file_browser::list_zip(&path, &library, &remote)
+    })
+    .await
+    .map_err(|err| format!("zip を読めません: {err}"))?
 }
 
 fn library_roots(app: &AppHandle) -> Result<(String, String), String> {
@@ -783,9 +837,20 @@ impl From<crate::library_files::CopyOutcome> for CopyResult {
     fn from(outcome: crate::library_files::CopyOutcome) -> Self {
         use crate::library_files::CopyOutcome;
         match outcome {
-            CopyOutcome::Copied => Self { status: "copied", source_size: None, existing_size: None },
-            CopyOutcome::AlreadyThere => Self { status: "already", source_size: None, existing_size: None },
-            CopyOutcome::Conflict { source_size, existing_size } => Self {
+            CopyOutcome::Copied => Self {
+                status: "copied",
+                source_size: None,
+                existing_size: None,
+            },
+            CopyOutcome::AlreadyThere => Self {
+                status: "already",
+                source_size: None,
+                existing_size: None,
+            },
+            CopyOutcome::Conflict {
+                source_size,
+                existing_size,
+            } => Self {
                 status: "conflict",
                 source_size: Some(source_size),
                 existing_size: Some(existing_size),
@@ -796,10 +861,12 @@ impl From<crate::library_files::CopyOutcome> for CopyResult {
 
 fn finish_copy(progress: &ProgressGuard, filename: &str, result: &Result<CopyResult, String>) {
     match result {
-        Ok(result) if result.status == "conflict" => {
-            progress.done(format!("{filename} は同じ名前の別のファイルがあるため、コピーしませんでした"))
+        Ok(result) if result.status == "conflict" => progress.done(format!(
+            "{filename} は同じ名前の別のファイルがあるため、コピーしませんでした"
+        )),
+        Ok(result) if result.status == "already" => {
+            progress.done(format!("{filename} はコピー先にあります"))
         }
-        Ok(result) if result.status == "already" => progress.done(format!("{filename} はコピー先にあります")),
         Ok(_) => progress.done(format!("{filename} をコピーしました")),
         Err(_) => progress.fail("コピーを中断しました"),
     }
@@ -815,7 +882,11 @@ pub async fn pull_remote_file(
 ) -> Result<CopyResult, String> {
     let label = filename.clone();
     let progress = ProgressGuard::new(app.clone(), "copy");
-    progress.update(0, 1, crate::progress::counted_message("コピー中", 1, 1, &label));
+    progress.update(
+        0,
+        1,
+        crate::progress::counted_message("コピー中", 1, 1, &label),
+    );
     let worker = app.clone();
     let copied = tauri::async_runtime::spawn_blocking(move || {
         let (remote, library) = {
@@ -868,7 +939,11 @@ pub async fn push_remote_file(
 ) -> Result<CopyResult, String> {
     let label = filename.clone();
     let progress = ProgressGuard::new(app.clone(), "copy");
-    progress.update(0, 1, crate::progress::counted_message("コピー中", 1, 1, &label));
+    progress.update(
+        0,
+        1,
+        crate::progress::counted_message("コピー中", 1, 1, &label),
+    );
     let worker = app.clone();
     let copied = tauri::async_runtime::spawn_blocking(move || {
         let (source, remote) = {
@@ -915,12 +990,12 @@ pub async fn push_remote_file(
 
 #[tauri::command]
 pub async fn open_booth_browser(app: tauri::AppHandle) -> Result<(), String> {
-    crate::browser::dispatch_ui(app, |handle| crate::browser::open_browser(handle)).await
+    crate::browser::dispatch_ui(app, crate::browser::open_browser).await
 }
 
 #[tauri::command]
 pub async fn show_booth_library(app: tauri::AppHandle) -> Result<(), String> {
-    crate::browser::dispatch_ui(app, |handle| crate::browser::show_library(handle)).await
+    crate::browser::dispatch_ui(app, crate::browser::show_library).await
 }
 
 #[tauri::command]
@@ -943,8 +1018,8 @@ pub async fn import_booth_page(
     let report = tauri::async_runtime::spawn_blocking(move || {
         crate::browser::import_current_page(&handle, &caller, None)
     })
-        .await
-        .map_err(|err| err.to_string())??;
+    .await
+    .map_err(|err| err.to_string())??;
     let _ = app.emit("library-changed", ());
     Ok(report)
 }
@@ -991,7 +1066,9 @@ pub fn purchase_history(
 }
 
 #[tauri::command(async)]
-pub fn purchase_status(state: State<'_, AppState>) -> Result<crate::purchases::PurchaseStatus, String> {
+pub fn purchase_status(
+    state: State<'_, AppState>,
+) -> Result<crate::purchases::PurchaseStatus, String> {
     let connection = db(&state)?;
     crate::purchases::status(&connection, crate::browser::purchase_walk_running())
 }
@@ -1034,7 +1111,11 @@ pub fn create_purchase_label(
 }
 
 #[tauri::command]
-pub fn rename_purchase_label(state: State<'_, AppState>, id: i64, name: String) -> Result<(), String> {
+pub fn rename_purchase_label(
+    state: State<'_, AppState>,
+    id: i64,
+    name: String,
+) -> Result<(), String> {
     let connection = db(&state)?;
     crate::purchases::rename_label(&connection, id, &name)
 }
@@ -1070,9 +1151,16 @@ pub async fn clear_booth_session(app: tauri::AppHandle) -> Result<(), String> {
     crate::browser::clear_session(&app).await
 }
 
+/// Whether the built-in browser left a profile on this device. The settings screen offers to
+/// delete it even while the feature is off.
+#[tauri::command]
+pub async fn booth_session_stored(app: tauri::AppHandle) -> bool {
+    crate::browser::session_stored(&app).await
+}
+
 #[tauri::command]
 pub async fn close_booth_browser(app: tauri::AppHandle) -> Result<(), String> {
-    crate::browser::dispatch_ui(app, |handle| crate::browser::close_browser(handle)).await
+    crate::browser::dispatch_ui(app, crate::browser::close_browser).await
 }
 
 #[tauri::command]
@@ -1110,16 +1198,22 @@ pub fn asset_update_downloads(
     let requests: Vec<view::UpdateRequest> = requests
         .into_iter()
         .filter(|request| crate::library_files::valid_booth_id(request.booth_id.trim()))
-        .map(|request| view::UpdateRequest { booth_id: request.booth_id.trim().to_string(), ..request })
+        .map(|request| view::UpdateRequest {
+            booth_id: request.booth_id.trim().to_string(),
+            ..request
+        })
         .collect();
     let (mut snapshot, remote) = {
-        let mut connection = db(&state)?;
-        let snapshot = db::load_snapshot(&mut connection)?;
-        let remote = db::settings(&mut connection)?.remote_library_folder;
+        let connection = db(&state)?;
+        let snapshot = db::load_snapshot(&connection)?;
+        let remote = db::settings(&connection)?.remote_library_folder;
         (snapshot, remote)
     };
     // リモートにあるファイルは受け取り直さない。確かめるのは頼まれた商品だけ。
-    let mut ids: Vec<String> = requests.iter().map(|request| request.booth_id.clone()).collect();
+    let mut ids: Vec<String> = requests
+        .iter()
+        .map(|request| request.booth_id.clone())
+        .collect();
     ids.sort();
     ids.dedup();
     crate::library_files::probe_remote_for_products(&mut snapshot, &remote, &ids);
@@ -1160,7 +1254,10 @@ pub async fn fetch_free_files(
         &crate::free_files::log_line(&booth_id, report.http_status, &report.outcome),
     );
     if let Some(message) = crate::free_files::nothing_found(&report.outcome) {
-        return Ok(FreeFilesReport { files: 0, notice: Some(message.to_string()) });
+        return Ok(FreeFilesReport {
+            files: 0,
+            notice: Some(message.to_string()),
+        });
     }
     if let Some(message) = crate::free_files::refusal(&report.outcome) {
         return Err(message.to_string());
@@ -1182,7 +1279,10 @@ pub async fn fetch_free_files(
     .await
     .map_err(|_| "ファイル情報を保存できません".to_string())??;
     let _ = app.emit("library-changed", ());
-    Ok(FreeFilesReport { files: count, notice: None })
+    Ok(FreeFilesReport {
+        files: count,
+        notice: None,
+    })
 }
 
 /// スキャン済みファイルと、記録済みの商品ファイルだけを既定のアプリで開く。
@@ -1273,7 +1373,10 @@ pub fn register_owned_body(
 }
 
 #[tauri::command(async)]
-pub fn classification_feedback(state: State<'_, AppState>, scope: String) -> Result<String, String> {
+pub fn classification_feedback(
+    state: State<'_, AppState>,
+    scope: String,
+) -> Result<String, String> {
     let connection = db(&state)?;
     db::classification_feedback_json(&connection, &scope)
 }
@@ -1353,8 +1456,8 @@ pub fn link_file(
     path: String,
     productId: Option<String>,
 ) -> Result<(), String> {
-    let mut connection = db(&state)?;
-    db::link_file(&mut connection, &path, productId.as_deref())
+    let connection = db(&state)?;
+    db::link_file(&connection, &path, productId.as_deref())
 }
 
 #[tauri::command]
@@ -1416,14 +1519,14 @@ pub fn clear_avatar_hero_image(
 
 #[tauri::command]
 pub fn save_base_body(state: State<'_, AppState>, body: BaseBodyInput) -> Result<String, String> {
-    let mut connection = db(&state)?;
-    db::save_base_body(&mut connection, &body)
+    let connection = db(&state)?;
+    db::save_base_body(&connection, &body)
 }
 
 #[tauri::command]
 pub fn delete_base_body(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    let mut connection = db(&state)?;
-    db::delete_base_body(&mut connection, &id)
+    let connection = db(&state)?;
+    db::delete_base_body(&connection, &id)
 }
 
 #[tauri::command]
@@ -1505,14 +1608,14 @@ pub(crate) async fn run_extract(app: &AppHandle, target: &str) -> Result<Extract
     let _clear = ClearRunning(running);
     let progress = ProgressGuard::new(app.clone(), "extract");
     let (jobs, threshold) = {
-        let mut connection = db(&state)?;
-        let jobs = db::products_for_extract(&mut connection, db::parse_extract_target(&target)?)?;
+        let connection = db(&state)?;
+        let jobs = db::products_for_extract(&connection, db::parse_extract_target(target)?)?;
         (jobs, db::settings(&connection)?.confidence_threshold)
     };
     // The log's run. Each product locks the database and logs on its own, so an edit made
     // between two products is not attributed to this run.
-    let mut run = db::ClassificationRun::new(db::KIND_RECLASSIFY, db::CLASSIFIER_RULES)
-        .with_note(&target);
+    let mut run =
+        db::ClassificationRun::new(db::KIND_RECLASSIFY, db::CLASSIFIER_RULES).with_note(target);
     let total = jobs.len() as u32;
     let mut processed = 0;
     let mut booth_settled = 0;
@@ -1524,7 +1627,7 @@ pub(crate) async fn run_extract(app: &AppHandle, target: &str) -> Result<Extract
             break;
         }
         classify_job(
-            &app,
+            app,
             &state,
             &mut run,
             job,
@@ -1544,7 +1647,7 @@ pub(crate) async fn run_extract(app: &AppHandle, target: &str) -> Result<Extract
         tokio::task::yield_now().await;
     }
     crate::browser::browser_log(
-        &app,
+        app,
         &crate::browser::classification_done_line(processed, booth_settled, rule_filled, cancelled),
     );
     if processed > 0 {
@@ -1557,7 +1660,9 @@ pub(crate) async fn run_extract(app: &AppHandle, target: &str) -> Result<Extract
     } else {
         progress.done_with(
             total,
-            format!("{processed} 件分類（カテゴリとタグ {booth_settled}、タイトルと説明 {rule_filled}）"),
+            format!(
+                "{processed} 件分類（カテゴリとタグ {booth_settled}、タイトルと説明 {rule_filled}）"
+            ),
         );
     }
     Ok(ExtractReport {
@@ -1701,8 +1806,8 @@ pub fn mark_owned_avatar(state: State<'_, AppState>, boothId: String) -> Result<
 #[tauri::command]
 pub async fn cache_thumbnails(app: AppHandle, state: State<'_, AppState>) -> Result<u32, String> {
     let jobs = {
-        let mut connection = db(&state)?;
-        db::thumbnail_jobs(&mut connection)?
+        let connection = db(&state)?;
+        db::thumbnail_jobs(&connection)?
     };
     let progress = ProgressGuard::new(app.clone(), "thumbs");
     let thumbs = state.thumbs_dir.clone();
@@ -1710,10 +1815,10 @@ pub async fn cache_thumbnails(app: AppHandle, state: State<'_, AppState>) -> Res
     let total = jobs.len() as u32;
     let mut saved = 0u32;
     for (index, job) in jobs.iter().enumerate() {
-        if let Some(path) = &job.thumbnail_path {
-            if Path::new(path).is_file() {
-                continue;
-            }
+        if let Some(path) = &job.thumbnail_path
+            && Path::new(path).is_file()
+        {
+            continue;
         }
         progress.update(
             index as u32,
@@ -1724,8 +1829,8 @@ pub async fn cache_thumbnails(app: AppHandle, state: State<'_, AppState>) -> Res
             crate::thumb::download_thumbnail(&client, &job.thumbnail_url, &thumbs, &job.booth_id)
                 .await
         {
-            let mut connection = db(&state)?;
-            db::set_thumbnail_path(&mut connection, &job.booth_id, &path)?;
+            let connection = db(&state)?;
+            db::set_thumbnail_path(&connection, &job.booth_id, &path)?;
             saved += 1;
         }
     }
@@ -1769,7 +1874,9 @@ pub async fn cache_product_preview(
         Err(_) => return Ok(None),
     };
     let directory = state.previews_dir.clone();
-    if let Some(path) = crate::preview_image::cached_preview(&directory, &boothId, original.as_str()) {
+    if let Some(path) =
+        crate::preview_image::cached_preview(&directory, &boothId, original.as_str())
+    {
         return Ok(Some(path.display().to_string()));
     }
     if !download {
@@ -1780,7 +1887,9 @@ pub async fn cache_product_preview(
         Err(_) => return Ok(None),
     };
     let _guard = preview_fetch_lock().lock().await;
-    if let Some(path) = crate::preview_image::cached_preview(&directory, &boothId, original.as_str()) {
+    if let Some(path) =
+        crate::preview_image::cached_preview(&directory, &boothId, original.as_str())
+    {
         return Ok(Some(path.display().to_string()));
     }
     match crate::preview_image::download_preview(&client, &original, &directory, &boothId).await {
@@ -1838,8 +1947,12 @@ pub enum BrowserAction {
         #[serde(default)]
         host_id: Option<String>,
     },
-    SelectTab { tab_id: String },
-    CloseTab { tab_id: String },
+    SelectTab {
+        tab_id: String,
+    },
+    CloseTab {
+        tab_id: String,
+    },
     Back {
         #[serde(default)]
         tab_id: Option<String>,
@@ -1885,9 +1998,19 @@ pub enum BrowserAction {
     /// Move the right panel's pages into one new window.
     Undock,
     /// The right panel's page area, or None while that tab is not on screen.
-    PanelArea { area: Option<PanelRect>, visible: bool },
-    ReorderTabs { host_id: String, tab_ids: Vec<String> },
-    DetachTab { tab_id: String, x: f64, y: f64 },
+    PanelArea {
+        area: Option<PanelRect>,
+        visible: bool,
+    },
+    ReorderTabs {
+        host_id: String,
+        tab_ids: Vec<String>,
+    },
+    DetachTab {
+        tab_id: String,
+        x: f64,
+        y: f64,
+    },
     DockTab {
         tab_id: String,
         #[serde(default)]
@@ -1909,7 +2032,12 @@ fn panel_rect(
     rect: Option<PanelRect>,
 ) -> Result<Option<crate::browser_surface::SurfaceArea>, String> {
     rect.map(|rect| {
-        crate::browser_surface::SurfaceArea::from_panel(rect.left, rect.top, rect.width, rect.height)
+        crate::browser_surface::SurfaceArea::from_panel(
+            rect.left,
+            rect.top,
+            rect.width,
+            rect.height,
+        )
     })
     .transpose()
 }
@@ -1957,7 +2085,11 @@ pub async fn browser_action(
                     None => surface::new_tab(handle, url.as_deref())?,
                 }
             }
-            BrowserAction::Navigate { url, tab_id, host_id } => {
+            BrowserAction::Navigate {
+                url,
+                tab_id,
+                host_id,
+            } => {
                 let id = surface::tab_for_caller(&label, tab_id, host_id)?;
                 surface::navigate_tab(handle, &id, &url)?;
             }
@@ -1987,7 +2119,11 @@ pub async fn browser_action(
                     surface::stop_tab(handle, &id)?;
                 }
             }
-            BrowserAction::Zoom { action, tab_id, host_id } => {
+            BrowserAction::Zoom {
+                action,
+                tab_id,
+                host_id,
+            } => {
                 let id = surface::tab_for_caller(&label, tab_id, host_id)?;
                 surface::zoom_tab(handle, &id, action)?;
             }
@@ -2011,7 +2147,9 @@ pub async fn browser_action(
             BrowserAction::ReorderTabs { host_id, tab_ids } => {
                 surface::reorder(handle, &host_id, &tab_ids)?;
             }
-            BrowserAction::DetachTab { tab_id, x, y } => surface::detach_tab(handle, &tab_id, x, y)?,
+            BrowserAction::DetachTab { tab_id, x, y } => {
+                surface::detach_tab(handle, &tab_id, x, y)?
+            }
             BrowserAction::DockTab { tab_id, index } => surface::dock_tab(handle, &tab_id, index)?,
         }
         surface::state(handle)
@@ -2075,30 +2213,54 @@ mod browser_action_tests {
     #[test]
     fn older_browser_actions_parse_and_new_fields_stay_optional() {
         let action: BrowserAction = serde_json::from_str(r#"{"kind":"newTab"}"#).unwrap();
-        assert!(matches!(action, BrowserAction::NewTab { url: None, host_id: None }));
+        assert!(matches!(
+            action,
+            BrowserAction::NewTab {
+                url: None,
+                host_id: None
+            }
+        ));
         let action: BrowserAction = serde_json::from_str(r#"{"kind":"back"}"#).unwrap();
-        assert!(matches!(action, BrowserAction::Back { tab_id: None, host_id: None }));
+        assert!(matches!(
+            action,
+            BrowserAction::Back {
+                tab_id: None,
+                host_id: None
+            }
+        ));
         let action: BrowserAction = serde_json::from_str(r#"{"kind":"undock"}"#).unwrap();
         assert!(matches!(action, BrowserAction::Undock));
         let action: BrowserAction = serde_json::from_str(r#"{"kind":"dock","area":null}"#).unwrap();
-        assert!(matches!(action, BrowserAction::Dock { area: None, host_id: None }));
+        assert!(matches!(
+            action,
+            BrowserAction::Dock {
+                area: None,
+                host_id: None
+            }
+        ));
         let action: BrowserAction =
-            serde_json::from_str(r#"{"kind":"detachTab","tabId":"booth-tab-1","x":-10.0,"y":4.0}"#).unwrap();
+            serde_json::from_str(r#"{"kind":"detachTab","tabId":"booth-tab-1","x":-10.0,"y":4.0}"#)
+                .unwrap();
         assert!(matches!(
             action,
             BrowserAction::DetachTab { ref tab_id, x, y }
                 if tab_id == "booth-tab-1" && x == -10.0 && y == 4.0
         ));
-        assert!(serde_json::from_str::<BrowserAction>(
-            r#"{"kind":"navigate","url":"https://example.com","extra":1}"#
-        )
-        .is_err());
+        assert!(
+            serde_json::from_str::<BrowserAction>(
+                r#"{"kind":"navigate","url":"https://example.com","extra":1}"#
+            )
+            .is_err()
+        );
     }
 }
 
 #[tauri::command(async)]
 #[allow(non_snake_case)]
-pub fn product_avatar_suggestions(state: State<'_, AppState>, boothId: String) -> Result<db::AvatarSuggestions, String> {
+pub fn product_avatar_suggestions(
+    state: State<'_, AppState>,
+    boothId: String,
+) -> Result<db::AvatarSuggestions, String> {
     let connection = db(&state)?;
     db::product_avatar_suggestions(&connection, &boothId)
 }
@@ -2106,7 +2268,10 @@ pub fn product_avatar_suggestions(state: State<'_, AppState>, boothId: String) -
 /// 「取得した商品の分類」で最初に選んでおく候補。読むだけで保存しない。
 #[tauri::command(async)]
 #[allow(non_snake_case)]
-pub fn product_genre_suggestion(state: State<'_, AppState>, boothId: String) -> Result<db::GenreSuggestion, String> {
+pub fn product_genre_suggestion(
+    state: State<'_, AppState>,
+    boothId: String,
+) -> Result<db::GenreSuggestion, String> {
     let connection = db(&state)?;
     db::product_genre_suggestion(&connection, &boothId)
 }
@@ -2133,7 +2298,10 @@ pub fn browser_auto_finish(
 }
 
 #[tauri::command(async)]
-pub fn asset_update_status(view: tauri::Webview, state: State<'_, AppState>) -> Result<crate::asset_updates::Status, String> {
+pub fn asset_update_status(
+    view: tauri::Webview,
+    state: State<'_, AppState>,
+) -> Result<crate::asset_updates::Status, String> {
     if view.label() != "main" {
         return Err("この画面からアセットの更新を確認する権限がありません".into());
     }
@@ -2142,14 +2310,21 @@ pub fn asset_update_status(view: tauri::Webview, state: State<'_, AppState>) -> 
 }
 
 #[tauri::command(async)]
-pub fn asset_update_history(view: tauri::Webview, state: State<'_, AppState>) -> Result<Vec<crate::asset_updates::UpdateRecord>, String> {
+pub fn asset_update_history(
+    view: tauri::Webview,
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::asset_updates::UpdateRecord>, String> {
     trusted_updater(&view)?;
     let connection = db(&state)?;
     crate::asset_updates::history(&connection)
 }
 
 #[tauri::command]
-pub fn configure_asset_updates(view: tauri::Webview, state: State<'_, AppState>, input: crate::asset_updates::Configure) -> Result<crate::asset_updates::Status, String> {
+pub fn configure_asset_updates(
+    view: tauri::Webview,
+    state: State<'_, AppState>,
+    input: crate::asset_updates::Configure,
+) -> Result<crate::asset_updates::Status, String> {
     if view.label() != "main" {
         return Err("この画面からアセットの更新を確認する権限がありません".into());
     }
@@ -2158,7 +2333,10 @@ pub fn configure_asset_updates(view: tauri::Webview, state: State<'_, AppState>,
 }
 
 #[tauri::command]
-pub async fn check_asset_updates(view: tauri::Webview, app: AppHandle) -> Result<crate::asset_updates::Status, String> {
+pub async fn check_asset_updates(
+    view: tauri::Webview,
+    app: AppHandle,
+) -> Result<crate::asset_updates::Status, String> {
     if view.label() != "main" {
         return Err("この画面からアセットの更新を確認する権限がありません".into());
     }
@@ -2166,22 +2344,46 @@ pub async fn check_asset_updates(view: tauri::Webview, app: AppHandle) -> Result
 }
 
 #[tauri::command]
-pub async fn preview_existing_import(view: tauri::Webview, app: AppHandle, path: String) -> Result<crate::existing_import::Preview, String> {
+pub async fn preview_existing_import(
+    view: tauri::Webview,
+    app: AppHandle,
+    path: String,
+) -> Result<crate::existing_import::Preview, String> {
     trusted_updater(&view)?;
-    let rows={let state=app.state::<AppState>(); let connection=db(&state)?; crate::existing_import::catalog(&connection)?};
-    tauri::async_runtime::spawn_blocking(move || crate::existing_import::preview(rows, Path::new(&path))).await.map_err(|_|"フォルダを調べられません")?
+    let rows = {
+        let state = app.state::<AppState>();
+        let connection = db(&state)?;
+        crate::existing_import::catalog(&connection)?
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::existing_import::preview(rows, Path::new(&path))
+    })
+    .await
+    .map_err(|_| "フォルダを調べられません")?
 }
 #[tauri::command]
-pub async fn register_existing_import(view: tauri::Webview, app: AppHandle, path: String, selections: Vec<crate::existing_import::Selection>, copy: bool) -> Result<crate::existing_import::Report, String> {
+pub async fn register_existing_import(
+    view: tauri::Webview,
+    app: AppHandle,
+    path: String,
+    selections: Vec<crate::existing_import::Selection>,
+    copy: bool,
+) -> Result<crate::existing_import::Report, String> {
     trusted_updater(&view)?;
-    tauri::async_runtime::spawn_blocking(move || crate::existing_import::register(&app,Path::new(&path),selections,copy)).await.map_err(|_|"取り込みを実行できません")?
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::existing_import::register(&app, Path::new(&path), selections, copy)
+    })
+    .await
+    .map_err(|_| "取り込みを実行できません")?
 }
 
 #[cfg(test)]
 mod settings_thread_tests {
     /// Attributes written right above `pub fn {name}(`.
     fn attributes<'a>(source: &'a str, name: &str) -> Vec<&'a str> {
-        let at = source.find(&format!("pub fn {name}(")).unwrap_or_else(|| panic!("{name} exists"));
+        let at = source
+            .find(&format!("pub fn {name}("))
+            .unwrap_or_else(|| panic!("{name} exists"));
         source[..at]
             .lines()
             .rev()
@@ -2196,17 +2398,43 @@ mod settings_thread_tests {
     fn read_commands_run_off_the_ui_thread() {
         let source = include_str!("commands.rs").replace("\r\n", "\n");
         for name in [
-            "library_stats", "list_avatars", "list_products_by_category", "list_products_by_genre",
-            "list_product_options", "list_knowledge", "product_for_edit", "list_unlinked_files",
-            "list_managed_products", "search_product_ids", "get_settings", "get_booth_page_interval",
-            "integration_status", "extension_link", "classification_status", "classification_log_runs",
-            "classification_log_entries", "classification_log_search", "classification_unresolved_names",
-            "classification_feedback", "sync_export_json", "catalog_info", "setup_status",
-            "product_avatar_suggestions", "product_genre_suggestion", "browser_auto_pending",
-            "purchase_history", "purchase_status", "purchase_summary", "asset_update_status",
-            "asset_update_history", "asset_update_downloads",
+            "library_stats",
+            "list_avatars",
+            "list_products_by_category",
+            "list_products_by_genre",
+            "list_product_options",
+            "list_knowledge",
+            "product_for_edit",
+            "list_unlinked_files",
+            "list_managed_products",
+            "search_product_ids",
+            "get_settings",
+            "get_booth_page_interval",
+            "integration_status",
+            "extension_link",
+            "classification_status",
+            "classification_log_runs",
+            "classification_log_entries",
+            "classification_log_search",
+            "classification_unresolved_names",
+            "classification_feedback",
+            "sync_export_json",
+            "catalog_info",
+            "setup_status",
+            "product_avatar_suggestions",
+            "product_genre_suggestion",
+            "browser_auto_pending",
+            "purchase_history",
+            "purchase_status",
+            "purchase_summary",
+            "asset_update_status",
+            "asset_update_history",
+            "asset_update_downloads",
         ] {
-            assert!(attributes(&source, name).contains(&"#[tauri::command(async)]"), "{name} runs off the UI thread");
+            assert!(
+                attributes(&source, name).contains(&"#[tauri::command(async)]"),
+                "{name} runs off the UI thread"
+            );
         }
     }
 
@@ -2215,10 +2443,18 @@ mod settings_thread_tests {
         let source = include_str!("commands.rs").replace("\r\n", "\n");
         for name in ["pub fn save_settings(", "pub fn update_settings("] {
             let at = source.find(name).unwrap();
-            assert!(source[..at].trim_end().ends_with("#[tauri::command(async)]"), "{name} runs off the UI thread");
+            assert!(
+                source[..at]
+                    .trim_end()
+                    .ends_with("#[tauri::command(async)]"),
+                "{name} runs off the UI thread"
+            );
             let body = &source[at..];
             let body = &body[..body.find("\n}\n").unwrap()];
-            assert!(!body.contains("crate::presence::apply_presence("), "{name} changes the tray on the UI thread");
+            assert!(
+                !body.contains("crate::presence::apply_presence("),
+                "{name} changes the tray on the UI thread"
+            );
             assert!(body.contains("apply_presence_on_ui("), "{name}");
         }
         let helper = &source[source.find("fn apply_presence_on_ui(").unwrap()..];

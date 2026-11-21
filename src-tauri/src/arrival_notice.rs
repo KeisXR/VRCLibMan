@@ -234,7 +234,10 @@ pub(crate) fn message(pending: &Pending) -> Option<(String, String)> {
     match pending.files.as_slice() {
         [] => {}
         [Some(title)] => lines.push(format!("「{}」をライブラリに追加しました", short(title))),
-        files => lines.push(format!("{} 件のファイルをライブラリに追加しました", files.len())),
+        files => lines.push(format!(
+            "{} 件のファイルをライブラリに追加しました",
+            files.len()
+        )),
     }
     if pending.added > 0 {
         lines.push(format!("{} 件の商品を追加しました", pending.added));
@@ -274,20 +277,43 @@ mod tests {
 
     #[test]
     fn one_file_names_its_product_and_hidden_titles_are_only_counted() {
-        let one = Pending { files: vec![Some("ふわふわパーカー".into())], ..Default::default() };
+        let one = Pending {
+            files: vec![Some("ふわふわパーカー".into())],
+            ..Default::default()
+        };
         assert_eq!(
             message(&one),
-            Some(("ファイルを追加しました".into(), "「ふわふわパーカー」をライブラリに追加しました".into()))
+            Some((
+                "ファイルを追加しました".into(),
+                "「ふわふわパーカー」をライブラリに追加しました".into()
+            ))
         );
-        let hidden = Pending { files: vec![None], ..Default::default() };
-        assert_eq!(message(&hidden).unwrap().1, "1 件のファイルをライブラリに追加しました");
-        let many = Pending { files: vec![Some("A".into()), None, Some("B".into())], ..Default::default() };
-        assert_eq!(message(&many).unwrap().1, "3 件のファイルをライブラリに追加しました");
+        let hidden = Pending {
+            files: vec![None],
+            ..Default::default()
+        };
+        assert_eq!(
+            message(&hidden).unwrap().1,
+            "1 件のファイルをライブラリに追加しました"
+        );
+        let many = Pending {
+            files: vec![Some("A".into()), None, Some("B".into())],
+            ..Default::default()
+        };
+        assert_eq!(
+            message(&many).unwrap().1,
+            "3 件のファイルをライブラリに追加しました"
+        );
     }
 
     #[test]
     fn a_waiting_classification_leads_the_notification() {
-        let pending = Pending { files: vec![None, None], added: 1, classify: true, ..Default::default() };
+        let pending = Pending {
+            files: vec![None, None],
+            added: 1,
+            classify: true,
+            ..Default::default()
+        };
         let (title, body) = message(&pending).unwrap();
         assert_eq!(title, "取得した商品の分類を選んでください");
         assert_eq!(
@@ -298,10 +324,17 @@ mod tests {
 
     #[test]
     fn product_counts_without_files() {
-        let pending = Pending { added: 3, updated: 2, ..Default::default() };
+        let pending = Pending {
+            added: 3,
+            updated: 2,
+            ..Default::default()
+        };
         assert_eq!(
             message(&pending),
-            Some(("商品を読み込みました".into(), "3 件の商品を追加しました\n2 件の商品情報を更新しました".into()))
+            Some((
+                "商品を読み込みました".into(),
+                "3 件の商品を追加しました\n2 件の商品情報を更新しました".into()
+            ))
         );
     }
 
@@ -315,7 +348,10 @@ mod tests {
 
     #[test]
     fn a_windows_toast_opens_the_app_url_and_escapes_titles() {
-        let xml = toast_xml("ファイルを追加しました", "「A&B <髪>」をライブラリに追加しました\n2 件の商品を追加しました");
+        let xml = toast_xml(
+            "ファイルを追加しました",
+            "「A&B <髪>」をライブラリに追加しました\n2 件の商品を追加しました",
+        );
         assert!(xml.starts_with(r#"<toast activationType="protocol" launch="vrclibman://open">"#));
         assert!(xml.contains("<text>ファイルを追加しました</text>"));
         assert!(xml.contains("<text>「A&amp;B &lt;髪&gt;」をライブラリに追加しました</text>"));

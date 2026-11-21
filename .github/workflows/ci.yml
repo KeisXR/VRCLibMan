@@ -26,6 +26,18 @@ jobs:
           rustc test/fixtures/macos-panel-frame.rs -o "$RUNNER_TEMP/macos-panel-frame"
           swift test/macos-browser-panel-layout.swift "$RUNNER_TEMP/macos-panel-frame"
 
+  rust-format:
+    name: rust format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: check formatting
+        working-directory: src-tauri
+        run: cargo fmt --check
+
   frontend:
     name: frontend
     runs-on: ubuntu-latest
@@ -43,15 +55,24 @@ jobs:
       - name: type check
         run: npx tsc --noEmit
 
+      # Some tests drive headless Chrome (preinstalled on ubuntu-latest).
+      # CHROME_PATH is pinned so a missing Chrome fails instead of skipping them.
       - name: test
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
         run: npm test
-        
-      # Drives real pointer input in headless Chrome (preinstalled on ubuntu-latest).
-      # CHROME_PATH is pinned so a missing Chrome fails instead of skipping the test.
+
+      # Drives real pointer input in headless Chrome.
       - name: test right panel tab click
         env:
           CHROME_PATH: /usr/bin/google-chrome
         run: npm run test:tab-click
+
+      # Loads the extension's content script and popup in headless Chrome.
+      - name: test extension pages
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: npm run test:extension-ui
 
   rust:
     name: rust (${{ matrix.platform }})
@@ -94,6 +115,8 @@ jobs:
         run: xvfb-run -a -s '-screen 0 2000x1200x24' npm run test:browser-layout
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
       # Use the LLD binary shipped with rustc for faster Windows test links.
       # Keep this CI-only: local Windows builds retain their default linker.
@@ -119,6 +142,13 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: src-tauri
         run: xvfb-run -a cargo test --lib --features tauri/custom-protocol
+
+      # Report only: warnings are listed in the log and do not fail the job. Code for other
+      # platforms shows up as unused here, so this is not turned into an error.
+      - name: clippy (report only)
+        if: matrix.platform == 'ubuntu-22.04'
+        working-directory: src-tauri
+        run: cargo clippy --lib --features tauri/custom-protocol
 
       - name: test native Linux browser panel
         if: runner.os == 'Linux'

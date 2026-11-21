@@ -525,13 +525,13 @@ pub fn title_avatar_hints(title: &str, avatars: &[Avatar]) -> Vec<String> {
             push(&avatar.display_name);
             continue;
         }
-        if let Some(stem) = dedication_stem(&inner) {
-            if let Some(avatar) = crate::resolve::resolve_name(stem, avatars) {
-                remember_compound(&mut compounds, stem);
-                remember_compound(&mut compounds, &avatar.display_name);
-                push(&avatar.display_name);
-                continue;
-            }
+        if let Some(stem) = dedication_stem(&inner)
+            && let Some(avatar) = crate::resolve::resolve_name(stem, avatars)
+        {
+            remember_compound(&mut compounds, stem);
+            remember_compound(&mut compounds, &avatar.display_name);
+            push(&avatar.display_name);
+            continue;
         }
         if let Some(name) = crate::normalize::dedication_inside(&inner) {
             let mut pieces = Vec::new();
@@ -578,7 +578,7 @@ fn remember_compound(compounds: &mut Vec<String>, source: &str) {
 fn is_dotted_piece(compound: &str, name: &str) -> bool {
     compound != name
         && compound
-            .split(|ch| matches!(ch, '・' | '･'))
+            .split(['・', '･'])
             .any(|piece| piece.trim() == name)
 }
 
@@ -635,7 +635,7 @@ fn emit_dedication_name(name: &str, avatars: &[Avatar], names: &mut Vec<String>)
             }
         }
     }
-    for piece in name.split(|ch| matches!(ch, '/' | '／' | '、' | '&' | '＆' | '・' | '･')) {
+    for piece in name.split(['/', '／', '、', '&', '＆', '・', '･']) {
         push(piece);
     }
 }
@@ -644,16 +644,16 @@ fn emit_dedication_name(name: &str, avatars: &[Avatar], names: &mut Vec<String>)
 pub fn explicit_dedication_pieces(title: &str, avatars: &[Avatar]) -> Vec<String> {
     let mut names = Vec::new();
     for inner in bracket_inners(title) {
-        if let Some(stem) = dedication_stem(&inner) {
-            if let Some(avatar) = crate::resolve::resolve_name(stem, avatars) {
-                if !names
-                    .iter()
-                    .any(|existing| existing == &avatar.display_name)
-                {
-                    names.push(avatar.display_name.clone());
-                }
-                continue;
+        if let Some(stem) = dedication_stem(&inner)
+            && let Some(avatar) = crate::resolve::resolve_name(stem, avatars)
+        {
+            if !names
+                .iter()
+                .any(|existing| existing == &avatar.display_name)
+            {
+                names.push(avatar.display_name.clone());
             }
+            continue;
         }
         let Some(name) = crate::normalize::dedication_inside(&inner) else {
             continue;
@@ -805,7 +805,17 @@ fn file_label_pieces(label: &str) -> Vec<String> {
 
 fn usable_file_piece(piece: &str) -> bool {
     const EXTENSIONS: &[&str] = &[
-        "zip", "unitypackage", "7z", "rar", "fbx", "blend", "psd", "png", "jpg", "pdf", "txt",
+        "zip",
+        "unitypackage",
+        "7z",
+        "rar",
+        "fbx",
+        "blend",
+        "psd",
+        "png",
+        "jpg",
+        "pdf",
+        "txt",
     ];
     static VERSION: OnceLock<Regex> = OnceLock::new();
     let version = VERSION
@@ -843,7 +853,9 @@ pub fn says_generic(title: &str, description: &str) -> bool {
 
 fn compatibility_section(description: &str) -> Option<String> {
     let lines: Vec<&str> = description.lines().collect();
-    let start = lines.iter().position(|line| is_section_heading(line.trim()))?;
+    let start = lines
+        .iter()
+        .position(|line| is_section_heading(line.trim()))?;
     let mut section = String::new();
     for line in lines.iter().skip(start + 1) {
         let trimmed = line.trim();
@@ -1299,13 +1311,13 @@ fn bracket_inners(title: &str) -> Vec<String> {
     let mut inners = Vec::new();
     let mut index = 0;
     while index < chars.len() {
-        if chars[index] == '【' {
-            if let Some(end) = chars[index + 1..].iter().position(|ch| *ch == '】') {
-                let inner: String = chars[index + 1..index + 1 + end].iter().collect();
-                inners.push(inner);
-                index += end + 2;
-                continue;
-            }
+        if chars[index] == '【'
+            && let Some(end) = chars[index + 1..].iter().position(|ch| *ch == '】')
+        {
+            let inner: String = chars[index + 1..index + 1 + end].iter().collect();
+            inners.push(inner);
+            index += end + 2;
+            continue;
         }
         index += 1;
     }
@@ -1827,7 +1839,11 @@ Avatar
         ];
         assert_eq!(
             avatar_names_in_files(&labels, &avatars),
-            vec!["マヌカ".to_string(), "ショコラ".to_string(), "ライム".to_string()]
+            vec![
+                "マヌカ".to_string(),
+                "ショコラ".to_string(),
+                "ライム".to_string()
+            ]
         );
     }
 
@@ -1838,7 +1854,12 @@ Avatar
         assert_eq!(files, vec!["プラム".to_string()]);
         let listed = names_for_extraction("ワンピース", LIST, &files, &avatars);
         assert!(listed.iter().any(|name| name == "しなの"));
-        let open = names_for_extraction("【4アバター対応】ワンピース", "布の服です。", &files, &avatars);
+        let open = names_for_extraction(
+            "【4アバター対応】ワンピース",
+            "布の服です。",
+            &files,
+            &avatars,
+        );
         assert_eq!(open, vec!["プラム".to_string()]);
     }
 
@@ -1935,8 +1956,7 @@ Avatar
             listed_avatar_names(linked, &[]),
             vec!["うらら".to_string(), "プラム".to_string()]
         );
-        let mixed =
-            "対応アバター\nライム_ver1.00 https://booth.pm/ja/items/1001\nうらら / オリジナル3Dモデル\n";
+        let mixed = "対応アバター\nライム_ver1.00 https://booth.pm/ja/items/1001\nうらら / オリジナル3Dモデル\n";
         assert_eq!(
             listed_avatar_names(mixed, &[]),
             vec!["ライム".to_string(), "うらら".to_string()]

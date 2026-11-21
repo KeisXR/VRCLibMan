@@ -218,14 +218,22 @@ fn store(connection: &Connection, rows: Vec<Current>, mode: Mode) -> Result<(), 
 }
 
 fn product_rows(connection: &Connection, booth_id: Option<&str>) -> Result<Vec<Current>, String> {
-    let filter = if booth_id.is_some() { "WHERE booth_id = ?1" } else { "" };
+    let filter = if booth_id.is_some() {
+        "WHERE booth_id = ?1"
+    } else {
+        ""
+    };
     let mut statement = sql(connection.prepare_cached(&format!(
         "SELECT booth_id, category, category_locked, genre, genre_locked, confidence,
                 classifier_version, user_confirmed, needs_review, is_generic, links_locked,
                 compatible_avatars_json, unresolved_names_json
          FROM products {filter}"
     )))?;
-    let filter = if booth_id.is_some() { "WHERE product_id = ?1" } else { "" };
+    let filter = if booth_id.is_some() {
+        "WHERE product_id = ?1"
+    } else {
+        ""
+    };
     let mut links = sql(connection.prepare_cached(&format!(
         "SELECT product_id, avatar_id, source FROM product_avatars {filter}
          ORDER BY product_id, avatar_id"
@@ -240,7 +248,10 @@ fn product_rows(connection: &Connection, booth_id: Option<&str>) -> Result<Vec<C
     }))?;
     for link in link_rows {
         let (product, avatar, source) = sql(link)?;
-        linked.entry(product).or_default().push(json!([avatar, source]));
+        linked
+            .entry(product)
+            .or_default()
+            .push(json!([avatar, source]));
     }
     let mut rows = Vec::new();
     let products = sql(statement.query_map(params_from_iter(booth_id), |row| {
@@ -269,7 +280,14 @@ fn product_rows(connection: &Connection, booth_id: Option<&str>) -> Result<Vec<C
             is_generic
         ]);
         let empty = category.is_none() && !category_locked && !genre_locked && !user_confirmed;
-        Ok((booth_id, classification, empty, links_locked, compatible, unresolved))
+        Ok((
+            booth_id,
+            classification,
+            empty,
+            links_locked,
+            compatible,
+            unresolved,
+        ))
     }))?;
     for product in products {
         let (booth_id, classification, empty, links_locked, compatible, unresolved) = sql(product)?;
@@ -363,7 +381,6 @@ pub(crate) fn file_links(
         .collect())
 }
 
-
 /// Keep the exact on-disk name. Trimmed names would collide (`a.zip` vs ` a.zip`) and no longer match the scan row.
 fn export_filename(value: &str) -> Option<String> {
     if value != value.trim() {
@@ -409,7 +426,11 @@ fn all_rows(connection: &Connection) -> Result<Vec<Current>, String> {
 }
 
 pub(crate) fn touch_product(connection: &Connection, booth_id: &str) -> Result<(), String> {
-    store(connection, product_rows(connection, Some(booth_id))?, Mode::Touch)
+    store(
+        connection,
+        product_rows(connection, Some(booth_id))?,
+        Mode::Touch,
+    )
 }
 
 pub(crate) fn touch_avatar(connection: &Connection, id: &str) -> Result<(), String> {
@@ -417,7 +438,11 @@ pub(crate) fn touch_avatar(connection: &Connection, id: &str) -> Result<(), Stri
 }
 
 pub(crate) fn touch_file_links(connection: &Connection, booth_id: &str) -> Result<(), String> {
-    store(connection, file_link_rows(connection, Some(booth_id))?, Mode::Touch)
+    store(
+        connection,
+        file_link_rows(connection, Some(booth_id))?,
+        Mode::Touch,
+    )
 }
 
 pub(crate) fn touch_config(connection: &Connection) -> Result<(), String> {
@@ -425,7 +450,11 @@ pub(crate) fn touch_config(connection: &Connection) -> Result<(), String> {
 }
 
 pub(crate) fn reconcile_file_links(connection: &Connection) -> Result<(), String> {
-    store(connection, file_link_rows(connection, None)?, Mode::Reconcile)
+    store(
+        connection,
+        file_link_rows(connection, None)?,
+        Mode::Reconcile,
+    )
 }
 
 pub(crate) fn reconcile_all(connection: &Connection) -> Result<(), String> {
@@ -472,8 +501,11 @@ mod tests {
 
     fn with_product(id: &str) -> Connection {
         let mut connection = db::open_memory().unwrap();
-        db::import_export_json(&mut connection, &product_json(id, "見本の衣装", "見本の説明"))
-            .unwrap();
+        db::import_export_json(
+            &mut connection,
+            &product_json(id, "見本の衣装", "見本の説明"),
+        )
+        .unwrap();
         connection
     }
 
@@ -498,7 +530,7 @@ mod tests {
 
     fn manual_update(id: &str, category: &str) -> ProductUpdate {
         ProductUpdate {
-                purchased_editions: None,
+            purchased_editions: None,
             booth_id: id.into(),
             category: Some(category.into()),
             genre: None,
@@ -547,7 +579,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 14);
+        assert_eq!(version, crate::db::SCHEMA_VERSION);
         for (entity, key) in [
             (ENTITY_CLASSIFICATION, "9001"),
             (ENTITY_LINKS, "9001"),
@@ -561,10 +593,17 @@ mod tests {
             .collect();
         assert_eq!(keys.len(), 6);
         for key in keys {
-            assert_eq!(meta_row(&connection, ENTITY_CONFIG, key), Some((None, None, None)));
+            assert_eq!(
+                meta_row(&connection, ENTITY_CONFIG, key),
+                Some((None, None, None))
+            );
         }
         let category: String = connection
-            .query_row("SELECT category FROM products WHERE booth_id = '9001'", [], |row| row.get(0))
+            .query_row(
+                "SELECT category FROM products WHERE booth_id = '9001'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(category, "outfit");
     }
@@ -577,10 +616,21 @@ mod tests {
             device_identity(&connection).unwrap()
         };
         let parts: Vec<&str> = first.id.split('-').collect();
-        assert_eq!(parts.iter().map(|part| part.len()).collect::<Vec<_>>(), [8, 4, 4, 4, 12]);
+        assert_eq!(
+            parts.iter().map(|part| part.len()).collect::<Vec<_>>(),
+            [8, 4, 4, 4, 12]
+        );
         assert!(parts[2].starts_with('4'));
-        assert!(matches!(parts[3].chars().next(), Some('8' | '9' | 'a' | 'b')));
-        assert!(first.id.chars().all(|ch| ch == '-' || ch.is_ascii_hexdigit()));
+        assert!(matches!(
+            parts[3].chars().next(),
+            Some('8' | '9' | 'a' | 'b')
+        ));
+        assert!(
+            first
+                .id
+                .chars()
+                .all(|ch| ch == '-' || ch.is_ascii_hexdigit())
+        );
         assert!(!first.name.is_empty());
         let connection = db::open(&path).unwrap();
         assert_eq!(device_identity(&connection).unwrap(), first);
@@ -612,7 +662,14 @@ mod tests {
         let saved = db::update_settings(&connection, &patch("  kei-desk-2 ")).unwrap();
         assert_eq!(saved.device_name, "kei-desk-2");
         assert_eq!(db::settings(&connection).unwrap().device_name, "kei-desk-2");
-        assert_eq!(db::update_settings(&connection, &patch(&"あ".repeat(64))).unwrap().device_name.chars().count(), 64);
+        assert_eq!(
+            db::update_settings(&connection, &patch(&"あ".repeat(64)))
+                .unwrap()
+                .device_name
+                .chars()
+                .count(),
+            64
+        );
     }
 
     #[test]
@@ -636,7 +693,8 @@ mod tests {
         let (_dir, path) = temp_db();
         {
             let mut connection = db::open(&path).unwrap();
-            db::import_export_json(&mut connection, &product_json("9001", "見本の衣装", "説明")).unwrap();
+            db::import_export_json(&mut connection, &product_json("9001", "見本の衣装", "説明"))
+                .unwrap();
             db::update_product(&mut connection, &manual_update("9001", "outfit")).unwrap();
             db::update_settings(
                 &connection,
@@ -652,13 +710,19 @@ mod tests {
                 .prepare("SELECT entity, key, fingerprint, at FROM sync_meta ORDER BY entity, key")
                 .unwrap();
             statement
-                .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
+                .query_map([], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                })
                 .unwrap()
                 .collect::<Result<Vec<_>, _>>()
                 .unwrap()
         };
         let first = dump(&db::open(&path).unwrap());
-        assert!(first.iter().any(|row| row.0 == ENTITY_CLASSIFICATION && row.3.is_some()));
+        assert!(
+            first
+                .iter()
+                .any(|row| row.0 == ENTITY_CLASSIFICATION && row.3.is_some())
+        );
         let second = dump(&db::open(&path).unwrap());
         assert_eq!(first, second);
     }
@@ -702,7 +766,10 @@ mod tests {
     fn genre_move_and_undo_are_recorded() {
         let mut connection = with_product("9001");
         connection
-            .execute("UPDATE products SET category = 'outfit' WHERE booth_id = '9001'", [])
+            .execute(
+                "UPDATE products SET category = 'outfit' WHERE booth_id = '9001'",
+                [],
+            )
             .unwrap();
         let snapshot = db::move_product_genre(&mut connection, "9001", "asset", "hair").unwrap();
         let moved = at(&connection, ENTITY_CLASSIFICATION, "9001");
@@ -725,7 +792,8 @@ mod tests {
     #[test]
     fn owned_body_records_avatar_and_product() {
         let mut connection = with_product("9001");
-        let result = db::register_manual_owned_body(&mut connection, "9001", Some("見本ちゃん")).unwrap();
+        let result =
+            db::register_manual_owned_body(&mut connection, "9001", Some("見本ちゃん")).unwrap();
         let crate::model::RegisterOwnedBodyResult::Registered { avatar_id, .. } = result else {
             panic!("名前を渡したので登録される");
         };
@@ -755,7 +823,14 @@ mod tests {
         let scan = file_scan("/secret/place/plain.zip", "plain.zip", "plain");
         db::apply_scan(&mut connection, "/secret/place", &scan).unwrap();
         db::link_file(&connection, "/secret/place/plain.zip", Some("9001")).unwrap();
-        assert!(at(&connection, ENTITY_FILE_LINK, &file_link_key("9001", "plain.zip")).is_some());
+        assert!(
+            at(
+                &connection,
+                ENTITY_FILE_LINK,
+                &file_link_key("9001", "plain.zip")
+            )
+            .is_some()
+        );
         let stored: String = connection
             .query_row(
                 "SELECT group_concat(key || fingerprint) FROM sync_meta WHERE entity = 'file_link'",
@@ -789,7 +864,8 @@ mod tests {
                         ('/b/x.zip', 'x.zip', '9001', 'download', 't');",
             )
             .unwrap();
-        let top = |connection: &Connection| file_links(connection, Some("9001")).unwrap()[0].2.clone();
+        let top =
+            |connection: &Connection| file_links(connection, Some("9001")).unwrap()[0].2.clone();
         assert_eq!(top(&connection).as_deref(), Some("download"));
         connection
             .execute_batch(
@@ -836,14 +912,19 @@ mod tests {
     #[test]
     fn empty_classification_never_carries_meta() {
         let mut connection = db::open_memory().unwrap();
-        db::import_export_json(&mut connection, &product_json("9001", "見本", "最初の説明")).unwrap();
+        db::import_export_json(&mut connection, &product_json("9001", "見本", "最初の説明"))
+            .unwrap();
         db::update_product(&mut connection, &manual_update("9001", "outfit")).unwrap();
         connection
             .execute("UPDATE products SET category_locked = 0, genre_locked = 0, user_confirmed = 1 WHERE booth_id = '9001'", [])
             .unwrap();
         db::reresolve_all(&mut connection).unwrap();
         assert!(at(&connection, ENTITY_CLASSIFICATION, "9001").is_some());
-        db::import_export_json(&mut connection, &product_json("9001", "見本", "変わった説明")).unwrap();
+        db::import_export_json(
+            &mut connection,
+            &product_json("9001", "見本", "変わった説明"),
+        )
+        .unwrap();
         assert_eq!(
             meta_row(&connection, ENTITY_CLASSIFICATION, "9001"),
             Some((None, None, None))
@@ -860,12 +941,18 @@ mod tests {
         reconcile_all(&connection).unwrap();
         assert_eq!(at(&connection, ENTITY_CLASSIFICATION, "9001"), None);
         connection
-            .execute("UPDATE products SET genre = 'hair' WHERE booth_id = '9001'", [])
+            .execute(
+                "UPDATE products SET genre = 'hair' WHERE booth_id = '9001'",
+                [],
+            )
             .unwrap();
         baseline_missing(&connection).unwrap();
         assert_eq!(at(&connection, ENTITY_CLASSIFICATION, "9001"), None);
         connection
-            .execute("UPDATE products SET category = 'hair' WHERE booth_id = '9001'", [])
+            .execute(
+                "UPDATE products SET category = 'hair' WHERE booth_id = '9001'",
+                [],
+            )
             .unwrap();
         reconcile_all(&connection).unwrap();
         assert!(at(&connection, ENTITY_CLASSIFICATION, "9001").is_some());

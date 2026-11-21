@@ -2044,6 +2044,8 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 .switch-label input { width: 18px; height: 18px; accent-color: var(--button); }
 .switch-label input:disabled + * { opacity: .5; }
 .section-actions { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-5); }
+.section-actions .button { flex: 0 0 auto; }
+.section-actions .note-strong { margin: 0; min-width: 0; }
 .settings-details { padding: var(--space-3) var(--space-5); color: var(--text-secondary); font-size: 13px; }
 .settings-details summary { cursor: pointer; }
 .settings-details p { margin: var(--space-2) 0 0; }

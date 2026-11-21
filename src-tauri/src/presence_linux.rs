@@ -181,12 +181,11 @@ pub fn start(app: AppHandle, login_launch: bool) {
             let ready = presence::background_mode_enabled(&app);
             // Preserve the saved preference. A missing/late host or a failed
             // tray only changes this session's ability to close into the tray.
-            if (first && login_launch && presence::should_open_window_on_start(ready, true))
-                || (was_ready && !ready)
+            if ((first && login_launch && presence::should_open_window_on_start(ready, true))
+                || (was_ready && !ready))
+                && let Err(error) = presence::show_main_window(&app)
             {
-                if let Err(error) = presence::show_main_window(&app) {
-                    eprintln!("{error}");
-                }
+                eprintln!("{error}");
             }
             first = false;
             glib::timeout_future(PROBE_INTERVAL).await;

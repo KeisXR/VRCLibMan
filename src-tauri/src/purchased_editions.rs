@@ -1,6 +1,6 @@
 //! Purchased editions are independent of product compatibility and body ownership.
 use crate::{db, model::Avatar};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -83,7 +83,11 @@ pub fn variation_of(name: &str, title: &str) -> Option<String> {
         (!inner.is_empty()).then_some(inner)
     }
     if let Some(found) = extract(name, title).map(str::to_owned).or_else(|| {
-        extract(&crate::normalize::nfkc(name), &crate::normalize::nfkc(title)).map(str::to_owned)
+        extract(
+            &crate::normalize::nfkc(name),
+            &crate::normalize::nfkc(title),
+        )
+        .map(str::to_owned)
     }) {
         return Some(found);
     }
@@ -233,18 +237,16 @@ impl Catalog {
         Ok(result)
     }
     fn manual_scope(&self, id: &str) -> Option<Choice> {
-        if let Some(choice) = self.manual.get(id) {
-            Some(if choice.mode == "all" {
+        self.manual.get(id).map(|choice| {
+            if choice.mode == "all" {
                 Choice {
                     mode: "all".into(),
                     avatar_ids: self.links.get(id).cloned().unwrap_or_default(),
                 }
             } else {
                 choice.clone()
-            })
-        } else {
-            None
-        }
+            }
+        })
     }
 
     pub fn scope(&self, id: &str) -> Choice {
@@ -293,15 +295,15 @@ impl Catalog {
         if let Some(single) = self.single_compatible_edition(id) {
             return single;
         }
-        if let Some(title) = self.titles.get(id) {
-            if trailing_variation(title).is_none() {
-                let linked = self.linked_avatars(id);
-                if let Some(avatar) = crate::resolve::match_title(title, &linked) {
-                    return Choice {
-                        mode: "specific".into(),
-                        avatar_ids: vec![avatar.id.clone()],
-                    };
-                }
+        if let Some(title) = self.titles.get(id)
+            && trailing_variation(title).is_none()
+        {
+            let linked = self.linked_avatars(id);
+            if let Some(avatar) = crate::resolve::match_title(title, &linked) {
+                return Choice {
+                    mode: "specific".into(),
+                    avatar_ids: vec![avatar.id.clone()],
+                };
             }
         }
         if self.unified_files.contains(id) {
@@ -314,11 +316,16 @@ impl Catalog {
     }
 
     fn single_compatible_edition(&self, id: &str) -> Option<Choice> {
-        let [avatar_id] = self.links.get(id)?.as_slice() else { return None };
+        let [avatar_id] = self.links.get(id)?.as_slice() else {
+            return None;
+        };
         if self.unresolved.contains(id) {
             return None;
         }
-        Some(Choice { mode: "specific".into(), avatar_ids: vec![avatar_id.clone()] })
+        Some(Choice {
+            mode: "specific".into(),
+            avatar_ids: vec![avatar_id.clone()],
+        })
     }
 
     fn linked_avatars(&self, id: &str) -> Vec<Avatar> {
@@ -350,10 +357,10 @@ impl Catalog {
         }
         let stripped = piece.strip_suffix('版').map(str::trim_end);
         for candidate in [Some(piece), stripped].into_iter().flatten() {
-            if !linked.is_empty() {
-                if let Some(avatar) = self.resolve_label(candidate, Some(linked)) {
-                    return Some(avatar.id.clone());
-                }
+            if !linked.is_empty()
+                && let Some(avatar) = self.resolve_label(candidate, Some(linked))
+            {
+                return Some(avatar.id.clone());
             }
             if let Some(avatar) = self.resolve_label(candidate, None) {
                 return Some(avatar.id.clone());
@@ -367,11 +374,15 @@ impl Catalog {
         if let Some(single) = self.resolve_piece(name, &linked) {
             return vec![single];
         }
-        let pool = if linked.is_empty() { None } else { Some(linked.as_slice()) };
+        let pool = if linked.is_empty() {
+            None
+        } else {
+            Some(linked.as_slice())
+        };
         let mut found = Vec::new();
         for part in name.split([
-            '/', '／', '&', '＆', '・', '･', ',', '、', '+', '＋', '(', ')', '（', '）', '[',
-            ']', '【', '】', '✿', '💭', '-',
+            '/', '／', '&', '＆', '・', '･', ',', '、', '+', '＋', '(', ')', '（', '）', '[', ']',
+            '【', '】', '✿', '💭', '-',
         ]) {
             let part = part.trim().trim_end_matches('版').trim_end();
             if let Some(avatar) = self.resolve_label(part, pool) {
@@ -509,10 +520,7 @@ mod tests {
     #[test]
     fn compatibility_is_not_a_purchased_edition_and_library_needs_no_orders() {
         let c = fixture();
-        assert_eq!(
-            Catalog::load(&c).unwrap().scope("1234"),
-            Choice::unknown()
-        );
+        assert_eq!(Catalog::load(&c).unwrap().scope("1234"), Choice::unknown());
         c.execute(
             "INSERT INTO product_variations VALUES ('1234','Lime',1)",
             [],
@@ -520,8 +528,14 @@ mod tests {
         .unwrap();
         let catalog = Catalog::load(&c).unwrap();
         assert_eq!(catalog.scope("1234").avatar_ids, ["lime"]);
-        assert_eq!(catalog.order_scope("1234", Some("Plum"), false).avatar_ids, ["plum"]);
-        assert_eq!(catalog.order_scope("1234", Some("黒"), false), Choice::unknown());
+        assert_eq!(
+            catalog.order_scope("1234", Some("Plum"), false).avatar_ids,
+            ["plum"]
+        );
+        assert_eq!(
+            catalog.order_scope("1234", Some("黒"), false),
+            Choice::unknown()
+        );
         let s = db::load_snapshot(&c).unwrap();
         let lime = crate::view::avatar_detail(&s, "lime").unwrap();
         let plum = crate::view::avatar_detail(&s, "plum").unwrap();
@@ -533,11 +547,12 @@ mod tests {
                 .count(),
             1
         );
-        assert!(plum
-            .sections
-            .iter()
-            .flat_map(|s| &s.items)
-            .all(|i| i.booth_id != "1234"));
+        assert!(
+            plum.sections
+                .iter()
+                .flat_map(|s| &s.items)
+                .all(|i| i.booth_id != "1234")
+        );
         assert!(!lime.owned);
         assert!(!plum.owned);
     }
@@ -566,10 +581,12 @@ mod tests {
             cards.iter().find(|a| a.id == "lime").unwrap().outfit_count,
             1
         );
-        assert!(cards
-            .iter()
-            .filter(|a| a.id != "lime")
-            .all(|a| a.outfit_count == 0));
+        assert!(
+            cards
+                .iter()
+                .filter(|a| a.id != "lime")
+                .all(|a| a.outfit_count == 0)
+        );
         assert!(cards.iter().all(|a| !a.owned));
     }
 
@@ -585,27 +602,13 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(
-            Catalog::load(&c)
-                .unwrap()
-                .scope("1234")
-                .avatar_ids
-                .len(),
-            2
-        );
+        assert_eq!(Catalog::load(&c).unwrap().scope("1234").avatar_ids.len(), 2);
         c.execute(
             "INSERT INTO product_avatars VALUES ('1234','manuka','manual')",
             [],
         )
         .unwrap();
-        assert_eq!(
-            Catalog::load(&c)
-                .unwrap()
-                .scope("1234")
-                .avatar_ids
-                .len(),
-            3
-        );
+        assert_eq!(Catalog::load(&c).unwrap().scope("1234").avatar_ids.len(), 3);
         save(
             &c,
             "1234",
@@ -632,7 +635,9 @@ mod tests {
             3
         );
         assert_eq!(
-            Catalog::load(&c).unwrap().order_scope("1234", Some("色違い"), false),
+            Catalog::load(&c)
+                .unwrap()
+                .order_scope("1234", Some("色違い"), false),
             Choice::unknown()
         );
     }
@@ -668,7 +673,7 @@ mod tests {
         assert_eq!(
             c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            14
+            crate::db::SCHEMA_VERSION
         );
         save(
             &c,
@@ -835,17 +840,21 @@ mod tests {
         );
         let snapshot = db::load_snapshot(&c).unwrap();
         assert!(snapshot.avatars.iter().any(|a| a.id == "edition-source"));
-        assert!(!snapshot
-            .avatars
-            .iter()
-            .find(|a| a.id == "lime")
-            .unwrap()
-            .aliases
-            .contains(&"統合前のアバター".into()));
-        assert!(snapshot
-            .links
-            .iter()
-            .any(|l| l.product_id == "1234" && l.avatar_id == "edition-source"));
+        assert!(
+            !snapshot
+                .avatars
+                .iter()
+                .find(|a| a.id == "lime")
+                .unwrap()
+                .aliases
+                .contains(&"統合前のアバター".into())
+        );
+        assert!(
+            snapshot
+                .links
+                .iter()
+                .any(|l| l.product_id == "1234" && l.avatar_id == "edition-source")
+        );
         let summary = crate::purchases::summary(&c, None).unwrap();
         assert_eq!(summary.groups[0].key, "avatar:edition-source");
         assert_eq!(summary.total_yen, 1700);

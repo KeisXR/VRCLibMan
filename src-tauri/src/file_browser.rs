@@ -90,8 +90,7 @@ pub(crate) struct ZipListing {
     pub truncated: bool,
 }
 
-const NO_LIBRARY: &str =
-    "ライブラリフォルダが設定されていません。設定で選ぶか、上の欄にフォルダのパスを入力してください";
+const NO_LIBRARY: &str = "ライブラリフォルダが設定されていません。設定で選ぶか、上の欄にフォルダのパスを入力してください";
 const NOT_ABSOLUTE: &str = "フォルダの場所は、ドライブや / から始まるパスで入力してください";
 const PARENT_PART: &str = "「..」を含むパスは開けません。上の階層へは「上へ」を使ってください";
 const NOT_FOUND: &str = "このパスは見つかりません";
@@ -110,12 +109,19 @@ fn clean_input(raw: &str) -> &str {
 /// Lexical checks before touching the disk.
 pub(crate) fn requested_path(raw: &str, library: &str) -> Result<PathBuf, String> {
     let text = clean_input(raw);
-    let text = if text.is_empty() { library.trim() } else { text };
+    let text = if text.is_empty() {
+        library.trim()
+    } else {
+        text
+    };
     if text.is_empty() {
         return Err(NO_LIBRARY.into());
     }
     let path = PathBuf::from(text);
-    if path.components().any(|part| matches!(part, Component::ParentDir)) {
+    if path
+        .components()
+        .any(|part| matches!(part, Component::ParentDir))
+    {
         return Err(PARENT_PART.into());
     }
     if !path.is_absolute() {
@@ -152,7 +158,9 @@ pub(crate) fn optional_root(value: &str) -> Option<PathBuf> {
     if !path.is_absolute() {
         return None;
     }
-    resolve(path).ok().filter(|path| file_type(path).is_ok_and(|kind| kind.is_dir()))
+    resolve(path)
+        .ok()
+        .filter(|path| file_type(path).is_ok_and(|kind| kind.is_dir()))
 }
 
 fn display(path: &Path) -> String {
@@ -170,7 +178,9 @@ fn read_entries(dir: PathBuf) -> std::io::Result<(Vec<DirEntryView>, bool)> {
         }
         let name = entry.file_name().to_string_lossy().into_owned();
         // `DirEntry::file_type` does not follow links, same as `symlink_metadata`.
-        let Ok(file_type) = entry.file_type() else { continue };
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
         let (kind, size) = if file_type.is_symlink() {
             (EntryKind::Link, None)
         } else if file_type.is_dir() {
@@ -179,7 +189,12 @@ fn read_entries(dir: PathBuf) -> std::io::Result<(Vec<DirEntryView>, bool)> {
             let size = entry.metadata().ok().map(|meta| meta.len());
             (EntryKind::File, size)
         };
-        entries.push(DirEntryView { name, kind, size, label: None });
+        entries.push(DirEntryView {
+            name,
+            kind,
+            size,
+            label: None,
+        });
     }
     sort_entries(&mut entries);
     Ok((entries, truncated))
@@ -258,10 +273,15 @@ fn label_plan(listing: &DirListing, linked: &[(String, String)]) -> LabelPlan {
         .into_iter()
         .flatten()
         .any(|root| same_path(here, Path::new(root)));
-    let folder_name = here.file_name().map(|name| name.to_string_lossy().into_owned());
-    let folder = folder_name
-        .filter(|name| roots && !is_root && valid_booth_id(name));
-    let files: Vec<(String, &str)> = if listing.entries.iter().any(|entry| entry.kind == EntryKind::File) {
+    let folder_name = here
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned());
+    let folder = folder_name.filter(|name| roots && !is_root && valid_booth_id(name));
+    let files: Vec<(String, &str)> = if listing
+        .entries
+        .iter()
+        .any(|entry| entry.kind == EntryKind::File)
+    {
         linked
             .iter()
             .filter_map(|(path, booth_id)| {
@@ -270,7 +290,10 @@ fn label_plan(listing: &DirListing, linked: &[(String, String)]) -> LabelPlan {
                 if !same_path(parent, here) {
                     return None;
                 }
-                Some((path.file_name()?.to_string_lossy().into_owned(), booth_id.as_str()))
+                Some((
+                    path.file_name()?.to_string_lossy().into_owned(),
+                    booth_id.as_str(),
+                ))
             })
             .collect()
     } else {
@@ -295,7 +318,11 @@ fn label_plan(listing: &DirListing, linked: &[(String, String)]) -> LabelPlan {
 /// Product IDs whose titles the listing needs. The caller looks them up in the DB.
 pub(crate) fn label_ids(listing: &DirListing, linked: &[(String, String)]) -> Vec<String> {
     let plan = label_plan(listing, linked);
-    let mut ids: Vec<String> = plan.folder.into_iter().chain(plan.entries.into_iter().flatten()).collect();
+    let mut ids: Vec<String> = plan
+        .folder
+        .into_iter()
+        .chain(plan.entries.into_iter().flatten())
+        .collect();
     ids.sort();
     ids.dedup();
     ids
@@ -348,7 +375,9 @@ pub(crate) fn read_zip(path: PathBuf) -> Result<(Vec<ZipEntryView>, bool), Strin
     let total = archive.len();
     let mut entries = Vec::new();
     for index in 0..total.min(MAX_ZIP_ENTRIES) {
-        let Ok(entry) = archive.by_index_raw(index) else { continue };
+        let Ok(entry) = archive.by_index_raw(index) else {
+            continue;
+        };
         let name = decode_zip_name(entry.name_raw(), entry.name());
         let dir = entry.is_dir() || name.ends_with('/') || name.ends_with('\\');
         let path = clean_zip_path(&name);
@@ -448,7 +477,10 @@ mod tests {
     fn typed_paths_are_checked_before_the_disk() {
         assert_eq!(requested_path("", "").unwrap_err(), NO_LIBRARY);
         assert_eq!(requested_path("   ", "").unwrap_err(), NO_LIBRARY);
-        assert_eq!(requested_path("relative/folder", "").unwrap_err(), NOT_ABSOLUTE);
+        assert_eq!(
+            requested_path("relative/folder", "").unwrap_err(),
+            NOT_ABSOLUTE
+        );
         let root = temp_root("dots");
         let dotted = format!("{}{}..", root.display(), std::path::MAIN_SEPARATOR);
         assert_eq!(requested_path(&dotted, "").unwrap_err(), PARENT_PART);
@@ -475,9 +507,16 @@ mod tests {
         )
         .unwrap();
         assert!(!listing.inside_library);
-        assert_eq!(listing.remote.as_deref(), Some(other.display().to_string().as_str()));
-        assert_eq!(listing.parent, other.parent().map(|p| p.display().to_string()));
-        let missing_library = list_directory(&other.display().to_string(), "/no/such/library", "").unwrap();
+        assert_eq!(
+            listing.remote.as_deref(),
+            Some(other.display().to_string().as_str())
+        );
+        assert_eq!(
+            listing.parent,
+            other.parent().map(|p| p.display().to_string())
+        );
+        let missing_library =
+            list_directory(&other.display().to_string(), "/no/such/library", "").unwrap();
         assert_eq!(missing_library.library, None);
         assert!(!missing_library.inside_library);
         std::fs::remove_dir_all(library).unwrap();
@@ -485,10 +524,20 @@ mod tests {
     }
 
     fn entry(name: &str, kind: EntryKind) -> DirEntryView {
-        DirEntryView { name: name.into(), kind, size: None, label: None }
+        DirEntryView {
+            name: name.into(),
+            kind,
+            size: None,
+            label: None,
+        }
     }
 
-    fn fake_listing(path: &Path, library: &Path, remote: Option<&Path>, entries: Vec<DirEntryView>) -> DirListing {
+    fn fake_listing(
+        path: &Path,
+        library: &Path,
+        remote: Option<&Path>,
+        entries: Vec<DirEntryView>,
+    ) -> DirListing {
         DirListing {
             path: display(path),
             parent: path.parent().map(display),
@@ -502,7 +551,10 @@ mod tests {
     }
 
     fn label(title: &str, adult: bool) -> EntryLabel {
-        EntryLabel { title: title.into(), adult }
+        EntryLabel {
+            title: title.into(),
+            adult,
+        }
     }
 
     // Dummy IDs and titles only.
@@ -524,16 +576,32 @@ mod tests {
             ],
         );
         let linked = vec![(display(&library.join("loose.zip")), "9000003".to_string())];
-        assert_eq!(label_ids(&listing, &linked), ["9000001", "9000002", "9000003"]);
+        assert_eq!(
+            label_ids(&listing, &linked),
+            ["9000001", "9000002", "9000003"]
+        );
         let titles = HashMap::from([
             ("9000001".to_string(), label("架空の服", false)),
             ("9000003".to_string(), label("架空の髪", true)),
         ]);
         apply_labels(&mut listing, &linked, &titles);
         let names: Vec<_> = listing.entries.iter().map(|e| e.name.as_str()).collect();
-        assert_eq!(names, ["9000001", "9000002", "9000003", "_misc", "9000001", "loose.zip"]);
+        assert_eq!(
+            names,
+            [
+                "9000001",
+                "9000002",
+                "9000003",
+                "_misc",
+                "9000001",
+                "loose.zip"
+            ]
+        );
         assert_eq!(listing.entries[0].label, Some(label("架空の服", false)));
-        assert_eq!(listing.entries[1].label, None, "unknown IDs keep the plain name");
+        assert_eq!(
+            listing.entries[1].label, None,
+            "unknown IDs keep the plain name"
+        );
         assert_eq!(listing.entries[2].label, Some(label("架空の髪", true)));
         assert_eq!(listing.entries[3].label, None);
         assert_eq!(listing.entries[4].label, None, "links are never labelled");
@@ -544,18 +612,35 @@ mod tests {
             &library.join("9000001"),
             &library,
             None,
-            vec![entry("pack.zip", EntryKind::File), entry("other.zip", EntryKind::File)],
+            vec![
+                entry("pack.zip", EntryKind::File),
+                entry("other.zip", EntryKind::File),
+            ],
         );
         let linked = vec![
-            (display(&library.join("9000001").join("pack.zip")), "9000001".to_string()),
-            (display(&library.join("9000001").join("other.zip")), "9000003".to_string()),
+            (
+                display(&library.join("9000001").join("pack.zip")),
+                "9000001".to_string(),
+            ),
+            (
+                display(&library.join("9000001").join("other.zip")),
+                "9000003".to_string(),
+            ),
         ];
         apply_labels(&mut inside, &linked, &titles);
         assert_eq!(inside.label, Some(label("架空の服", false)));
-        assert_eq!(inside.entries[0].label, None, "the folder already names this product");
+        assert_eq!(
+            inside.entries[0].label, None,
+            "the folder already names this product"
+        );
         assert_eq!(inside.entries[1].label, Some(label("架空の髪", true)));
 
-        let mut on_remote = fake_listing(&remote, &library, Some(&remote), vec![entry("9000001", EntryKind::Dir)]);
+        let mut on_remote = fake_listing(
+            &remote,
+            &library,
+            Some(&remote),
+            vec![entry("9000001", EntryKind::Dir)],
+        );
         apply_labels(&mut on_remote, &[], &titles);
         assert_eq!(on_remote.entries[0].label, Some(label("架空の服", false)));
     }
@@ -564,7 +649,12 @@ mod tests {
     fn numbered_folders_outside_the_roots_are_not_read_as_products() {
         let library = std::env::temp_dir().join("lib-labels");
         let elsewhere = std::env::temp_dir().join("photos-2024");
-        let mut listing = fake_listing(&elsewhere, &library, None, vec![entry("9000001", EntryKind::Dir)]);
+        let mut listing = fake_listing(
+            &elsewhere,
+            &library,
+            None,
+            vec![entry("9000001", EntryKind::Dir)],
+        );
         assert!(label_ids(&listing, &[]).is_empty());
         let titles = HashMap::from([("9000001".to_string(), label("架空の服", false))]);
         apply_labels(&mut listing, &[], &titles);
@@ -592,7 +682,12 @@ mod tests {
         let listing = list_directory(&root.display().to_string(), "", "").unwrap();
         assert_eq!(
             listing.entries,
-            vec![DirEntryView { name: "link".into(), kind: EntryKind::Link, size: None, label: None }]
+            vec![DirEntryView {
+                name: "link".into(),
+                kind: EntryKind::Link,
+                size: None,
+                label: None
+            }]
         );
         std::fs::remove_dir_all(root).unwrap();
         std::fs::remove_dir_all(target).unwrap();
@@ -650,7 +745,11 @@ mod tests {
         for byte in data {
             crc ^= u32::from(*byte);
             for _ in 0..8 {
-                crc = if crc & 1 != 0 { (crc >> 1) ^ 0xedb8_8320 } else { crc >> 1 };
+                crc = if crc & 1 != 0 {
+                    (crc >> 1) ^ 0xedb8_8320
+                } else {
+                    crc >> 1
+                };
             }
         }
         !crc
@@ -674,21 +773,50 @@ mod tests {
             ],
         );
         let before = snapshot(&root);
-        let listing = list_zip(&archive.display().to_string(), &root.display().to_string(), "").unwrap();
+        let listing = list_zip(
+            &archive.display().to_string(),
+            &root.display().to_string(),
+            "",
+        )
+        .unwrap();
         assert_eq!(listing.library.as_deref(), Some(root.to_str().unwrap()));
         assert!(listing.remote.is_none());
         assert_eq!(
             listing.entries,
             vec![
-                ZipEntryView { path: "テスト".into(), dir: true, size: 0 },
-                ZipEntryView { path: "テスト/sample.unitypackage".into(), dir: false, size: 5 },
-                ZipEntryView { path: "フォルダ/readme.txt".into(), dir: false, size: 2 },
-                ZipEntryView { path: "フォルダ/two.unitypackage".into(), dir: false, size: 0 },
-                ZipEntryView { path: "loose/name.txt".into(), dir: false, size: 3 },
+                ZipEntryView {
+                    path: "テスト".into(),
+                    dir: true,
+                    size: 0
+                },
+                ZipEntryView {
+                    path: "テスト/sample.unitypackage".into(),
+                    dir: false,
+                    size: 5
+                },
+                ZipEntryView {
+                    path: "フォルダ/readme.txt".into(),
+                    dir: false,
+                    size: 2
+                },
+                ZipEntryView {
+                    path: "フォルダ/two.unitypackage".into(),
+                    dir: false,
+                    size: 0
+                },
+                ZipEntryView {
+                    path: "loose/name.txt".into(),
+                    dir: false,
+                    size: 3
+                },
             ]
         );
         assert!(!listing.truncated);
-        assert_eq!(snapshot(&root), before, "listing a zip must not extract anything");
+        assert_eq!(
+            snapshot(&root),
+            before,
+            "listing a zip must not extract anything"
+        );
 
         std::fs::write(root.join("broken.zip"), b"not a zip").unwrap();
         assert!(list_zip(&root.join("broken.zip").display().to_string(), "", "").is_err());

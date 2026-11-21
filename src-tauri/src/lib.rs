@@ -1,39 +1,40 @@
-mod asset_updates;
 mod arrival_notice;
+mod asset_updates;
 mod auto_classify;
 mod booth_category;
 mod booth_detail;
 mod browser;
-mod browser_dark;
 mod browser_auto;
-mod browser_url;
+mod browser_dark;
 #[cfg(target_os = "linux")]
 mod browser_linux;
-mod browser_tabs;
 mod browser_surface;
+mod browser_tabs;
+mod browser_url;
 mod catalog;
 mod classifier;
 mod commands;
 mod compat;
-mod genre;
-mod hero_image;
 mod db;
+mod existing_import;
+mod extension_delivery;
+mod extension_library;
+mod extension_package;
+mod extension_purchases;
+mod extension_status;
 mod file_browser;
 mod free_files;
+mod genre;
+mod hero_image;
 mod import_data;
 mod integration;
 mod library_files;
-mod remote_sync;
 mod library_walk;
 mod local_import;
-mod extension_status;
-mod extension_library;
-mod extension_purchases;
-mod extension_package;
-mod extension_delivery;
-mod existing_import;
 mod matching;
 mod model;
+#[cfg(test)]
+mod nav_bench;
 mod normalize;
 mod presence;
 #[cfg(target_os = "linux")]
@@ -41,10 +42,11 @@ mod presence_linux;
 mod preview_image;
 mod progress;
 mod purchase_walk;
-mod purchases;
 mod purchased_editions;
+mod purchases;
 mod quiet;
 mod received_gifts;
+mod remote_sync;
 mod resolve;
 mod retired_classifier;
 mod scan;
@@ -52,12 +54,10 @@ mod search;
 mod sync_export;
 mod sync_meta;
 mod thumb;
-mod view;
 mod unity;
 mod unity_import;
 mod updater;
-#[cfg(test)]
-mod nav_bench;
+mod view;
 
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
@@ -130,7 +130,7 @@ pub fn run() {
             std::fs::create_dir_all(&previews)?;
             std::fs::create_dir_all(&hero_images)?;
             let connection = db::open(&directory.join("library.sqlite"))
-                .map_err(|err| std::io::Error::other(err))?;
+                .map_err(std::io::Error::other)?;
             // The model classifiers are gone. Their settings go now; a saved cloud API key is
             // removed off the main thread because macOS may ask for Keychain access.
             if retired_classifier::retire_settings(&connection).unwrap_or(false) {
@@ -153,18 +153,15 @@ pub fn run() {
                 extension_route: Mutex::new(None),
             });
             arrival_notice::init(app.handle());
-            if let Some(state) = app.try_state::<AppState>() {
-                if let Ok(connection) = state.db.lock() {
+            if let Some(state) = app.try_state::<AppState>()
+                && let Ok(connection) = state.db.lock() {
                     let _ = db::extension_token(&connection);
                 }
-            }
-            if let Err(err) = local_import::start_receiver(app.handle().clone()) {
-                if let Some(state) = app.try_state::<AppState>() {
-                    if let Ok(mut slot) = state.receiver_error.lock() {
+            if let Err(err) = local_import::start_receiver(app.handle().clone())
+                && let Some(state) = app.try_state::<AppState>()
+                    && let Ok(mut slot) = state.receiver_error.lock() {
                         *slot = Some(err);
                     }
-                }
-            }
             #[cfg(target_os = "linux")]
             if app.deep_link().register("vrclibman").is_err() {
                 // URL registration uses external desktop tools. Receiving imports in an
@@ -194,7 +191,7 @@ pub fn run() {
                     .lock()
                     .map_err(|err| std::io::Error::other(err.to_string()))?;
                 let settings =
-                    db::settings(&connection).map_err(|err| std::io::Error::other(err))?;
+                    db::settings(&connection).map_err(std::io::Error::other)?;
                 browser_dark::set_enabled(settings.browser_force_dark);
                 let report = db::sweep_staged_downloads(&mut connection);
                 (
@@ -204,11 +201,10 @@ pub fn run() {
                 )
             };
             presence::remember_background(app.handle(), background_mode);
-            if let Some(state) = app.try_state::<AppState>() {
-                if let Ok(mut slot) = state.staged_left.lock() {
+            if let Some(state) = app.try_state::<AppState>()
+                && let Ok(mut slot) = state.staged_left.lock() {
                     *slot = left;
                 }
-            }
             crate::remote_sync::start(app.handle());
             crate::asset_updates::start(app.handle());
             {
@@ -338,6 +334,7 @@ pub fn run() {
             commands::set_purchase_item_labels,
             commands::set_purchase_gift,
             commands::clear_booth_session,
+            commands::booth_session_stored,
             commands::close_booth_browser,
             commands::booth_browser_log,
             commands::download_booth_file,
@@ -359,5 +356,5 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
-        .run(|app, event| presence::handle_run_event(app, event));
+        .run(presence::handle_run_event);
 }

@@ -141,10 +141,10 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
             locked,
         },
     );
-    if matches!(gate, Gate::Reject { status: 401, .. }) {
-        if let Ok(mut guard) = state.import_guard.lock() {
-            guard.record_failure(&origin_key, now);
-        }
+    if matches!(gate, Gate::Reject { status: 401, .. })
+        && let Ok(mut guard) = state.import_guard.lock()
+    {
+        guard.record_failure(&origin_key, now);
     }
     if matches!(
         gate,
@@ -167,10 +167,10 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
                 header(request, "X-VRCLibMan-Extension-Version"),
             );
         }
-        if pinned.is_none() {
-            if let Ok(connection) = state.db.lock() {
-                let _ = db::set_extension_origin(&connection, &origin_key);
-            }
+        if pinned.is_none()
+            && let Ok(connection) = state.db.lock()
+        {
+            let _ = db::set_extension_origin(&connection, &origin_key);
         }
     }
     if matches!(gate, Gate::Health) {
@@ -253,15 +253,27 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
         let text = if route.reads_body() {
             // 指定は ID かアバターだけなので、小さい本文しか受けない。
             if content_length.is_some_and(|length| length > LIBRARY_BODY) {
-                return response_for(origin.as_deref(), Gate::reject(413, "JSONが大きすぎます"), None);
+                return response_for(
+                    origin.as_deref(),
+                    Gate::reject(413, "JSONが大きすぎます"),
+                    None,
+                );
             }
             match read_limited(request.as_reader(), LIBRARY_BODY).map(String::from_utf8) {
                 Ok(Ok(text)) => text,
                 Ok(Err(_)) => {
-                    return response_for(origin.as_deref(), Gate::reject(400, "JSONを読めません"), None);
+                    return response_for(
+                        origin.as_deref(),
+                        Gate::reject(400, "JSONを読めません"),
+                        None,
+                    );
                 }
                 Err(()) => {
-                    return response_for(origin.as_deref(), Gate::reject(413, "JSONが大きすぎます"), None);
+                    return response_for(
+                        origin.as_deref(),
+                        Gate::reject(413, "JSONが大きすぎます"),
+                        None,
+                    );
                 }
             }
         } else {
@@ -271,7 +283,10 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
         use crate::extension_library::{Reply, Route};
         // サムネイルはファイルを読むだけなので、データベースのロックを取らない。
         let reply = if route == Route::Thumb {
-            Ok(crate::extension_library::thumbnail(&state.thumbs_dir, &text))
+            Ok(crate::extension_library::thumbnail(
+                &state.thumbs_dir,
+                &text,
+            ))
         } else {
             state
                 .db
@@ -281,14 +296,23 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
         };
         return match reply {
             Ok(Reply::Json { status, body }) => cors_json(origin.as_deref(), status, body),
-            Ok(Reply::Image { content_type, bytes }) => {
+            Ok(Reply::Image {
+                content_type,
+                bytes,
+            }) => {
                 let mut response = Response::from_data(bytes);
-                for (name, value) in [("Content-Type", content_type), ("X-Content-Type-Options", "nosniff")] {
+                for (name, value) in [
+                    ("Content-Type", content_type),
+                    ("X-Content-Type-Options", "nosniff"),
+                ] {
                     if let Ok(header) = Header::from_bytes(name.as_bytes(), value.as_bytes()) {
                         response = response.with_header(header);
                     }
                 }
-                match origin.as_deref().filter(|origin| is_extension_origin(origin)) {
+                match origin
+                    .as_deref()
+                    .filter(|origin| is_extension_origin(origin))
+                {
                     Some(origin) => add_cors(response, origin),
                     None => response,
                 }
@@ -302,22 +326,38 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
                 crate::presence::show_main_later(app);
                 cors_json(origin.as_deref(), 200, r#"{"ok":true}"#.into())
             }
-            Err(error) => cors_json(origin.as_deref(), 500, serde_json::json!({ "error": error }).to_string()),
+            Err(error) => cors_json(
+                origin.as_deref(),
+                500,
+                serde_json::json!({ "error": error }).to_string(),
+            ),
         };
     }
     if let Gate::Purchases(route) = &gate {
         let route = *route;
         let text = if route.reads_body() {
             if content_length.is_some_and(|length| length > MAX_BODY) {
-                return response_for(origin.as_deref(), Gate::reject(413, "JSONが大きすぎます"), None);
+                return response_for(
+                    origin.as_deref(),
+                    Gate::reject(413, "JSONが大きすぎます"),
+                    None,
+                );
             }
             match read_limited(request.as_reader(), MAX_BODY).map(String::from_utf8) {
                 Ok(Ok(text)) => text,
                 Ok(Err(_)) => {
-                    return response_for(origin.as_deref(), Gate::reject(400, "JSONを読めません"), None);
+                    return response_for(
+                        origin.as_deref(),
+                        Gate::reject(400, "JSONを読めません"),
+                        None,
+                    );
                 }
                 Err(()) => {
-                    return response_for(origin.as_deref(), Gate::reject(413, "JSONが大きすぎます"), None);
+                    return response_for(
+                        origin.as_deref(),
+                        Gate::reject(413, "JSONが大きすぎます"),
+                        None,
+                    );
                 }
             }
         } else {
@@ -328,7 +368,9 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
             .db
             .lock()
             .map_err(|_| "データベースをロックできません".to_string())
-            .and_then(|mut connection| crate::extension_purchases::handle(&mut connection, route, &text));
+            .and_then(|mut connection| {
+                crate::extension_purchases::handle(&mut connection, route, &text)
+            });
         return match outcome {
             Ok(outcome) => {
                 if outcome.purchases_changed {
@@ -622,7 +664,8 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
                 return cors_json(
                     origin.as_deref(),
                     400,
-                    r#"{"error":"どのファイルか確かめられません。ページを再読み込みしてください"}"#.into(),
+                    r#"{"error":"どのファイルか確かめられません。ページを再読み込みしてください"}"#
+                        .into(),
                 );
             }
         }
@@ -733,10 +776,10 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
             }
             if download {
                 let _ = app.emit_to("main", "browser-auto-pending", ());
-                if let Ok(product) = serde_json::from_str::<serde_json::Value>(&text) {
-                    if let Some(id) = product.get("boothId").and_then(|v| v.as_str()) {
-                        let _ = app.emit_to("main", "extension-import-prompt", id);
-                    }
+                if let Ok(product) = serde_json::from_str::<serde_json::Value>(&text)
+                    && let Some(id) = product.get("boothId").and_then(|v| v.as_str())
+                {
+                    let _ = app.emit_to("main", "extension-import-prompt", id);
                 }
                 crate::arrival_notice::ask_to_classify(app);
             }
@@ -875,11 +918,13 @@ fn classify(request: RequestView<'_>, access: Access<'_>) -> Gate {
     }
     // Chrome は、ホスト権限で送る拡張の GET に Origin を付けない。今の拡張は読み取りも POST で送る。
     // GET は Origin を付けて送る相手のために残す（Origin の無い要求は上で 403 になる）。
-    let read = request.method.eq_ignore_ascii_case("GET") || request.method.eq_ignore_ascii_case("POST");
+    let read =
+        request.method.eq_ignore_ascii_case("GET") || request.method.eq_ignore_ascii_case("POST");
     if read && path == "/health" {
         return Gate::Health;
     }
-    if request.method.eq_ignore_ascii_case("POST") && matches!(path, "/import" | "/import-download") {
+    if request.method.eq_ignore_ascii_case("POST") && matches!(path, "/import" | "/import-download")
+    {
         return Gate::Import;
     }
     if request.method.eq_ignore_ascii_case("POST") && path == "/product-status" {
@@ -947,17 +992,16 @@ fn response_for(
         }
     };
     let mut response = Response::from_string(body).with_status_code(StatusCode(status));
-    if status == 429 {
-        if let Ok(header) =
+    if status == 429
+        && let Ok(header) =
             Header::from_bytes(b"Retry-After", AUTH_LOCK_SECS.to_string().as_bytes())
-        {
-            response = response.with_header(header);
-        }
+    {
+        response = response.with_header(header);
     }
-    if origin.is_some_and(is_extension_origin) {
-        if let Some(origin) = origin {
-            response = add_cors(response, origin);
-        }
+    if origin.is_some_and(is_extension_origin)
+        && let Some(origin) = origin
+    {
+        response = add_cors(response, origin);
     }
     response
 }
@@ -1150,25 +1194,67 @@ mod tests {
         assert!(is_extension_origin(&official));
         let pinned = Some(EXTENSION);
         assert!(matches!(
-            classify(view("GET", "/health", Some(&official), Some("Bearer ABCD2345")), Access { token: "ABCD2345", pinned, locked: false }),
+            classify(
+                view("GET", "/health", Some(&official), Some("Bearer ABCD2345")),
+                Access {
+                    token: "ABCD2345",
+                    pinned,
+                    locked: false
+                }
+            ),
             Gate::Health
         ));
         assert!(matches!(
-            classify(view("GET", "/health", Some(&official), Some("Bearer WRONG234")), Access { token: "ABCD2345", pinned, locked: false }),
+            classify(
+                view("GET", "/health", Some(&official), Some("Bearer WRONG234")),
+                Access {
+                    token: "ABCD2345",
+                    pinned,
+                    locked: false
+                }
+            ),
             Gate::Reject { status: 401, .. }
         ));
         assert!(matches!(
-            classify(view("GET", "/health", Some("chrome-extension://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"), Some("Bearer ABCD2345")), Access { token: "ABCD2345", pinned, locked: false }),
+            classify(
+                view(
+                    "GET",
+                    "/health",
+                    Some("chrome-extension://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+                    Some("Bearer ABCD2345")
+                ),
+                Access {
+                    token: "ABCD2345",
+                    pinned,
+                    locked: false
+                }
+            ),
             Gate::Reject { status: 403, .. }
         ));
     }
 
     #[test]
     fn purchase_routes_share_the_origin_and_token_boundary() {
-        let access = || Access { token: "ABCD2345", pinned: None, locked: false };
-        for (method, path) in [("GET", "/purchases/state"), ("POST", "/purchases/list"), ("POST", "/purchases/checkout")] {
+        let access = || Access {
+            token: "ABCD2345",
+            pinned: None,
+            locked: false,
+        };
+        for (method, path) in [
+            ("GET", "/purchases/state"),
+            ("POST", "/purchases/list"),
+            ("POST", "/purchases/checkout"),
+        ] {
             assert!(matches!(
-                classify(view(method, path, Some("https://booth.pm"), Some("Bearer ABCD2345")), access()),
+                classify(
+                    view(
+                        method,
+                        path,
+                        Some("https://booth.pm"),
+                        Some("Bearer ABCD2345")
+                    ),
+                    access()
+                ),
                 Gate::Reject { status: 403, .. }
             ));
             assert!(matches!(
@@ -1176,23 +1262,51 @@ mod tests {
                 Gate::Reject { status: 401, .. }
             ));
             assert!(matches!(
-                classify(view(method, path, Some(EXTENSION), Some("Bearer ABCD-2345")), access()),
+                classify(
+                    view(method, path, Some(EXTENSION), Some("Bearer ABCD-2345")),
+                    access()
+                ),
                 Gate::Purchases(_)
             ));
         }
         assert!(matches!(
-            classify(view("GET", "/purchases/list", Some(EXTENSION), Some("Bearer ABCD2345")), access()),
+            classify(
+                view(
+                    "GET",
+                    "/purchases/list",
+                    Some(EXTENSION),
+                    Some("Bearer ABCD2345")
+                ),
+                access()
+            ),
             Gate::Reject { status: 404, .. }
         ));
     }
 
     #[test]
     fn side_panel_library_routes_share_the_origin_and_token_boundary() {
-        let access = || Access { token: "ABCD2345", pinned: None, locked: false };
-        for path in ["/library/avatars", "/library/items", "/library/thumb", "/library/product"] {
+        let access = || Access {
+            token: "ABCD2345",
+            pinned: None,
+            locked: false,
+        };
+        for path in [
+            "/library/avatars",
+            "/library/items",
+            "/library/thumb",
+            "/library/product",
+        ] {
             // ウェブページからは、コードが合っていても商品名もサムネイルも読めない。
             assert!(matches!(
-                classify(view("POST", path, Some("https://booth.pm"), Some("Bearer ABCD2345")), access()),
+                classify(
+                    view(
+                        "POST",
+                        path,
+                        Some("https://booth.pm"),
+                        Some("Bearer ABCD2345")
+                    ),
+                    access()
+                ),
                 Gate::Reject { status: 403, .. }
             ));
             assert!(matches!(
@@ -1204,11 +1318,17 @@ mod tests {
                 Gate::Reject { status: 401, .. }
             ));
             assert!(matches!(
-                classify(view("POST", path, Some(EXTENSION), Some("Bearer ABCD-2345")), access()),
+                classify(
+                    view("POST", path, Some(EXTENSION), Some("Bearer ABCD-2345")),
+                    access()
+                ),
                 Gate::Library(_)
             ));
             assert!(matches!(
-                classify(view("GET", path, Some(EXTENSION), Some("Bearer ABCD2345")), access()),
+                classify(
+                    view("GET", path, Some(EXTENSION), Some("Bearer ABCD2345")),
+                    access()
+                ),
                 Gate::Reject { status: 404, .. }
             ));
         }
@@ -1216,10 +1336,18 @@ mod tests {
 
     #[test]
     fn only_a_finished_library_walk_counts_as_a_complete_file_list() {
-        assert!(complete_library_export(r#"{"source":"library","complete":true,"products":[]}"#));
-        assert!(!complete_library_export(r#"{"source":"library-update","complete":true,"products":[]}"#));
-        assert!(!complete_library_export(r#"{"source":"library","complete":"true","products":[]}"#));
-        assert!(!complete_library_export(r#"{"source":"library","products":[]}"#));
+        assert!(complete_library_export(
+            r#"{"source":"library","complete":true,"products":[]}"#
+        ));
+        assert!(!complete_library_export(
+            r#"{"source":"library-update","complete":true,"products":[]}"#
+        ));
+        assert!(!complete_library_export(
+            r#"{"source":"library","complete":"true","products":[]}"#
+        ));
+        assert!(!complete_library_export(
+            r#"{"source":"library","products":[]}"#
+        ));
         assert!(!complete_library_export("[]"));
     }
 
@@ -1229,13 +1357,28 @@ mod tests {
             (Some("https://booth.pm"), Some("Bearer ABCD2345"), 403),
             (Some(EXTENSION), None, 401),
         ] {
-            assert!(matches!(classify(view("POST", "/import-download", origin, auth), Access {
+            assert!(
+                matches!(classify(view("POST", "/import-download", origin, auth), Access {
                 token: "ABCD2345", pinned: None, locked: false,
-            }), Gate::Reject { status: actual, .. } if actual == status));
+            }), Gate::Reject { status: actual, .. } if actual == status)
+            );
         }
-        assert!(matches!(classify(view("POST", "/import-download", Some(EXTENSION), Some("Bearer ABCD2345")), Access {
-            token: "ABCD2345", pinned: Some(EXTENSION), locked: false,
-        }), Gate::Import));
+        assert!(matches!(
+            classify(
+                view(
+                    "POST",
+                    "/import-download",
+                    Some(EXTENSION),
+                    Some("Bearer ABCD2345")
+                ),
+                Access {
+                    token: "ABCD2345",
+                    pinned: Some(EXTENSION),
+                    locked: false,
+                }
+            ),
+            Gate::Import
+        ));
     }
 
     #[test]
@@ -1350,13 +1493,36 @@ mod tests {
             Gate::Reject { status: 401, .. }
         ));
         // The extension sends reads as POST, because Chrome leaves Origin off its GET requests.
-        for (path, expected) in [("/health", "health"), ("/known-ids", "known"), ("/route-downloads/state", "route")] {
+        for (path, expected) in [
+            ("/health", "health"),
+            ("/known-ids", "known"),
+            ("/route-downloads/state", "route"),
+        ] {
             let actual = gate("POST", path, Some(EXTENSION), Some("Bearer ABCD-2345"));
-            assert!(matches!((expected, &actual), ("health", Gate::Health) | ("known", Gate::KnownIds) | ("route", Gate::RouteRead)), "{path}");
-            assert!(matches!(gate("POST", path, None, Some("Bearer ABCD-2345")), Gate::Reject { status: 403, .. }), "{path} without Origin");
+            assert!(
+                matches!(
+                    (expected, &actual),
+                    ("health", Gate::Health)
+                        | ("known", Gate::KnownIds)
+                        | ("route", Gate::RouteRead)
+                ),
+                "{path}"
+            );
+            assert!(
+                matches!(
+                    gate("POST", path, None, Some("Bearer ABCD-2345")),
+                    Gate::Reject { status: 403, .. }
+                ),
+                "{path} without Origin"
+            );
         }
         assert!(matches!(
-            gate("GET", "/route-downloads/state", Some(EXTENSION), Some("Bearer ABCD-2345")),
+            gate(
+                "GET",
+                "/route-downloads/state",
+                Some(EXTENSION),
+                Some("Bearer ABCD-2345")
+            ),
             Gate::Reject { status: 404, .. }
         ));
         assert!(token_ok(Some("Bearer ABCD-2345"), expected));

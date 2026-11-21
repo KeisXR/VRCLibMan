@@ -23,7 +23,11 @@ pub struct PackageStatus {
 }
 
 fn bundled_dir(app: &AppHandle) -> Option<PathBuf> {
-    let bundled = app.path().resource_dir().ok().map(|dir| dir.join("extension"));
+    let bundled = app
+        .path()
+        .resource_dir()
+        .ok()
+        .map(|dir| dir.join("extension"));
     if let Some(dir) = bundled.filter(|dir| dir.join("manifest.json").is_file()) {
         return Some(dir);
     }
@@ -38,7 +42,11 @@ fn bundled_dir(app: &AppHandle) -> Option<PathBuf> {
 }
 
 fn license_file(app: &AppHandle) -> Option<PathBuf> {
-    let bundled = app.path().resource_dir().ok().map(|dir| dir.join("LICENSE"));
+    let bundled = app
+        .path()
+        .resource_dir()
+        .ok()
+        .map(|dir| dir.join("LICENSE"));
     if let Some(file) = bundled.filter(|file| file.is_file()) {
         return Some(file);
     }
@@ -62,7 +70,10 @@ pub(crate) fn manifest_version(dir: &Path) -> Option<String> {
 
 fn valid_version(version: &str) -> bool {
     let parts: Vec<&str> = version.split('.').collect();
-    (1..=4).contains(&parts.len()) && parts.iter().all(|part| !part.is_empty() && part.len() <= 9 && part.bytes().all(|b| b.is_ascii_digit()))
+    (1..=4).contains(&parts.len())
+        && parts.iter().all(|part| {
+            !part.is_empty() && part.len() <= 9 && part.bytes().all(|b| b.is_ascii_digit())
+        })
 }
 
 /// 拡張が自分を読み込み直すかを決めるため、`/health` で知らせる版。展開していなければ無し。
@@ -83,7 +94,8 @@ pub fn status(app: &AppHandle) -> Result<PackageStatus, String> {
 }
 
 pub fn install(app: &AppHandle) -> Result<PackageStatus, String> {
-    let source = bundled_dir(app).ok_or("アプリに同梱した拡張機能が見つかりません。アプリを入れ直してください")?;
+    let source = bundled_dir(app)
+        .ok_or("アプリに同梱した拡張機能が見つかりません。アプリを入れ直してください")?;
     let target = managed_dir(app)?;
     let license = license_file(app);
     install_from(&source, &target, license.as_deref())?;
@@ -106,7 +118,10 @@ pub fn refresh(app: &AppHandle, uses_extension: bool) -> Result<bool, String> {
 pub fn refresh_from_settings(app: &AppHandle) -> Result<bool, String> {
     let uses_extension = {
         let state = app.state::<crate::AppState>();
-        let connection = state.db.lock().map_err(|_| "データベースをロックできません".to_string())?;
+        let connection = state
+            .db
+            .lock()
+            .map_err(|_| "データベースをロックできません".to_string())?;
         crate::integration::status(&connection)?.mode != "browser"
     };
     refresh(app, uses_extension)
@@ -124,7 +139,10 @@ fn relative_files(root: &Path) -> Result<Vec<PathBuf>, String> {
             .strip_prefix(root)
             .map_err(|_| "同梱した拡張機能を読めません")?
             .to_path_buf();
-        let name = relative.file_name().and_then(|name| name.to_str()).unwrap_or("");
+        let name = relative
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
         if name.starts_with('.') || (relative.components().count() == 1 && SKIP.contains(&name)) {
             continue;
         }
@@ -135,7 +153,10 @@ fn relative_files(root: &Path) -> Result<Vec<PathBuf>, String> {
 }
 
 fn safe_relative(path: &Path) -> bool {
-    !path.as_os_str().is_empty() && path.components().all(|component| matches!(component, Component::Normal(_)))
+    !path.as_os_str().is_empty()
+        && path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
 }
 
 fn write_replacing(target: &Path, bytes: &[u8]) -> Result<(), String> {
@@ -145,21 +166,32 @@ fn write_replacing(target: &Path, bytes: &[u8]) -> Result<(), String> {
         .prefix(".vrclibman-")
         .tempfile_in(parent)
         .map_err(|_| "拡張機能のフォルダに書けません")?;
-    temp.write_all(bytes).map_err(|_| "拡張機能のファイルを書けません")?;
-    temp.as_file().sync_all().map_err(|_| "拡張機能のファイルを書けません")?;
+    temp.write_all(bytes)
+        .map_err(|_| "拡張機能のファイルを書けません")?;
+    temp.as_file()
+        .sync_all()
+        .map_err(|_| "拡張機能のファイルを書けません")?;
     // 同じフォルダ内の一時ファイルから置き換える。読み込み中の Chrome が半端なファイルを読まないため。
-    temp.persist(target).map_err(|_| "拡張機能のファイルを置き換えられません。ブラウザを閉じてからもう一度お試しください")?;
+    temp.persist(target).map_err(
+        |_| "拡張機能のファイルを置き換えられません。ブラウザを閉じてからもう一度お試しください",
+    )?;
     Ok(())
 }
 
 /// `source` の拡張を `target` へ写す。`manifest.json` を最後に置き換えるので、途中で失敗しても新しい版を名乗らない。
 /// 前回写したファイルのうち、新しい版に無いものだけを消す。利用者が置いたほかのファイルには触れない。
-pub(crate) fn install_from(source: &Path, target: &Path, license: Option<&Path>) -> Result<(), String> {
+pub(crate) fn install_from(
+    source: &Path,
+    target: &Path,
+    license: Option<&Path>,
+) -> Result<(), String> {
     if manifest_version(source).is_none() {
         return Err("同梱した拡張機能の版を読めません".into());
     }
     std::fs::create_dir_all(target).map_err(|_| "拡張機能のフォルダを作れません")?;
-    let target = target.canonicalize().map_err(|_| "拡張機能のフォルダを作れません")?;
+    let target = target
+        .canonicalize()
+        .map_err(|_| "拡張機能のフォルダを作れません")?;
     let mut files = relative_files(source)?;
     let manifest = PathBuf::from("manifest.json");
     files.retain(|file| file != &manifest);
@@ -169,13 +201,14 @@ pub(crate) fn install_from(source: &Path, target: &Path, license: Option<&Path>)
         write_replacing(&target.join(file), &bytes)?;
         written.insert(file.clone());
     }
-    if let Some(license) = license {
-        if let Ok(bytes) = std::fs::read(license) {
-            write_replacing(&target.join("LICENSE"), &bytes)?;
-            written.insert(PathBuf::from("LICENSE"));
-        }
+    if let Some(license) = license
+        && let Ok(bytes) = std::fs::read(license)
+    {
+        write_replacing(&target.join("LICENSE"), &bytes)?;
+        written.insert(PathBuf::from("LICENSE"));
     }
-    let manifest_bytes = std::fs::read(source.join(&manifest)).map_err(|_| "同梱した拡張機能を読めません")?;
+    let manifest_bytes =
+        std::fs::read(source.join(&manifest)).map_err(|_| "同梱した拡張機能を読めません")?;
     write_replacing(&target.join(&manifest), &manifest_bytes)?;
     written.insert(manifest);
     let list_path = target.join(FILE_LIST);
@@ -208,7 +241,10 @@ mod tests {
     }
 
     fn bundle(dir: &Path, version: &str, files: &[(&str, &str)]) {
-        write(&dir.join("manifest.json"), &format!(r#"{{"manifest_version":3,"version":"{version}"}}"#));
+        write(
+            &dir.join("manifest.json"),
+            &format!(r#"{{"manifest_version":3,"version":"{version}"}}"#),
+        );
         write(&dir.join("package.json"), "{}");
         for (name, text) in files {
             write(&dir.join(name), text);
@@ -222,10 +258,21 @@ mod tests {
         let target = root.path().join("data").join(FOLDER);
         let license = root.path().join("LICENSE");
         write(&license, "MPL");
-        bundle(&source, "0.8.3", &[("popup.js", "old"), ("icons/icon-16.png", "png"), ("gone.js", "x")]);
+        bundle(
+            &source,
+            "0.8.3",
+            &[
+                ("popup.js", "old"),
+                ("icons/icon-16.png", "png"),
+                ("gone.js", "x"),
+            ],
+        );
         install_from(&source, &target, Some(&license)).unwrap();
         assert_eq!(manifest_version(&target).as_deref(), Some("0.8.3"));
-        assert_eq!(std::fs::read_to_string(target.join("popup.js")).unwrap(), "old");
+        assert_eq!(
+            std::fs::read_to_string(target.join("popup.js")).unwrap(),
+            "old"
+        );
         assert!(target.join("icons/icon-16.png").is_file());
         assert!(target.join("LICENSE").is_file());
         assert!(!target.join("package.json").exists());
@@ -236,7 +283,10 @@ mod tests {
         bundle(&source, "0.9.0", &[("popup.js", "new")]);
         install_from(&source, &target, Some(&license)).unwrap();
         assert_eq!(manifest_version(&target).as_deref(), Some("0.9.0"));
-        assert_eq!(std::fs::read_to_string(target.join("popup.js")).unwrap(), "new");
+        assert_eq!(
+            std::fs::read_to_string(target.join("popup.js")).unwrap(),
+            "new"
+        );
         assert!(!target.join("gone.js").exists());
         assert!(target.join("notes.txt").is_file());
         let leftovers: Vec<_> = std::fs::read_dir(&target)
@@ -256,7 +306,10 @@ mod tests {
         let source = root.path().join("bundle");
         let target = root.path().join(FOLDER);
         write(&source.join("popup.js"), "x");
-        assert!(install_from(&source, &target, None).is_err(), "a bundle without a valid version is refused");
+        assert!(
+            install_from(&source, &target, None).is_err(),
+            "a bundle without a valid version is refused"
+        );
         assert!(manifest_version(&target).is_none());
 
         bundle(&source, "1.0.0", &[]);

@@ -16,7 +16,10 @@ use std::time::{Duration, Instant};
 struct Rng(u64);
 impl Rng {
     fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         self.0 >> 33
     }
     fn below(&mut self, n: u64) -> u64 {
@@ -28,10 +31,33 @@ impl Rng {
 }
 
 const WORDS: &[&str] = &[
-    "対応アバター", "衣装", "テクスチャ", "ポリゴン数", "シェイプキー", "利用規約", "内容物", "更新履歴",
-    "VRChatでの使用を想定した", "オリジナル3Dモデルです", "PhysBone設定済み", "Modular Avatar対応",
-    "UnityPackage", "髪型", "アクセサリー", "マテリアル", "商用利用", "改変", "再配布", "禁止",
-    "着せ替え", "素体", "同梱", "セット", "カラーバリエーション", "導入方法", "クレジット",
+    "対応アバター",
+    "衣装",
+    "テクスチャ",
+    "ポリゴン数",
+    "シェイプキー",
+    "利用規約",
+    "内容物",
+    "更新履歴",
+    "VRChatでの使用を想定した",
+    "オリジナル3Dモデルです",
+    "PhysBone設定済み",
+    "Modular Avatar対応",
+    "UnityPackage",
+    "髪型",
+    "アクセサリー",
+    "マテリアル",
+    "商用利用",
+    "改変",
+    "再配布",
+    "禁止",
+    "着せ替え",
+    "素体",
+    "同梱",
+    "セット",
+    "カラーバリエーション",
+    "導入方法",
+    "クレジット",
 ];
 
 /// 800〜8000 字、平均 3000 字ほどの架空の説明。
@@ -87,8 +113,13 @@ fn build(products: usize, watch: bool) -> Built {
     let mut connection = db::open(&dir.path().join("library.sqlite")).unwrap();
     let mut rng = Rng(0x5eed + products as u64);
     let avatars: Vec<(String, String)> = {
-        let mut q = connection.prepare("SELECT id, display_name FROM avatars ORDER BY id").unwrap();
-        q.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect()
+        let mut q = connection
+            .prepare("SELECT id, display_name FROM avatars ORDER BY id")
+            .unwrap();
+        q.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
     };
     let files_root = dir.path().join("lib");
     std::fs::create_dir_all(&files_root).unwrap();
@@ -108,10 +139,23 @@ fn build(products: usize, watch: bool) -> Built {
                 0..=44 => (Some("outfit"), Some("outfit")),
                 45..=52 => (Some("hair"), Some("hair")),
                 53..=62 => (Some("accessory"), Some("accessory")),
-                63..=70 => (Some("texture"), Some(if rng.chance(50) { "makeup_skin" } else { "eye_texture" })),
+                63..=70 => (
+                    Some("texture"),
+                    Some(if rng.chance(50) {
+                        "makeup_skin"
+                    } else {
+                        "eye_texture"
+                    }),
+                ),
                 71..=80 => (Some("gimmick"), Some("gimmick")),
-                81..=87 => (Some("world"), Some(world_genres[rng.below(world_genres.len() as u64) as usize])),
-                88..=97 => (Some("other"), Some(asset_genres[12 + rng.below(2) as usize])),
+                81..=87 => (
+                    Some("world"),
+                    Some(world_genres[rng.below(world_genres.len() as u64) as usize]),
+                ),
+                88..=97 => (
+                    Some("other"),
+                    Some(asset_genres[12 + rng.below(2) as usize]),
+                ),
                 _ => (None, None),
             }
         };
@@ -141,15 +185,23 @@ fn build(products: usize, watch: bool) -> Built {
         let mut linked: Vec<usize> = Vec::new();
         if index < owned {
             linked.push(index);
-            tx.execute("UPDATE avatars SET owned = 1 WHERE id = ?1", [&avatars[index].0]).unwrap();
-        } else if matches!(category, Some("outfit" | "hair" | "accessory" | "texture")) && rng.chance(80) {
+            tx.execute(
+                "UPDATE avatars SET owned = 1 WHERE id = ?1",
+                [&avatars[index].0],
+            )
+            .unwrap();
+        } else if matches!(category, Some("outfit" | "hair" | "accessory" | "texture"))
+            && rng.chance(80)
+        {
             let count = match rng.below(10) {
                 0..=4 => 1,
                 5..=7 => 2 + rng.below(3),
                 _ => 5 + rng.below(8),
             };
             for _ in 0..count {
-                let skew = rng.below(referenced as u64).min(rng.below(referenced as u64)) as usize;
+                let skew = rng
+                    .below(referenced as u64)
+                    .min(rng.below(referenced as u64)) as usize;
                 if !linked.contains(&skew) {
                     linked.push(skew);
                 }
@@ -237,18 +289,40 @@ fn build(products: usize, watch: bool) -> Built {
     tx.commit().unwrap();
     if watch {
         let blob = serde_json::json!({ "automatic": true, "allProducts": true, "generation": 1, "rows": watch_rows, "history": [] });
+        // Written in the shape of older versions, then moved into rows the way an upgrade does.
         db::set_setting(&connection, "asset_update_watch_v1", &blob.to_string()).unwrap();
+        asset_updates::move_legacy_watch(&connection).unwrap();
     }
-    db::set_setting(&connection, "library_folder", &files_root.display().to_string()).unwrap();
-    Built { connection, popular_avatar: avatars[0].0.clone(), dir }
+    db::set_setting(
+        &connection,
+        "library_folder",
+        &files_root.display().to_string(),
+    )
+    .unwrap();
+    Built {
+        connection,
+        popular_avatar: avatars[0].0.clone(),
+        dir,
+    }
 }
 
 fn report(products: usize, watch: bool, runs: usize) {
-    let Built { mut connection, dir, popular_avatar } = build(products, watch);
+    let Built {
+        mut connection,
+        dir,
+        popular_avatar,
+    } = build(products, watch);
     let c = &mut connection;
-    let count = |table: &str| -> i64 { c.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0)).unwrap() };
+    let count = |table: &str| -> i64 {
+        c.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+            .unwrap()
+    };
     let blob: i64 = c
-        .query_row("SELECT COALESCE(MAX(LENGTH(CAST(value AS BLOB))), 0) FROM settings WHERE key = 'asset_update_watch_v1'", [], |r| r.get(0))
+        .query_row(
+            "SELECT COALESCE(SUM(LENGTH(CAST(COALESCE(baseline, '') || COALESCE(latest, '') || new_files || COALESCE(current_files, '') || COALESCE(history_library_files, '') AS BLOB))), 0) FROM asset_watch",
+            [],
+            |r| r.get(0),
+        )
         .unwrap();
     println!(
         "\n=== 商品 {products} 件 / アセット更新の対象 {} / アバター {} (所持 {}) / 対応リンク {} / ファイル行 {} / 手元 {} / 更新確認の保存値 {:.1} MB",
@@ -272,8 +346,14 @@ fn report(products: usize, watch: bool, runs: usize) {
     println!("    更新確認の保存値の解析        {}", ms(t_watches));
 
     // コマンド（commands.rs と同じ手順）
-    let (t_stats, stats_json) = time(runs, || serde_json::to_string(&db::library_stats(c).unwrap()).unwrap());
-    assert_eq!(stats_json, serde_json::to_string(&view::library_stats(&snapshot)).unwrap(), "counts read with SQL");
+    let (t_stats, stats_json) = time(runs, || {
+        serde_json::to_string(&db::library_stats(c).unwrap()).unwrap()
+    });
+    assert_eq!(
+        stats_json,
+        serde_json::to_string(&view::library_stats(&snapshot)).unwrap(),
+        "counts read with SQL"
+    );
     let (t_cards_only, _) = time(runs, || view::avatar_cards(&snapshot));
     let (t_avatars, cards_json) = time(runs, || {
         let snapshot = db::load_snapshot(c).unwrap();
@@ -296,45 +376,103 @@ fn report(products: usize, watch: bool, runs: usize) {
     let mut placed = snapshot.clone();
     library_files::fill_local_places(&mut placed, "");
     let asset_ids = db::product_ids_by_genre(c, "asset", None).unwrap();
-    let (t_genre_view, _) = time(runs, || view::genre_products(&placed, crate::genre::ASSET_GENRES, &asset_ids, None));
+    let (t_genre_view, _) = time(runs, || {
+        view::genre_products(&placed, crate::genre::ASSET_GENRES, &asset_ids, None)
+    });
     let (t_detail, detail_json) = time(runs, || {
         let mut snapshot = db::load_snapshot(c).unwrap();
         library_files::fill_local_places(&mut snapshot, "");
         serde_json::to_string(&view::avatar_detail(&snapshot, &popular_avatar).unwrap()).unwrap()
     });
-    let (t_update_status, status_json) = time(runs, || serde_json::to_string(&asset_updates::status(c).unwrap()).unwrap());
+    let (t_update_status, status_json) = time(runs, || {
+        serde_json::to_string(&asset_updates::status(c).unwrap()).unwrap()
+    });
     let (t_settings, _) = time(runs, || db::settings(c).unwrap());
     let (t_class, _) = time(runs, || db::classification_status(c).unwrap());
-    let (t_knowledge, knowledge_json) = time(runs, || serde_json::to_string(&db::knowledge(c).unwrap()).unwrap());
-    let (t_options, options_json) = time(runs, || serde_json::to_string(&db::product_options(c).unwrap()).unwrap());
-    assert_eq!(options_json, serde_json::to_string(&view::product_options(&snapshot)).unwrap(), "options read with SQL");
-    let (t_purchase_page, _) = time(runs, || serde_json::to_string(&purchases::page(c, &purchases::PurchaseQuery::default(), false).unwrap()).unwrap());
-    let (t_purchase_status, _) = time(runs, || serde_json::to_string(&purchases::status(c, false).unwrap()).unwrap());
-    let (t_purchase_summary, _) = time(runs, || serde_json::to_string(&purchases::summary(c, None).unwrap()).unwrap());
+    let (t_knowledge, knowledge_json) = time(runs, || {
+        serde_json::to_string(&db::knowledge(c).unwrap()).unwrap()
+    });
+    let (t_options, options_json) = time(runs, || {
+        serde_json::to_string(&db::product_options(c).unwrap()).unwrap()
+    });
+    assert_eq!(
+        options_json,
+        serde_json::to_string(&view::product_options(&snapshot)).unwrap(),
+        "options read with SQL"
+    );
+    let (t_purchase_page, _) = time(runs, || {
+        serde_json::to_string(
+            &purchases::page(c, &purchases::PurchaseQuery::default(), false).unwrap(),
+        )
+        .unwrap()
+    });
+    let (t_purchase_status, _) = time(runs, || {
+        serde_json::to_string(&purchases::status(c, false).unwrap()).unwrap()
+    });
+    let (t_purchase_summary, _) = time(runs, || {
+        serde_json::to_string(&purchases::summary(c, None).unwrap()).unwrap()
+    });
 
     let size = |json: &str| format!("{:.0} KB", json.len() as f64 / 1024.0);
     println!("  library_stats                   {}", ms(t_stats));
-    println!("  list_avatars                    {}   （カードの計算 {}、{}）", ms(t_avatars), ms(t_cards_only).trim(), size(&cards_json));
-    println!("  list_products_by_genre asset    {}   （手元の確認 {}、カードの組み立て {}、{}）", ms(t_assets), ms(t_places).trim(), ms(t_genre_view).trim(), size(&assets_json));
-    println!("  list_products_by_genre world    {}   （{}）", ms(t_worlds), size(&worlds_json));
-    println!("  get_avatar（対応の多い 1 体）   {}   （{}）", ms(t_detail), size(&detail_json));
+    println!(
+        "  list_avatars                    {}   （カードの計算 {}、{}）",
+        ms(t_avatars),
+        ms(t_cards_only).trim(),
+        size(&cards_json)
+    );
+    println!(
+        "  list_products_by_genre asset    {}   （手元の確認 {}、カードの組み立て {}、{}）",
+        ms(t_assets),
+        ms(t_places).trim(),
+        ms(t_genre_view).trim(),
+        size(&assets_json)
+    );
+    println!(
+        "  list_products_by_genre world    {}   （{}）",
+        ms(t_worlds),
+        size(&worlds_json)
+    );
+    println!(
+        "  get_avatar（対応の多い 1 体）   {}   （{}）",
+        ms(t_detail),
+        size(&detail_json)
+    );
     println!("  list_product_options            {}", ms(t_options));
-    println!("  asset_update_status             {}   （{}）", ms(t_update_status), size(&status_json));
+    println!(
+        "  asset_update_status             {}   （{}）",
+        ms(t_update_status),
+        size(&status_json)
+    );
     println!("  get_settings                    {}", ms(t_settings));
     println!("  classification_status           {}", ms(t_class));
     println!("  list_knowledge                  {}", ms(t_knowledge));
-    println!("  購入履歴 一覧 / 状態 / 集計     {} / {} / {}", ms(t_purchase_page).trim(), ms(t_purchase_status).trim(), ms(t_purchase_summary).trim());
+    println!(
+        "  購入履歴 一覧 / 状態 / 集計     {} / {} / {}",
+        ms(t_purchase_page).trim(),
+        ms(t_purchase_status).trim(),
+        ms(t_purchase_summary).trim()
+    );
     println!("  --- サイドバーから開いたときに画面が呼ぶ読み込みの合計 ---");
     println!("  アバター     {}", ms(t_avatars + t_stats));
     println!("  アセット     {}", ms(t_assets));
     println!("  ワールド     {}", ms(t_worlds));
     println!("  検索         {}", ms(t_avatars + t_assets + t_worlds));
     println!("  購入履歴     {}", ms(t_purchase_page + t_purchase_status));
-    println!("  インポート   {}", ms(t_class + t_stats + t_settings + t_options));
-    println!("  設定         {}", ms(t_settings + t_knowledge + t_update_status + t_options));
+    println!(
+        "  インポート   {}",
+        ms(t_class + t_stats + t_settings + t_options)
+    );
+    println!(
+        "  設定         {}",
+        ms(t_settings + t_knowledge + t_update_status + t_options)
+    );
 
     if let Ok(out) = std::env::var("NAV_BENCH_DUMP") {
-        let out = std::path::Path::new(&out).join(format!("{products}-{}", if watch { "watch" } else { "plain" }));
+        let out = std::path::Path::new(&out).join(format!(
+            "{products}-{}",
+            if watch { "watch" } else { "plain" }
+        ));
         std::fs::create_dir_all(&out).unwrap();
         // The temporary folder differs on every run; outputs are compared without it.
         let root = serde_json::to_string(&dir.path().display().to_string()).unwrap();
@@ -373,9 +511,16 @@ fn report(products: usize, watch: bool, runs: usize) {
 fn navigation_timing() {
     let sizes: Vec<usize> = std::env::var("NAV_BENCH_SIZES")
         .ok()
-        .map(|raw| raw.split(',').filter_map(|part| part.trim().parse().ok()).collect())
+        .map(|raw| {
+            raw.split(',')
+                .filter_map(|part| part.trim().parse().ok())
+                .collect()
+        })
         .unwrap_or_else(|| vec![300, 1000, 2000]);
-    let runs = std::env::var("NAV_BENCH_RUNS").ok().and_then(|v| v.parse().ok()).unwrap_or(5);
+    let runs = std::env::var("NAV_BENCH_RUNS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(5);
     let plain = std::env::var("NAV_BENCH_PLAIN").is_ok();
     for products in sizes {
         if plain {

@@ -57,11 +57,18 @@ fn yen(value: Option<&Value>) -> Option<i64> {
     match value? {
         Value::Number(number) => number
             .as_i64()
-            .or_else(|| number.as_f64().filter(|v| v.fract() == 0.0).map(|v| v as i64))
+            .or_else(|| {
+                number
+                    .as_f64()
+                    .filter(|v| v.fract() == 0.0)
+                    .map(|v| v as i64)
+            })
             .filter(|price| *price >= 0),
         Value::String(text) => {
             let digits: String = text.chars().filter(char::is_ascii_digit).collect();
-            let plain = text.chars().all(|ch| ch.is_ascii_digit() || matches!(ch, '¥' | '￥' | ',' | ' ' | '円'));
+            let plain = text
+                .chars()
+                .all(|ch| ch.is_ascii_digit() || matches!(ch, '¥' | '￥' | ',' | ' ' | '円'));
             if digits.is_empty() || !plain {
                 None
             } else {
@@ -87,46 +94,65 @@ pub fn interpret_prices(body: &str) -> PriceOutcome {
     if let Some(Value::Array(rows)) = map.get("variations") {
         for row in rows.iter().take(MAX_VARIATIONS) {
             let Some(row) = row.as_object() else { continue };
-            let Some(price) = yen(row.get("price")) else { continue };
+            let Some(price) = yen(row.get("price")) else {
+                continue;
+            };
             let name = row
                 .get("name")
                 .and_then(Value::as_str)
                 .and_then(crate::library_files::clean_variation)
                 .unwrap_or_default();
-            prices.push(VariationPrice { name, price_yen: price });
+            prices.push(VariationPrice {
+                name,
+                price_yen: price,
+            });
         }
     }
-    if prices.is_empty() {
-        if let Some(price) = yen(map.get("price")) {
-            prices.push(VariationPrice { name: String::new(), price_yen: price });
-        }
+    if prices.is_empty()
+        && let Some(price) = yen(map.get("price"))
+    {
+        prices.push(VariationPrice {
+            name: String::new(),
+            price_yen: price,
+        });
     }
     PriceOutcome::Prices(prices)
 }
 
 pub(crate) fn classify(document: ItemDocument) -> PriceOutcome {
     match document {
-        ItemDocument::Body { status, final_url, content_type, body } => {
-            match booth_detail::gate_http(status, &final_url, &content_type, &body) {
-                None => interpret_prices(&body),
-                Some(DetailOutcome::Missing) => PriceOutcome::Missing,
-                Some(DetailOutcome::Adult | DetailOutcome::AgeGate) => PriceOutcome::Restricted,
-                Some(DetailOutcome::RetryLater) => PriceOutcome::RetryLater,
-                Some(DetailOutcome::Again | DetailOutcome::Public(_)) => PriceOutcome::Again,
-            }
-        }
+        ItemDocument::Body {
+            status,
+            final_url,
+            content_type,
+            body,
+        } => match booth_detail::gate_http(status, &final_url, &content_type, &body) {
+            None => interpret_prices(&body),
+            Some(DetailOutcome::Missing) => PriceOutcome::Missing,
+            Some(DetailOutcome::Adult | DetailOutcome::AgeGate) => PriceOutcome::Restricted,
+            Some(DetailOutcome::RetryLater) => PriceOutcome::RetryLater,
+            Some(DetailOutcome::Again | DetailOutcome::Public(_)) => PriceOutcome::Again,
+        },
         ItemDocument::AgeGate => PriceOutcome::Restricted,
         ItemDocument::Again => PriceOutcome::Again,
     }
 }
 
 fn key(name: &str) -> String {
-    nfkc(name).split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+    nfkc(name)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 /// もらったバリエーションの今の価格。名前が合うものを足し、合わなければ価格が 1 つに決まるときだけ返す。
 pub fn current_price(prices: &[VariationPrice], owned: &[String]) -> Option<i64> {
-    let owned: HashSet<String> = owned.iter().map(|name| key(name)).filter(|name| !name.is_empty()).collect();
+    let owned: HashSet<String> = owned
+        .iter()
+        .map(|name| key(name))
+        .filter(|name| !name.is_empty())
+        .collect();
     let matched: Vec<i64> = prices
         .iter()
         .filter(|row| !row.name.is_empty() && owned.contains(&key(&row.name)))
@@ -136,7 +162,10 @@ pub fn current_price(prices: &[VariationPrice], owned: &[String]) -> Option<i64>
         return Some(matched.iter().sum());
     }
     let first = prices.first()?.price_yen;
-    prices.iter().all(|row| row.price_yen == first).then_some(first)
+    prices
+        .iter()
+        .all(|row| row.price_yen == first)
+        .then_some(first)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -163,7 +192,9 @@ pub(crate) fn load(connection: &Connection) -> Result<Vec<ReceivedGift>, String>
              JOIN products p ON p.booth_id = v.booth_id
              WHERE p.received_gift = 1 AND v.owned = 1",
         ))?;
-        let rows = sql(statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))))?;
+        let rows = sql(statement.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        }))?;
         for row in rows {
             let (id, name) = sql(row)?;
             owned.entry(id).or_default().push(name);
@@ -176,7 +207,11 @@ pub(crate) fn load(connection: &Connection) -> Result<Vec<ReceivedGift>, String>
          ORDER BY p.booth_id",
     ))?;
     let rows = sql(statement.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, Option<String>>(2)?))
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, Option<String>>(1)?,
+            row.get::<_, Option<String>>(2)?,
+        ))
     }))?;
     let mut gifts = Vec::new();
     for row in rows {
@@ -184,9 +219,13 @@ pub(crate) fn load(connection: &Connection) -> Result<Vec<ReceivedGift>, String>
         let price = match outcome.as_deref() {
             None => GiftPrice::Unchecked,
             Some(OUTCOME_OK) => {
-                let prices: Vec<VariationPrice> = json.and_then(|json| serde_json::from_str(&json).ok()).unwrap_or_default();
+                let prices: Vec<VariationPrice> = json
+                    .and_then(|json| serde_json::from_str(&json).ok())
+                    .unwrap_or_default();
                 let names = owned.get(&booth_id).map(Vec::as_slice).unwrap_or_default();
-                current_price(&prices, names).map(GiftPrice::Known).unwrap_or(GiftPrice::Unknown)
+                current_price(&prices, names)
+                    .map(GiftPrice::Known)
+                    .unwrap_or(GiftPrice::Unknown)
             }
             Some(_) => GiftPrice::Unknown,
         };
@@ -208,12 +247,20 @@ fn targets(connection: &Connection, refresh: bool) -> Result<Vec<Target>, String
          ORDER BY booth_id",
     ))?;
     let rows = sql(statement.query_map(params![refresh], |row| {
-        Ok(Target { booth_id: row.get(0)?, adult: row.get::<_, i64>(1)? != 0 })
+        Ok(Target {
+            booth_id: row.get(0)?,
+            adult: row.get::<_, i64>(1)? != 0,
+        })
     }))?;
     sql(rows.collect())
 }
 
-fn record(connection: &Connection, booth_id: &str, outcome: &str, prices: &[VariationPrice]) -> Result<(), String> {
+fn record(
+    connection: &Connection,
+    booth_id: &str,
+    outcome: &str,
+    prices: &[VariationPrice],
+) -> Result<(), String> {
     let json = serde_json::to_string(prices).map_err(|err| err.to_string())?;
     sql(connection.execute(
         "INSERT INTO product_prices (booth_id, outcome, variations_json, checked_at) VALUES (?1, ?2, ?3, ?4)
@@ -256,15 +303,28 @@ pub(crate) async fn fetch(app: &AppHandle, refresh: bool) -> Result<GiftPriceRep
     let _running = Running;
     let state = app.state::<crate::AppState>();
     let (targets, interval) = {
-        let connection = state.db.lock().map_err(|_| "データベースをロックできません".to_string())?;
-        (targets(&connection, refresh)?, crate::db::booth_page_interval_ms(&connection)?)
+        let connection = state
+            .db
+            .lock()
+            .map_err(|_| "データベースをロックできません".to_string())?;
+        (
+            targets(&connection, refresh)?,
+            crate::db::booth_page_interval_ms(&connection)?,
+        )
     };
     let mut report = GiftPriceReport::default();
     let progress = ProgressGuard::new(app.clone(), JOB);
     let total = targets.len() as u32;
     let mut requested = false;
     for (index, target) in targets.iter().enumerate() {
-        progress.update(index as u32, total, format!("もらったギフトの価格を確認しています ({}/{total})", index + 1));
+        progress.update(
+            index as u32,
+            total,
+            format!(
+                "もらったギフトの価格を確認しています ({}/{total})",
+                index + 1
+            ),
+        );
         let outcome = if target.adult {
             PriceOutcome::Restricted
         } else {
@@ -289,7 +349,10 @@ pub(crate) async fn fetch(app: &AppHandle, refresh: bool) -> Result<GiftPriceRep
         };
         match saved {
             Some((kind, prices)) => {
-                let connection = state.db.lock().map_err(|_| "データベースをロックできません".to_string())?;
+                let connection = state
+                    .db
+                    .lock()
+                    .map_err(|_| "データベースをロックできません".to_string())?;
                 record(&connection, &target.booth_id, kind, prices)?;
                 report.checked += 1;
                 if kind != OUTCOME_OK {
@@ -313,7 +376,10 @@ mod tests {
     use super::*;
 
     fn row(name: &str, price: i64) -> VariationPrice {
-        VariationPrice { name: name.into(), price_yen: price }
+        VariationPrice {
+            name: name.into(),
+            price_yen: price,
+        }
     }
 
     #[test]
@@ -322,10 +388,17 @@ mod tests {
             {"name":"ダミーA対応","price":1500},{"name":"フルセット","price":3000},{"name":null,"price":"¥ 500"}]}"#;
         assert_eq!(
             interpret_prices(body),
-            PriceOutcome::Prices(vec![row("ダミーA対応", 1500), row("フルセット", 3000), row("", 500)])
+            PriceOutcome::Prices(vec![
+                row("ダミーA対応", 1500),
+                row("フルセット", 3000),
+                row("", 500)
+            ])
         );
         let single = r#"{"price":"¥ 800","variations":[]}"#;
-        assert_eq!(interpret_prices(single), PriceOutcome::Prices(vec![row("", 800)]));
+        assert_eq!(
+            interpret_prices(single),
+            PriceOutcome::Prices(vec![row("", 800)])
+        );
         let range = r#"{"price":"¥ 800〜¥ 900","variations":[]}"#;
         assert_eq!(interpret_prices(range), PriceOutcome::Prices(vec![]));
         let adult = r#"{"is_adult":true,"price":"¥ 800","variations":[{"name":"A","price":800}]}"#;
@@ -335,12 +408,19 @@ mod tests {
 
     #[test]
     fn price_follows_the_received_variation_or_a_single_price() {
-        let prices = [row("ダミーA対応", 1500), row("ダミーB対応", 1500), row("フルセット", 3000)];
+        let prices = [
+            row("ダミーA対応", 1500),
+            row("ダミーB対応", 1500),
+            row("フルセット", 3000),
+        ];
         assert_eq!(current_price(&prices, &["フルセット".into()]), Some(3000));
         assert_eq!(current_price(&prices, &["ﾀﾞﾐｰA対応".into()]), Some(1500));
         assert_eq!(current_price(&prices, &[]), None);
         assert_eq!(current_price(&prices[..2], &[]), Some(1500));
-        assert_eq!(current_price(&[row("", 800)], &["色違い".into()]), Some(800));
+        assert_eq!(
+            current_price(&[row("", 800)], &["色違い".into()]),
+            Some(800)
+        );
         assert_eq!(current_price(&[], &[]), None);
     }
 
@@ -353,15 +433,34 @@ mod tests {
             body: body.into(),
         };
         let url = "https://booth.pm/ja/items/424242.json";
-        assert_eq!(classify(page(404, url, "application/json", "{}")), PriceOutcome::Missing);
-        assert_eq!(classify(page(429, url, "application/json", "{}")), PriceOutcome::RetryLater);
-        assert_eq!(classify(page(200, url, "text/html", "<html>")), PriceOutcome::Restricted);
         assert_eq!(
-            classify(page(200, "https://booth.pm/age_verification", "application/json", "{}")),
+            classify(page(404, url, "application/json", "{}")),
+            PriceOutcome::Missing
+        );
+        assert_eq!(
+            classify(page(429, url, "application/json", "{}")),
+            PriceOutcome::RetryLater
+        );
+        assert_eq!(
+            classify(page(200, url, "text/html", "<html>")),
             PriceOutcome::Restricted
         );
         assert_eq!(
-            classify(page(200, url, "application/json", r#"{"variations":[{"name":"A","price":100}]}"#)),
+            classify(page(
+                200,
+                "https://booth.pm/age_verification",
+                "application/json",
+                "{}"
+            )),
+            PriceOutcome::Restricted
+        );
+        assert_eq!(
+            classify(page(
+                200,
+                url,
+                "application/json",
+                r#"{"variations":[{"name":"A","price":100}]}"#
+            )),
             PriceOutcome::Prices(vec![row("A", 100)])
         );
     }
@@ -376,12 +475,28 @@ mod tests {
         ]"#;
         crate::db::import_export_json(&mut connection, json).unwrap();
         // 省略された印は消さない。
-        crate::db::import_export_json(&mut connection, r#"[{"boothId":"424242","title":"ダミー衣装"}]"#).unwrap();
+        crate::db::import_export_json(
+            &mut connection,
+            r#"[{"boothId":"424242","title":"ダミー衣装"}]"#,
+        )
+        .unwrap();
         let gifts = load(&connection).unwrap();
-        assert_eq!(gifts.iter().map(|gift| gift.booth_id.as_str()).collect::<Vec<_>>(), ["424242", "434343"]);
+        assert_eq!(
+            gifts
+                .iter()
+                .map(|gift| gift.booth_id.as_str())
+                .collect::<Vec<_>>(),
+            ["424242", "434343"]
+        );
         assert!(gifts.iter().all(|gift| gift.price == GiftPrice::Unchecked));
         assert_eq!(targets(&connection, false).unwrap().len(), 2);
-        record(&connection, "424242", OUTCOME_OK, &[row("ダミーA対応", 1500), row("フルセット", 3000)]).unwrap();
+        record(
+            &connection,
+            "424242",
+            OUTCOME_OK,
+            &[row("ダミーA対応", 1500), row("フルセット", 3000)],
+        )
+        .unwrap();
         record(&connection, "434343", OUTCOME_MISSING, &[]).unwrap();
         let gifts = load(&connection).unwrap();
         assert_eq!(gifts[0].price, GiftPrice::Known(3000));

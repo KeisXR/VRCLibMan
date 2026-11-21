@@ -1,6 +1,6 @@
 use crate::model::{
-    Avatar, BaseBody, Category, DownloadFact, FilePlace, LibraryStats, Link, LocalFile,
-    PlacedDownload, Product, ProductFlag, VariationFact,
+    Avatar, BaseBody, Category, DownloadFact, FilePlace, Link, LocalFile, PlacedDownload, Product,
+    ProductFlag, VariationFact,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -240,11 +240,15 @@ struct Classified<'s> {
 
 impl Classified<'_> {
     fn thumbnail_path(&self) -> Option<String> {
-        self.owned.iter().find_map(|body| body.thumbnail_path.clone())
+        self.owned
+            .iter()
+            .find_map(|body| body.thumbnail_path.clone())
     }
 
     fn thumbnail_url(&self) -> Option<String> {
-        self.owned.iter().find_map(|body| body.thumbnail_url.clone())
+        self.owned
+            .iter()
+            .find_map(|body| body.thumbnail_url.clone())
     }
 
     fn section_len(&self, key: &str) -> u32 {
@@ -279,7 +283,10 @@ struct Lookup<'s> {
 
 impl<'s> Lookup<'s> {
     fn new(snapshot: &'s Snapshot) -> Self {
-        fn group<'s, T>(rows: &'s [T], key: impl Fn(&'s T) -> Option<&'s str>) -> HashMap<&'s str, Vec<&'s T>> {
+        fn group<'s, T>(
+            rows: &'s [T],
+            key: impl Fn(&'s T) -> Option<&'s str>,
+        ) -> HashMap<&'s str, Vec<&'s T>> {
             let mut grouped: HashMap<&str, Vec<&T>> = HashMap::new();
             for row in rows {
                 if let Some(key) = key(row) {
@@ -291,8 +298,14 @@ impl<'s> Lookup<'s> {
         let mut avatars_of: HashMap<&str, Vec<&str>> = HashMap::new();
         let mut products_of: HashMap<&str, Vec<&str>> = HashMap::new();
         for link in &snapshot.links {
-            avatars_of.entry(link.product_id.as_str()).or_default().push(link.avatar_id.as_str());
-            products_of.entry(link.avatar_id.as_str()).or_default().push(link.product_id.as_str());
+            avatars_of
+                .entry(link.product_id.as_str())
+                .or_default()
+                .push(link.avatar_id.as_str());
+            products_of
+                .entry(link.avatar_id.as_str())
+                .or_default()
+                .push(link.product_id.as_str());
         }
         let mut flags = HashMap::new();
         for flag in &snapshot.product_flags {
@@ -302,11 +315,17 @@ impl<'s> Lookup<'s> {
             .products
             .iter()
             .enumerate()
-            .filter(|(_, product)| product.is_generic && !avatars_of.contains_key(product.booth_id.as_str()))
+            .filter(|(_, product)| {
+                product.is_generic && !avatars_of.contains_key(product.booth_id.as_str())
+            })
             .map(|(position, _)| position)
             .collect();
         Self {
-            products: snapshot.products.iter().map(|product| (product.booth_id.as_str(), product)).collect(),
+            products: snapshot
+                .products
+                .iter()
+                .map(|product| (product.booth_id.as_str(), product))
+                .collect(),
             positions: snapshot
                 .products
                 .iter()
@@ -316,7 +335,9 @@ impl<'s> Lookup<'s> {
             avatars_of,
             products_of,
             files_of: group(&snapshot.files, |file| file.linked_product_id.as_deref()),
-            placed_of: group(&snapshot.placed_downloads, |row| Some(row.booth_id.as_str())),
+            placed_of: group(&snapshot.placed_downloads, |row| {
+                Some(row.booth_id.as_str())
+            }),
             rows_of: group(&snapshot.download_rows, |row| Some(row.booth_id.as_str())),
             variations_of: group(&snapshot.variations, |row| Some(row.booth_id.as_str())),
             flags,
@@ -325,19 +346,31 @@ impl<'s> Lookup<'s> {
     }
 
     fn avatars_of(&self, booth_id: &str) -> &[&'s str] {
-        self.avatars_of.get(booth_id).map(Vec::as_slice).unwrap_or_default()
+        self.avatars_of
+            .get(booth_id)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
     }
 
     fn files_of(&self, booth_id: &str) -> &[&'s LocalFile] {
-        self.files_of.get(booth_id).map(Vec::as_slice).unwrap_or_default()
+        self.files_of
+            .get(booth_id)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
     }
 
     fn placed_of(&self, booth_id: &str) -> &[&'s PlacedDownload] {
-        self.placed_of.get(booth_id).map(Vec::as_slice).unwrap_or_default()
+        self.placed_of
+            .get(booth_id)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
     }
 
     fn rows_of(&self, booth_id: &str) -> &[&'s DownloadFact] {
-        self.rows_of.get(booth_id).map(Vec::as_slice).unwrap_or_default()
+        self.rows_of
+            .get(booth_id)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
     }
 }
 
@@ -374,7 +407,10 @@ pub fn avatar_detail(snapshot: &Snapshot, id: &str) -> Option<AvatarDetail> {
     let lookup = Lookup::new(snapshot);
     let classified = classify(snapshot, &lookup, avatar);
     let views = |products: &[&Product]| -> Vec<ItemView> {
-        products.iter().map(|product| item_view(snapshot, &lookup, product, false)).collect()
+        products
+            .iter()
+            .map(|product| item_view(snapshot, &lookup, product, false))
+            .collect()
     };
     let mut siblings: Vec<Sibling> = snapshot
         .avatars
@@ -413,7 +449,9 @@ pub fn avatar_detail(snapshot: &Snapshot, id: &str) -> Option<AvatarDetail> {
                 category: category.to_string(),
                 items: items
                     .iter()
-                    .map(|(product, via_base_body)| item_view(snapshot, &lookup, product, *via_base_body))
+                    .map(|(product, via_base_body)| {
+                        item_view(snapshot, &lookup, product, *via_base_body)
+                    })
                     .collect(),
             })
             .collect(),
@@ -450,7 +488,10 @@ pub struct UpdateTarget {
 /// 新しく見つかった（`is_new`）まだ手元にもリモートにも無いファイルを返す。以前のファイルは返さない。
 /// 同じバリエーションに新しいファイルがあればそれだけにし、無ければ（バリエーション名が変わったとき）
 /// その商品の新しいファイルをすべて返す。ほかの商品の新しいファイルは足さない。
-pub fn update_download_targets(snapshot: &Snapshot, requests: &[UpdateRequest]) -> Vec<UpdateTarget> {
+pub fn update_download_targets(
+    snapshot: &Snapshot,
+    requests: &[UpdateRequest],
+) -> Vec<UpdateTarget> {
     let lookup = Lookup::new(snapshot);
     let mut targets: Vec<UpdateTarget> = Vec::new();
     for request in requests {
@@ -528,7 +569,12 @@ pub fn genre_products(
     }
 }
 
-fn browse_bucket(snapshot: &Snapshot, lookup: &Lookup<'_>, product: &Product, genres: &[(&str, &str)]) -> String {
+fn browse_bucket(
+    snapshot: &Snapshot,
+    lookup: &Lookup<'_>,
+    product: &Product,
+    genres: &[(&str, &str)],
+) -> String {
     if free_shelf(snapshot, lookup, product) {
         return crate::genre::FREE.to_string();
     }
@@ -585,7 +631,11 @@ pub fn product_edit_view(snapshot: &Snapshot, booth_id: &str) -> Option<ProductE
         .iter()
         .find(|product| product.booth_id == booth_id)?;
     Some(ProductEditView {
-        purchased_editions: snapshot.manual_editions.get(booth_id).cloned().unwrap_or_default(),
+        purchased_editions: snapshot
+            .manual_editions
+            .get(booth_id)
+            .cloned()
+            .unwrap_or_default(),
         booth_id: product.booth_id.clone(),
         title: product.title.clone(),
         shop: product.shop.clone(),
@@ -680,7 +730,10 @@ fn panel_item(lookup: &Lookup<'_>, product: &Product, via_base_body: bool) -> Pa
         is_adult: flag.and_then(|flag| flag.is_adult).unwrap_or(false),
         unpublished: flag.and_then(|flag| flag.unpublished).unwrap_or(false),
         via_base_body,
-        has_thumbnail: product.thumbnail_path.as_deref().is_some_and(|path| !path.is_empty()),
+        has_thumbnail: product
+            .thumbnail_path
+            .as_deref()
+            .is_some_and(|path| !path.is_empty()),
     }
 }
 
@@ -697,7 +750,10 @@ fn panel_genre_label(genres: &[(&str, &str)], key: &str) -> String {
 }
 
 /// `genres` の順に見出しを並べ、そのあとに無料・ジャンル未設定を置く。空の見出しは出さない。
-fn panel_genre_sections(genres: &[(&str, &str)], rows: Vec<(String, PanelItem)>) -> Vec<PanelSection> {
+fn panel_genre_sections(
+    genres: &[(&str, &str)],
+    rows: Vec<(String, PanelItem)>,
+) -> Vec<PanelSection> {
     let mut groups: HashMap<String, Vec<PanelItem>> = HashMap::new();
     for (key, item) in rows {
         groups.entry(key).or_default().push(item);
@@ -731,9 +787,17 @@ pub fn panel_avatars(snapshot: &Snapshot) -> Vec<PanelAvatar> {
                 thumbnail_id: classified
                     .owned
                     .iter()
-                    .find(|body| body.thumbnail_path.as_deref().is_some_and(|path| !path.is_empty()))
+                    .find(|body| {
+                        body.thumbnail_path
+                            .as_deref()
+                            .is_some_and(|path| !path.is_empty())
+                    })
                     .map(|body| body.booth_id.clone()),
-                item_count: classified.sections.iter().map(|(_, items)| items.len() as u32).sum(),
+                item_count: classified
+                    .sections
+                    .iter()
+                    .map(|(_, items)| items.len() as u32)
+                    .sum(),
             }
         })
         .collect()
@@ -747,7 +811,10 @@ pub fn panel_avatar_sections(snapshot: &Snapshot, id: &str) -> Option<Vec<PanelS
     let plain = |key: &str, label: &str, products: &[&Product]| PanelSection {
         key: key.into(),
         label: label.into(),
-        items: products.iter().map(|product| panel_item(&lookup, product, false)).collect(),
+        items: products
+            .iter()
+            .map(|product| panel_item(&lookup, product, false))
+            .collect(),
     };
     let genres = crate::genre::ASSET_GENRES;
     let mut seen = HashSet::new();
@@ -762,7 +829,10 @@ pub fn panel_avatar_sections(snapshot: &Snapshot, id: &str) -> Option<Vec<PanelS
                 .as_deref()
                 .filter(|genre| genres.iter().any(|(known, _)| known == genre))
                 .unwrap_or(crate::genre::UNSET);
-            (key.to_string(), panel_item(&lookup, product, *via_base_body))
+            (
+                key.to_string(),
+                panel_item(&lookup, product, *via_base_body),
+            )
         })
         .collect();
     let mut sections = vec![plain("avatar", "アバター本体", &classified.owned)];
@@ -774,12 +844,21 @@ pub fn panel_avatar_sections(snapshot: &Snapshot, id: &str) -> Option<Vec<PanelS
 }
 
 /// アセット・ワールドの一覧と同じ分け方（ダウンロードしていない無料商品は「無料」）。
-pub fn panel_kind_sections(snapshot: &Snapshot, genres: &[(&str, &str)], all_ids: &[String]) -> Vec<PanelSection> {
+pub fn panel_kind_sections(
+    snapshot: &Snapshot,
+    genres: &[(&str, &str)],
+    all_ids: &[String],
+) -> Vec<PanelSection> {
     let lookup = Lookup::new(snapshot);
     let rows = all_ids
         .iter()
         .filter_map(|id| lookup.products.get(id.as_str()).copied())
-        .map(|product| (browse_bucket(snapshot, &lookup, product, genres), panel_item(&lookup, product, false)))
+        .map(|product| {
+            (
+                browse_bucket(snapshot, &lookup, product, genres),
+                panel_item(&lookup, product, false),
+            )
+        })
         .collect();
     panel_genre_sections(genres, rows)
 }
@@ -787,7 +866,8 @@ pub fn panel_kind_sections(snapshot: &Snapshot, genres: &[(&str, &str)], all_ids
 /// The counts from a whole snapshot. The app reads them with `db::library_stats`, which must
 /// give the same numbers; tests compare the two.
 #[cfg(test)]
-pub fn library_stats(snapshot: &Snapshot) -> LibraryStats {
+pub fn library_stats(snapshot: &Snapshot) -> crate::model::LibraryStats {
+    use crate::model::LibraryStats;
     let unextracted = snapshot
         .products
         .iter()
@@ -814,7 +894,11 @@ pub fn library_stats(snapshot: &Snapshot) -> LibraryStats {
             + snapshot
                 .download_rows
                 .iter()
-                .filter(|row| row.local_path.as_deref().is_some_and(|path| !path.is_empty()))
+                .filter(|row| {
+                    row.local_path
+                        .as_deref()
+                        .is_some_and(|path| !path.is_empty())
+                })
                 .count()) as u32,
     }
 }
@@ -854,15 +938,26 @@ fn classify<'s>(snapshot: &'s Snapshot, lookup: &Lookup<'s>, avatar: &Avatar) ->
         .collect();
     candidates.sort_unstable();
     candidates.dedup();
-    for product in candidates.into_iter().map(|position| &snapshot.products[position]) {
+    for product in candidates
+        .into_iter()
+        .map(|position| &snapshot.products[position])
+    {
         if product.category == Some(Category::World) {
             continue;
         }
-        let linked: HashSet<&str> = lookup.avatars_of(&product.booth_id).iter().copied().collect();
+        let linked: HashSet<&str> = lookup
+            .avatars_of(&product.booth_id)
+            .iter()
+            .copied()
+            .collect();
         let compatibility_linked = linked.contains(avatar.id.as_str());
         let scope = snapshot.purchased_editions.get(&product.booth_id);
-        let purchased: HashSet<&str> = scope.map(|s| s.avatar_ids.iter().map(String::as_str).collect()).unwrap_or_default();
-        let in_family = purchased.iter().any(|id| linked.contains(id) && family.contains(*id));
+        let purchased: HashSet<&str> = scope
+            .map(|s| s.avatar_ids.iter().map(String::as_str).collect())
+            .unwrap_or_default();
+        let in_family = purchased
+            .iter()
+            .any(|id| linked.contains(id) && family.contains(*id));
         let directly_linked = linked.contains(avatar.id.as_str());
         if product.category == Some(Category::Avatar) {
             if directly_linked {
@@ -876,7 +971,9 @@ fn classify<'s>(snapshot: &'s Snapshot, lookup: &Lookup<'s>, avatar: &Avatar) ->
         }
         let directly_linked = compatibility_linked && purchased.contains(avatar.id.as_str());
         // Sharing a body does not establish compatibility with another head.
-        if directly_linked || (!compatibility_linked && in_family && product.category != Some(Category::Hair)) {
+        if directly_linked
+            || (!compatibility_linked && in_family && product.category != Some(Category::Hair))
+        {
             let key = product
                 .category
                 .map(Category::as_str)
@@ -920,7 +1017,11 @@ fn classify<'s>(snapshot: &'s Snapshot, lookup: &Lookup<'s>, avatar: &Avatar) ->
     }
 }
 
-fn outfits_for_adjustment(snapshot: &Snapshot, lookup: &Lookup<'_>, avatar: &Avatar) -> Vec<ItemView> {
+fn outfits_for_adjustment(
+    snapshot: &Snapshot,
+    lookup: &Lookup<'_>,
+    avatar: &Avatar,
+) -> Vec<ItemView> {
     let family = family_ids(snapshot, avatar);
     let linked: HashSet<&str> = snapshot
         .links
@@ -952,11 +1053,22 @@ fn outfits_for_adjustment(snapshot: &Snapshot, lookup: &Lookup<'_>, avatar: &Ava
 }
 
 /// アバター詳細の「対応版未設定」の欄と同じ条件（対応先があり、対応版を判定できない）。
-fn edition_unset(product: &Product, scope: Option<&crate::purchased_editions::Choice>, linked: bool) -> bool {
-    product.category != Some(Category::Avatar) && linked && scope.is_none_or(|choice| choice.mode == "unknown")
+fn edition_unset(
+    product: &Product,
+    scope: Option<&crate::purchased_editions::Choice>,
+    linked: bool,
+) -> bool {
+    product.category != Some(Category::Avatar)
+        && linked
+        && scope.is_none_or(|choice| choice.mode == "unknown")
 }
 
-fn item_view(snapshot: &Snapshot, lookup: &Lookup<'_>, product: &Product, via_base_body: bool) -> ItemView {
+fn item_view(
+    snapshot: &Snapshot,
+    lookup: &Lookup<'_>,
+    product: &Product,
+    via_base_body: bool,
+) -> ItemView {
     let mut files: Vec<FileBrief> = lookup
         .files_of(&product.booth_id)
         .iter()
@@ -978,9 +1090,15 @@ fn item_view(snapshot: &Snapshot, lookup: &Lookup<'_>, product: &Product, via_ba
     files.truncate(8);
     let flag = lookup.flags.get(product.booth_id.as_str()).copied();
     let scope = snapshot.purchased_editions.get(&product.booth_id);
-    let edition_unset = edition_unset(product, scope, !lookup.avatars_of(&product.booth_id).is_empty());
+    let edition_unset = edition_unset(
+        product,
+        scope,
+        !lookup.avatars_of(&product.booth_id).is_empty(),
+    );
     ItemView {
-        purchased_editions: scope.cloned().unwrap_or_else(crate::purchased_editions::Choice::unknown),
+        purchased_editions: scope
+            .cloned()
+            .unwrap_or_else(crate::purchased_editions::Choice::unknown),
         edition_unset,
         booth_id: product.booth_id.clone(),
         title: product.title.clone(),
@@ -1033,15 +1151,11 @@ fn numeric_downloadable_id(id: Option<&str>) -> Option<u64> {
     id?.trim().parse::<u64>().ok()
 }
 
-fn file_matches_set(
-    set: &HashSet<String>,
-    downloadable_id: Option<&str>,
-    filename: &str,
-) -> bool {
-    if let Some(id) = downloadable_id.map(str::trim).filter(|id| !id.is_empty()) {
-        if set.contains(id) {
-            return true;
-        }
+fn file_matches_set(set: &HashSet<String>, downloadable_id: Option<&str>, filename: &str) -> bool {
+    if let Some(id) = downloadable_id.map(str::trim).filter(|id| !id.is_empty())
+        && set.contains(id)
+    {
+        return true;
     }
     set.contains(filename.trim())
 }
@@ -1056,11 +1170,15 @@ fn build_download_view(
     remote_path: Option<String>,
     downloadable_id: Option<String>,
 ) -> DownloadView {
-    let is_new = watch.is_some_and(|w| file_matches_set(&w.new_files, downloadable_id.as_deref(), &filename));
+    let is_new = watch
+        .is_some_and(|w| file_matches_set(&w.new_files, downloadable_id.as_deref(), &filename));
     let superseded = state == FilePlace::Missing
         && watch
             .and_then(|w| w.current_files.as_ref())
-            .is_some_and(|current| !current.is_empty() && !file_matches_set(current, downloadable_id.as_deref(), &filename));
+            .is_some_and(|current| {
+                !current.is_empty()
+                    && !file_matches_set(current, downloadable_id.as_deref(), &filename)
+            });
     DownloadView {
         variation,
         filename,
@@ -1169,7 +1287,6 @@ fn base_name(snapshot: &Snapshot, id: Option<&str>) -> Option<String> {
         .map(|body| body.display_name.clone())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1225,9 +1342,18 @@ mod tests {
     fn with_full_sets(snapshot: &Snapshot) -> Snapshot {
         let mut result = snapshot.clone();
         for product in &result.products {
-            result.purchased_editions.insert(product.booth_id.clone(), crate::purchased_editions::Choice {
-                mode: "all".into(), avatar_ids: result.links.iter().filter(|l| l.product_id == product.booth_id).map(|l| l.avatar_id.clone()).collect(),
-            });
+            result.purchased_editions.insert(
+                product.booth_id.clone(),
+                crate::purchased_editions::Choice {
+                    mode: "all".into(),
+                    avatar_ids: result
+                        .links
+                        .iter()
+                        .filter(|l| l.product_id == product.booth_id)
+                        .map(|l| l.avatar_id.clone())
+                        .collect(),
+                },
+            );
         }
         result
     }
@@ -1283,24 +1409,42 @@ mod tests {
         snapshot.products[3].genre = Some("outfit".into());
         let avatars = panel_avatars(&snapshot);
         assert_eq!(
-            avatars.iter().map(|avatar| avatar.id.as_str()).collect::<Vec<_>>(),
-            avatar_cards(&snapshot).iter().map(|card| card.id.as_str()).collect::<Vec<_>>()
+            avatars
+                .iter()
+                .map(|avatar| avatar.id.as_str())
+                .collect::<Vec<_>>(),
+            avatar_cards(&snapshot)
+                .iter()
+                .map(|card| card.id.as_str())
+                .collect::<Vec<_>>()
         );
         let lime = avatars.iter().find(|avatar| avatar.id == "lime").unwrap();
         assert_eq!(lime.thumbnail_id.as_deref(), Some("1"));
         assert_eq!(lime.item_count, 1);
 
         let sections = panel_avatar_sections(&snapshot, "lime").unwrap();
-        let keys: Vec<&str> = sections.iter().map(|section| section.key.as_str()).collect();
+        let keys: Vec<&str> = sections
+            .iter()
+            .map(|section| section.key.as_str())
+            .collect();
         assert_eq!(keys, ["avatar", "outfit", "generic"]);
         assert_eq!(sections[1].label, "衣装");
         assert!(sections[0].items[0].has_thumbnail && !sections[1].items[0].via_base_body);
         // The shared body lists the same outfit on the sibling, marked as coming through the body.
         let plum = panel_avatar_sections(&snapshot, "plum").unwrap();
-        assert!(plum.iter().find(|section| section.key == "outfit").unwrap().items[0].via_base_body);
+        assert!(
+            plum.iter()
+                .find(|section| section.key == "outfit")
+                .unwrap()
+                .items[0]
+                .via_base_body
+        );
         assert!(panel_avatar_sections(&snapshot, "nobody").is_none());
         let json = serde_json::to_string(&sections).unwrap();
-        assert!(!json.contains("thumbs") && !json.contains("booth.pm"), "no path or URL leaves the app");
+        assert!(
+            !json.contains("thumbs") && !json.contains("booth.pm"),
+            "no path or URL leaves the app"
+        );
     }
 
     #[test]
@@ -1310,14 +1454,25 @@ mod tests {
         snapshot.products[4].genre = Some("gimmick".into());
         snapshot.products[5].genre = Some("hair".into());
         snapshot.products[6].genre = None;
-        let all: Vec<String> = ["4", "5", "6", "7"].iter().map(|id| id.to_string()).collect();
+        let all: Vec<String> = ["4", "5", "6", "7"]
+            .iter()
+            .map(|id| id.to_string())
+            .collect();
         let sections = panel_kind_sections(&snapshot, crate::genre::ASSET_GENRES, &all);
-        let keys: Vec<&str> = sections.iter().map(|section| section.key.as_str()).collect();
+        let keys: Vec<&str> = sections
+            .iter()
+            .map(|section| section.key.as_str())
+            .collect();
         assert_eq!(keys, ["outfit", "hair", "gimmick", crate::genre::UNSET]);
         assert_eq!(sections[3].label, "ジャンル未設定");
         let counts = genre_products(&snapshot, crate::genre::ASSET_GENRES, &all, None).counts;
         for section in &sections {
-            assert_eq!(counts.get(&section.key), Some(&(section.items.len() as u32)), "{}", section.key);
+            assert_eq!(
+                counts.get(&section.key),
+                Some(&(section.items.len() as u32)),
+                "{}",
+                section.key
+            );
         }
     }
 
@@ -1325,17 +1480,32 @@ mod tests {
     fn edition_badge_only_marks_linked_items_whose_edition_is_unknown() {
         let snapshot = sample();
         let item = |id: &str, snapshot: &Snapshot| {
-            let product = snapshot.products.iter().find(|product| product.booth_id == id).unwrap();
+            let product = snapshot
+                .products
+                .iter()
+                .find(|product| product.booth_id == id)
+                .unwrap();
             item_view(snapshot, &Lookup::new(snapshot), product, false)
         };
         // 対応先のある衣装で、対応版を判定できないもの（scope が無い）だけに付ける。
         assert!(item("4", &snapshot).edition_unset);
-        assert!(!item("5", &snapshot).edition_unset, "a generic item with no avatar has no edition to choose");
-        assert!(!item("1", &snapshot).edition_unset, "an avatar body is not an edition");
+        assert!(
+            !item("5", &snapshot).edition_unset,
+            "a generic item with no avatar has no edition to choose"
+        );
+        assert!(
+            !item("1", &snapshot).edition_unset,
+            "an avatar body is not an edition"
+        );
         let full = with_full_sets(&snapshot);
-        assert!(!item("4", &full).edition_unset, "a known edition is not marked");
+        assert!(
+            !item("4", &full).edition_unset,
+            "a known edition is not marked"
+        );
         let mut unknown = snapshot.clone();
-        unknown.purchased_editions.insert("4".into(), crate::purchased_editions::Choice::unknown());
+        unknown
+            .purchased_editions
+            .insert("4".into(), crate::purchased_editions::Choice::unknown());
         assert!(item("4", &unknown).edition_unset);
     }
 
@@ -1393,7 +1563,12 @@ mod tests {
             product("20", "ライム専用ヘア", Some(Category::Hair), false),
             product("21", "ライム・プラム対応ヘア", Some(Category::Hair), false),
             product("22", "汎用ヘア", Some(Category::Hair), true),
-            product("23", "ライムに結び付いた汎用ヘア", Some(Category::Hair), true),
+            product(
+                "23",
+                "ライムに結び付いた汎用ヘア",
+                Some(Category::Hair),
+                true,
+            ),
         ]);
         snapshot.links.extend([
             link("20", "lime"),
@@ -1417,7 +1592,12 @@ mod tests {
             ids.sort();
             assert_eq!(ids, expected, "{id}");
             assert!(hair.items.iter().all(|item| !item.via_base_body));
-            assert!(detail.generic_items.iter().any(|item| item.booth_id == "22"));
+            assert!(
+                detail
+                    .generic_items
+                    .iter()
+                    .any(|item| item.booth_id == "22")
+            );
             let cards = avatar_cards(&with_full_sets(&snapshot));
             assert_eq!(
                 cards.iter().find(|card| card.id == id).unwrap().hair_count,
@@ -1460,11 +1640,12 @@ mod tests {
         assert_eq!(body.downloads.len(), 1);
         assert_eq!(body.downloads[0].filename, "body.unitypackage");
         assert_eq!(body.downloads[0].state, FilePlace::Missing);
-        assert!(lime
-            .sections
-            .iter()
-            .flat_map(|section| &section.items)
-            .all(|item| item.booth_id != "1"));
+        assert!(
+            lime.sections
+                .iter()
+                .flat_map(|section| &section.items)
+                .all(|item| item.booth_id != "1")
+        );
     }
 
     #[test]
@@ -1899,7 +2080,11 @@ mod tests {
         let rows = download_views(&snapshot, &Lookup::new(&snapshot), "1");
         assert_eq!(
             rows.iter().map(|r| r.filename.as_str()).collect::<Vec<_>>(),
-            vec!["MochiFitter75r.zip", "MochiFitter74r.zip", "MochiFitter73r.zip"]
+            vec![
+                "MochiFitter75r.zip",
+                "MochiFitter74r.zip",
+                "MochiFitter73r.zip"
+            ]
         );
         assert!(rows[0].is_new);
         assert!(!rows[0].superseded);
@@ -1936,20 +2121,34 @@ mod tests {
             booth_id: "1".into(),
             variation: variation.into(),
         };
-        let names = |targets: Vec<UpdateTarget>| targets.into_iter().map(|t| t.filename).collect::<Vec<_>>();
+        let names = |targets: Vec<UpdateTarget>| {
+            targets.into_iter().map(|t| t.filename).collect::<Vec<_>>()
+        };
 
         assert_eq!(
-            names(update_download_targets(&snapshot, &[request("A", "Outfit_A_v1.zip")])),
+            names(update_download_targets(
+                &snapshot,
+                &[request("A", "Outfit_A_v1.zip")]
+            )),
             vec!["Outfit_A_v2.zip"]
         );
         // The variation was renamed: every new file of the product.
-        let mut renamed = names(update_download_targets(&snapshot, &[request("旧", "Outfit_v1.zip")]));
+        let mut renamed = names(update_download_targets(
+            &snapshot,
+            &[request("旧", "Outfit_v1.zip")],
+        ));
         renamed.sort();
         assert_eq!(renamed, vec!["Outfit_A_v2.zip", "Outfit_B_v2.zip"]);
         // Two requests for the same file give it once; unknown products give nothing.
-        let twice = [request("A", "Outfit_A_v1.zip"), request("A", "Outfit_A_v1.zip")];
+        let twice = [
+            request("A", "Outfit_A_v1.zip"),
+            request("A", "Outfit_A_v1.zip"),
+        ];
         assert_eq!(update_download_targets(&snapshot, &twice).len(), 1);
-        let other = UpdateRequest { booth_id: "999999".into(), variation: String::new() };
+        let other = UpdateRequest {
+            booth_id: "999999".into(),
+            variation: String::new(),
+        };
         assert!(update_download_targets(&snapshot, &[other]).is_empty());
 
         // Nothing new was found: nothing to receive again.

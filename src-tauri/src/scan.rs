@@ -100,10 +100,10 @@ pub(crate) fn scan_block_reason(canon: &Path) -> Result<(), String> {
             "ドライブ直下はスキャンできません。アセットの入ったフォルダを選んでください".into(),
         );
     }
-    if let Some(first) = normals.first() {
-        if first == "windows" || first.starts_with("program files") {
-            return Err("システムフォルダはスキャンできません".into());
-        }
+    if let Some(first) = normals.first()
+        && (first == "windows" || first.starts_with("program files"))
+    {
+        return Err("システムフォルダはスキャンできません".into());
     }
     #[cfg(target_os = "macos")]
     if let Some(message) = macos_scan_block(
@@ -159,8 +159,11 @@ pub(crate) fn scan_import_packages(root: &Path) -> Result<ScanOutcome, String> {
 }
 
 pub(crate) fn is_import_package(path: &Path) -> bool {
-    path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext|
-        ext.eq_ignore_ascii_case("zip") || ext.eq_ignore_ascii_case("unitypackage"))
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| {
+            ext.eq_ignore_ascii_case("zip") || ext.eq_ignore_ascii_case("unitypackage")
+        })
 }
 
 fn scan_folder_inner(root: &Path, packages_only: bool) -> Result<ScanOutcome, String> {
@@ -239,12 +242,12 @@ fn labels_for(path: &Path, is_dir: bool) -> Vec<String> {
         }
     } else if let Some(stem) = path.file_stem().and_then(|name| name.to_str()) {
         labels.push(stem.to_string());
-        if let Some(parent) = path.parent().and_then(|parent| parent.file_name()) {
-            if let Some(parent) = parent.to_str() {
-                if !generic_dir(OsStr::new(parent)) && !skip_dir(OsStr::new(parent)) {
-                    labels.push(parent.to_string());
-                }
-            }
+        if let Some(parent) = path.parent().and_then(|parent| parent.file_name())
+            && let Some(parent) = parent.to_str()
+            && !generic_dir(OsStr::new(parent))
+            && !skip_dir(OsStr::new(parent))
+        {
+            labels.push(parent.to_string());
         }
     }
     labels
@@ -298,19 +301,53 @@ mod tests {
     fn existing_import_scans_only_packages_case_insensitively() {
         let root = TempDir::new();
         fs::create_dir_all(root.0.join("衣装")).unwrap();
-        for name in ["pack.zip", "upper.ZIP", "衣装/model.unitypackage", "MODEL.UnityPackage",
-                     "texture.psd", "model.fbx", "body.vrm", "archive.7z", "archive.rar",
-                     "pack.zip.part", "pack.zip.exe", "readme.txt"] {
+        for name in [
+            "pack.zip",
+            "upper.ZIP",
+            "衣装/model.unitypackage",
+            "MODEL.UnityPackage",
+            "texture.psd",
+            "model.fbx",
+            "body.vrm",
+            "archive.7z",
+            "archive.rar",
+            "pack.zip.part",
+            "pack.zip.exe",
+            "readme.txt",
+        ] {
             fs::write(root.0.join(name), b"test").unwrap();
         }
         let result = scan_import_packages(&root.0).unwrap();
-        let mut names: Vec<_> = result.entries.iter().map(|entry| entry.filename.as_str()).collect();
+        let mut names: Vec<_> = result
+            .entries
+            .iter()
+            .map(|entry| entry.filename.as_str())
+            .collect();
         names.sort_unstable();
-        assert_eq!(names, ["MODEL.UnityPackage", "model.unitypackage", "pack.zip", "upper.ZIP"]);
-        assert!(result.entries.iter().all(|entry| !entry.is_dir && is_import_package(Path::new(&entry.path))));
+        assert_eq!(
+            names,
+            [
+                "MODEL.UnityPackage",
+                "model.unitypackage",
+                "pack.zip",
+                "upper.ZIP"
+            ]
+        );
+        assert!(
+            result
+                .entries
+                .iter()
+                .all(|entry| !entry.is_dir && is_import_package(Path::new(&entry.path)))
+        );
         assert!(!result.truncated);
         // The general library scan keeps its existing broader asset support.
-        assert!(scan_folder(&root.0).unwrap().entries.iter().any(|entry| entry.filename == "texture.psd"));
+        assert!(
+            scan_folder(&root.0)
+                .unwrap()
+                .entries
+                .iter()
+                .any(|entry| entry.filename == "texture.psd")
+        );
     }
 
     #[test]

@@ -106,10 +106,10 @@ pub fn account_document_is_fresh(raw: &str) -> bool {
         };
         value = parsed;
     }
-    match value.get("fresh").and_then(|item| item.as_bool()) {
-        Some(fresh) => fresh,
-        None => true,
-    }
+    value
+        .get("fresh")
+        .and_then(|item| item.as_bool())
+        .unwrap_or(true)
 }
 
 pub fn parse_account_eval(raw: &str) -> Result<BoothAccount, String> {
@@ -440,10 +440,7 @@ fn initial_download_cookie<'a>(
 }
 
 /// ワーカー側から呼ぶ。UI スレッドや dispatch_ui の中では呼ばない。
-pub fn session_header(
-    window: &tauri::Webview<tauri::Wry>,
-    url: &Url,
-) -> Result<String, String> {
+pub fn session_header(window: &tauri::Webview<tauri::Wry>, url: &Url) -> Result<String, String> {
     let cookies = window
         .cookies_for_url(url.clone())
         .map_err(|_| "ログイン状態を確認できません".to_string())?;
@@ -657,10 +654,10 @@ fn download_user_agent() -> &'static str {
 }
 
 fn suggested_filename(disposition: Option<&str>, url: &Url) -> String {
-    if let Some(header) = disposition {
-        if let Some(name) = filename_from_content_disposition(header) {
-            return name;
-        }
+    if let Some(header) = disposition
+        && let Some(name) = filename_from_content_disposition(header)
+    {
+        return name;
     }
     url.path().rsplit('/').next().unwrap_or("").to_string()
 }
@@ -935,7 +932,8 @@ mod tests {
         let original = Url::parse("https://booth.pm/downloadables/2336025").unwrap();
         let same_host_redirect = Url::parse("https://booth.pm/downloadables/redirected").unwrap();
         let subdomain_redirect = Url::parse("https://accounts.booth.pm/library").unwrap();
-        let external_redirect = Url::parse("https://cdn.example.test/file.zip?signature=abc").unwrap();
+        let external_redirect =
+            Url::parse("https://cdn.example.test/file.zip?signature=abc").unwrap();
         let lookalike_host = Url::parse("https://evil-booth.pm/file.zip").unwrap();
         let insecure_url = Url::parse("http://booth.pm/downloadables/2336025").unwrap();
         let session_cookie = "session_id=secret";
@@ -1032,8 +1030,12 @@ mod tests {
         let production = source.split("mod tests").next().unwrap();
         let fetch = function_body(production, "fn fetch_staged_file");
         let closed = fetch.rfind("drop(file);").expect("closed");
-        let checked = fetch.rfind("file_looks_like_login_page(&path)").expect("checked");
-        let marked = fetch.find("library_files::mark_from_internet(&path)").expect("marked");
+        let checked = fetch
+            .rfind("file_looks_like_login_page(&path)")
+            .expect("checked");
+        let marked = fetch
+            .find("library_files::mark_from_internet(&path)")
+            .expect("marked");
         let returned = fetch.find("Ok(StagedFetch").expect("returned");
         assert!(closed < checked && checked < marked && marked < returned);
     }
@@ -1057,9 +1059,18 @@ mod tests {
 
     #[test]
     fn a_missing_file_is_told_apart_from_other_failures() {
-        assert_eq!(status_error(reqwest::StatusCode::NOT_FOUND), QuietError::Gone);
+        assert_eq!(
+            status_error(reqwest::StatusCode::NOT_FOUND),
+            QuietError::Gone
+        );
         assert_eq!(status_error(reqwest::StatusCode::GONE), QuietError::Gone);
-        assert_eq!(status_error(reqwest::StatusCode::FORBIDDEN), QuietError::Failed);
-        assert_eq!(status_error(reqwest::StatusCode::INTERNAL_SERVER_ERROR), QuietError::Failed);
+        assert_eq!(
+            status_error(reqwest::StatusCode::FORBIDDEN),
+            QuietError::Failed
+        );
+        assert_eq!(
+            status_error(reqwest::StatusCode::INTERNAL_SERVER_ERROR),
+            QuietError::Failed
+        );
     }
 }

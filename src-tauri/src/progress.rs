@@ -47,7 +47,13 @@ pub fn counted_message(verb: &str, current: u32, total: u32, name: &str) -> Stri
     }
 }
 
-pub fn emit_progress(app: &AppHandle, job: &str, current: u32, total: u32, message: impl Into<String>) {
+pub fn emit_progress(
+    app: &AppHandle,
+    job: &str,
+    current: u32,
+    total: u32,
+    message: impl Into<String>,
+) {
     app.send(JobProgress {
         job: job.to_string(),
         current,
@@ -125,7 +131,10 @@ impl<S: ProgressSink> ProgressGuard<S> {
 
     /// 途中の進捗。`total = 0` は終わりが分からない（不定）。終わりの後は何も送らない。
     pub fn update(&self, current: u32, total: u32, message: impl Into<String>) {
-        let mut last = self.last.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut last = self
+            .last
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if last.finished {
             return;
         }
@@ -149,7 +158,10 @@ impl<S: ProgressSink> ProgressGuard<S> {
     /// 件数を指定して成功で終える。
     pub fn done_with(&self, total: u32, message: impl Into<String>) {
         {
-            let mut last = self.last.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut last = self
+                .last
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             if !last.finished {
                 last.current = total;
                 last.total = total;
@@ -167,7 +179,10 @@ impl<S: ProgressSink> ProgressGuard<S> {
     }
 
     fn finish(&self, state: ProgressState, message: String) {
-        let mut last = self.last.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut last = self
+            .last
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if last.finished {
             return;
         }
@@ -184,7 +199,10 @@ impl<S: ProgressSink> ProgressGuard<S> {
 
 impl<S: ProgressSink> Drop for ProgressGuard<S> {
     fn drop(&mut self) {
-        let last = self.last.get_mut().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let last = self
+            .last
+            .get_mut()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if last.finished {
             return;
         }
@@ -198,8 +216,14 @@ impl<S: ProgressSink> Drop for ProgressGuard<S> {
 mod tests {
     #[test]
     fn counted_message_shows_count_and_name() {
-        assert_eq!(super::counted_message("分類中", 3, 10, "商品"), "分類中 3 / 10: 商品");
-        assert_eq!(super::counted_message("コピー中", 1, 1, " "), "コピー中 1 / 1");
+        assert_eq!(
+            super::counted_message("分類中", 3, 10, "商品"),
+            "分類中 3 / 10: 商品"
+        );
+        assert_eq!(
+            super::counted_message("コピー中", 1, 1, " "),
+            "コピー中 1 / 1"
+        );
         let long = "あ".repeat(60);
         assert_eq!(
             super::counted_message("分類中", 1, 2, &long),
@@ -235,10 +259,25 @@ mod tests {
 
     #[test]
     fn final_done_fills_to_total_and_keeps_zero_items() {
-        let p = final_progress("thumbs", false, 2, 5, Some((ProgressState::Done, "ok".into())));
+        let p = final_progress(
+            "thumbs",
+            false,
+            2,
+            5,
+            Some((ProgressState::Done, "ok".into())),
+        );
         assert_eq!((p.current, p.total, p.state), (5, 5, ProgressState::Done));
-        let zero = final_progress("thumbs", false, 0, 0, Some((ProgressState::Done, "0 件".into())));
-        assert_eq!((zero.current, zero.total, zero.state), (0, 0, ProgressState::Done));
+        let zero = final_progress(
+            "thumbs",
+            false,
+            0,
+            0,
+            Some((ProgressState::Done, "0 件".into())),
+        );
+        assert_eq!(
+            (zero.current, zero.total, zero.state),
+            (0, 0, ProgressState::Done)
+        );
     }
 
     #[test]
@@ -250,9 +289,24 @@ mod tests {
 
     #[test]
     fn final_error_and_cancel_keep_last_numbers() {
-        let p = final_progress("pull", false, 40, 100, Some((ProgressState::Error, "e".into())));
-        assert_eq!((p.current, p.total, p.state), (40, 100, ProgressState::Error));
-        let c = final_progress("pull", false, 40, 100, Some((ProgressState::Cancelled, "c".into())));
+        let p = final_progress(
+            "pull",
+            false,
+            40,
+            100,
+            Some((ProgressState::Error, "e".into())),
+        );
+        assert_eq!(
+            (p.current, p.total, p.state),
+            (40, 100, ProgressState::Error)
+        );
+        let c = final_progress(
+            "pull",
+            false,
+            40,
+            100,
+            Some((ProgressState::Cancelled, "c".into())),
+        );
         assert_eq!(c.state, ProgressState::Cancelled);
     }
 

@@ -51,8 +51,9 @@ PC 間の移行は [データ移行](docs/remote-sync.md) に従う。現在は�
 - ライセンスは MPL-2.0。`LICENSE` は公式全文を改変せずに置き、アプリの resources と拡張 zip（`stage-extension.mjs`）に同梱する。アプリは `THIRD_PARTY_NOTICES.md` も同梱する。配布物の受け取り手にライセンス本文とソースの入手先を示すため。
 - DB はアプリデータディレクトリの `library.sqlite`。サムネイルは同じ場所の `thumbs`。選択した商品の大きいプレビューは隣の `previews`。アバターごとのヒーロー画像は隣の `hero_images`（`avatars.hero_image_path`、DB版9）で、データ移行の ZIP にファイルだけを含め、パスは書き出さない。識別子 `app.vrclibman.desktop` は、インストールしたアプリと `tauri dev` で同じなので、Windows では `%APPDATA%\app.vrclibman.desktop` の DB と `%LOCALAPPDATA%\app.vrclibman.desktop\EBWebView` の WebView プロファイルを共有する。Mac の DB は `~/Library/Application Support/app.vrclibman.desktop`。内蔵ブラウザのログインは WebKit のデータストアにあり、メイン画面とは別である。`npm run dev` の見本はこのディレクトリを使わない。
 - アンインストールの `src-tauri/windows/hooks.nsh` は `NSIS_HOOK_POSTUNINSTALL` で `HKCU\Software\VRCLibMan` だけを消す。アプリデータのディレクトリは消さない。
-- `user_version` が 0 のときだけ `SCHEMA` を流す。既存 DB の列を変えるときは、新しい版の移行を足す。`SCHEMA` 定数の書き換えだけでは入らない。
+- `user_version` が 0 のときだけ `SCHEMA` を流す。既存 DB の列を変えるときは、新しい版の移行を足す。`SCHEMA` 定数の書き換えだけでは入らない。版を上げたら `db::SCHEMA_VERSION` も同じ番号にする（テストがこの定数と比べる）。
 - 変更系の関数は `&mut Connection`。`transaction()` が可変借用を要求するため。
+- `db` の関数は分野ごとに `src-tauri/src/db/` のファイルへ置き、呼び出しは `db::名前` のままにする（`db.rs` が各ファイルを `pub(crate) use` で再公開する）。ほかのファイルから使う非公開の項目は `pub(super)` にする。1 つのファイルに戻さない。12,000 行を超えて、変更のたびに全体を読む必要があったため。
 - 起動時の設定の既定値、初期データ、カタログの投入（`finish_open`）は1つのトランザクションで行う。1行ごとにコミットすると、ディスク上の DB ではそのたびにファイルを同期し、新しいライブラリを開くのに Windows で数十秒かかるため（[検証記録](docs/verification.md#新しいライブラリを開くときの同期回数2026-11-13)）。
 - DB の `MutexGuard` を `.await` の間に持たない。抽出の実行中フラグは `Arc<AtomicBool>`。
 - 画面が DB を読むだけのコマンドは `#[tauri::command(async)]` にする。同期コマンドは UI スレッドで DB のロックを待ち、その間アプリ全体が止まるため（`commands.rs` の `read_commands_run_off_the_ui_thread`）。
@@ -184,9 +185,17 @@ macOS の終了ハンドラは Tauri 標準の自動再読み込みを置き換�
 
 ファイル情報が 1 件もない商品のカードには、内蔵ブラウザが有効で非公開でないときだけ「無料配布のファイルを探す」を出す（説明文は付けない。押しても本体はダウンロードせず、ファイル行を加えるだけなので、ダウンロードと取り違えない名前にする）。押したときだけ `fetch_free_files` が公開の `https://booth.pm/ja/items/{id}.json` を 1 回、Cookie なしで読む（`free_files.rs`。取得は `booth_detail.rs` と共用）。`status` が `free_download` のバリエーションのファイルだけを、`downloadable_id` 付きの未ダウンロード行（`product_files`）として既存の取り込みと同じ経路で加え、無料と年齢制限の印だけ更新する。名前、ショップ、説明、カテゴリ、タグは書かない。年齢制限の商品でも本文は保存しない。有料、年齢確認、404、429 / 503 は何も保存せず理由を返す。有料と一覧なしは失敗ではないので、エラーではなく `notice` で返し、画面は通常の通知で出す。確認できなかったとき（年齢確認、404、429 / 503、通信の失敗）だけをエラーにする。ダウンロード、購入、BOOTH のライブラリへの追加はしない。取得は上の「ダウンロード」を本人が 1 件ずつ押したときだけで、ログインや年齢確認の扱いも同じ。記録は ID の末尾 4 桁、HTTP の状態、件数だけ。
 
-Windows では、BOOTH の窓を同期コマンドの中で作らない。WebView2 は再入できず、IPC のコールバックから `WebviewWindowBuilder::build` すると新しい窓だけが応答しなくなる（メインの窓は動いたままに見える）。開く・ライブラリへ移動する・戻る進む・閉じるは async コマンドにし、コールバックが返ったあとメインスレッドで行う。データベースのロックを持ったまま窓を作らない。ページ読み取りの待ちも UI スレッドに載せない。`booth-browser` をメイン画面の `EBWebView` と同じ data_directory にしない。操作とページの移動先はアプリデータの `booth-browser.log` に残す。一般サイトのページ読み込みは origin だけを記録し、パス・クエリ・断片は残さない。BOOTH のインポートや巡回の記録は検証済みライブラリのパスまでとする。BOOTH / pixiv のログイン用別窓要求は元のタブで開き、ほかの http / https の別窓要求は新しいタブで開く。年齢確認を自動通過しない。
+Windows では、BOOTH の窓を同期コマンドの中で作らない。WebView2 は再入できず、IPC のコールバックから `WebviewWindowBuilder::build` すると新しい窓だけが応答しなくなる（メインの窓は動いたままに見える）。開く・ライブラリへ移動する・戻る進む・閉じるは async コマンドにし、コールバックが返ったあとメインスレッドで行う。データベースのロックを持ったまま窓を作らない。ページ読み取りの待ちも UI スレッドに載せない。`booth-browser` をメイン画面の `EBWebView` と同じ data_directory にしない。操作とページの移動先はアプリデータの `booth-browser.log` に残す。一般サイトのページ読み込みは origin だけを記録し、パス・クエリ・断片は残さない。閲覧データを削除するときは、この記録からも開いたサイトの行を消し、未対応カテゴリの行だけを残す（`log_without_visited_sites`）。BOOTH のインポートや巡回の記録は検証済みライブラリのパスまでとする。BOOTH / pixiv のログイン用別窓要求は元のタブで開き、ほかの http / https の別窓要求は新しいタブで開く。年齢確認を自動通過しない。
 
 メイン画面にブラウザの子 WebView があると `get_webview_window("main")` は取得できないため、トレイ・深いリンク・単一起動からの再表示は `get_window("main")` で既存ウィンドウを取得する。
+
+内蔵ブラウザのログイン状態と、ほかのサイトに渡す権限は次のとおり守る（確認の範囲は [検証記録](docs/verification.md#内蔵ブラウザのログイン状態と権限の見直し2026-11-20)）。
+
+- ページ（`booth-tab-N`）からのカメラ・マイク・位置情報・通知・画面共有・MIDI・センサーの要求は `page_permission` で拒否する。応答を決めないと、macOS の wry はカメラとマイクを確認なしで許可するため。
+- 確認用 WebView（`booth-probe`）はダウンロードを保存せず、新しい窓も開かない。機能をオフにして閉じるときは確認用も捨てる。
+- 専用プロファイルのフォルダは `create_session_dir` で作り、Unix では所有者だけが読める 0700 にする。Linux では Cookie が平文で入るため。
+- 設定の「内蔵ブラウザの閲覧データを削除」は、機能がオフでもプロファイルが残っていれば出す（`booth_session_stored`）。オフにしてもログイン状態は端末に残るため。
+- 全取得と購入履歴の読み込みは、ページを読む前に、タブの本当のアドレスがページの申告と同じ BOOTH のホストであることを確かめる（`confirm_walk_page`）。アドレスを読めないときは止めない。
 
 ### 購入履歴
 
@@ -224,7 +233,7 @@ Windows では、BOOTH の窓を同期コマンドの中で作らない。WebVie
 
 - `asset_updates.rs` が、設定で全商品一括、または商品ごとに許可した対象を、Cookie なしの公開 `items/{id}.json` を比較する。全商品一括の許可は今後追加する商品も含み、個別のオフを例外として保持する。一括許可をオフにすると全行の許可を解除し、実行中の結果も無効にする。500件の上限は設けない。手動確認と、既定オフの1日1回の自動確認がある。自動確認はアプリ起動中だけで、専用のタスク1本が動く。取得は直列・3秒間隔、通信失敗・429/503・ログイン/年齢確認ではバッチを止め、自動確認全体を1時間空ける。404は確認失敗として次の商品へ進む。
 - 手動の「今すぐ確認」では、内蔵ブラウザが有効なら先に `import_library` で BOOTH ライブラリのファイル情報を読み直して `product_files` に反映し、続けて公開情報を比較する。自動確認は公開情報の比較だけを行う。公開の無料ファイル一覧は `store_free_files` と同じ経路で未ダウンロード行として反映する。既にファイル行がある商品に新しい `downloadable_id` またはファイル名が加わったときは「新しいファイルの追加」として候補にし、商品カードで大きい番号順に並べて「新しいファイル」バッジを出し、全取得完了時に現在の BOOTH 一覧に無い未ダウンロード行は削除せず「以前のファイル」に畳む。新着印はそのファイルのダウンロード完了または「確認済みにする」で消える。同じ番号・名前のままの差し替え、説明の8000字以降は判定できない。公開日時、価格、人気、署名付きURLを更新の根拠にしない。
-- 初回成功を基準にし、次回以降の変更は確認済みにするまで候補として保持する。取得失敗は最終成功の観測・基準を消さず、変更なしにしない。設定と観測は既存 `settings` の `asset_update_watch_v1` に保存する。スキーマ版は変えず、商品の説明・分類は書き換えない。
+- 初回成功を基準にし、次回以降の変更は確認済みにするまで候補として保持する。取得失敗は最終成功の観測・基準を消さず、変更なしにしない。観測は商品ごとに `asset_watch` の 1 行、履歴は `asset_watch_history`（DB版15）、全体の設定だけを `settings` の `asset_update_state_v2` に置く。確認 1 件で書くのはその商品の行だけにする。全商品を対象にした 1 つの JSON（旧 `asset_update_watch_v1`）は 1000 商品で 16.5MB になり、商品 1 件ごとに全体を書き直していたため（[検証記録](docs/verification.md#アセット更新の保存を表へ移す2026-11-20)）。説明文は全文ではなくダイジェストで比べ、商品の説明・分類は書き換えない。
 - 全体オフ・停止は実行世代、商品ごとの許可変更は行の世代で実行中の結果も無効にする。発行済み通信は完了する場合がある。除外商品は確認しない。コマンドは `main` だけで受ける。画面は設定の「アセットの更新設定」で、対象一覧は既定で折り畳み（件数と状態は常に表示）、展開時は内部スクロールで商品名・ID・結果で絞り込み、50件ずつ表示する。手動確認はサイドバーのアカウント欄の上にあるボタンからも実行でき、対象と全取得の有無は設定に従う。候補の通知はアプリ内バナー。OS通知・自動ダウンロード・自動適用は行わない。
 
 ### Unity の検出
@@ -392,7 +401,7 @@ BOOTH のカテゴリとタグで決まらなかったときは、`classify_list
 
 Windows の配布は未署名の NSIS（`.exe`）である。実行ファイルは `VRCLibMan.exe`。Mac は Apple Silicon（`aarch64-apple-darwin`）と macOS 14 以降だけの未署名 dmg で、ad-hoc 署名（`signingIdentity` が `-`）だけを付ける。公証はしない。Intel と universal は作らない。`v*` タグが `package.json`、`package-lock.json`、`tauri.conf.json`、`Cargo.toml`、`Cargo.lock` の版と一致し、タグのコミットが main に含まれるとき、`.github/workflows/release.yml` が下書き Release を 1 回だけ作り（`scripts/check-release-version.mjs` で照合）、その release id に Windows、Mac、Linux 両 CPU のビルドを載せる。公開済みの同じタグには載せない。拡張の版はアプリの版と同じで、タグと一緒に照合する。拡張 zip は ubuntu の別ジョブが作る。`manifest.json` と `popup.html` が参照するファイルが無いときは失敗する。Mac は `macos-latest` ランナーで作る。`workflow_dispatch` はタグも Release も作らない試しビルドで、成果物は Artifacts に置く。コード署名の秘密情報は置かない。
 
-Mac の内蔵ブラウザは `data_directory` を使わない。固定の 16 バイト `data_store_identifier`（`vrclibman-booth!`）でメイン画面と分ける。ログアウトはフォルダ削除ではなく、そのデータストアの `clear_all_browsing_data` と `remove_data_store` である。`vrclibman://` は `.app` を `/Applications` に置いたときだけ動く。
+Mac の内蔵ブラウザは `data_directory` を使わない。固定の 16 バイト `data_store_identifier`（`vrclibman-booth!`）でメイン画面と分ける。ログアウトはフォルダ削除ではなく、同じデータストアの WebView をすべて閉じてからの `remove_data_store` である。`vrclibman://` は `.app` を `/Applications` に置いたときだけ動く。
 
 実ページの変化に合わせて拡張の解析を更新する。自動ダウンロードは、この方針の外にある。Unity との連携は、利用者が選んだ unitypackage を既定の Unity で開くところまでに留め、プロジェクトへの自動転送はしない。
 
@@ -416,7 +425,20 @@ Mac の内蔵ブラウザは `data_directory` を使わない。固定の 16 バ
 
 | 場所 | 役割 |
 | --- | --- |
-| `src-tauri/src/db.rs` | SQLite、抽出の保存、再解決、シード |
+| `src-tauri/src/db.rs` | DB の入口。`db/` の各ファイルを `db::名前` で呼べるようにまとめ、商品やアバターの読み出しなど共通の部品を持つ |
+| `src-tauri/src/db/schema.rs` | 最初のスキーマ、移行（`SCHEMA_VERSION`）、起動時の既定値 |
+| `src-tauri/src/db/settings.rs` | 設定、ブックマーク、ペアリングコード |
+| `src-tauri/src/db/import.rs` | 商品の取り込みと、BOOTH から届いた値のマージ |
+| `src-tauri/src/db/extraction.rs` | 分類の適用と再解決 |
+| `src-tauri/src/db/extract_jobs.rs` | 次に分類する商品、BOOTH のカテゴリと公開情報での確定 |
+| `src-tauri/src/db/classification_edit.rs` | 手動の分類（ジャンル移動、取り消し、編集）と分類改善用 JSON |
+| `src-tauri/src/db/owned_body.rs` | 所持アバター本体の判定と名前 |
+| `src-tauri/src/db/knowledge.rs` | 対応表（アバター、素体、統合、シード、カタログ） |
+| `src-tauri/src/db/downloads.rs` | バリエーションとダウンロードの行、無料ファイル、ステージング |
+| `src-tauri/src/db/local_files.rs` | スキャンしたファイルと商品の結び付け |
+| `src-tauri/src/db/queries.rs` | 画面用の一覧と件数、サムネイル、除外 |
+| `src-tauri/src/db/auto_register.rs` | 内蔵ブラウザと拡張が登録した商品の分類待ち |
+| `src-tauri/src/db/tests.rs` | `db` 全体のテスト |
 | `src-tauri/src/db/classification_log.rs` | 分類記録の実行と明細 |
 | `src-tauri/src/resolve.rs` | 名前の解決、仮アバター、`needs_review` の判定 |
 | `src-tauri/src/compat.rs` | 対応リスト、タイトルの別名、ファイル名の名前、汎用の文言、強いカテゴリ上書き |

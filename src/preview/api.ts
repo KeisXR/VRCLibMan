@@ -617,6 +617,9 @@ let previewAccountUnknown = previewAccountQuery === "unknown";
 let previewAccountFailAfter = previewAccountQuery === "keep" ? 1 : Number.POSITIVE_INFINITY;
 let previewAccountChecks = 0;
 let previewBoothLoggedIn = previewAccountQuery !== "out" && previewAccountQuery !== "unknown";
+// The profile stays on the device after the built-in browser is turned off (?session=stored).
+let previewSessionStored = typeof location !== "undefined" && new URLSearchParams(location.search).get("session") === "stored";
+if (previewSessionStored) store.setupComplete = true;
 
 if (stressPreview) {
   store.setupComplete = true;
@@ -2278,6 +2281,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       const mode = args.mode as BoothImportMode;
       if (!["extension", "browser", "both"].includes(mode)) throw new Error("BOOTH の読み込み方が不正です");
       importMode = mode;
+      if (store.settings.builtinBrowser) previewSessionStored = true;
       store.settings.builtinBrowser = mode !== "extension";
       return undefined as T;
     }
@@ -2690,7 +2694,9 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     case "clear_booth_session":
       previewBoothLoggedIn = false;
       previewAccountUnknown = false;
+      previewSessionStored = false;
       return undefined as T;
+    case "booth_session_stored": return (previewSessionStored || store.settings.builtinBrowser) as T;
     case "cache_product_preview": {
       const boothId = String(args.boothId ?? "");
       if (!/^\d{4,12}$/.test(boothId)) throw new Error("商品IDが不正です");

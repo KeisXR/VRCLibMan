@@ -124,16 +124,16 @@ fn strip_label_tails(input: &str) -> String {
 fn strip_relation_suffix(input: &str) -> String {
     const SUFFIXES: &[&str] = &["対応", "専用", "向け", "ちゃん", "くん", "さん", "様"];
     for suffix in SUFFIXES {
-        if let Some(stripped) = input.strip_suffix(suffix) {
-            if stripped.chars().count() >= 2 {
-                return stripped.to_string();
-            }
-        }
-    }
-    if let Some(stripped) = input.strip_suffix("用") {
-        if stripped.chars().count() >= 2 {
+        if let Some(stripped) = input.strip_suffix(suffix)
+            && stripped.chars().count() >= 2
+        {
             return stripped.to_string();
         }
+    }
+    if let Some(stripped) = input.strip_suffix("用")
+        && stripped.chars().count() >= 2
+    {
+        return stripped.to_string();
     }
     input.to_string()
 }
@@ -164,15 +164,14 @@ pub fn quoted_segments(title: &str) -> Vec<String> {
             .iter()
             .copied()
             .find(|(start, _)| *start == chars[index])
+            && let Some(relative) = chars[index + 1..].iter().position(|ch| *ch == end)
         {
-            if let Some(relative) = chars[index + 1..].iter().position(|ch| *ch == end) {
-                let segment: String = chars[index + 1..index + 1 + relative].iter().collect();
-                if segment.trim().chars().count() >= 1 {
-                    out.push(segment.trim().to_string());
-                }
-                index = index + relative + 2;
-                continue;
+            let segment: String = chars[index + 1..index + 1 + relative].iter().collect();
+            if segment.trim().chars().count() >= 1 {
+                out.push(segment.trim().to_string());
             }
+            index = index + relative + 2;
+            continue;
         }
         index += 1;
     }
@@ -230,17 +229,17 @@ pub fn strip_tag_brackets(title: &str) -> String {
     let mut out = String::new();
     let mut index = 0;
     while index < chars.len() {
-        if chars[index] == '【' {
-            if let Some(end) = chars[index + 1..].iter().position(|ch| *ch == '】') {
-                let inner: String = chars[index + 1..index + 1 + end].iter().collect();
-                if let Some(name) = dedication_inside(&inner) {
-                    out.push(' ');
-                    out.push_str(&name);
-                    out.push(' ');
-                }
-                index += end + 2;
-                continue;
+        if chars[index] == '【'
+            && let Some(end) = chars[index + 1..].iter().position(|ch| *ch == '】')
+        {
+            let inner: String = chars[index + 1..index + 1 + end].iter().collect();
+            if let Some(name) = dedication_inside(&inner) {
+                out.push(' ');
+                out.push_str(&name);
+                out.push(' ');
             }
+            index += end + 2;
+            continue;
         }
         out.push(chars[index]);
         index += 1;
@@ -585,10 +584,10 @@ pub fn adjacent_reading(anchor: &str, text: &str) -> Option<String> {
         if !reading_edge(&original, index, end, want_cjk) {
             continue;
         }
-        if let Some(name) = reading_beside(&original, index, end, want_cjk) {
-            if !found.iter().any(|existing: &String| existing == &name) {
-                found.push(name);
-            }
+        if let Some(name) = reading_beside(&original, index, end, want_cjk)
+            && !found.iter().any(|existing: &String| existing == &name)
+        {
+            found.push(name);
         }
     }
     if found.len() == 1 { found.pop() } else { None }
@@ -803,11 +802,11 @@ pub fn peel_product_words(input: &str) -> String {
                 .to_string();
             continue;
         }
-        if let Some(stripped) = text.strip_suffix('用') {
-            if stripped.chars().count() >= 2 {
-                text = stripped.trim().to_string();
-                continue;
-            }
+        if let Some(stripped) = text.strip_suffix('用')
+            && stripped.chars().count() >= 2
+        {
+            text = stripped.trim().to_string();
+            continue;
         }
         break;
     }

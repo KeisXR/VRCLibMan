@@ -74,7 +74,9 @@ pub(crate) fn query(connection: &Connection, query: Query) -> Result<Vec<Status>
                     .query_map([&id], |r| r.get::<_, String>(0))?
                     .collect::<rusqlite::Result<Vec<_>>>()?
                     .into_iter()
-                    .filter(|file| (4..=12).contains(&file.len()) && file.bytes().all(|b| b.is_ascii_digit()))
+                    .filter(|file| {
+                        (4..=12).contains(&file.len()) && file.bytes().all(|b| b.is_ascii_digit())
+                    })
                     .collect();
                 // Only existing table relationships count. Hair never inherits body compatibility.
                 let mut statement = connection.prepare("SELECT a.id,a.display_name,
@@ -169,7 +171,13 @@ mod tests {
         assert!(rows[0].saved_files.is_empty());
         c.execute_batch("INSERT INTO product_files(booth_id,variation,filename,downloadable_id,local_path) VALUES ('2000','B用','b.zip','555555','C:/lib/2000/b.zip');
             INSERT INTO product_files(booth_id,variation,filename,downloadable_id) VALUES ('2000','C用','c.zip','666666');").unwrap();
-        let saved = query(&c, Query { ids: vec!["2000".into()] }).unwrap();
+        let saved = query(
+            &c,
+            Query {
+                ids: vec!["2000".into()],
+            },
+        )
+        .unwrap();
         assert_eq!(saved[0].saved_files, vec!["555555".to_string()]);
         let json = serde_json::to_string(&saved).unwrap();
         assert!(json.contains("\"savedFiles\":[\"555555\"]") && !json.contains("C:/lib"));

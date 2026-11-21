@@ -202,11 +202,11 @@ fn dice(left: &str, right: &str) -> f64 {
     }
     let mut overlap = 0;
     for gram in &right_grams {
-        if let Some(count) = counts.get_mut(gram) {
-            if *count > 0 {
-                overlap += 1;
-                *count -= 1;
-            }
+        if let Some(count) = counts.get_mut(gram)
+            && *count > 0
+        {
+            overlap += 1;
+            *count -= 1;
         }
     }
     (2.0 * overlap as f64) / (left_grams.len() + right_grams.len()) as f64

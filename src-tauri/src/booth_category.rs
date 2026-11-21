@@ -23,7 +23,11 @@ pub enum CategoryRule {
 
 /// `true` when category id or name, plus tags when the category is ambiguous,
 /// is enough to skip the title and description rules.
-pub fn settle(category_id: Option<i64>, category_name: &str, tags: &[String]) -> Option<Settlement> {
+pub fn settle(
+    category_id: Option<i64>,
+    category_name: &str,
+    tags: &[String],
+) -> Option<Settlement> {
     if let Some(id) = category_id.filter(|id| *id > 0) {
         match id_decision(id, tags) {
             IdDecision::Settled(settled) => return Some(settled),
@@ -270,8 +274,14 @@ mod tests {
         let tool = settle(Some(215), "別の名前", &[]).unwrap();
         assert_eq!(tool.category, Category::Other);
         assert_eq!(tool.genre.as_deref(), Some("tool_editor"));
-        assert_eq!(settle(Some(208), "", &[]).unwrap().category, Category::Avatar);
-        assert_eq!(settle(Some(212), "", &[]).unwrap().category, Category::Avatar);
+        assert_eq!(
+            settle(Some(208), "", &[]).unwrap().category,
+            Category::Avatar
+        );
+        assert_eq!(
+            settle(Some(212), "", &[]).unwrap().category,
+            Category::Avatar
+        );
         assert_eq!(
             settle(Some(209), "", &[]).unwrap().genre.as_deref(),
             Some("outfit")
@@ -303,7 +313,10 @@ mod tests {
         let outfit = settle(Some(999), "配布用3D衣装", &[]).unwrap();
         assert_eq!(outfit.category, Category::Outfit);
         assert_eq!(outfit.genre.as_deref(), Some("outfit"));
-        assert_eq!(settle(Some(999), "VRoid", &[]).unwrap().category, Category::Avatar);
+        assert_eq!(
+            settle(Some(999), "VRoid", &[]).unwrap().category,
+            Category::Avatar
+        );
         assert!(settle(Some(999), "未確認の分類", &tags(&["家具"])).is_none());
         assert!(settle(None, "3Dモデル", &[]).is_none());
     }
@@ -311,7 +324,14 @@ mod tests {
     #[test]
     fn props_need_a_specific_tag_or_the_model() {
         assert!(settle(Some(210), "3D小道具", &[]).is_none());
-        assert!(settle(Some(210), "3D小道具", &tags(&["VRChat", "Unity", "3Dモデル"])).is_none());
+        assert!(
+            settle(
+                Some(210),
+                "3D小道具",
+                &tags(&["VRChat", "Unity", "3Dモデル"])
+            )
+            .is_none()
+        );
         let furniture = settle(Some(210), "3D小道具", &tags(&["VRChat", "家具"])).unwrap();
         assert_eq!(furniture.category, Category::World);
         assert_eq!(furniture.genre.as_deref(), Some("furniture_props"));
@@ -371,7 +391,11 @@ mod tests {
             assert_eq!(category_rule(Some(id), ""), CategoryRule::Unknown, "{id}");
             let named = settle(Some(id), "3D衣装", &[]).unwrap();
             assert_eq!(named.category, Category::Outfit, "{id}");
-            assert_eq!(category_rule(Some(id), "3D衣装"), CategoryRule::Known, "{id}");
+            assert_eq!(
+                category_rule(Some(id), "3D衣装"),
+                CategoryRule::Known,
+                "{id}"
+            );
         }
     }
 
@@ -416,7 +440,12 @@ mod tests {
         assert_eq!(outfit.genre.as_deref(), Some("outfit"));
         let shoes = settle(Some(209), "3D衣装", &tags(&["靴"])).unwrap();
         assert_eq!(shoes.genre.as_deref(), Some("shoes_socks"));
-        let tool = settle(Some(215), "3Dツール・システム", &tags(&["衣装", "瞳", "ギミック", "表情"])).unwrap();
+        let tool = settle(
+            Some(215),
+            "3Dツール・システム",
+            &tags(&["衣装", "瞳", "ギミック", "表情"]),
+        )
+        .unwrap();
         assert_eq!(tool.category, Category::Other);
         assert_eq!(tool.genre.as_deref(), Some("tool_editor"));
         assert!(settle(Some(214), "3Dテクスチャ", &tags(&["衣装"])).is_none());

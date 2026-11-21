@@ -1,7 +1,7 @@
 //! Native placement of a docked page below the main window's HTML controls.
 use super::{
-    macos_geometry::{panel_frame, Frame},
     SurfaceArea,
+    macos_geometry::{Frame, panel_frame},
 };
 use objc2::{msg_send, runtime::AnyObject};
 use objc2_foundation::{NSPoint, NSRect, NSSize};

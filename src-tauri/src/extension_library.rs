@@ -4,9 +4,9 @@
 //! 返すのは ID・商品名・ショップ・印・注文番号・日時だけ。パス・説明・URL・金額は返さない。
 //! 並べ方と分け方はアプリの画面と同じ `view` の規則を使い、拡張に複製しない。
 use crate::{db, purchases, view};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,10 +41,18 @@ pub(crate) fn route(method: &str, path: &str) -> Option<Route> {
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Reply {
-    Json { status: u16, body: String },
-    Image { content_type: &'static str, bytes: Vec<u8> },
+    Json {
+        status: u16,
+        body: String,
+    },
+    Image {
+        content_type: &'static str,
+        bytes: Vec<u8>,
+    },
     /// アプリのメイン画面をこの場所（`#/assets/item/<ID>` など）へ移して、窓を前に出す。
-    Open { route: String },
+    Open {
+        route: String,
+    },
 }
 
 impl Reply {
@@ -89,7 +97,8 @@ pub(crate) fn handle(connection: &Connection, route: Route, body: &str) -> Resul
     match route {
         Route::Avatars => {
             let snapshot = db::load_snapshot(connection)?;
-            let count = |kind: &str| db::product_ids_by_genre(connection, kind, None).map(|ids| ids.len());
+            let count =
+                |kind: &str| db::product_ids_by_genre(connection, kind, None).map(|ids| ids.len());
             Ok(Reply::ok(json!({
                 "avatars": view::panel_avatars(&snapshot),
                 "assetCount": count("asset")?,
@@ -120,18 +129,29 @@ pub(crate) fn handle(connection: &Connection, route: Route, body: &str) -> Resul
             Ok(Reply::ok(json!({ "sections": sections })))
         }
         Route::Product => {
-            let Some(id) = serde_json::from_str::<IdBody>(body).ok().map(|body| body.id).filter(|id| valid_id(id)) else {
+            let Some(id) = serde_json::from_str::<IdBody>(body)
+                .ok()
+                .map(|body| body.id)
+                .filter(|id| valid_id(id))
+            else {
                 return Ok(Reply::error(400, "商品IDを読めません"));
             };
             product(connection, &id).map(Reply::ok)
         }
         Route::Open => {
-            let Some(id) = serde_json::from_str::<IdBody>(body).ok().map(|body| body.id).filter(|id| valid_id(id)) else {
+            let Some(id) = serde_json::from_str::<IdBody>(body)
+                .ok()
+                .map(|body| body.id)
+                .filter(|id| valid_id(id))
+            else {
                 return Ok(Reply::error(400, "商品IDを読めません"));
             };
             Ok(match app_route(connection, &id)? {
                 Some(route) => Reply::Open { route },
-                None => Reply::error(404, "この商品は、まだアプリで開けません。アプリに登録して分類すると開けます"),
+                None => Reply::error(
+                    404,
+                    "この商品は、まだアプリで開けません。アプリに登録して分類すると開けます",
+                ),
             })
         }
         Route::Thumb => Ok(Reply::error(404, "サムネイルがありません")),
@@ -233,7 +253,11 @@ fn edition(connection: &Connection, id: &str) -> Result<Value, String> {
         .optional()
         .map_err(failed)?;
     let linked: bool = connection
-        .query_row("SELECT EXISTS(SELECT 1 FROM product_avatars WHERE product_id = ?1)", [id], |row| row.get(0))
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM product_avatars WHERE product_id = ?1)",
+            [id],
+            |row| row.get(0),
+        )
         .map_err(failed)?;
     let Some(category) = category else {
         return Ok(Value::Null);
@@ -245,7 +269,11 @@ fn edition(connection: &Connection, id: &str) -> Result<Value, String> {
     let mut names = Vec::new();
     for avatar in &choice.avatar_ids {
         let name: Option<String> = connection
-            .query_row("SELECT display_name FROM avatars WHERE id = ?1", params![avatar], |row| row.get(0))
+            .query_row(
+                "SELECT display_name FROM avatars WHERE id = ?1",
+                params![avatar],
+                |row| row.get(0),
+            )
             .optional()
             .map_err(failed)?;
         names.extend(name);
@@ -266,7 +294,11 @@ const THUMB_MAX_BYTES: u64 = 4 * 1024 * 1024;
 /// 保存済みのサムネイル。名前は商品 ID（数字だけ）から組み立て、受け取ったパスは使わない。
 /// リンクはたどらない。DB は読まない。
 pub(crate) fn thumbnail(thumbs: &Path, body: &str) -> Reply {
-    let Some(id) = serde_json::from_str::<IdBody>(body).ok().map(|body| body.id).filter(|id| valid_id(id)) else {
+    let Some(id) = serde_json::from_str::<IdBody>(body)
+        .ok()
+        .map(|body| body.id)
+        .filter(|id| valid_id(id))
+    else {
         return Reply::error(400, "商品IDを読めません");
     };
     for (extension, content_type) in THUMB_TYPES {
@@ -278,7 +310,10 @@ pub(crate) fn thumbnail(thumbs: &Path, body: &str) -> Reply {
             continue;
         }
         if let Ok(bytes) = std::fs::read(&path) {
-            return Reply::Image { content_type, bytes };
+            return Reply::Image {
+                content_type,
+                bytes,
+            };
         }
     }
     Reply::error(404, "サムネイルがありません")
@@ -339,18 +374,48 @@ mod tests {
         let (_, world) = json_of(handle(&connection, Route::Items, r#"{"kind":"world"}"#).unwrap());
         assert_eq!(world["sections"][0]["key"], "furniture_props");
         assert_eq!(world["sections"][0]["items"][0]["boothId"], "3000");
-        let (_, assets) = json_of(handle(&connection, Route::Items, r#"{"kind":"asset"}"#).unwrap());
+        let (_, assets) =
+            json_of(handle(&connection, Route::Items, r#"{"kind":"asset"}"#).unwrap());
         let text = assets.to_string();
         assert!(text.contains("見本の衣装") && !text.contains("除外した衣装"));
         let item = &assets["sections"][0]["items"][0];
-        let mut keys: Vec<&str> = item.as_object().unwrap().keys().map(String::as_str).collect();
+        let mut keys: Vec<&str> = item
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
         keys.sort_unstable();
-        assert_eq!(keys, ["boothId", "hasThumbnail", "isAdult", "shop", "title", "unpublished", "viaBaseBody"]);
+        assert_eq!(
+            keys,
+            [
+                "boothId",
+                "hasThumbnail",
+                "isAdult",
+                "shop",
+                "title",
+                "unpublished",
+                "viaBaseBody"
+            ]
+        );
 
-        for body in ["{}", r#"{"kind":"avatar"}"#, r#"{"avatar":"a","kind":"asset"}"#, r#"{"path":"/"}"#, "x"] {
-            assert_eq!(json_of(handle(&connection, Route::Items, body).unwrap()).0, 400, "{body}");
+        for body in [
+            "{}",
+            r#"{"kind":"avatar"}"#,
+            r#"{"avatar":"a","kind":"asset"}"#,
+            r#"{"path":"/"}"#,
+            "x",
+        ] {
+            assert_eq!(
+                json_of(handle(&connection, Route::Items, body).unwrap()).0,
+                400,
+                "{body}"
+            );
         }
-        assert_eq!(json_of(handle(&connection, Route::Items, r#"{"avatar":"nobody"}"#).unwrap()).0, 404);
+        assert_eq!(
+            json_of(handle(&connection, Route::Items, r#"{"avatar":"nobody"}"#).unwrap()).0,
+            404
+        );
     }
 
     #[test]
@@ -369,7 +434,8 @@ mod tests {
                    ('11111111',0,'2000','見本の衣装',1500),('22222222',0,'2000','見本の衣装',3000),('33333333',0,'9999','別の商品',100);",
             )
             .unwrap();
-        let (status, detail) = json_of(handle(&connection, Route::Product, r#"{"id":"2000"}"#).unwrap());
+        let (status, detail) =
+            json_of(handle(&connection, Route::Product, r#"{"id":"2000"}"#).unwrap());
         assert_eq!(status, 200);
         assert_eq!(detail["historyRead"], true);
         assert_eq!(detail["orderCount"], 2);
@@ -378,13 +444,32 @@ mod tests {
         assert_eq!(detail["orders"][1]["gift"], false);
         assert_eq!(detail["edition"]["avatars"][0], "見本A");
         let text = detail.to_string();
-        assert!(!text.contains("1500") && !text.contains("3000") && !text.contains("yen"), "no price leaves the app");
+        assert!(
+            !text.contains("1500") && !text.contains("3000") && !text.contains("yen"),
+            "no price leaves the app"
+        );
         // 本体・未登録・除外した商品には対応版を返さない。
         for id in ["1000", "9999", "4000"] {
-            assert!(json_of(handle(&connection, Route::Product, &format!(r#"{{"id":"{id}"}}"#)).unwrap()).1["edition"].is_null(), "{id}");
+            assert!(
+                json_of(
+                    handle(&connection, Route::Product, &format!(r#"{{"id":"{id}"}}"#)).unwrap()
+                )
+                .1["edition"]
+                    .is_null(),
+                "{id}"
+            );
         }
-        for body in [r#"{"id":"12"}"#, r#"{"id":"../1000"}"#, r#"{"id":"1000","x":1}"#, ""] {
-            assert_eq!(json_of(handle(&connection, Route::Product, body).unwrap()).0, 400, "{body}");
+        for body in [
+            r#"{"id":"12"}"#,
+            r#"{"id":"../1000"}"#,
+            r#"{"id":"1000","x":1}"#,
+            "",
+        ] {
+            assert_eq!(
+                json_of(handle(&connection, Route::Product, body).unwrap()).0,
+                400,
+                "{body}"
+            );
         }
     }
 
@@ -398,21 +483,52 @@ mod tests {
                  INSERT INTO product_avatars VALUES ('6000','owned 6000/あ','manual');",
             )
             .unwrap();
-        let open = |id: &str| handle(&connection, Route::Open, &format!(r#"{{"id":"{id}"}}"#)).unwrap();
-        assert_eq!(open("2000"), Reply::Open { route: "#/assets/item/2000".into() });
-        assert_eq!(open("3000"), Reply::Open { route: "#/worlds/item/3000".into() });
-        assert_eq!(open("1000"), Reply::Open { route: "#/avatar/a".into() });
-        assert_eq!(open("6000"), Reply::Open { route: "#/avatar/owned%206000%2F%E3%81%82".into() });
+        let open =
+            |id: &str| handle(&connection, Route::Open, &format!(r#"{{"id":"{id}"}}"#)).unwrap();
+        assert_eq!(
+            open("2000"),
+            Reply::Open {
+                route: "#/assets/item/2000".into()
+            }
+        );
+        assert_eq!(
+            open("3000"),
+            Reply::Open {
+                route: "#/worlds/item/3000".into()
+            }
+        );
+        assert_eq!(
+            open("1000"),
+            Reply::Open {
+                route: "#/avatar/a".into()
+            }
+        );
+        assert_eq!(
+            open("6000"),
+            Reply::Open {
+                route: "#/avatar/owned%206000%2F%E3%81%82".into()
+            }
+        );
         // 未登録・除外・未分類の商品は開かない。
         for id in ["9999", "4000", "5000"] {
             assert_eq!(json_of(open(id)).0, 404, "{id}");
         }
-        for body in [r#"{"id":"12"}"#, r##"{"id":"#/settings"}"##, r#"{"route":"/settings"}"#, ""] {
-            assert_eq!(json_of(handle(&connection, Route::Open, body).unwrap()).0, 400, "{body}");
+        for body in [
+            r#"{"id":"12"}"#,
+            r##"{"id":"#/settings"}"##,
+            r#"{"route":"/settings"}"#,
+            "",
+        ] {
+            assert_eq!(
+                json_of(handle(&connection, Route::Open, body).unwrap()).0,
+                400,
+                "{body}"
+            );
         }
         let (_, detail) = json_of(handle(&connection, Route::Product, r#"{"id":"2000"}"#).unwrap());
         assert_eq!(detail["appLink"], true);
-        let (_, missing) = json_of(handle(&connection, Route::Product, r#"{"id":"5000"}"#).unwrap());
+        let (_, missing) =
+            json_of(handle(&connection, Route::Product, r#"{"id":"5000"}"#).unwrap());
         assert_eq!(missing["appLink"], false);
     }
 
@@ -425,17 +541,31 @@ mod tests {
         std::fs::write(dir.path().join("secret.jpg"), b"secret").unwrap();
         assert_eq!(
             thumbnail(&thumbs, r#"{"id":"123456"}"#),
-            Reply::Image { content_type: "image/png", bytes: b"png-bytes".to_vec() }
+            Reply::Image {
+                content_type: "image/png",
+                bytes: b"png-bytes".to_vec()
+            }
         );
         assert_eq!(json_of(thumbnail(&thumbs, r#"{"id":"654321"}"#)).0, 404);
-        for body in [r#"{"id":"../secret"}"#, r#"{"id":"123456.png"}"#, r#"{"id":""}"#, r#"{"path":"x"}"#, "nope"] {
+        for body in [
+            r#"{"id":"../secret"}"#,
+            r#"{"id":"123456.png"}"#,
+            r#"{"id":""}"#,
+            r#"{"path":"x"}"#,
+            "nope",
+        ] {
             assert_eq!(json_of(thumbnail(&thumbs, body)).0, 400, "{body}");
         }
         std::fs::write(thumbs.join("222222.jpg"), b"").unwrap();
-        assert_eq!(json_of(thumbnail(&thumbs, r#"{"id":"222222"}"#)).0, 404, "an empty file is not an image");
+        assert_eq!(
+            json_of(thumbnail(&thumbs, r#"{"id":"222222"}"#)).0,
+            404,
+            "an empty file is not an image"
+        );
         #[cfg(unix)]
         {
-            std::os::unix::fs::symlink(dir.path().join("secret.jpg"), thumbs.join("333333.jpg")).unwrap();
+            std::os::unix::fs::symlink(dir.path().join("secret.jpg"), thumbs.join("333333.jpg"))
+                .unwrap();
             assert_eq!(json_of(thumbnail(&thumbs, r#"{"id":"333333"}"#)).0, 404);
         }
     }

@@ -437,8 +437,12 @@ impl SettingsPatch {
                 .clone()
                 .unwrap_or(current.library_folder),
             builtin_browser: self.builtin_browser.unwrap_or(current.builtin_browser),
-            browser_force_dark: self.browser_force_dark.unwrap_or(current.browser_force_dark),
-            browser_auto_register: self.browser_auto_register.unwrap_or(current.browser_auto_register),
+            browser_force_dark: self
+                .browser_force_dark
+                .unwrap_or(current.browser_force_dark),
+            browser_auto_register: self
+                .browser_auto_register
+                .unwrap_or(current.browser_auto_register),
             booth_link_target: self
                 .booth_link_target
                 .clone()
@@ -457,15 +461,16 @@ impl SettingsPatch {
             ui_rail_width: self.ui_rail_width.unwrap_or(current.ui_rail_width),
             ui_rail_collapsed: self.ui_rail_collapsed.unwrap_or(current.ui_rail_collapsed),
             ui_genre_width: self.ui_genre_width.unwrap_or(current.ui_genre_width),
-            ui_genre_collapsed: self.ui_genre_collapsed.unwrap_or(current.ui_genre_collapsed),
+            ui_genre_collapsed: self
+                .ui_genre_collapsed
+                .unwrap_or(current.ui_genre_collapsed),
             preview_pane: self.preview_pane.unwrap_or(current.preview_pane),
             preview_pane_width: clamp_preview_pane_width(
-                self.preview_pane_width.unwrap_or(current.preview_pane_width),
+                self.preview_pane_width
+                    .unwrap_or(current.preview_pane_width),
             ),
             avatar_hero: normalize_avatar_hero(
-                self.avatar_hero
-                    .as_deref()
-                    .unwrap_or(&current.avatar_hero),
+                self.avatar_hero.as_deref().unwrap_or(&current.avatar_hero),
             ),
             right_panel_tabs: normalize_right_panel_tabs(
                 self.right_panel_tabs
@@ -510,7 +515,6 @@ pub(crate) fn clamp_ui_rail_width(value: u32) -> u32 {
 pub(crate) fn clamp_ui_genre_width(value: u32) -> u32 {
     value.clamp(160, 320)
 }
-
 
 pub const DEFAULT_AVATAR_HERO: &str = "small";
 
@@ -563,21 +567,25 @@ pub(crate) fn normalize_right_panel_tabs(raw: &str) -> String {
         if !RIGHT_PANEL_KINDS.contains(&kind.as_str()) {
             continue;
         }
-        if RIGHT_PANEL_SINGLETONS.contains(&kind.as_str()) {
-            if let Some(existing) = tabs.iter().position(|tab| tab == kind) {
-                // An active duplicate keeps focus on the tab it collapsed into.
-                if index == parsed.active {
-                    active = existing;
-                }
-                continue;
+        if RIGHT_PANEL_SINGLETONS.contains(&kind.as_str())
+            && let Some(existing) = tabs.iter().position(|tab| tab == kind)
+        {
+            // An active duplicate keeps focus on the tab it collapsed into.
+            if index == parsed.active {
+                active = existing;
             }
+            continue;
         }
         if index <= parsed.active {
             active = tabs.len();
         }
         tabs.push(kind.clone());
     }
-    let active = if tabs.is_empty() { 0 } else { active.min(tabs.len() - 1) };
+    let active = if tabs.is_empty() {
+        0
+    } else {
+        active.min(tabs.len() - 1)
+    };
     serde_json::to_string(&RightPanelTabs { tabs, active })
         .unwrap_or_else(|_| default_right_panel_tabs())
 }
@@ -669,7 +677,11 @@ pub struct ClassificationSnapshot {
 
 /// Result of registering a misclassified product as an owned avatar body.
 #[derive(Debug, Clone, Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum RegisterOwnedBodyResult {
     Registered {
         snapshot: ClassificationSnapshot,
@@ -689,8 +701,10 @@ mod owned_body_json_tests {
     #[test]
     fn needs_name_uses_ipc_camel_case_fields() {
         let value = serde_json::to_value(RegisterOwnedBodyResult::NeedsName {
-            suggested_name: "見本".into(), candidates: vec![],
-        }).unwrap();
+            suggested_name: "見本".into(),
+            candidates: vec![],
+        })
+        .unwrap();
         assert_eq!(value["kind"], "needsName");
         assert_eq!(value["suggestedName"], "見本");
         assert!(value.get("suggested_name").is_none());
@@ -702,10 +716,14 @@ mod owned_body_json_tests {
             "boothId": "123456", "category": null, "genre": null,
             "categoryLocked": false, "genreLocked": false,
             "userConfirmed": false, "needsReview": false
-        })).unwrap();
+        }))
+        .unwrap();
         let value = serde_json::to_value(RegisterOwnedBodyResult::Registered {
-            snapshot, avatar_id: "sample".into(), display_name: "見本".into(),
-        }).unwrap();
+            snapshot,
+            avatar_id: "sample".into(),
+            display_name: "見本".into(),
+        })
+        .unwrap();
         assert_eq!(value["avatarId"], "sample");
         assert_eq!(value["displayName"], "見本");
         assert!(value.get("avatar_id").is_none());
