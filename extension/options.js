@@ -34,6 +34,7 @@ async function load() {
   $("#auto-purchase").checked = stored.autoPurchase !== false;
   $("#route-downloads").checked = stored.routeDownloads === true;
   $("#show-badges").checked = stored.showBadges !== false;
+  $("#follow-page-avatar").checked = stored.followPageAvatar !== false;
   return stored;
 }
 
@@ -75,6 +76,11 @@ $("#auto-purchase").addEventListener("change", async (event) => {
 $("#show-badges").addEventListener("change", async (event) => {
   await chrome.storage.local.set({ showBadges: event.target.checked });
   say("開いている BOOTH のページは、再読み込みすると反映されます");
+});
+
+$("#follow-page-avatar").addEventListener("change", async (event) => {
+  await chrome.storage.local.set({ followPageAvatar: event.target.checked });
+  say(event.target.checked ? "見ている商品の対応アバターを先頭に出して選びます" : "ページを移っても、選んだアバターのままにします");
 });
 
 $("#route-downloads").addEventListener("change", async (event) => {

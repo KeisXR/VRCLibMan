@@ -99,6 +99,16 @@ pub fn extension_link(state: State<'_, AppState>) -> Result<crate::model::Extens
     Ok(extension_link_view(&state, &token))
 }
 
+/// 拡張の「アプリで開く」で頼まれた行き先を 1 回だけ返す。メイン画面からだけ受け付ける。
+/// データベースは読まないので、UI スレッドで待つものが無い。
+#[tauri::command]
+pub fn take_extension_route(view: tauri::Webview, state: State<'_, AppState>) -> Option<String> {
+    if view.label() != "main" {
+        return None;
+    }
+    state.extension_route.lock().ok().and_then(|mut pending| pending.take())
+}
+
 #[tauri::command]
 pub fn regenerate_extension_token(
     state: State<'_, AppState>,

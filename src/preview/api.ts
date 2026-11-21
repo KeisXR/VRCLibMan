@@ -2708,6 +2708,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     case "cache_thumbnails":
     case "route_staged_download":
       desktopOnly();
+    case "take_extension_route": return null as T;
     case "browser_auto_pending": return [] as T;
     case "browser_auto_finish": return undefined as T;
     case "list_staged_downloads":

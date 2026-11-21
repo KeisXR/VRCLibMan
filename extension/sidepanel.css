@@ -1,0 +1,76 @@
+/* サイドパネル。上に表示の切り替え、その下に開いているページのカードとライブラリ、または記録。
+ * 色・角丸・余白は ui.css（本体の src/styles.css の写し）の変数だけを使う。
+ * カードにするのは開いているページだけで、ライブラリは地の上にそのまま並べる。
+ * 色を持つのはアバターの顔と商品の画像で、まわりは無彩色のままにする。 */
+.top { position: sticky; top: 0; z-index: 2; background: var(--bg); }
+.stack { display: flex; flex-direction: column; gap: var(--space-3); }
+.stack:empty { display: none; }
+.stack:not(:empty) + #panel-library { margin-top: var(--space-3); }
+
+/* 表示の切り替え。本体の .tab と同じで、選択中は面の色と下の朱の直線（角丸には掛けない）。 */
+.views { display: flex; gap: var(--space-1); padding: 0 var(--space-4) var(--space-2); }
+.view { position: relative; font: inherit; color: var(--text-secondary); background: transparent; border: 0; border-radius: var(--radius-sm); padding: 6px var(--space-3); cursor: pointer; transition: background-color var(--motion) ease, color var(--motion) ease; }
+.view:hover { background: var(--hover); color: var(--text); }
+.view[aria-selected="true"] { background: var(--surface); color: var(--text); font-weight: 650; }
+.view[aria-selected="true"]::after { content: ""; position: absolute; left: var(--space-3); right: var(--space-3); bottom: 2px; height: 2px; border-radius: 2px; background: var(--line-accent); }
+
+/* 開いているページ */
+.actions { gap: var(--space-2); }
+.actions .btn { padding-left: var(--space-2); padding-right: var(--space-2); }
+.files { max-height: 240px; overflow-y: auto; }
+.buy { display: flex; flex-direction: column; gap: var(--space-1); }
+.btn.link { text-decoration: underline; text-underline-offset: 2px; }
+
+/* ライブラリ */
+.lib { display: flex; flex-direction: column; gap: var(--space-3); }
+
+/* アバターの並び。顔を横に並べて流し、「すべて」「ワールド」は右端に固定する。 */
+.rail { display: flex; align-items: flex-start; }
+.rail-scroll { flex: 1; min-width: 0; display: flex; gap: var(--space-1); overflow-x: auto; scrollbar-width: none; scroll-snap-type: x proximity; }
+.rail-scroll::-webkit-scrollbar { display: none; }
+.rail.has-more .rail-scroll { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent); }
+.rail-fixed { flex: none; display: flex; gap: var(--space-1); margin-left: var(--space-2); padding-left: var(--space-2); border-left: 1px solid var(--line); }
+.av { flex: none; width: 64px; display: flex; flex-direction: column; align-items: center; font: inherit; color: var(--text-secondary); background: transparent; border: 0; border-radius: var(--radius-sm); padding: var(--space-2) 2px; cursor: pointer; scroll-snap-align: start; transition: background-color var(--motion) ease, color var(--motion) ease; }
+.av:hover { background: var(--hover); color: var(--text); }
+.av:focus-visible { outline-offset: -2px; }
+.face { width: 44px; height: 44px; margin-bottom: var(--space-2); border-radius: 50%; background: var(--sunken); box-shadow: inset 0 0 0 1px var(--line); overflow: hidden; display: grid; place-items: center; font-size: 16px; font-weight: 500; line-height: 1; color: var(--text-secondary); transition: box-shadow var(--motion) ease; }
+.face img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.face svg { width: 20px; height: 20px; }
+.av-name { max-width: 100%; font-size: 12px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.av-meta { font-size: 11px; line-height: 1.4; }
+.av-page { color: var(--text); font-weight: 500; }
+/* 選択中は、顔のまわりの輪と名前の太さで示す。 */
+.av[aria-pressed="true"] { color: var(--text); }
+.av[aria-pressed="true"] .av-name { font-weight: 650; }
+.av[aria-pressed="true"] .face { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--text); }
+.av[aria-pressed="true"]:hover .face { box-shadow: 0 0 0 2px var(--hover), 0 0 0 4px var(--text); }
+
+.tools { display: flex; align-items: center; gap: var(--space-2); }
+.tools .field { flex: 1; height: 36px; padding: 0 var(--space-3); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
+.tools .iconbtn { margin-left: auto; }
+
+/* ジャンル。見出しの行と細い線で分け、カードにはしない。 */
+.sections { display: flex; flex-direction: column; }
+.genre { border-top: 1px solid var(--line); }
+.genre > summary { display: flex; align-items: center; gap: var(--space-2); height: 40px; cursor: pointer; list-style: none; border-radius: var(--radius-sm); }
+.genre > summary::-webkit-details-marker { display: none; }
+.genre > summary::before { content: ""; width: 6px; height: 6px; flex: none; margin: 0 var(--space-1); border-right: 1.5px solid var(--text-secondary); border-bottom: 1.5px solid var(--text-secondary); transform: rotate(-45deg); transition: transform var(--motion) ease; }
+.genre[open] > summary::before { transform: rotate(45deg); }
+.genre > summary:hover .genre-name { color: var(--text); }
+.genre-name { font-weight: 650; }
+.genre-count { font-size: 12px; color: var(--text-secondary); }
+.genre-body { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-1) 0 var(--space-4); }
+
+/* 商品。画像を主役にして、名前とショップを下に添える。 */
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: var(--space-4) var(--space-2); }
+.tile { display: flex; flex-direction: column; min-width: 0; color: inherit; text-decoration: none; border-radius: var(--radius-sm); }
+.tile-picture { position: relative; display: block; aspect-ratio: 1; margin-bottom: var(--space-2); border-radius: var(--radius-sm); overflow: hidden; background: var(--sunken); }
+.tile-picture::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--line); pointer-events: none; transition: box-shadow var(--motion) ease; }
+.tile:hover .tile-picture::after { box-shadow: inset 0 0 0 1px var(--text-secondary); }
+.thumb { display: block; width: 100%; height: 100%; }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.tile b { font-size: 12px; font-weight: 500; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.tile-shop { margin-top: 2px; font-size: 11px; line-height: 1.4; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tags { position: absolute; left: var(--space-1); right: var(--space-1); bottom: var(--space-1); display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.tag { font-size: 11px; line-height: 1.5; padding: 0 var(--space-1); border-radius: 4px; background: var(--surface); color: var(--text-note); }
+.more { align-self: center; }

@@ -291,6 +291,9 @@ test('a finished full library walk is sent as a complete file list; without pair
   const imported=w.sent.find(row=>row.path==='/import').body;
   assert.equal(imported.complete,true);
   assert.equal(imported.source,'library');
+  // 「アプリで開く」 sends one product ID and nothing else.
+  assert.equal((await w.message({type:'open-in-app',id:'123456',route:'#/settings'})).ok,true);
+  assert.deepEqual(w.sent.at(-1).path+JSON.stringify(w.sent.at(-1).body),'/library/open{"id":"123456"}');
   const unpaired=worker({pairingToken:''});
   const job=await unpaired.message({type:'job-start',kind:'library'});
   await unpaired.message({type:'walk-result',id:job.id,kind:'library',products:[{boothId:'9003'}],pages:1,complete:true},offscreenPage);
@@ -310,6 +313,9 @@ test('a purchase-history job needs the app, passes its own code to the walker an
   await w.message({type:'walk-result',id:started.id,kind:'purchases',purchases:{pages:2,added:3,details:3,notice:''}},offscreenPage);
   assert.equal(w.session.job.state,'done');
   assert.match(w.session.job.line,/購入履歴 2 ページ、新しい注文 3 件、詳細 3 件/);
+  // 「アプリで開く」 sends one product ID and nothing else.
+  assert.equal((await w.message({type:'open-in-app',id:'123456',route:'#/settings'})).ok,true);
+  assert.deepEqual(w.sent.at(-1).path+JSON.stringify(w.sent.at(-1).body),'/library/open{"id":"123456"}');
   const unpaired=worker({pairingToken:''});
   assert.match((await unpaired.message({type:'job-start',kind:'purchases'})).error,/ペアリング/);
   assert.equal(unpaired.session.job.state,'error');
@@ -371,4 +377,30 @@ test('the same or an older version in the app folder never reloads the extension
     assert.equal(w.reloads.length,0,String(extension));
     assert.equal(w.data.extensionUpdate,null);
   }
+});
+
+test('the side panel library is answered to the extension\'s own pages only, never to a BOOTH page', async()=>{
+  const w=worker({},[],{app:{
+    '/library/avatars':()=>({avatars:[{id:'a',displayName:'見本A',thumbnailId:null,itemCount:1}],assetCount:1,worldCount:0}),
+    '/library/items':body=>({sections:[{key:'outfit',label:'衣装',items:[{boothId:'123456',title:body.avatar||body.kind,shop:'店'}]}]}),
+    '/library/product':body=>({boothId:body.id,historyRead:true,orderCount:0,orders:[],edition:null})}});
+  for(const message of [{type:'library-avatars'},{type:'library-items',avatar:'a'},{type:'library-product',id:'123456'},{type:'open-in-app',id:'123456'}]){
+    assert.equal(await w.message(message,page()),undefined,`${message.type} is not answered to a BOOTH page`);
+  }
+  assert.equal(w.sent.some(row=>row.path.startsWith('/library/')),false);
+  assert.equal((await w.message({type:'library-avatars'})).avatars[0].displayName,'見本A');
+  assert.equal((await w.message({type:'library-items',avatar:'a'})).sections[0].items[0].title,'a');
+  // Anything but an avatar asks for a kind, and only the two the app knows.
+  assert.equal((await w.message({type:'library-items',kind:'world'})).sections[0].items[0].title,'world');
+  assert.equal((await w.message({type:'library-items',kind:'../x'})).sections[0].items[0].title,'asset');
+  assert.equal((await w.message({type:'library-product',id:123456})).boothId,'123456');
+  const sent=w.sent.filter(row=>row.path.startsWith('/library/'));
+  assert.deepEqual(sent.map(row=>row.body),[{},{avatar:'a'},{kind:'world'},{kind:'asset'},{id:'123456'}]);
+  for(const request of sent){assert.equal(request.options.method,'POST');assert.equal(request.options.credentials,'omit');assert.equal(request.options.headers.Authorization,'Bearer ABCD-2345');}
+  // 「アプリで開く」 sends one product ID and nothing else.
+  assert.equal((await w.message({type:'open-in-app',id:'123456',route:'#/settings'})).ok,true);
+  assert.deepEqual(w.sent.at(-1).path+JSON.stringify(w.sent.at(-1).body),'/library/open{"id":"123456"}');
+  const unpaired=worker({pairingToken:''});
+  assert.match((await unpaired.message({type:'library-avatars'})).error,/接続を設定/);
+  assert.equal(unpaired.sent.some(row=>row.path.startsWith('/library/')),false);
 });
