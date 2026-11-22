@@ -3912,11 +3912,47 @@ fn a_checkout_product_is_marked_purchased_and_takes_its_library_files() {
         shop: "見本工房".into(),
     };
     assert!(crate::purchases::record_checkout(&mut connection, "91234567", &[bought]).unwrap());
+    // ギフトかどうかは詳細にしか出ないので、購入完了だけの記録ではまだ購入済みにしない。
+    // 確かめていない購入として印を付け、カードに無料配布を探す操作を出さない。
+    assert!(!purchased(&connection));
+    let unverified = |connection: &Connection| {
+        load_snapshot(connection)
+            .unwrap()
+            .product_flags
+            .into_iter()
+            .find(|flag| flag.booth_id == "5512345")
+            .unwrap()
+            .purchase_unverified
+    };
+    assert!(unverified(&connection));
+    connection
+        .execute(
+            "UPDATE purchase_orders SET detail_read_at = '2026-11-22T00:00:00Z' WHERE order_id = '91234567'",
+            [],
+        )
+        .unwrap();
     assert!(purchased(&connection));
+    assert!(!unverified(&connection));
     // 贈ったギフトの注文は、自分の購入として扱わない。
+    connection
+        .execute(
+            "UPDATE purchase_orders SET gift_detected = 1 WHERE order_id = '91234567'",
+            [],
+        )
+        .unwrap();
+    assert!(!purchased(&connection));
+    // 本人がギフトでないと決めた注文は、購入として扱う。
+    crate::purchases::set_gift_override(&connection, "91234567", Some(false)).unwrap();
+    assert!(purchased(&connection));
     crate::purchases::set_gift_override(&connection, "91234567", Some(true)).unwrap();
     assert!(!purchased(&connection));
     crate::purchases::set_gift_override(&connection, "91234567", None).unwrap();
+    connection
+        .execute(
+            "UPDATE purchase_orders SET gift_detected = 0 WHERE order_id = '91234567'",
+            [],
+        )
+        .unwrap();
     assert!(purchased(&connection));
 
     // ライブラリの 1 商品分（extractPage と同じ形）。題が違っても、題は書き換えない。

@@ -112,6 +112,8 @@ export interface ItemView {
   unpublished: boolean;
   /** 購入履歴に、贈ったギフトでない注文として載っている。ファイル情報が無ければ「購入したファイルを読み込む」を出す。 */
   purchased: boolean;
+  /** 購入完了だけを記録し、ギフトかどうかをまだ確かめていない注文に載っている。無料配布を探す操作は出さない。 */
+  purchaseUnverified: boolean;
   remoteConfigured: boolean;
   remoteChecked: boolean;
   remoteReachable: boolean;

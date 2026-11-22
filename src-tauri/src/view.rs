@@ -87,6 +87,9 @@ pub struct ItemView {
     /// 購入履歴に、贈ったギフトでない注文として載っている。ファイル情報が無いとき、カードは
     /// 「無料配布のファイルを探す」ではなく「購入したファイルを読み込む」を出す。
     pub purchased: bool,
+    /// 購入完了だけを記録し、ギフトかどうかをまだ確かめていない注文に載っている。カードは
+    /// 「無料配布のファイルを探す」を出さない（買った商品を無料の商品として扱わないため）。
+    pub purchase_unverified: bool,
     pub remote_configured: bool,
     pub remote_checked: bool,
     pub remote_reachable: bool,
@@ -1124,6 +1127,7 @@ fn item_view(
         is_adult: flag.and_then(|flag| flag.is_adult).unwrap_or(false),
         unpublished: flag.and_then(|flag| flag.unpublished).unwrap_or(false),
         purchased: flag.is_some_and(|flag| flag.purchased),
+        purchase_unverified: flag.is_some_and(|flag| flag.purchase_unverified),
         remote_configured: snapshot.remote_configured,
         remote_checked: snapshot.remote_checked,
         remote_reachable: snapshot.remote_reachable,
@@ -1858,6 +1862,7 @@ mod tests {
             is_adult: None,
             unpublished: None,
             purchased: false,
+            purchase_unverified: false,
         }
     }
 

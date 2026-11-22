@@ -204,6 +204,8 @@ pub struct ProductFlag {
     pub unpublished: Option<bool>,
     /// 購入履歴に、贈ったギフトでない注文として載っている。
     pub purchased: bool,
+    /// 購入完了だけを記録し、ギフトかどうかをまだ確かめていない注文に載っている。
+    pub purchase_unverified: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

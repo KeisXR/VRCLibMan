@@ -161,10 +161,24 @@ function gift(order: StoredOrder): boolean {
   return order.giftOverride ?? order.giftDetected;
 }
 
-/** 購入履歴に、贈ったギフトでない注文として載っている商品。Rust の `ProductFlag.purchased` と同じ。 */
+/**
+ * 購入履歴に、贈ったギフトでない注文として載っている商品。Rust の `ProductFlag.purchased` と同じく、
+ * 詳細を読んだ注文か、ギフトの印を本人が決めた注文だけを数える。
+ */
+/** 購入完了だけを記録し、ギフトかどうかをまだ確かめていない注文の商品。Rust の `purchase_unverified`。 */
+export function previewUnverifiedPurchaseIds(): Set<string> {
+  const ids = new Set<string>();
+  for (const order of state.orders) {
+    if (order.detailRead || order.giftOverride != null) continue;
+    for (const item of order.items) ids.add(item.sample.boothId);
+  }
+  return ids;
+}
+
 export function previewPurchasedIds(): Set<string> {
   const ids = new Set<string>();
   for (const order of state.orders) {
+    if (!order.detailRead && order.giftOverride == null) continue;
     if (gift(order)) continue;
     for (const item of order.items) ids.add(item.sample.boothId);
   }

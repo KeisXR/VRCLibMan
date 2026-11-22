@@ -6,6 +6,8 @@ import type { ItemView } from "./types";
  * - `purchased`: 購入履歴にある商品（贈ったギフトを除く）。「購入したファイルを読み込む」で
  *   BOOTH のライブラリからその商品のファイル一覧を読む。購入完了ページから登録した商品は
  *   ファイル情報が無いので、無料配布を探しても見つからないため。
+ * - 購入完了だけを記録し、ギフトかどうかをまだ確かめていない商品（`purchaseUnverified`）には
+ *   どちらも出さない。買った商品を無料の商品として扱わないため。
  * - `free`: それ以外。「無料配布のファイルを探す」で BOOTH の公開情報を 1 回だけ読み、
  *   無料配布のファイルだけを行として加える。非公開の商品は公開情報を読めないので出さない。
  * どちらもダウンロード・購入・ライブラリへの追加はしない。
@@ -13,17 +15,18 @@ import type { ItemView } from "./types";
 export type FileCheckKind = "purchased" | "free";
 
 export function fileCheckKind(
-  item: Pick<ItemView, "downloads" | "localFileCount" | "unpublished"> & { purchased?: boolean },
+  item: Pick<ItemView, "downloads" | "localFileCount" | "unpublished"> & { purchased?: boolean; purchaseUnverified?: boolean },
   builtinBrowser: boolean,
 ): FileCheckKind | null {
   if (!builtinBrowser || item.downloads.length > 0 || item.localFileCount > 0) return null;
   if (item.purchased) return "purchased";
+  if (item.purchaseUnverified) return null;
   return item.unpublished ? null : "free";
 }
 
 /** 「無料配布のファイルを探す」を出すか。購入履歴にある商品には出さない。 */
 export function offerFreeFileCheck(
-  item: Pick<ItemView, "downloads" | "localFileCount" | "unpublished"> & { purchased?: boolean },
+  item: Pick<ItemView, "downloads" | "localFileCount" | "unpublished"> & { purchased?: boolean; purchaseUnverified?: boolean },
   builtinBrowser: boolean,
 ): boolean {
   return fileCheckKind(item, builtinBrowser) === "free";

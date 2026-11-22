@@ -59,6 +59,9 @@ test("購入したファイルを読み込む: a purchased item with no file inf
     // 非公開でもライブラリにはあるので、購入した商品は読める。
     assert.equal(free.fileCheckKind({ ...empty, purchased: true, unpublished: true }, true), "purchased");
     assert.equal(free.fileCheckKind({ ...empty, purchased: false }, true), "free");
+    // 購入完了だけでギフトか未確認の商品には、無料配布を探す操作も出さない。
+    assert.equal(free.fileCheckKind({ ...empty, purchaseUnverified: true }, true), null);
+    assert.equal(free.offerFreeFileCheck({ ...empty, purchaseUnverified: true }, true), false);
     assert.equal(free.fileCheckKind({ ...empty, purchased: true }, false), null);
     assert.equal(free.fileCheckKind({ downloads: [file], localFileCount: 0, purchased: true }, true), null);
     assert.equal(free.fileCheckLabel("purchased", false), "購入したファイルを読み込む");

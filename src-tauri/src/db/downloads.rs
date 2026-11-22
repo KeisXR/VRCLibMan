@@ -46,12 +46,18 @@ pub(super) fn load_download_rows(connection: &Connection) -> Result<Vec<Download
 
 pub(super) fn load_product_flags(connection: &Connection) -> Result<Vec<ProductFlag>, String> {
     // 購入履歴に、贈ったギフトでない注文として載っている商品。カードは「無料配布のファイルを探す」の
-    // 代わりに「購入したファイルを読み込む」を出す。
+    // 代わりに「購入したファイルを読み込む」を出す。ギフトかどうかは注文の詳細にしか出ないので、
+    // 詳細を読んだ注文か、本人がギフトの印を決めた注文だけを数える（購入完了だけの記録は数えない）。
     let mut statement = connection
         .prepare(
             "SELECT p.booth_id, p.is_free, p.is_adult, p.unpublished,
                     EXISTS (SELECT 1 FROM purchase_items i JOIN purchase_orders o ON o.order_id = i.order_id
-                            WHERE i.booth_id = p.booth_id AND COALESCE(o.gift_override, o.gift_detected) = 0)
+                            WHERE i.booth_id = p.booth_id
+                              AND (o.detail_read_at IS NOT NULL OR o.gift_override IS NOT NULL)
+                              AND COALESCE(o.gift_override, o.gift_detected) = 0),
+                    EXISTS (SELECT 1 FROM purchase_items i JOIN purchase_orders o ON o.order_id = i.order_id
+                            WHERE i.booth_id = p.booth_id
+                              AND o.detail_read_at IS NULL AND o.gift_override IS NULL)
              FROM products p",
         )
         .sql()?;
@@ -66,6 +72,7 @@ pub(super) fn load_product_flags(connection: &Connection) -> Result<Vec<ProductF
                 is_adult: adult.map(|value| value != 0),
                 unpublished: unpublished.map(|value| value != 0),
                 purchased: row.get::<_, i64>(4)? != 0,
+                purchase_unverified: row.get::<_, i64>(5)? != 0,
             })
         })
         .sql()?;

@@ -2455,6 +2455,10 @@ pub(crate) async fn read_purchased_files(
                 let _ =
                     tauri::async_runtime::spawn_blocking(move || std::thread::sleep(pause)).await;
             }
+            // ページの間にログアウトが始まったら、次のページは開かない（`open_order_reader` も拒む）。
+            if SESSION_CLEARING.load(Ordering::SeqCst) {
+                return Err("ログアウト中です".to_string());
+            }
             let url = library_walk::library_walk_url(WalkSection::Library, page)?;
             let (loaded, arrived) = std::sync::mpsc::channel::<()>();
             let source = source_label.to_string();
@@ -2632,6 +2636,11 @@ fn open_order_reader(
     url: Url,
     loaded: std::sync::mpsc::Sender<()>,
 ) -> Result<(), String> {
+    // ログアウトは UI スレッドで窓を壊してからプロファイルを消す。UI スレッドで確かめ、
+    // 消している最中のプロファイルに WebView を作り直さない。
+    if SESSION_CLEARING.load(Ordering::SeqCst) {
+        return Err("ログアウト中です".into());
+    }
     // 元のタブが閉じられていたら、メイン窓に置く。1px で隠すので見た目は変わらない。
     let window = match app.get_webview(source_label) {
         Some(source) => source.window(),
@@ -3776,6 +3785,14 @@ mod tests {
         assert!(read.contains("library_walk_running()"));
         assert!(read.contains("WalkSection::Library"));
         assert!(read.contains("open_order_reader("));
+        // ページの間のログアウトでは次のページを開かない。
+        let loop_start = read.find("for page in").unwrap();
+        assert!(
+            read[loop_start..].find("SESSION_CLEARING").unwrap()
+                < read[loop_start..].find("open_order_reader(").unwrap()
+        );
+        let opener = function_body(production, "fn open_order_reader");
+        assert!(opener.find("SESSION_CLEARING").unwrap() < opener.find("add_child").unwrap());
         let page = function_body(production, "async fn read_library_reader_page");
         assert!(page.contains("settled_stop"));
         assert!(page.contains("BROWSER_AGE_MESSAGE"));

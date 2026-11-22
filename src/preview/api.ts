@@ -1,7 +1,7 @@
 import { previewBrowserState, previewBrowserPanelSnapshot, previewBrowserAction, previewSaveBookmark, previewDeleteBookmark, previewOpenBrowser, previewCloseBrowser } from "./browser";
 import extensionManifest from "../../extension/manifest.json";
 import { previewListDirectory, previewListZip, previewPrepareUnityPackages, previewUnityPackages } from "./files";
-import { previewPurchaseDispatch, previewPurchaseExport, previewPurchasedIds } from "./purchases";
+import { previewPurchaseDispatch, previewPurchaseExport, previewPurchasedIds, previewUnverifiedPurchaseIds } from "./purchases";
 import { filePresence } from "../media";
 import { FILE_GONE_MESSAGE } from "../downloads";
 import { GENRE_FREE, GENRE_LABEL, GENRE_UNSET, genresForKind } from "../types";
@@ -793,6 +793,7 @@ function itemView(item: Product, viaBaseBody: boolean): ItemView {
     isAdult: item.isAdult,
     unpublished: item.unpublished,
     purchased: previewPurchasedIds().has(item.boothId),
+    purchaseUnverified: previewUnverifiedPurchaseIds().has(item.boothId),
     remoteConfigured,
     remoteChecked,
     remoteReachable: remoteConfigured && store.remoteChecked && store.remoteReachable,
