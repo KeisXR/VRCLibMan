@@ -1285,6 +1285,77 @@ pub async fn fetch_free_files(
     })
 }
 
+pub(crate) const PURCHASED_FILES_NOT_FOUND: &str = "BOOTH のライブラリの新しい購入の中に、この商品は見つかりませんでした。支払いが済んでいない注文か、ギフトとして贈った注文かもしれません。前に買った商品は、インポートの「ライブラリ全取得」で読み込めます";
+
+/// 「購入したファイルを読み込む」: 本人が押した 1 商品のファイル一覧を、内蔵ブラウザのログインで
+/// BOOTH のライブラリから読む（隠した子 WebView、表示中のタブは動かさない）。ファイル行と
+/// バリエーションだけを保存し、ダウンロード・購入はしない。購入完了ページから登録した商品は
+/// ファイル情報が無く、無料配布を探しても見つからないため。
+#[tauri::command]
+pub async fn fetch_purchased_files(
+    app: tauri::AppHandle,
+    booth_id: String,
+) -> Result<FreeFilesReport, String> {
+    if !crate::library_files::valid_booth_id(&booth_id) {
+        return Err("商品のIDを読めません".into());
+    }
+    let app_for_check = app.clone();
+    let id_for_check = booth_id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_for_check.state::<AppState>();
+        let connection = db(&state)?;
+        if !db::settings(&connection)?.builtin_browser {
+            return Err("内蔵ブラウザを有効にしてから押してください".to_string());
+        }
+        db::free_files_target(&connection, &id_for_check)
+    })
+    .await
+    .map_err(|_| "商品を確認できません".to_string())??;
+    let source = crate::browser_surface::active_view(&app)
+        .map(|view| view.label().to_string())
+        .unwrap_or_default();
+    let wanted = vec![booth_id.clone()];
+    let found = crate::browser::read_purchased_files(
+        &app,
+        &source,
+        &wanted,
+        crate::browser::PURCHASED_FILE_PAGES,
+    )
+    .await?;
+    crate::browser::browser_log(
+        &app,
+        &format!(
+            "購入したファイルの確認 {} {}",
+            crate::booth_detail::id_tail(&booth_id),
+            if found.is_empty() {
+                "ライブラリになし"
+            } else {
+                "ライブラリにあり"
+            }
+        ),
+    );
+    if found.is_empty() {
+        return Ok(FreeFilesReport {
+            files: 0,
+            notice: Some(PURCHASED_FILES_NOT_FOUND.to_string()),
+        });
+    }
+    crate::browser::store_purchased_files(&app, found).await?;
+    let id_for_count = booth_id.clone();
+    let app_for_count = app.clone();
+    let files = tauri::async_runtime::spawn_blocking(move || {
+        let state = app_for_count.state::<AppState>();
+        let connection = db(&state)?;
+        db::product_file_count(&connection, &id_for_count)
+    })
+    .await
+    .map_err(|_| "ファイル情報を確認できません".to_string())??;
+    Ok(FreeFilesReport {
+        files,
+        notice: None,
+    })
+}
+
 /// スキャン済みファイルと、記録済みの商品ファイルだけを既定のアプリで開く。
 /// JS 側の opener に open-path 権限を足さず、Rust で登録済みのパスか確かめてから開く。
 #[tauri::command]

@@ -45,8 +45,15 @@ pub(super) fn load_download_rows(connection: &Connection) -> Result<Vec<Download
 }
 
 pub(super) fn load_product_flags(connection: &Connection) -> Result<Vec<ProductFlag>, String> {
+    // 購入履歴に、贈ったギフトでない注文として載っている商品。カードは「無料配布のファイルを探す」の
+    // 代わりに「購入したファイルを読み込む」を出す。
     let mut statement = connection
-        .prepare("SELECT booth_id, is_free, is_adult, unpublished FROM products")
+        .prepare(
+            "SELECT p.booth_id, p.is_free, p.is_adult, p.unpublished,
+                    EXISTS (SELECT 1 FROM purchase_items i JOIN purchase_orders o ON o.order_id = i.order_id
+                            WHERE i.booth_id = p.booth_id AND COALESCE(o.gift_override, o.gift_detected) = 0)
+             FROM products p",
+        )
         .sql()?;
     let rows = statement
         .query_map([], |row| {
@@ -58,6 +65,7 @@ pub(super) fn load_product_flags(connection: &Connection) -> Result<Vec<ProductF
                 is_free: free.map(|value| value != 0),
                 is_adult: adult.map(|value| value != 0),
                 unpublished: unpublished.map(|value| value != 0),
+                purchased: row.get::<_, i64>(4)? != 0,
             })
         })
         .sql()?;
@@ -178,6 +186,18 @@ pub(crate) fn add_free_product(connection: &mut Connection, url: &str) -> Result
     Ok(booth_id)
 }
 
+/// この商品のファイル行の数。
+pub(crate) fn product_file_count(connection: &Connection, booth_id: &str) -> Result<usize, String> {
+    let count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM product_files WHERE booth_id = ?1",
+            params![booth_id],
+            |row| row.get(0),
+        )
+        .sql()?;
+    Ok(count.max(0) as usize)
+}
+
 /// The product must exist and not be excluded before the public read starts.
 pub(crate) fn free_files_target(connection: &Connection, booth_id: &str) -> Result<(), String> {
     if product_by_id(connection, booth_id)?.is_none() {
@@ -198,6 +218,49 @@ pub(crate) fn store_free_files(
     is_free: Option<bool>,
     is_adult: Option<bool>,
 ) -> Result<usize, String> {
+    store_file_rows(
+        connection,
+        booth_id,
+        files,
+        &[],
+        is_free,
+        if is_adult == Some(true) {
+            Some(true)
+        } else {
+            None
+        },
+    )
+}
+
+/// 購入した商品のファイル行とバリエーション。BOOTH のライブラリから読んだ 1 商品分
+/// （`browser::read_purchased_files`）。題・ショップ・説明・カテゴリ・タグ・無料の印は書かない。
+/// ライブラリに無い商品と除外中の商品は拒む。保存後の商品のファイル行の数を返す。
+pub(crate) fn store_purchased_files(
+    connection: &mut Connection,
+    product: &IncomingProduct,
+) -> Result<usize, String> {
+    store_file_rows(
+        connection,
+        &product.booth_id,
+        &product.downloads,
+        &product.variations,
+        None,
+        if product.is_adult == Some(true) {
+            Some(true)
+        } else {
+            None
+        },
+    )
+}
+
+fn store_file_rows(
+    connection: &mut Connection,
+    booth_id: &str,
+    files: &[IncomingDownload],
+    variations: &[IncomingVariation],
+    is_free: Option<bool>,
+    is_adult: Option<bool>,
+) -> Result<usize, String> {
     free_files_target(connection, booth_id)?;
     let mut before_files = std::collections::HashMap::new();
     if let Ok(keys) = crate::asset_updates::existing_file_keys(connection, booth_id) {
@@ -210,14 +273,10 @@ pub(crate) fn store_free_files(
         description_snippet: String::new(),
         url: String::new(),
         thumbnail_url: None,
-        variations: Vec::new(),
+        variations: variations.to_vec(),
         downloads: files.to_vec(),
         is_free,
-        is_adult: if is_adult == Some(true) {
-            Some(true)
-        } else {
-            None
-        },
+        is_adult,
         unpublished: None,
         received_gift: None,
         booth_category: None,

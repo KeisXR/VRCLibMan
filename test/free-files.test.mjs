@@ -31,13 +31,42 @@ test("無料配布のファイルを探す: shown only for an item with no file 
 
 test("無料配布のファイルを探す: the card calls only the check command and never starts a download by itself", () => {
   const page = readFileSync(new URL("../src/pages/AvatarDetailPage.tsx", import.meta.url), "utf8").replace(/\r\n/g, "\n");
-  const start = page.indexOf("async function checkFreeFiles");
+  const start = page.indexOf("async function runFileCheck");
   assert.ok(start > 0);
-  const body = page.slice(start, page.indexOf("\n  }\n", start));
-  assert.match(body, /api\.fetchFreeFiles\(item\.boothId\)/);
+  const body = page.slice(start, page.indexOf("\n}\n", start));
+  assert.match(body, /api\.fetchFreeFiles\(boothId\)/);
+  assert.match(body, /api\.fetchPurchasedFiles\(boothId\)/);
   assert.doesNotMatch(body, /downloadBoothFile|openBoothLink|addFreeProduct/);
+  // カードとアセット一覧は、どちらもこの 1 か所から呼ぶ。
+  assert.equal(page.match(/api\.fetchFreeFiles\(/g).length, 1);
+  assert.equal(page.match(/api\.fetchPurchasedFiles\(/g).length, 1);
   const api = readFileSync(new URL("../src/api.ts", import.meta.url), "utf8");
   assert.match(api, /call<FreeFilesReport>\("fetch_free_files", \{ boothId \}\)/);
+  assert.match(api, /call<FreeFilesReport>\("fetch_purchased_files", \{ boothId \}\)/);
   const preview = readFileSync(new URL("../src/preview/api.ts", import.meta.url), "utf8");
   assert.match(preview, /case "fetch_free_files"/);
+  assert.match(preview, /case "fetch_purchased_files"/);
+});
+
+test("購入したファイルを読み込む: a purchased item with no file info never offers the free-file search", async () => {
+  const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  try {
+    const free = await server.ssrLoadModule("/src/freeFiles.ts");
+    const empty = { downloads: [], localFileCount: 0 };
+    // 内蔵ブラウザで買った直後の商品（購入完了ページからの登録でファイル情報なし）。
+    assert.equal(free.fileCheckKind({ ...empty, purchased: true }, true), "purchased");
+    assert.equal(free.offerFreeFileCheck({ ...empty, purchased: true }, true), false);
+    // 非公開でもライブラリにはあるので、購入した商品は読める。
+    assert.equal(free.fileCheckKind({ ...empty, purchased: true, unpublished: true }, true), "purchased");
+    assert.equal(free.fileCheckKind({ ...empty, purchased: false }, true), "free");
+    assert.equal(free.fileCheckKind({ ...empty, purchased: true }, false), null);
+    assert.equal(free.fileCheckKind({ downloads: [file], localFileCount: 0, purchased: true }, true), null);
+    assert.equal(free.fileCheckLabel("purchased", false), "購入したファイルを読み込む");
+    assert.equal(free.fileCheckLabel("purchased", true), "読み込んでいます…");
+    assert.equal(free.fileCheckLabel("free", false), "無料配布のファイルを探す");
+    assert.match(free.purchasedFilesResultMessage({ files: 2 }), /2 件.*ダウンロード/);
+    assert.equal(free.purchasedFilesResultMessage({ files: 0, notice: "見つかりませんでした" }), "見つかりませんでした");
+  } finally {
+    await server.close();
+  }
 });

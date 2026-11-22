@@ -110,6 +110,8 @@ export interface ItemView {
   isAdult: boolean;
   /** Library badge「非公開」. Distinct from 公開終了. */
   unpublished: boolean;
+  /** 購入履歴に、贈ったギフトでない注文として載っている。ファイル情報が無ければ「購入したファイルを読み込む」を出す。 */
+  purchased: boolean;
   remoteConfigured: boolean;
   remoteChecked: boolean;
   remoteReachable: boolean;

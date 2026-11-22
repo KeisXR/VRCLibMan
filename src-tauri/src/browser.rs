@@ -2372,7 +2372,15 @@ impl Drop for OrderReaderTurn {
 
 /// 購入完了ページを見たあと、その注文の詳細を 1 回だけ読む。購入やダウンロードはしない。
 /// 読めなかった注文は詳細が未取得のまま残り、次の購入履歴の読み込みで埋まる。
-pub(crate) fn read_order_later(app: &AppHandle, source_label: &str, order_id: &str) {
+/// 続けて、この購入で登録した商品（`products`）のファイル一覧を BOOTH のライブラリから読む
+/// （`read_purchased_files`）。購入完了ページにはファイルが無く、ファイル情報の無いカードには
+/// 無料品向けの操作しか出ないため。
+pub(crate) fn read_order_later(
+    app: &AppHandle,
+    source_label: &str,
+    order_id: &str,
+    products: Vec<String>,
+) {
     let app = app.clone();
     let source = source_label.to_string();
     let order_id = order_id.to_string();
@@ -2384,7 +2392,197 @@ pub(crate) fn read_order_later(app: &AppHandle, source_label: &str, order_id: &s
                 "購入した注文の詳細は、次に購入履歴を読み込むときに取得します",
             ),
         }
+        if products.is_empty() {
+            return;
+        }
+        let read = match read_purchased_files(&app, &source, &products, PURCHASED_FILE_PAGES).await
+        {
+            Ok(found) => store_purchased_files(&app, found).await,
+            Err(error) => Err(error),
+        };
+        match read {
+            Ok(stored) => browser_log(
+                &app,
+                &format!(
+                    "購入した商品のファイル一覧を読みました（{} / {} 件）",
+                    stored,
+                    products.len()
+                ),
+            ),
+            Err(_) => browser_log(
+                &app,
+                "購入した商品のファイル一覧は、商品カードの「購入したファイルを読み込む」で読めます",
+            ),
+        }
     });
+}
+
+/// 購入したファイルを探すライブラリのページ数。ライブラリは購入の新しい順なので、
+/// 買ったばかりの商品は 1 ページ目にある。見つからなければ「ライブラリ全取得」で読む。
+pub(crate) const PURCHASED_FILE_PAGES: u32 = 3;
+
+pub(crate) const PURCHASED_FILES_UNSUPPORTED: &str =
+    "この OS では、インポートの「ライブラリ全取得」で購入したファイルを読み込んでください";
+
+/// 購入した商品のファイル一覧を、隠した子 WebView で BOOTH のライブラリから読む。表示中のタブは動かさない。
+/// ライブラリを 1 ページ目から順に、探す商品がそろうか `max_pages` まで読み、並列にしない。
+/// 読むのは `extractPage` がライブラリの全取得と同じに返す商品のうち、探している商品だけ。
+/// ダウンロード・購入はしない。ログイン切れと年齢確認では止まり、年齢確認は通過しない。
+pub(crate) async fn read_purchased_files(
+    app: &AppHandle,
+    source_label: &str,
+    wanted: &[String],
+    max_pages: u32,
+) -> Result<Vec<serde_json::Value>, String> {
+    if !order_reader_supported() {
+        return Err(PURCHASED_FILES_UNSUPPORTED.into());
+    }
+    if library_walk_running() || SESSION_CLEARING.load(Ordering::SeqCst) {
+        return Err(walk_busy_message().into());
+    }
+    if ORDER_READER_BUSY.swap(true, Ordering::SeqCst) {
+        return Err("購入した注文を読んでいます。少し待ってから、もう一度押してください".into());
+    }
+    let _turn = OrderReaderTurn;
+    let pause = with_db(app, |connection| db::booth_page_interval_ms(connection))
+        .await
+        .map(Duration::from_millis)
+        .unwrap_or(library_walk::PAGE_DELAY);
+    let mut found: Vec<serde_json::Value> = Vec::new();
+    let result = async {
+        for page in 1..=max_pages.max(1) {
+            if page > 1 {
+                let _ =
+                    tauri::async_runtime::spawn_blocking(move || std::thread::sleep(pause)).await;
+            }
+            let url = library_walk::library_walk_url(WalkSection::Library, page)?;
+            let (loaded, arrived) = std::sync::mpsc::channel::<()>();
+            let source = source_label.to_string();
+            let target = url.clone();
+            dispatch_ui(app.clone(), move |handle| {
+                open_order_reader(handle, &source, target, loaded)
+            })
+            .await?;
+            let snapshot = read_library_reader_page(app, &url, arrived).await?;
+            let fresh = purchased_products_on_page(snapshot.products, wanted, &found);
+            found.extend(fresh);
+            if found.len() >= wanted.len() || page >= snapshot.last_page {
+                break;
+            }
+        }
+        Ok::<(), String>(())
+    }
+    .await;
+    let _ = dispatch_ui(app.clone(), |handle| {
+        if let Some(view) = handle.get_webview(ORDER_READER_LABEL) {
+            let _ = view.close();
+        }
+        Ok(())
+    })
+    .await;
+    result.map(|()| found)
+}
+
+/// ライブラリ 1 ページの商品から、探している商品で、まだ見つけていないものだけ。
+fn purchased_products_on_page(
+    products: Vec<serde_json::Value>,
+    wanted: &[String],
+    found: &[serde_json::Value],
+) -> Vec<serde_json::Value> {
+    let id_of = |product: &serde_json::Value| {
+        product
+            .get("boothId")
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    let mut seen: HashSet<String> = found.iter().map(id_of).collect();
+    let mut result = Vec::new();
+    for product in products {
+        let id = id_of(&product);
+        if wanted.iter().any(|want| *want == id) && seen.insert(id) {
+            result.push(product);
+        }
+    }
+    result
+}
+
+async fn read_library_reader_page(
+    app: &AppHandle,
+    url: &Url,
+    arrived: std::sync::mpsc::Receiver<()>,
+) -> Result<PageSnapshot, String> {
+    let first =
+        tauri::async_runtime::spawn_blocking(move || arrived.recv_timeout(Duration::from_secs(20)))
+            .await
+            .map_err(|_| "ページを読めません".to_string())?;
+    if first.is_err() {
+        return Err("ページの読み込みがタイムアウトしました".into());
+    }
+    let started = std::time::Instant::now();
+    loop {
+        if started.elapsed() > Duration::from_secs(20) {
+            return Err("ページの読み込みがタイムアウトしました".into());
+        }
+        let raw = eval_label_within(
+            app,
+            ORDER_READER_LABEL,
+            PROBE_JS.to_string(),
+            Duration::from_secs(3),
+        )
+        .await?;
+        let PageProbe { href, ready, .. } = parse_probe(&raw)?;
+        if ready == "complete" {
+            match library_walk::settled_stop(&href) {
+                Some(WalkStop::AgeGate) => return Err(db::BROWSER_AGE_MESSAGE.into()),
+                Some(_) => return Err(WALK_LOGIN_NOTICE.into()),
+                None => {}
+            }
+            if library_walk::same_library_page(&href, url) {
+                break;
+            }
+        }
+        let _ =
+            tauri::async_runtime::spawn_blocking(|| std::thread::sleep(Duration::from_millis(200)))
+                .await;
+    }
+    let raw = eval_label_within(
+        app,
+        ORDER_READER_LABEL,
+        walk_page_script(),
+        Duration::from_secs(10),
+    )
+    .await?;
+    let snapshot = parse_walk_snapshot(&raw)?;
+    if !library_walk::same_library_page(&snapshot.href, url) {
+        return Err(WALK_LOGIN_NOTICE.into());
+    }
+    Ok(snapshot)
+}
+
+/// ライブラリから読んだ商品のファイル行とバリエーションだけを保存する。題・説明・分類は書かない。
+/// 除外中の商品とライブラリに無い商品は飛ばす。保存できた商品の数を返す。
+pub(crate) async fn store_purchased_files(
+    app: &AppHandle,
+    products: Vec<serde_json::Value>,
+) -> Result<usize, String> {
+    if products.is_empty() {
+        return Ok(0);
+    }
+    let stored = with_db(app, move |connection| {
+        let text = serde_json::Value::Array(products).to_string();
+        let parsed = crate::import_data::parse_export(&text)?;
+        let mut stored = 0;
+        for product in &parsed.products {
+            if db::store_purchased_files(connection, product).is_ok() {
+                stored += 1;
+            }
+        }
+        Ok(stored)
+    })
+    .await?;
+    let _ = app.emit("library-changed", ());
+    Ok(stored)
 }
 
 async fn read_order_in_background(
@@ -2434,10 +2632,13 @@ fn open_order_reader(
     url: Url,
     loaded: std::sync::mpsc::Sender<()>,
 ) -> Result<(), String> {
-    let source = app
-        .get_webview(source_label)
-        .ok_or_else(|| "ブラウザが開いていません".to_string())?;
-    let window = source.window();
+    // 元のタブが閉じられていたら、メイン窓に置く。1px で隠すので見た目は変わらない。
+    let window = match app.get_webview(source_label) {
+        Some(source) => source.window(),
+        None => app
+            .get_window("main")
+            .ok_or_else(|| "ブラウザが開いていません".to_string())?,
+    };
     if let Some(old) = app.get_webview(ORDER_READER_LABEL) {
         let _ = old.close();
     }
@@ -3549,6 +3750,44 @@ mod tests {
         assert_eq!(parse_purchase_detail(&failed).unwrap_err(), "読めません");
         let missing = serde_json::json!({ "ok": true, "href": "https://accounts.booth.pm/orders/1", "detail": null }).to_string();
         assert!(parse_purchase_detail(&missing).unwrap().detail.is_none());
+    }
+
+    #[test]
+    fn purchased_files_keep_only_the_wanted_products_once() {
+        let page = vec![
+            serde_json::json!({ "boothId": "5512345", "downloads": [] }),
+            serde_json::json!({ "boothId": "6600001", "downloads": [] }),
+            serde_json::json!({ "boothId": "5512345", "downloads": [] }),
+        ];
+        let wanted = vec!["5512345".to_string(), "5512346".to_string()];
+        let first = purchased_products_on_page(page.clone(), &wanted, &[]);
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0]["boothId"], "5512345");
+        // 前のページで見つけた商品は、次のページで重ねない。
+        assert!(purchased_products_on_page(page, &wanted, &first).is_empty());
+    }
+
+    #[test]
+    fn purchased_files_are_read_after_the_checkout_is_registered_and_never_download() {
+        let source = include_str!("browser.rs");
+        let production = &source[..source.find("#[cfg(test)]").unwrap()];
+        let read = function_body(production, "pub(crate) async fn read_purchased_files");
+        assert!(read.contains("ORDER_READER_BUSY.swap(true"));
+        assert!(read.contains("library_walk_running()"));
+        assert!(read.contains("WalkSection::Library"));
+        assert!(read.contains("open_order_reader("));
+        let page = function_body(production, "async fn read_library_reader_page");
+        assert!(page.contains("settled_stop"));
+        assert!(page.contains("BROWSER_AGE_MESSAGE"));
+        let auto = include_str!("browser_auto.rs");
+        let register = auto
+            .find("db::browser_auto_register(&mut c, product)")
+            .unwrap();
+        let read_later = auto.find("browser::read_order_later(").unwrap();
+        assert!(
+            register < read_later,
+            "ファイル一覧は商品を登録してから読む"
+        );
     }
 
     #[test]

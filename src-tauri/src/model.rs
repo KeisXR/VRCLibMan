@@ -202,6 +202,8 @@ pub struct ProductFlag {
     pub is_free: Option<bool>,
     pub is_adult: Option<bool>,
     pub unpublished: Option<bool>,
+    /// 購入履歴に、贈ったギフトでない注文として載っている。
+    pub purchased: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

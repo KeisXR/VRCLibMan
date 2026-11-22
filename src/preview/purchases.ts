@@ -161,6 +161,16 @@ function gift(order: StoredOrder): boolean {
   return order.giftOverride ?? order.giftDetected;
 }
 
+/** 購入履歴に、贈ったギフトでない注文として載っている商品。Rust の `ProductFlag.purchased` と同じ。 */
+export function previewPurchasedIds(): Set<string> {
+  const ids = new Set<string>();
+  for (const order of state.orders) {
+    if (gift(order)) continue;
+    for (const item of order.items) ids.add(item.sample.boothId);
+  }
+  return ids;
+}
+
 function itemView(item: StoredItem): PurchaseItemView {
   const sample = item.sample;
   return {

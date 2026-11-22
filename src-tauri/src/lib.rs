@@ -340,6 +340,7 @@ pub fn run() {
             commands::download_booth_file,
             commands::asset_update_downloads,
             commands::fetch_free_files,
+            commands::fetch_purchased_files,
             commands::asset_update_status,
             commands::asset_update_history,
             commands::configure_asset_updates,

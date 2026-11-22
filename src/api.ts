@@ -324,6 +324,7 @@ export const api = {
   assetUpdateDownloads: (requests: { boothId: string; variation: string }[]) =>
     call<AssetUpdateTarget[]>("asset_update_downloads", { requests }),
   fetchFreeFiles: (boothId: string) => call<FreeFilesReport>("fetch_free_files", { boothId }),
+  fetchPurchasedFiles: (boothId: string) => call<FreeFilesReport>("fetch_purchased_files", { boothId }),
   pushRemoteFile: (boothId: string, variation: string, filename: string, overwrite = false) =>
     call<CopyResult>("push_remote_file", { boothId, variation, filename, overwrite }),
   cacheThumbnails: () => call<number>("cache_thumbnails"),
