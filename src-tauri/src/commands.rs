@@ -125,6 +125,162 @@ pub fn regenerate_extension_token(
     Ok(extension_link_view(&state, &token))
 }
 
+/// AI エージェント連携の設定と、エージェントに書かせる実行ファイルのパス。
+#[tauri::command(async)]
+pub fn mcp_status(state: State<'_, AppState>) -> Result<crate::mcp_api::McpStatus, String> {
+    let connection = db(&state)?;
+    crate::mcp_api::status(&connection)
+}
+
+/// AI エージェント連携のオン・オフと、R-18 の商品を含めるか。メイン画面からだけ受け付ける。
+#[tauri::command(async)]
+pub fn set_mcp_settings(
+    view: tauri::Webview,
+    app: AppHandle,
+    state: State<'_, AppState>,
+    enabled: bool,
+    include_adult: bool,
+    allow_download: bool,
+) -> Result<crate::mcp_api::McpStatus, String> {
+    if view.label() != "main" {
+        return Err("この画面からは変更できません".into());
+    }
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| "アプリのデータフォルダが見つかりません".to_string())?;
+    let mut connection = db(&state)?;
+    crate::mcp_api::save(
+        &mut connection,
+        &directory,
+        enabled,
+        include_adult,
+        allow_download,
+    )?;
+    crate::mcp_api::status(&connection)
+}
+
+/// AI エージェント連携の認証コードを作り直す。メイン画面からだけ受け付ける。
+#[tauri::command(async)]
+pub fn regenerate_mcp_token(
+    view: tauri::Webview,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    if view.label() != "main" {
+        return Err("この画面からは変更できません".into());
+    }
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| "アプリのデータフォルダが見つかりません".to_string())?;
+    let connection = db(&state)?;
+    crate::mcp_api::regenerate(&connection, &directory)
+}
+
+/// 同梱の SKILL のフォルダ（`agent-skill/vrclibman`）。
+fn bundled_skill(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    let bundled = app
+        .path()
+        .resource_dir()
+        .ok()
+        .map(|dir| dir.join("agent-skill").join("vrclibman"));
+    if let Some(dir) = bundled.filter(|dir| dir.join("SKILL.md").is_file()) {
+        return Ok(dir);
+    }
+    // tauri dev ではリソースを写さないことがあるので、ソースのフォルダを使う。
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("agent-skill")
+        .join("vrclibman");
+    if cfg!(debug_assertions) && source.join("SKILL.md").is_file() {
+        return Ok(source);
+    }
+    Err("同梱の SKILL が見つかりません。アプリを入れ直してください".into())
+}
+
+fn agent_env() -> Result<crate::agent_setup::Env, String> {
+    crate::agent_setup::Env::current().ok_or_else(|| "ホームフォルダが見つかりません".to_string())
+}
+
+/// エージェントの設定は、AI エージェント連携がオンのときだけ書く。
+fn require_mcp_enabled(view: &tauri::Webview, state: &AppState) -> Result<(), String> {
+    if view.label() != "main" {
+        return Err("この画面からは変更できません".into());
+    }
+    let connection = db(state)?;
+    if crate::mcp_api::enabled(&connection)? {
+        Ok(())
+    } else {
+        Err("先に「AI エージェント連携」をオンにしてください".into())
+    }
+}
+
+/// 各 AI エージェントの設定と SKILL の状態。ファイルを読むだけ。
+#[tauri::command]
+pub async fn agent_clients() -> Result<Vec<crate::agent_setup::ClientStatus>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let env = agent_env()?;
+        Ok(crate::agent_setup::statuses(
+            &env,
+            &crate::mcp_api::command_path(),
+            env!("CARGO_PKG_VERSION"),
+        ))
+    })
+    .await
+    .map_err(|err| format!("エージェントの状態を読めません: {err}"))?
+}
+
+/// AI エージェントの設定ファイルに vrclibman を書く（`add`）か外す。メイン画面からだけ受け付ける。
+#[tauri::command]
+pub async fn change_agent_config(
+    view: tauri::Webview,
+    state: State<'_, AppState>,
+    id: String,
+    add: bool,
+) -> Result<crate::agent_setup::ChangeReport, String> {
+    require_mcp_enabled(&view, &state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let report = crate::agent_setup::change_config(
+            &agent_env()?,
+            &id,
+            &crate::mcp_api::command_path(),
+            add,
+        )?;
+        eprintln!(
+            "AI エージェントの設定: {} {}",
+            report.label,
+            if add { "追加" } else { "削除" }
+        );
+        Ok(report)
+    })
+    .await
+    .map_err(|err| format!("エージェントを設定できません: {err}"))?
+}
+
+/// 同梱の SKILL を AI エージェントのフォルダに入れる（`add`）か外す。メイン画面からだけ受け付ける。
+#[tauri::command]
+pub async fn change_agent_skill(
+    view: tauri::Webview,
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    add: bool,
+) -> Result<crate::agent_setup::ChangeReport, String> {
+    require_mcp_enabled(&view, &state)?;
+    let source = bundled_skill(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::agent_setup::change_skill(
+            &agent_env()?,
+            &id,
+            &source,
+            env!("CARGO_PKG_VERSION"),
+            add,
+        )
+    })
+    .await
+    .map_err(|err| format!("SKILL を入れられません: {err}"))?
+}
+
 fn extension_link_view(state: &AppState, token: &str) -> crate::model::ExtensionLink {
     let error = state
         .receiver_error

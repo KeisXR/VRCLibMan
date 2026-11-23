@@ -42,7 +42,7 @@ const SETTINGS = "設定";
 /** 設定の節の見出しと別の言い方。並びと id は `SETTINGS_NAV_ITEMS`。 */
 const SETTINGS_SECTIONS: Record<string, { title: string; keywords: readonly string[] }> = {
   "settings-library": { title: "ライブラリとダウンロード", keywords: ["保存先", "自動整理", "リモート"] },
-  "settings-unity": { title: "Unity", keywords: ["unitypackage", "Unityで開く"] },
+  "settings-unity": { title: "Unity", keywords: ["unitypackage", "Unityで開く", "AI エージェント", "MCP"] },
   "settings-startup": { title: "起動と常駐", keywords: ["バックグラウンド", "常駐", "トレイ", "自動起動"] },
   "settings-design": { title: "デザイン", keywords: ["見た目", "見出し画像", "ヒーロー"] },
   "settings-asset-updates": { title: "アセットの更新", keywords: ["更新確認", "アセットの更新設定", "更新設定"] },
@@ -142,6 +142,9 @@ const SETTING_ENTRIES: AppSearchEntry[] = [
   setting("settings-library", "settings-route-about", "自動整理について詳しく", ["自動整理"]),
   setting("settings-unity", "settings-unity-editor", "既定の Unity", ["Unity のバージョン", "エディタ", "Unityで開く"]),
   setting("settings-unity", "settings-unity-detect", "Unity を探す", ["Unity Hub", "参照", "検出"]),
+  setting("settings-unity", "settings-ai-agent", "AI エージェント連携", ["MCP", "Claude Code", "Cursor", "エージェント"]),
+  setting("settings-unity", "settings-ai-agent-download", "AI エージェントからのダウンロードを許可", ["MCP", "download_file", "ダウンロード"]),
+  setting("settings-unity", "settings-ai-agent-clients", "AI エージェントへの登録", ["MCP の設定", "SKILL", "Codex", "Claude Desktop", "Gemini", "Copilot"]),
   setting("settings-startup", "settings-background", "バックグラウンドで動作", ["常駐", "トレイ", "メニューバー", "閉じても動かす"]),
   setting("settings-startup", "settings-launch-at-login", "ログイン時に起動", ["自動起動", "スタートアップ"]),
   setting("settings-design", "settings-avatar-hero", "アバター詳細の見出し画像", ["ヒーロー", "ヒーロー画像", "見出し", "画像なし", "旧デザイン"]),

@@ -2497,6 +2497,13 @@ details.generic summary { cursor: pointer; color: var(--text-secondary); }
 /* クラウド分類の APIキー欄。保存状態の行は入力欄の下に少し空けて置く */
 /* 既定の Unity のパス。選択欄の下に右寄せで置き、長いパスは折り返す */
 .setting-control > p.unity-path { margin: var(--space-2) 0 0; text-align: right; overflow-wrap: anywhere; font-size: 12px; }
+.agent-config { margin: var(--space-2) 0 0; padding: var(--space-2); max-width: 100%; overflow-x: auto; white-space: pre; text-align: left; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; background: var(--surface-secondary); border-radius: var(--radius-sm); }
+.agent-client { padding: var(--space-2) 0 var(--space-3); border-bottom: 1px solid var(--line); }
+.agent-client .inline-control { flex-wrap: wrap; }
+.agent-state { display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-2); font-weight: 600; }
+.agent-dot { width: 10px; height: 10px; flex: none; border-radius: var(--radius-pill); background: var(--faint); }
+.agent-state.ok .agent-dot { background: var(--good); }
+.agent-state.warn .agent-dot { background: var(--warn); }
 
 /* ==== 線のアクセント（朱）: 指定はこのブロックだけ ====
  * 面は塗らず、選択・見出し・進捗・フォーカスに細い線だけ使う。

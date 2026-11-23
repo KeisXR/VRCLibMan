@@ -5,7 +5,7 @@ import { previewPurchaseDispatch, previewPurchaseExport, previewPurchasedIds, pr
 import { filePresence } from "../media";
 import { FILE_GONE_MESSAGE } from "../downloads";
 import { GENRE_FREE, GENRE_LABEL, GENRE_UNSET, genresForKind } from "../types";
-import type { ClassificationSnapshot, OwnedAvatarRestore, RegisterOwnedBodyResult, SnapshotLink, UnityEditor, UnityStatus } from "../types";
+import type { AgentClient, ClassificationSnapshot, OwnedAvatarRestore, RegisterOwnedBodyResult, SnapshotLink, UnityEditor, UnityStatus } from "../types";
 import type {
   AvatarCard,
   BoothFileStatus,
@@ -2050,6 +2050,18 @@ function previewFileSize(path: string): number | null {
   return file ? file.size : null;
 }
 
+/** AI エージェント連携の見本。実際の受信口は無い。 */
+const previewMcp = { enabled: false, includeAdult: false, allowDownload: false, command: "C:\\Program Files\\VRCLibMan\\VRCLibMan.exe" };
+
+/** AI エージェントの見本。実際のファイルには書かない。 */
+const previewAgents: AgentClient[] = [
+  { id: "claude-code", label: "Claude Code", installed: true, verified: true, automatic: true, config: "none", skill: "none", configPath: "C:/Users/you/.claude.json", manual: "claude mcp add --scope user vrclibman -- \"C:/Program Files/VRCLibMan/VRCLibMan.exe\" --mcp", note: "" },
+  { id: "claude-desktop", label: "Claude Desktop", installed: true, verified: true, automatic: true, config: "none", skill: "unsupported", configPath: "C:/Users/you/AppData/Roaming/Claude/claude_desktop_config.json", manual: "{ \"mcpServers\": { \"vrclibman\": { \"command\": \"C:/Program Files/VRCLibMan/VRCLibMan.exe\", \"args\": [\"--mcp\"] } } }", note: "" },
+  { id: "codex", label: "Codex", installed: true, verified: true, automatic: true, config: "current", skill: "outdated", configPath: "C:/Users/you/.codex/config.toml", manual: "[mcp_servers.vrclibman]\ncommand = 'C:/Program Files/VRCLibMan/VRCLibMan.exe'\nargs = [\"--mcp\"]", note: "" },
+  { id: "cursor", label: "Cursor", installed: false, verified: false, automatic: true, config: "none", skill: "none", configPath: "C:/Users/you/.cursor/mcp.json", manual: "{ \"mcpServers\": {} }", note: "" },
+  { id: "cherry-studio", label: "Cherry Studio", installed: false, verified: false, automatic: false, config: "manual", skill: "unsupported", configPath: "", manual: "{ \"mcpServers\": {} }", note: "Cherry Studio の設定から追加してください。" },
+];
+
 function previewUnityStatus(): UnityStatus {
   return {
     editors: previewUnityEditors.map((editor) => ({ ...editor })),
@@ -2487,6 +2499,31 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       } as T;
     case "unity_editors":
       return previewUnityStatus() as T;
+    case "mcp_status":
+      return { ...previewMcp } as T;
+    case "set_mcp_settings":
+      previewMcp.enabled = Boolean(args.enabled);
+      previewMcp.includeAdult = Boolean(args.includeAdult);
+      previewMcp.allowDownload = Boolean(args.allowDownload);
+      return { ...previewMcp } as T;
+    case "regenerate_mcp_token":
+      return undefined as T;
+    case "agent_clients":
+      return previewAgents.map((agent) => ({ ...agent })) as T;
+    case "change_agent_config":
+    case "change_agent_skill": {
+      const agent = previewAgents.find((item) => item.id === args.id);
+      if (!agent) throw new Error("知らないエージェントです");
+      if (!previewMcp.enabled) throw new Error("先に「AI エージェント連携」をオンにしてください");
+      if (command === "change_agent_config") {
+        if (!agent.automatic) throw new Error(`${agent.label} は自動で設定できません。「手動で設定する」の内容を使ってください`);
+        agent.config = args.add ? "current" : "none";
+      } else {
+        if (agent.skill === "unsupported") throw new Error(`${agent.label} は SKILL に対応していません`);
+        agent.skill = args.add ? "current" : "none";
+      }
+      return { label: agent.label, changed: [agent.configPath], backups: args.add ? [agent.configPath + ".vrclibman-backup"] : [] } as T;
+    }
     case "unity_packages":
       return previewUnityPackages(String(args.path ?? ""), store.settings.libraryFolder, store.settings.remoteLibraryFolder, previewFileSize) as T;
     case "prepare_unity_packages": {

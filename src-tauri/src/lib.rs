@@ -1,3 +1,4 @@
+mod agent_setup;
 mod arrival_notice;
 mod asset_updates;
 mod auto_classify;
@@ -32,6 +33,8 @@ mod library_files;
 mod library_walk;
 mod local_import;
 mod matching;
+mod mcp_api;
+pub mod mcp_stdio;
 mod model;
 #[cfg(test)]
 mod nav_bench;
@@ -156,6 +159,10 @@ pub fn run() {
             if let Some(state) = app.try_state::<AppState>()
                 && let Ok(connection) = state.db.lock() {
                     let _ = db::extension_token(&connection);
+                    // AI エージェント連携の認証コードのファイルを、設定に合わせて置くか消す。
+                    if let Err(error) = mcp_api::sync_token_file(&connection, &directory) {
+                        eprintln!("{error}");
+                    }
                 }
             if let Err(err) = local_import::start_receiver(app.handle().clone())
                 && let Some(state) = app.try_state::<AppState>()
@@ -241,6 +248,12 @@ pub fn run() {
             commands::integration_status,
             commands::set_booth_import_mode,
             commands::regenerate_extension_token,
+            commands::mcp_status,
+            commands::set_mcp_settings,
+            commands::regenerate_mcp_token,
+            commands::agent_clients,
+            commands::change_agent_config,
+            commands::change_agent_skill,
             commands::library_stats,
             commands::list_managed_products,
             commands::set_product_excluded,
