@@ -605,8 +605,7 @@ pub(crate) struct UnityTarget {
 }
 
 const TARGET_GONE: &str = "選んだ Unity が見つかりません。閉じられたか、別のプロジェクトに切り替わりました。もう一度選んでください";
-const STILL_IMPORTING: &str =
-    "Unity が前のパッケージの画面を開いています。Unity の Import 画面を閉じてから、もう一度押してください";
+const STILL_IMPORTING: &str = "Unity が前のパッケージの画面を開いています。Unity の Import 画面を閉じてから、もう一度押してください";
 const TARGET_BUSY: &str =
     "選んだ Unity が応答しません。Unity の画面を確かめてから、もう一度押してください";
 
@@ -805,8 +804,7 @@ mod editor_windows {
         if main_window(window).is_none() || pid_of(window) != target.pid {
             return Err(TARGET_GONE.into());
         }
-        if super::running_editors::image_path(target.pid).is_some_and(|path| !is_unity_exe(&path))
-        {
+        if super::running_editors::image_path(target.pid).is_some_and(|path| !is_unity_exe(&path)) {
             return Err(TARGET_GONE.into());
         }
         // Unity のエディタは、この名前の登録メッセージに同じ番号を返す（`-openfile` も同じ確認をする）。
@@ -1397,12 +1395,8 @@ mod tests {
                 pid: 1,
             };
             assert_eq!(
-                launch_into_instance(
-                    &target,
-                    &[PathBuf::from("a.unitypackage")],
-                    Duration::ZERO
-                )
-                .unwrap_err(),
+                launch_into_instance(&target, &[PathBuf::from("a.unitypackage")], Duration::ZERO)
+                    .unwrap_err(),
                 TARGET_GONE
             );
         }
