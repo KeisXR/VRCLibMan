@@ -132,7 +132,10 @@ export function useUnityOpen({ notify, fail }: { notify: (message: string) => vo
         ]);
         const list = target.entry != null ? onlyEntry(listed, target.entry) : listed;
         if (!list) throw new Error("選んだ Unity パッケージが zip の中に見つかりません");
-        const ready = unityEditorReady(status);
+        // 選んだ Unity へ直接渡すときは既定の Unity を使わない。既定が無くても Unity が 2 つ以上
+        // 開いていれば、関連付けに回さず渡す先を選ばせる。
+        const ready =
+          unityEditorReady(status) || needsUnityTarget(await api.unityInstances().catch(() => []));
         const missing = Boolean(status?.selectedPath.trim() && status.selectedMissing);
         const boothId = target.boothId ?? null;
         const plan = unityOpenPlan(list, ready);
