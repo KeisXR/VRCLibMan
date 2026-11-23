@@ -26,7 +26,7 @@ import { ExcludeProductButton } from "../components/ProductExclusions";
 import { UnityOpenButton } from "../components/UnityOpenDialog";
 import { isUnityOpenableName } from "../unityOpen";
 import { copyWithConfirm } from "../remoteCopy";
-import { FREE_FILE_CHECK_BUSY_LABEL, FREE_FILE_CHECK_LABEL, freeFilesResultMessage, offerFreeFileCheck } from "../freeFiles";
+import { type FileCheckKind, fileCheckKind, fileCheckLabel, freeFilesResultMessage, purchasedFilesResultMessage } from "../freeFiles";
 import {
   type RemoteProbeStatus,
   placeLabelForFile,
@@ -331,7 +331,8 @@ function AvatarAssetsPanel({
   const [busy, setBusy] = useState("");
   const fileCount = view.downloads.length + view.localFiles.length;
   const bytes = totalDownloadBytes(view.downloads) + totalDownloadBytes(view.localFiles);
-  if (fileCount === 0 && !offerFreeFileCheck(view, builtinBrowser)) return null;
+  const checkKind = fileCheckKind(view, builtinBrowser);
+  if (fileCount === 0 && !checkKind) return null;
 
   async function pull(file: DownloadView) {
     setBusy(file.filename);
@@ -373,9 +374,7 @@ function AvatarAssetsPanel({
         <span className="avatar-assets-summary-meta">{formatAssetSummary(fileCount, bytes)}</span>
       </summary>
       <div className="avatar-assets-body">
-        {offerFreeFileCheck(view, builtinBrowser) ? (
-          <FreeFileCheckButton boothId={view.boothId} />
-        ) : null}
+        {checkKind ? <FileCheckButton boothId={view.boothId} kind={checkKind} /> : null}
         {view.downloads.length > 0 ? (
           <DownloadFiles
             item={view}
@@ -410,26 +409,31 @@ function AvatarAssetsPanel({
   );
 }
 
-function FreeFileCheckButton({ boothId }: { boothId: string }) {
+/** ファイル情報の無い商品の「購入したファイルを読み込む」「無料配布のファイルを探す」。ダウンロードはしない。 */
+async function runFileCheck(kind: FileCheckKind, boothId: string): Promise<string> {
+  if (kind === "purchased") return purchasedFilesResultMessage(await api.fetchPurchasedFiles(boothId));
+  return freeFilesResultMessage(await api.fetchFreeFiles(boothId));
+}
+
+function FileCheckButton({ boothId, kind }: { boothId: string; kind: FileCheckKind }) {
   const { refresh, notify, fail } = useShell();
-  const [checkingFree, setCheckingFree] = useState(false);
-  async function runFreeFileCheck() {
-    if (checkingFree) return;
-    setCheckingFree(true);
+  const [checking, setChecking] = useState(false);
+  async function check() {
+    if (checking) return;
+    setChecking(true);
     try {
-      const report = await api.fetchFreeFiles(boothId);
-      notify(freeFilesResultMessage(report));
+      notify(await runFileCheck(kind, boothId));
       refresh();
     } catch (err) {
       fail(errorText(err));
     } finally {
-      setCheckingFree(false);
+      setChecking(false);
     }
   }
   return (
     <div className="free-file-check">
-      <button className="button secondary" type="button" disabled={checkingFree} onClick={() => void runFreeFileCheck()}>
-        {checkingFree ? FREE_FILE_CHECK_BUSY_LABEL : FREE_FILE_CHECK_LABEL}
+      <button className="button secondary" type="button" disabled={checking} onClick={() => void check()}>
+        {fileCheckLabel(kind, checking)}
       </button>
     </div>
   );
@@ -631,19 +635,19 @@ export function ItemCard({
 }) {
   const { builtinBrowser, refresh, notify, fail } = useShell();
   const [busy, setBusy] = useState("");
-  const [checkingFree, setCheckingFree] = useState(false);
+  const [checkingFiles, setCheckingFiles] = useState(false);
+  const checkKind = fileCheckKind(item, builtinBrowser);
 
-  async function checkFreeFiles() {
-    if (checkingFree) return;
-    setCheckingFree(true);
+  async function checkFiles(kind: FileCheckKind) {
+    if (checkingFiles) return;
+    setCheckingFiles(true);
     try {
-      const report = await api.fetchFreeFiles(item.boothId);
-      notify(freeFilesResultMessage(report));
+      notify(await runFileCheck(kind, item.boothId));
       refresh();
     } catch (err) {
       fail(errorText(err));
     } finally {
-      setCheckingFree(false);
+      setCheckingFiles(false);
     }
   }
 
@@ -740,14 +744,14 @@ export function ItemCard({
           </div>
         )}
         <div id={`files-${item.boothId}`}>
-          {/* 「ファイル情報なし」は題の横の印で分かる。無料配布を探すボタンが無いときだけ、次にすることを添える。 */}
-          {!hideFiles && item.downloads.length === 0 && item.localFileCount === 0 && !offerFreeFileCheck(item, builtinBrowser) && (
+          {/* 「ファイル情報なし」は題の横の印で分かる。ファイルを読むボタンが無いときだけ、次にすることを添える。 */}
+          {!hideFiles && item.downloads.length === 0 && item.localFileCount === 0 && !checkKind && (
             <p className="meta">ファイル情報がまだありません。BOOTH のライブラリを読み込み直すか、インポートの「3. 手元のファイル」でフォルダを調べてください。</p>
           )}
-          {!hideFiles && offerFreeFileCheck(item, builtinBrowser) && (
+          {!hideFiles && checkKind && (
             <div className="free-file-check">
-              <button className="button secondary" type="button" disabled={checkingFree} onClick={() => void checkFreeFiles()}>
-                {checkingFree ? FREE_FILE_CHECK_BUSY_LABEL : FREE_FILE_CHECK_LABEL}
+              <button className="button secondary" type="button" disabled={checkingFiles} onClick={() => void checkFiles(checkKind)}>
+                {fileCheckLabel(checkKind, checkingFiles)}
               </button>
             </div>
           )}

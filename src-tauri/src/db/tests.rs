@@ -3886,6 +3886,122 @@ fn a_folder_scan_creates_local_file_rows_from_product_ids() {
     assert_eq!(note, 0);
 }
 
+/// 内蔵ブラウザで買った商品は、購入完了ページの題とショップだけで登録され、ファイル情報が無い。
+/// カードには購入済みの印を渡し、ライブラリから読んだファイル行だけを加える（題・無料の印は変えない）。
+#[test]
+fn a_checkout_product_is_marked_purchased_and_takes_its_library_files() {
+    let mut connection = open_memory().unwrap();
+    import_export_json(
+        &mut connection,
+        r#"[{"boothId":"5512345","title":"見本のスカイボックス","shop":"見本工房","url":"https://booth.pm/ja/items/5512345"}]"#,
+    )
+    .unwrap();
+    let purchased = |connection: &Connection| {
+        load_snapshot(connection)
+            .unwrap()
+            .product_flags
+            .into_iter()
+            .find(|flag| flag.booth_id == "5512345")
+            .unwrap()
+            .purchased
+    };
+    assert!(!purchased(&connection));
+    let bought = crate::purchases::CheckoutProduct {
+        booth_id: "5512345".into(),
+        title: "見本のスカイボックス".into(),
+        shop: "見本工房".into(),
+    };
+    assert!(crate::purchases::record_checkout(&mut connection, "91234567", &[bought]).unwrap());
+    // ギフトかどうかは詳細にしか出ないので、購入完了だけの記録ではまだ購入済みにしない。
+    // 確かめていない購入として印を付け、カードに無料配布を探す操作を出さない。
+    assert!(!purchased(&connection));
+    let unverified = |connection: &Connection| {
+        load_snapshot(connection)
+            .unwrap()
+            .product_flags
+            .into_iter()
+            .find(|flag| flag.booth_id == "5512345")
+            .unwrap()
+            .purchase_unverified
+    };
+    assert!(unverified(&connection));
+    connection
+        .execute(
+            "UPDATE purchase_orders SET detail_read_at = '2026-11-22T00:00:00Z' WHERE order_id = '91234567'",
+            [],
+        )
+        .unwrap();
+    assert!(purchased(&connection));
+    assert!(!unverified(&connection));
+    // 贈ったギフトの注文は、自分の購入として扱わない。
+    connection
+        .execute(
+            "UPDATE purchase_orders SET gift_detected = 1 WHERE order_id = '91234567'",
+            [],
+        )
+        .unwrap();
+    assert!(!purchased(&connection));
+    // 本人がギフトでないと決めた注文は、購入として扱う。
+    crate::purchases::set_gift_override(&connection, "91234567", Some(false)).unwrap();
+    assert!(purchased(&connection));
+    crate::purchases::set_gift_override(&connection, "91234567", Some(true)).unwrap();
+    assert!(!purchased(&connection));
+    crate::purchases::set_gift_override(&connection, "91234567", None).unwrap();
+    connection
+        .execute(
+            "UPDATE purchase_orders SET gift_detected = 0 WHERE order_id = '91234567'",
+            [],
+        )
+        .unwrap();
+    assert!(purchased(&connection));
+
+    // ライブラリの 1 商品分（extractPage と同じ形）。題が違っても、題は書き換えない。
+    let library = crate::import_data::parse_export(
+        r#"[{"boothId":"5512345","title":"ライブラリ側の題","shop":"","url":"https://booth.pm/ja/items/5512345",
+             "variations":[{"name":"通常版","owned":true}],
+             "downloads":[{"filename":"skybox_v1.zip","variation":"通常版","downloadableId":"7712345"},
+                          {"filename":"readme.txt","variation":"通常版","downloadableId":"7712346"}]}]"#,
+    )
+    .unwrap();
+    assert_eq!(
+        store_purchased_files(&mut connection, &library.products[0]).unwrap(),
+        2
+    );
+    assert_eq!(
+        store_purchased_files(&mut connection, &library.products[0]).unwrap(),
+        2
+    );
+    assert_eq!(product_file_count(&connection, "5512345").unwrap(), 2);
+    let (title, free): (String, Option<i64>) = connection
+        .query_row(
+            "SELECT title, is_free FROM products WHERE booth_id = '5512345'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(title, "見本のスカイボックス");
+    assert_eq!(free, None);
+    let (variation, number, downloaded): (String, String, i64) = connection
+        .query_row(
+            "SELECT variation, downloadable_id, downloaded FROM product_files
+             WHERE booth_id = '5512345' AND filename = 'skybox_v1.zip'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        (variation.as_str(), number.as_str(), downloaded),
+        ("通常版", "7712345", 0)
+    );
+
+    // 除外中の商品とライブラリに無い商品には書かない。
+    set_product_excluded(&mut connection, "5512345", true).unwrap();
+    assert!(store_purchased_files(&mut connection, &library.products[0]).is_err());
+    let mut stranger = library.products[0].clone();
+    stranger.booth_id = "5599999".into();
+    assert!(store_purchased_files(&mut connection, &stranger).is_err());
+}
+
 #[test]
 fn free_files_fill_an_empty_product_without_touching_its_text() {
     let mut connection = open_memory().unwrap();

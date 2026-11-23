@@ -1,7 +1,7 @@
 import { previewBrowserState, previewBrowserPanelSnapshot, previewBrowserAction, previewSaveBookmark, previewDeleteBookmark, previewOpenBrowser, previewCloseBrowser } from "./browser";
 import extensionManifest from "../../extension/manifest.json";
 import { previewListDirectory, previewListZip, previewPrepareUnityPackages, previewUnityPackages } from "./files";
-import { previewPurchaseDispatch, previewPurchaseExport } from "./purchases";
+import { previewPurchaseDispatch, previewPurchaseExport, previewPurchasedIds, previewUnverifiedPurchaseIds } from "./purchases";
 import { filePresence } from "../media";
 import { FILE_GONE_MESSAGE } from "../downloads";
 import { GENRE_FREE, GENRE_LABEL, GENRE_UNSET, genresForKind } from "../types";
@@ -118,6 +118,10 @@ const PREVIEW_GENRE: Record<string, string> = {
   world: "world",
   other: "other",
 };
+
+/** Rust の `commands::PURCHASED_FILES_NOT_FOUND` と同じ文言。 */
+const PURCHASED_FILES_NOT_FOUND =
+  "BOOTH のライブラリの新しい購入の中に、この商品は見つかりませんでした。支払いが済んでいない注文か、ギフトとして贈った注文かもしれません。前に買った商品は、インポートの「ライブラリ全取得」で読み込めます";
 
 function product(partial: Partial<Product> & Pick<Product, "boothId" | "title" | "category">): Product {
   return {
@@ -261,6 +265,13 @@ const store: Store = {
       genreLocked: true,
       isFree: true,
     }),
+    // 内蔵ブラウザで買った直後の商品。購入完了ページから登録したのでファイル情報が無い。
+    product({
+      boothId: "8800144",
+      title: "ライム・プラム対応 見本の髪",
+      shop: "見本ヘア",
+      category: "hair",
+    }),
     product({
       boothId: "8800132",
       title: "非公開の見本アクセサリ",
@@ -365,6 +376,7 @@ const store: Store = {
     { productId: "8800101", avatarId: "manuka" },
     { productId: "8800111", avatarId: "lime" },
     { productId: "8800132", avatarId: "lime" },
+    { productId: "8800144", avatarId: "lime" },
     { productId: "8800112", avatarId: "lime" },
     { productId: "8800102", avatarId: "manuka" },
     { productId: "8800120", avatarId: "lime" },
@@ -780,6 +792,8 @@ function itemView(item: Product, viaBaseBody: boolean): ItemView {
     isFree: item.isFree,
     isAdult: item.isAdult,
     unpublished: item.unpublished,
+    purchased: previewPurchasedIds().has(item.boothId),
+    purchaseUnverified: previewUnverifiedPurchaseIds().has(item.boothId),
     remoteConfigured,
     remoteChecked,
     remoteReachable: remoteConfigured && store.remoteChecked && store.remoteReachable,
@@ -2551,6 +2565,22 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
         } as T;
       }
       for (const filename of ["ribbon_v1.zip", "ribbon_textures.zip"]) {
+        if (!store.downloads.some((row) => row.boothId === boothId && row.filename === filename)) {
+          store.downloads.push({ boothId, variation: "", filename, sizeBytes: null, state: "missing", localPath: null, remotePath: null });
+        }
+      }
+      return { files: store.downloads.filter((row) => row.boothId === boothId).length } as T;
+    }
+    case "fetch_purchased_files": {
+      // Preview stand-in for reading the purchased product's files from the BOOTH library.
+      const boothId = String(args.boothId ?? "");
+      const product = store.products.find((item) => item.boothId === boothId);
+      if (!product) throw new Error("商品が見つかりません");
+      if (!store.settings.builtinBrowser) throw new Error("内蔵ブラウザを有効にしてから押してください");
+      if (!previewPurchasedIds().has(boothId)) {
+        return { files: 0, notice: PURCHASED_FILES_NOT_FOUND } as T;
+      }
+      for (const filename of ["sample_hair_v1.unitypackage", "sample_hair_textures.zip"]) {
         if (!store.downloads.some((row) => row.boothId === boothId && row.filename === filename)) {
           store.downloads.push({ boothId, variation: "", filename, sizeBytes: null, state: "missing", localPath: null, remotePath: null });
         }

@@ -133,7 +133,6 @@ pub(crate) fn page_loaded(view: &Webview, url: &Url) {
                 .unwrap_or(false);
             if recorded {
                 let _ = app.emit("purchases-changed", ());
-                browser::read_order_later(&app, &tab, &order_id);
             }
             let result = (|| {
                 let state = app.state::<AppState>();
@@ -158,6 +157,15 @@ pub(crate) fn page_loaded(view: &Webview, url: &Url) {
                     &app,
                     "購入商品の自動登録に失敗しました。確認画面から登録してください",
                 ),
+            }
+            // 登録のあとで、注文の詳細と、買った商品のファイル一覧をライブラリから読む。
+            // 購入完了ページにはファイルが無いので、読まないとカードにダウンロードの行が出ない。
+            if recorded {
+                let ids: Vec<String> = products
+                    .iter()
+                    .map(|product| product.booth_id.clone())
+                    .collect();
+                browser::read_order_later(&app, &tab, &order_id, ids);
             }
         });
     });
