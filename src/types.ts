@@ -900,6 +900,26 @@ export interface UnityLaunchResult {
 /** "unity" は設定の既定 Unity で -openfile、"system" は OS の関連付け */
 export type UnityLaunchMode = "unity" | "system";
 
+/** 起動中の Unity エディタの窓（プロジェクトごと）。Windows だけ並ぶ */
+export interface UnityInstance {
+  /** 窓の番号。渡すときに pid と一緒に返す */
+  window: string;
+  pid: number;
+  project: string;
+  /** 開いているシーン。読めなければ空文字 */
+  scene: string;
+  /** 例：2022.3.22f1。読めなければ空文字 */
+  version: string;
+  /** エディタ本体のパス。読めなければ空文字 */
+  editorPath: string;
+}
+
+/** 渡す先として選んだ Unity の窓 */
+export interface UnityTarget {
+  window: string;
+  pid: number;
+}
+
 export interface AssetUpdateRow {
   revision: number;
   candidateKey?: string | null;

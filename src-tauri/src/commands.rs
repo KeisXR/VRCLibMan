@@ -728,14 +728,28 @@ pub async fn prepare_unity_packages(
     .map_err(|err| format!("Unity パッケージを取り出せません: {err}"))?
 }
 
+/// 起動中の Unity エディタの窓（プロジェクトごと）。2 つ以上あれば、画面が渡す先を選ばせる。
+/// Windows 以外では空。
+#[tauri::command(async)]
+pub fn unity_instances(
+    view: tauri::Webview,
+) -> Result<Vec<crate::unity_import::UnityInstance>, String> {
+    if view.label() != "main" {
+        return Err("この画面から Unity は選べません".into());
+    }
+    Ok(crate::unity_import::running_instances())
+}
+
 /// 取り出した Unity パッケージを先頭から順に開く。`mode` は "unity"（設定の既定 Unity で
-/// `-openfile`）か "system"（OS の関連付け）。Unity の起動を待つときは途中で止まり、残りは呼び直す。
+/// `-openfile`）か "system"（OS の関連付け）。"unity" で `target` があれば、選んだ Unity の窓へ直接渡す。
+/// Unity の起動を待つときは途中で止まり、残りは呼び直す。
 #[tauri::command]
 pub async fn launch_unity_packages(
     view: tauri::Webview,
     app: AppHandle,
     paths: Vec<String>,
     mode: String,
+    target: Option<crate::unity_import::UnityTarget>,
 ) -> Result<crate::unity_import::LaunchResult, String> {
     if view.label() != "main" {
         return Err("この画面から Unity パッケージは開けません".into());
@@ -756,8 +770,15 @@ pub async fn launch_unity_packages(
             .iter()
             .map(|path| crate::unity_import::allowed_launch_path(path, &cache_root, &library, &remote))
             .collect::<Result<Vec<_>, _>>()?;
-        match mode {
-            crate::unity_import::LaunchMode::Unity => {
+        match (mode, target) {
+            (crate::unity_import::LaunchMode::Unity, Some(target)) => {
+                crate::unity_import::launch_into_instance(
+                    &target,
+                    &packages,
+                    crate::unity_import::HANDOFF_GAP,
+                )
+            }
+            (crate::unity_import::LaunchMode::Unity, None) => {
                 let editor = crate::unity_import::editor_from_setting(&selected)?;
                 let running = crate::unity_import::running_editor_paths();
                 crate::unity_import::require_running_editor(&editor, running.as_deref())?;
@@ -768,7 +789,7 @@ pub async fn launch_unity_packages(
                     crate::unity_import::HANDOFF_GAP,
                 )
             }
-            crate::unity_import::LaunchMode::System => {
+            (crate::unity_import::LaunchMode::System, _) => {
                 use tauri_plugin_opener::OpenerExt;
                 for (index, package) in packages.iter().enumerate() {
                     if index > 0 {

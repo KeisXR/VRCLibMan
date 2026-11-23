@@ -478,7 +478,7 @@ mod running_editors {
         String::from_utf16_lossy(&entry.exe_file[..end])
     }
 
-    fn image_path(process_id: u32) -> Option<PathBuf> {
+    pub(super) fn image_path(process_id: u32) -> Option<PathBuf> {
         let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id) };
         if process.is_null() {
             return None;
@@ -576,6 +576,333 @@ mod running_editors {
 mod running_editors {
     pub(super) fn list() -> Option<Vec<std::path::PathBuf>> {
         None
+    }
+}
+
+/// 起動中の Unity エディタの窓 1 つ。複数のプロジェクトを開いているとき、渡す先を選ぶのに使う。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UnityInstance {
+    /// 窓の番号（Windows の HWND を 10 進で）。渡すときに `pid` と一緒に返してもらう。
+    pub window: String,
+    pub pid: u32,
+    /// 窓のタイトルから読んだプロジェクト名。
+    pub project: String,
+    /// 開いているシーン名。読めなければ空。
+    pub scene: String,
+    /// 例：2022.3.22f1。読めなければ空。
+    pub version: String,
+    /// エディタ本体のパス。読めなければ空。
+    pub editor_path: String,
+}
+
+/// 渡す先として選ばれた Unity の窓。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UnityTarget {
+    pub window: String,
+    pub pid: u32,
+}
+
+const TARGET_GONE: &str = "選んだ Unity が見つかりません。閉じられたか、別のプロジェクトに切り替わりました。もう一度選んでください";
+const STILL_IMPORTING: &str = "Unity が前のパッケージの画面を開いています。Unity の Import 画面を閉じてから、もう一度押してください";
+const TARGET_BUSY: &str =
+    "選んだ Unity が応答しません。Unity の画面を確かめてから、もう一度押してください";
+
+/// Unity の窓のタイトル（`Project - Scene - Platform - Unity 2022.3.22f1* <DX11>`）から、
+/// プロジェクト名・シーン名・版を読む。Unity のメインの窓の形でなければ `None`。
+pub(crate) fn parse_editor_title(title: &str) -> Option<(String, String, String)> {
+    let at = title.rfind(" - Unity ")?;
+    let left = &title[..at];
+    let right = &title[at + " - Unity ".len()..];
+    let right = right.split(" <").next().unwrap_or(right).trim();
+    let version = right.trim_end_matches('*').trim().to_string();
+    let mut parts = left.splitn(3, " - ");
+    let project = parts.next().unwrap_or("").trim().to_string();
+    if project.is_empty() {
+        return None;
+    }
+    let scene = parts.next().unwrap_or("").trim().to_string();
+    Some((project, scene, version))
+}
+
+/// 起動中の Unity のメインの窓を、1 プロセス 1 つずつ並べる。Windows 以外では空。
+pub(crate) fn running_instances() -> Vec<UnityInstance> {
+    editor_windows::list()
+}
+
+/// 選んだ Unity の窓に、`-openfile` と同じ方法でパッケージを渡す。
+/// `-openfile` は起動中のエディタを窓で探してパスを WM_COPYDATA で送るが、
+/// 複数あるとどれに届くかを選べない。同じことを、選んだ窓に対して行う。
+/// Unity は Import 画面を閉じるまで返事をしない。返事を待つのは別のスレッドで、
+/// 少し待っても返事が無ければ（画面を出している）、残りは利用者が画面を閉じてから渡す。
+pub(crate) fn launch_into_instance(
+    target: &UnityTarget,
+    packages: &[PathBuf],
+    gap: Duration,
+) -> Result<LaunchResult, String> {
+    if editor_windows::still_sending() {
+        return Err(STILL_IMPORTING.into());
+    }
+    let window = editor_windows::confirm(target)?;
+    let mut launched = 0;
+    for (index, package) in packages.iter().enumerate() {
+        let answered = editor_windows::send_path(window, package)?;
+        launched += 1;
+        if index + 1 == packages.len() {
+            break;
+        }
+        if !answered {
+            return Ok(LaunchResult {
+                launched,
+                waiting: true,
+            });
+        }
+        std::thread::sleep(gap);
+    }
+    Ok(LaunchResult {
+        launched,
+        waiting: false,
+    })
+}
+
+#[cfg(windows)]
+mod editor_windows {
+    use super::{TARGET_BUSY, TARGET_GONE, UnityInstance, UnityTarget, parse_editor_title};
+    use std::ffi::c_void;
+    use std::path::Path;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    type Hwnd = *mut c_void;
+    type Found = Vec<(usize, u32, (String, String, String))>;
+    const SMTO_ABORTIFHUNG: u32 = 0x2;
+    const WM_COPYDATA: u32 = 0x004A;
+    const GW_OWNER: u32 = 4;
+    const SEND_TIMEOUT_MS: u32 = 3000;
+    /// 渡したあと返事を待つ時間。過ぎたら Import 画面を開いているとみなす。
+    const REPLY_WAIT: Duration = Duration::from_secs(3);
+    const CLASS: &str = "UnityContainerWndClass";
+
+    #[repr(C)]
+    struct CopyData {
+        data: usize,
+        size: u32,
+        pointer: *const c_void,
+    }
+
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn EnumWindows(callback: extern "system" fn(Hwnd, isize) -> i32, param: isize) -> i32;
+        fn IsWindow(window: Hwnd) -> i32;
+        fn IsWindowVisible(window: Hwnd) -> i32;
+        fn GetWindow(window: Hwnd, command: u32) -> Hwnd;
+        fn GetClassNameW(window: Hwnd, name: *mut u16, size: i32) -> i32;
+        fn GetWindowTextW(window: Hwnd, text: *mut u16, size: i32) -> i32;
+        fn GetWindowThreadProcessId(window: Hwnd, process: *mut u32) -> u32;
+        fn RegisterWindowMessageW(name: *const u16) -> u32;
+        fn SendMessageW(window: Hwnd, message: u32, wparam: usize, lparam: isize) -> isize;
+        fn SendMessageTimeoutW(
+            window: Hwnd,
+            message: u32,
+            wparam: usize,
+            lparam: isize,
+            flags: u32,
+            timeout: u32,
+            result: *mut usize,
+        ) -> isize;
+    }
+
+    fn text_of(read: impl Fn(*mut u16, i32) -> i32) -> String {
+        let mut buffer = vec![0u16; 1024];
+        let length = read(buffer.as_mut_ptr(), buffer.len() as i32).max(0) as usize;
+        String::from_utf16_lossy(&buffer[..length.min(buffer.len())])
+    }
+
+    fn pid_of(window: Hwnd) -> u32 {
+        let mut pid = 0;
+        unsafe { GetWindowThreadProcessId(window, &mut pid) };
+        pid
+    }
+
+    fn is_unity_exe(path: &Path) -> bool {
+        path.file_name()
+            .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("unity.exe"))
+    }
+
+    /// Unity のメインの窓か。表示中・持ち主なし・クラス名・タイトルの形で見る。
+    fn main_window(window: Hwnd) -> Option<(String, String, String)> {
+        unsafe {
+            if IsWindowVisible(window) == 0 || !GetWindow(window, GW_OWNER).is_null() {
+                return None;
+            }
+        }
+        if text_of(|buffer, size| unsafe { GetClassNameW(window, buffer, size) }) != CLASS {
+            return None;
+        }
+        parse_editor_title(&text_of(|buffer, size| unsafe {
+            GetWindowTextW(window, buffer, size)
+        }))
+    }
+
+    extern "system" fn collect(window: Hwnd, param: isize) -> i32 {
+        let found = unsafe { &mut *(param as *mut Found) };
+        if let Some(parts) = main_window(window) {
+            let pid = pid_of(window);
+            if pid != 0 && !found.iter().any(|(_, seen, _)| *seen == pid) {
+                found.push((window as usize, pid, parts));
+            }
+        }
+        1
+    }
+
+    pub(super) fn list() -> Vec<UnityInstance> {
+        let mut found: Found = Vec::new();
+        unsafe { EnumWindows(collect, &mut found as *mut Found as isize) };
+        found
+            .into_iter()
+            .filter_map(|(window, pid, (project, scene, version))| {
+                let editor = super::running_editors::image_path(pid);
+                // 実行ファイルが読めて Unity.exe でないものは、同じクラス名の別のアプリなので除く。
+                if editor.as_deref().is_some_and(|path| !is_unity_exe(path)) {
+                    return None;
+                }
+                Some(UnityInstance {
+                    window: window.to_string(),
+                    pid,
+                    project,
+                    scene,
+                    version,
+                    editor_path: editor
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_default(),
+                })
+            })
+            .collect()
+    }
+
+    fn identity_message() -> u32 {
+        let name: Vec<u16> = "UnityEditorIdentityMessage"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        unsafe { RegisterWindowMessageW(name.as_ptr()) }
+    }
+
+    /// 選んだときと同じ Unity の窓か確かめる。窓の番号は使い回されるので、プロセスと形も見る。
+    pub(super) fn confirm(target: &UnityTarget) -> Result<Hwnd, String> {
+        let raw: usize = target
+            .window
+            .trim()
+            .parse()
+            .map_err(|_| TARGET_GONE.to_string())?;
+        let window = raw as Hwnd;
+        if raw == 0 || unsafe { IsWindow(window) } == 0 {
+            return Err(TARGET_GONE.into());
+        }
+        if main_window(window).is_none() || pid_of(window) != target.pid {
+            return Err(TARGET_GONE.into());
+        }
+        if super::running_editors::image_path(target.pid).is_some_and(|path| !is_unity_exe(&path)) {
+            return Err(TARGET_GONE.into());
+        }
+        // Unity のエディタは、この名前の登録メッセージに同じ番号を返す（`-openfile` も同じ確認をする）。
+        let message = identity_message();
+        let mut answer = 0usize;
+        let sent = unsafe {
+            SendMessageTimeoutW(
+                window,
+                message,
+                0,
+                0,
+                SMTO_ABORTIFHUNG,
+                SEND_TIMEOUT_MS,
+                &mut answer,
+            )
+        };
+        if sent == 0 {
+            return Err(TARGET_BUSY.into());
+        }
+        if message == 0 || answer != message as usize {
+            return Err(TARGET_GONE.into());
+        }
+        Ok(window)
+    }
+
+    /// 送ったパスに Unity がまだ返事をしていない（Import 画面を開いている）。
+    static SENDING: AtomicBool = AtomicBool::new(false);
+
+    pub(super) fn still_sending() -> bool {
+        SENDING.load(Ordering::SeqCst)
+    }
+
+    /// パスを UTF-8 と終端の 0 で送る（`-openfile` が送る形と同じ）。
+    /// Unity は Import 画面を閉じるまで返事をしないので、`-openfile` と同じく返事まで待つ。
+    /// 待つのは別のスレッドで、送ったデータは返事が来るまでそこで持つ。途中で待つのをやめると、
+    /// Unity があとで読むデータが無くなり、何も開かないか、Unity が落ちた（2026-11-23）。
+    /// 少し待っても返事が無いときは `Ok(false)`（届いて、画面を開いている）。
+    pub(super) fn send_path(window: Hwnd, package: &Path) -> Result<bool, String> {
+        if SENDING.swap(true, Ordering::SeqCst) {
+            return Err(super::STILL_IMPORTING.into());
+        }
+        let mut bytes = package.to_string_lossy().into_owned().into_bytes();
+        bytes.push(0);
+        let target = window as usize;
+        let (done, answer) = mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name("unity-openfile".into())
+            .spawn(move || {
+                let data = CopyData {
+                    data: 0,
+                    size: bytes.len() as u32,
+                    pointer: bytes.as_ptr().cast(),
+                };
+                let result = unsafe {
+                    SendMessageW(
+                        target as Hwnd,
+                        WM_COPYDATA,
+                        0,
+                        &data as *const CopyData as isize,
+                    )
+                };
+                // 返事が来るまで `bytes` と `data` をここで持つ。
+                drop(data);
+                drop(bytes);
+                SENDING.store(false, Ordering::SeqCst);
+                let _ = done.send(result);
+            });
+        if spawned.is_err() {
+            SENDING.store(false, Ordering::SeqCst);
+            return Err(TARGET_BUSY.into());
+        }
+        match answer.recv_timeout(REPLY_WAIT) {
+            Ok(_) => Ok(true),
+            Err(mpsc::RecvTimeoutError::Timeout) => Ok(false),
+            Err(mpsc::RecvTimeoutError::Disconnected) => Err(TARGET_BUSY.into()),
+        }
+    }
+}
+
+#[cfg(not(windows))]
+mod editor_windows {
+    use super::{TARGET_GONE, UnityInstance, UnityTarget};
+    use std::path::Path;
+
+    pub(super) fn list() -> Vec<UnityInstance> {
+        Vec::new()
+    }
+
+    pub(super) fn confirm(_target: &UnityTarget) -> Result<(), String> {
+        Err(TARGET_GONE.into())
+    }
+
+    pub(super) fn still_sending() -> bool {
+        false
+    }
+
+    pub(super) fn send_path(_window: (), _package: &Path) -> Result<bool, String> {
+        Err(TARGET_GONE.into())
     }
 }
 
@@ -1025,6 +1352,54 @@ mod tests {
                 .to_lowercase();
             name == "unity.exe" || name == "unity"
         }));
+    }
+
+    #[test]
+    fn editor_titles_give_project_scene_and_version() {
+        assert_eq!(
+            parse_editor_title(
+                "Sample Room - Open Scene - Windows, Mac, Linux - Unity 2022.3.22f1* <DX11>"
+            ),
+            Some((
+                "Sample Room".into(),
+                "Open Scene".into(),
+                "2022.3.22f1".into()
+            ))
+        );
+        assert_eq!(
+            parse_editor_title("Sample - Windows, Mac, Linux - Unity 6000.0.23f1 <DX12>"),
+            Some((
+                "Sample".into(),
+                "Windows, Mac, Linux".into(),
+                "6000.0.23f1".into()
+            ))
+        );
+        assert_eq!(parse_editor_title("Inspector"), None);
+        assert_eq!(parse_editor_title(" - Unity 2022.3.22f1"), None);
+    }
+
+    #[test]
+    fn listing_running_instances_does_not_fail() {
+        // 開発機にも CI にも Unity が起動しているとは限らないので、並べられることだけを見る。
+        for instance in running_instances() {
+            assert!(!instance.project.is_empty());
+            assert!(instance.pid != 0);
+        }
+    }
+
+    #[test]
+    fn a_missing_window_is_not_a_target() {
+        for window in ["0", "x", ""] {
+            let target = UnityTarget {
+                window: window.into(),
+                pid: 1,
+            };
+            assert_eq!(
+                launch_into_instance(&target, &[PathBuf::from("a.unitypackage")], Duration::ZERO)
+                    .unwrap_err(),
+                TARGET_GONE
+            );
+        }
     }
 
     #[test]

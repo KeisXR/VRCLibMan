@@ -5,23 +5,30 @@ import { openSettingsSection } from "../anchorScroll";
 import { api } from "../api";
 import { useModalFocus } from "../keyboard";
 import { formatBytes } from "../media";
-import type { PreparedUnityPackage, UnityLaunchMode, UnityPackageList } from "../types";
+import type { PreparedUnityPackage, UnityInstance, UnityLaunchMode, UnityPackageList, UnityTarget } from "../types";
 import { errorText } from "../ui";
 import {
   UNITY_MISSING,
   UNITY_NOT_SET,
   launchedMessage,
+  needsUnityTarget,
   onlyEntry,
   selectedEntries,
   unityEditorReady,
+  unityInstanceDetail,
   unityOpenPlan,
 } from "../unityOpen";
 
 type DialogState =
   | { step: "choose"; list: UnityPackageList; boothId: string | null; checked: Set<string>; mode: UnityLaunchMode; missing: boolean }
   | { step: "setup"; list: UnityPackageList; boothId: string | null; entries: string[]; missing: boolean }
+  | { step: "target"; list: UnityPackageList; boothId: string | null; entries: string[]; instances: UnityInstance[]; chosen: string | null }
   | { step: "working"; message: string }
-  | { step: "waiting"; prepared: PreparedUnityPackage[]; next: number; mode: UnityLaunchMode };
+  | { step: "waiting"; prepared: PreparedUnityPackage[]; next: number; mode: UnityLaunchMode; target: UnityTarget | null };
+
+function targetOf(instance: UnityInstance): UnityTarget {
+  return { window: instance.window, pid: instance.pid };
+}
 
 export interface UnityOpenTarget {
   /** zip か .unitypackage の絶対パス。ライブラリかリモートライブラリの中のもの。 */
@@ -46,16 +53,16 @@ export function useUnityOpen({ notify, fail }: { notify: (message: string) => vo
   const running = useRef(false);
 
   const launchFrom = useCallback(
-    async (prepared: PreparedUnityPackage[], start: number, mode: UnityLaunchMode) => {
+    async (prepared: PreparedUnityPackage[], start: number, mode: UnityLaunchMode, target: UnityTarget | null) => {
       const total = prepared.length;
       setDialog({
         step: "working",
         message: total > 1 ? `Unity に渡しています（${start + 1}/${total}）` : "Unity に渡しています",
       });
-      const result = await api.launchUnityPackages(prepared.slice(start).map((item) => item.path), mode);
+      const result = await api.launchUnityPackages(prepared.slice(start).map((item) => item.path), mode, target);
       const done = start + result.launched;
       if (done < total) {
-        setDialog({ step: "waiting", prepared, next: done, mode });
+        setDialog({ step: "waiting", prepared, next: done, mode, target });
         return;
       }
       setDialog(null);
@@ -65,13 +72,28 @@ export function useUnityOpen({ notify, fail }: { notify: (message: string) => vo
   );
 
   const run = useCallback(
-    async (list: UnityPackageList, entries: string[], boothId: string | null, mode: UnityLaunchMode) => {
+    async (
+      list: UnityPackageList,
+      entries: string[],
+      boothId: string | null,
+      mode: UnityLaunchMode,
+      target: UnityTarget | null = null,
+      asked = false,
+    ) => {
       if (running.current || entries.length === 0) return;
       running.current = true;
       try {
+        if (mode === "unity" && !asked) {
+          // Unity が 2 つ以上開いていると、-openfile ではどれに届くかを選べない。先に渡す先を選んでもらう。
+          const instances = await api.unityInstances().catch(() => []);
+          if (needsUnityTarget(instances)) {
+            setDialog({ step: "target", list, boothId, entries, instances, chosen: null });
+            return;
+          }
+        }
         setDialog({ step: "working", message: list.kind === "zip" ? "zip から取り出しています" : "Unity に渡しています" });
         const prepared = await api.prepareUnityPackages(list.path, entries, boothId);
-        await launchFrom(prepared, 0, mode);
+        await launchFrom(prepared, 0, mode, target);
       } catch (err) {
         setDialog(null);
         fail(errorText(err));
@@ -83,11 +105,11 @@ export function useUnityOpen({ notify, fail }: { notify: (message: string) => vo
   );
 
   const resume = useCallback(
-    async (prepared: PreparedUnityPackage[], next: number, mode: UnityLaunchMode) => {
+    async (prepared: PreparedUnityPackage[], next: number, mode: UnityLaunchMode, target: UnityTarget | null) => {
       if (running.current) return;
       running.current = true;
       try {
-        await launchFrom(prepared, next, mode);
+        await launchFrom(prepared, next, mode, target);
       } catch (err) {
         setDialog(null);
         fail(errorText(err));
@@ -110,7 +132,10 @@ export function useUnityOpen({ notify, fail }: { notify: (message: string) => vo
         ]);
         const list = target.entry != null ? onlyEntry(listed, target.entry) : listed;
         if (!list) throw new Error("選んだ Unity パッケージが zip の中に見つかりません");
-        const ready = unityEditorReady(status);
+        // 選んだ Unity へ直接渡すときは既定の Unity を使わない。既定が無くても Unity が 2 つ以上
+        // 開いていれば、関連付けに回さず渡す先を選ばせる。
+        const ready =
+          unityEditorReady(status) || needsUnityTarget(await api.unityInstances().catch(() => []));
         const missing = Boolean(status?.selectedPath.trim() && status.selectedMissing);
         const boothId = target.boothId ?? null;
         const plan = unityOpenPlan(list, ready);
@@ -153,8 +178,17 @@ export function useUnityOpen({ notify, fail }: { notify: (message: string) => vo
       onImport={(entries, mode) => {
         if (dialog.step === "choose" || dialog.step === "setup") void run(dialog.list, entries, dialog.boothId, mode);
       }}
+      onPickTarget={(window) =>
+        setDialog((current) => (current?.step === "target" ? { ...current, chosen: window } : current))
+      }
+      onSendToTarget={() => {
+        if (dialog.step !== "target") return;
+        const instance = dialog.instances.find((item) => item.window === dialog.chosen);
+        if (!instance) return;
+        void run(dialog.list, dialog.entries, dialog.boothId, "unity", targetOf(instance), true);
+      }}
       onResume={() => {
-        if (dialog.step === "waiting") void resume(dialog.prepared, dialog.next, dialog.mode);
+        if (dialog.step === "waiting") void resume(dialog.prepared, dialog.next, dialog.mode, dialog.target);
       }}
       onSettings={() => {
         setDialog(null);
@@ -171,6 +205,8 @@ function UnityOpenDialog({
   onClose,
   onToggle,
   onImport,
+  onPickTarget,
+  onSendToTarget,
   onResume,
   onSettings,
 }: {
@@ -178,6 +214,8 @@ function UnityOpenDialog({
   onClose: () => void;
   onToggle: (entry: string) => void;
   onImport: (entries: string[], mode: UnityLaunchMode) => void;
+  onPickTarget: (window: string) => void;
+  onSendToTarget: () => void;
   onResume: () => void;
   onSettings: () => void;
 }) {
@@ -208,6 +246,46 @@ function UnityOpenDialog({
       <>
         <h2 id="unity-open-title">Unity で開く</h2>
         <p className="meta" role="status">{state.message}…</p>
+      </>
+    );
+  } else if (state.step === "target") {
+    const { instances, chosen, entries } = state;
+    body = (
+      <>
+        <h2 id="unity-open-title">どの Unity に渡しますか</h2>
+        <p className="meta">
+          Unity が {instances.length} つ開いています。{entries.length > 1 ? `${entries.length} 件のパッケージを` : "パッケージを"}
+          渡すプロジェクトを選んでください。
+        </p>
+        <ul className="file-list unity-open-list" role="radiogroup" aria-label="渡す先の Unity">
+          {instances.map((instance) => {
+            const detail = unityInstanceDetail(instance);
+            return (
+              <li key={instance.window}>
+                <label className="unity-open-choice">
+                  <input
+                    type="radio"
+                    name="unity-open-target"
+                    checked={chosen === instance.window}
+                    onChange={() => onPickTarget(instance.window)}
+                  />
+                  <span className="download-name" title={instance.editorPath || undefined}>
+                    {instance.project}
+                  </span>
+                </label>
+                {detail && <span className="meta">{detail}</span>}
+              </li>
+            );
+          })}
+        </ul>
+        <div className="row-actions">
+          <button className="button primary" type="button" disabled={chosen == null} onClick={onSendToTarget}>
+            この Unity に渡す
+          </button>
+          <button className="button" type="button" onClick={onClose}>
+            キャンセル
+          </button>
+        </div>
       </>
     );
   } else if (state.step === "waiting") {

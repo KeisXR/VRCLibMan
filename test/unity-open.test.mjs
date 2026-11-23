@@ -49,6 +49,13 @@ test("Unityで開く: plan, selection and paths", async () => {
     assert.equal(unity.boothIdFromPath("C:\\Lib\\Shop\\123\\a.zip"), null);
     assert.match(unity.launchedMessage(2, "unity"), /Unity に 2 件/);
     assert.match(unity.launchedMessage(1, "system"), /関連付けで 1 件/);
+
+    // Unity が 2 つ以上開いているときだけ、渡す先を選ばせる。
+    assert.equal(unity.needsUnityTarget([]), false);
+    assert.equal(unity.needsUnityTarget([{}]), false);
+    assert.equal(unity.needsUnityTarget([{}, {}]), true);
+    assert.equal(unity.unityInstanceDetail({ scene: "Main", version: "2022.3.22f1" }), "Main ・ Unity 2022.3.22f1");
+    assert.equal(unity.unityInstanceDetail({ scene: "", version: "" }), "");
   } finally {
     await server.close();
   }

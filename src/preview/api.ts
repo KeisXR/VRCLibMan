@@ -2494,6 +2494,14 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       const entries = Array.isArray(args.entries) ? args.entries.map(String) : [];
       return previewPrepareUnityPackages(list, entries, args.boothId == null ? null : String(args.boothId)) as T;
     }
+    case "unity_instances":
+      // 見本: 既定の Unity があるときは、プロジェクトを 2 つ開いている様子を見せる。
+      return (previewUnitySelected
+        ? [
+            { window: "1001", pid: 4001, project: "見本のアバター改変", scene: "SampleScene", version: "2022.3.22f1", editorPath: previewUnitySelected },
+            { window: "1002", pid: 4002, project: "見本のワールド", scene: "Main", version: "2022.3.22f1", editorPath: previewUnitySelected },
+          ]
+        : []) as T;
     case "launch_unity_packages": {
       const paths = Array.isArray(args.paths) ? args.paths.map(String) : [];
       if (paths.length === 0) throw new Error("開く Unity パッケージがありません");
