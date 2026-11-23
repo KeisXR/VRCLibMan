@@ -383,7 +383,7 @@ pub(crate) fn handle(connection: &Connection, route: Route, body: &str) -> Resul
             search(connection, body, adult_ok)
         }
         Route::Avatars => {
-            let snapshot = db::load_snapshot(connection)?;
+            let snapshot = visible_snapshot(connection, adult_ok)?;
             let avatars: Vec<Value> = view::panel_avatars(&snapshot)
                 .into_iter()
                 .map(|avatar| {
@@ -408,7 +408,7 @@ pub(crate) fn handle(connection: &Connection, route: Route, body: &str) -> Resul
             let Ok(body) = serde_json::from_str::<AvatarBody>(body) else {
                 return Ok(Reply::error(400, "アバターの指定を読めません"));
             };
-            let snapshot = db::load_snapshot(connection)?;
+            let snapshot = visible_snapshot(connection, adult_ok)?;
             let Some(avatar) = find_avatar(&snapshot, &body.avatar) else {
                 return Ok(Reply::error(
                     404,
@@ -747,6 +747,55 @@ impl<'a> Facts<'a> {
     }
 }
 
+/// AI エージェントに見せてよい商品だけの写し。R-18 を許していないときは、R-18 の商品とその結び付きを除く。
+/// 一覧の件数や、R-18 の商品だけが指すアバター・R-18 の本体による所持から、見せない商品が漏れないようにするため。
+fn visible_snapshot(connection: &Connection, adult_ok: bool) -> Result<view::Snapshot, String> {
+    let mut snapshot = db::load_snapshot(connection)?;
+    if adult_ok {
+        return Ok(snapshot);
+    }
+    let adult: HashSet<String> = snapshot
+        .product_flags
+        .iter()
+        .filter(|flag| flag.is_adult == Some(true))
+        .map(|flag| flag.booth_id.clone())
+        .collect();
+    if adult.is_empty() {
+        return Ok(snapshot);
+    }
+    snapshot
+        .products
+        .retain(|product| !adult.contains(&product.booth_id));
+    snapshot
+        .links
+        .retain(|link| !adult.contains(&link.product_id));
+    snapshot
+        .download_rows
+        .retain(|row| !adult.contains(&row.booth_id));
+    snapshot.files.retain(|file| {
+        !file
+            .linked_product_id
+            .as_ref()
+            .is_some_and(|id| adult.contains(id))
+    });
+    let bodies: HashSet<&str> = snapshot
+        .products
+        .iter()
+        .filter(|product| product.category == Some(Category::Avatar))
+        .map(|product| product.booth_id.as_str())
+        .collect();
+    let owned: HashSet<String> = snapshot
+        .links
+        .iter()
+        .filter(|link| bodies.contains(link.product_id.as_str()))
+        .map(|link| link.avatar_id.clone())
+        .collect();
+    for avatar in &mut snapshot.avatars {
+        avatar.owned = avatar.owned && owned.contains(&avatar.id);
+    }
+    Ok(snapshot)
+}
+
 fn genre_label(key: &str) -> String {
     crate::genre::ASSET_GENRES
         .iter()
@@ -775,7 +824,7 @@ fn find_avatar<'a>(snapshot: &'a view::Snapshot, raw: &str) -> Option<&'a crate:
 }
 
 fn search(connection: &Connection, body: SearchBody, adult_ok: bool) -> Result<Reply, String> {
-    let snapshot = db::load_snapshot(connection)?;
+    let snapshot = visible_snapshot(connection, adult_ok)?;
     let facts = Facts::new(&snapshot);
     let query = body.query.trim();
     let avatar = match body
@@ -1002,6 +1051,69 @@ mod tests {
                 json!({ "plan": plan.filename, "variation": plan.variation }),
             ),
         }
+    }
+
+    #[test]
+    fn avatar_listing_hides_what_only_adult_items_show() {
+        let (_library, _outside, connection) = library();
+        connection
+            .execute_batch(
+                "INSERT INTO avatars (id, display_name, owned) VALUES ('kakuu', '架空ちゃん', 1);
+                 INSERT INTO avatars (id, display_name, owned) VALUES ('mixed', '混在ちゃん', 0);
+                 INSERT INTO products (booth_id, title, category, is_adult, imported_at, updated_at) VALUES ('7001', '架空ちゃん本体', 'avatar', 1, 't', 't');
+                 INSERT INTO products (booth_id, title, category, genre, is_adult, imported_at, updated_at) VALUES ('7002', '大人の衣装', 'outfit', 'outfit', 1, 't', 't');
+                 INSERT INTO products (booth_id, title, category, genre, imported_at, updated_at) VALUES ('7003', '普通の衣装', 'outfit', 'outfit', 't', 't');
+                 INSERT INTO product_avatars (product_id, avatar_id, source) VALUES ('7001', 'kakuu', 'rule');
+                 INSERT INTO product_avatars (product_id, avatar_id, source) VALUES ('7002', 'kakuu', 'rule');
+                 INSERT INTO product_avatars (product_id, avatar_id, source) VALUES ('7002', 'mixed', 'rule');
+                 INSERT INTO product_avatars (product_id, avatar_id, source) VALUES ('7003', 'mixed', 'rule');",
+            )
+            .unwrap();
+        let avatars = |connection: &Connection| {
+            let (_, body) = json_of(handle(connection, Route::Avatars, "").unwrap());
+            body["avatars"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|avatar| {
+                    (
+                        avatar["id"].as_str().unwrap().to_string(),
+                        avatar["itemCount"].as_u64().unwrap(),
+                    )
+                })
+                .collect::<HashMap<_, _>>()
+        };
+        let hidden = avatars(&connection);
+        assert!(
+            !hidden.contains_key("kakuu"),
+            "R-18 の商品だけが指すアバターは出さない"
+        );
+        let hidden_items = |connection: &Connection| {
+            let (_, body) =
+                json_of(handle(connection, Route::AvatarAssets, r#"{"avatar":"mixed"}"#).unwrap());
+            body["sections"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|section| section["items"].as_array().unwrap().clone())
+                .map(|item| item["boothId"].as_str().unwrap().to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(hidden_items(&connection), ["7003"], "R-18 の商品は出さない");
+        assert!(hidden.contains_key("mixed"));
+        let (status, _) =
+            json_of(handle(&connection, Route::AvatarAssets, r#"{"avatar":"kakuu"}"#).unwrap());
+        assert_eq!(status, 200);
+        db::set_setting(&connection, ADULT_KEY, "1").unwrap();
+        let shown = avatars(&connection);
+        assert!(shown.contains_key("kakuu"), "許したときは出す");
+        let mut items = hidden_items(&connection);
+        items.sort();
+        assert_eq!(items, ["7002", "7003"]);
+        assert!(
+            shown["mixed"] >= hidden["mixed"],
+            "R-18 を許すと件数は減らない"
+        );
     }
 
     #[test]
