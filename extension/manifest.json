@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "VRCLibMan",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "BOOTHの商品情報・購入情報を、同じPCのVRCLibManへ送ります。パスワードやCookieはアプリへ渡しません。",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAjUd/kH4xIuagnwlQLAiTpQvz3UxyGjJ8hubIkl1Y97DDg8Hi028LiPedDFYzwgRkAdUaOBf7WNwPskeNaXtuvVYXX+fIzg68eTaN8qxKvLrO3bDwhhlTcRWzPYXMaUKiUj5DNZThMPks0XQf20pQyQuT+t2rPNeIntQjHFn11UWASyCnN6AnjkUSVuZkJ1nxI2rXGnqOb5Alc0ngybQZZJ2OxCmoIPOQVMbY17Ga6eMmI8QFqP3SOchK+FTqNwj4mlUZvWVV2NMwPgAWAHG8Fs9uD8rtzY2uBUoe8lrLa8sS8iuGIr2uf6mugHEI47LA5Vfh1W9kZnkWCfBNACU8kwIDAQAB",
   "icons": {
