@@ -1,4 +1,4 @@
-import type { UnityPackageList, UnityStatus } from "./types";
+import type { UnityInstance, UnityPackageList, UnityStatus } from "./types";
 
 /**
  * 「Unityで開く」の純粋な判断。zip は展開せずに一覧し、選んだものだけを取り出して
@@ -78,3 +78,13 @@ export const UNITY_NOT_SET =
   "既定の Unity が設定されていません。設定の「Unity」で選ぶと、その Unity で開きます。今回は OS の関連付けでも開けます。";
 export const UNITY_MISSING =
   "設定した Unity が見つかりません。設定の「Unity」で選び直してください。今回は OS の関連付けでも開けます。";
+
+/** 渡す先を選ばせるか。Unity が 2 つ以上開いているときだけ選ぶ。0〜1 つならこれまでどおり渡す。 */
+export function needsUnityTarget(instances: readonly unknown[]): boolean {
+  return instances.length >= 2;
+}
+
+/** 渡す先の一覧で、同じプロジェクト名が並ぶときに見分ける補足。 */
+export function unityInstanceDetail(instance: Pick<UnityInstance, "scene" | "version">): string {
+  return [instance.scene, instance.version && `Unity ${instance.version}`].filter(Boolean).join(" ・ ");
+}

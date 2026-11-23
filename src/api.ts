@@ -66,6 +66,8 @@ import type {
   PreparedUnityPackage,
   UnityLaunchResult,
   UnityLaunchMode,
+  UnityInstance,
+  UnityTarget,
 } from "./types";
 
 export type ClassificationFeedbackScope = "other" | "unclassified" | "both";
@@ -339,9 +341,11 @@ export const api = {
   /** 選んだものだけをアプリのキャッシュに取り出す。単体の .unitypackage はそのまま返す。 */
   prepareUnityPackages: (path: string, entries: string[], boothId: string | null) =>
     call<PreparedUnityPackage[]>("prepare_unity_packages", { path, entries, boothId }),
-  /** 先頭から順に Unity へ渡す。Unity の起動を待つときは途中で止まる。 */
-  launchUnityPackages: (paths: string[], mode: UnityLaunchMode) =>
-    call<UnityLaunchResult>("launch_unity_packages", { paths, mode }),
+  /** 起動中の Unity エディタの窓。2 つ以上あれば渡す先を選ばせる。 */
+  unityInstances: () => call<UnityInstance[]>("unity_instances"),
+  /** 先頭から順に Unity へ渡す。`target` があればその Unity の窓へ。Unity の起動を待つときは途中で止まる。 */
+  launchUnityPackages: (paths: string[], mode: UnityLaunchMode, target: UnityTarget | null = null) =>
+    call<UnityLaunchResult>("launch_unity_packages", { paths, mode, target }),
   routeStagedDownload: (path: string) => call<void>("route_staged_download", { path }),
   classificationFeedback: (scope: ClassificationFeedbackScope) =>
     call<string>("classification_feedback", { scope }),

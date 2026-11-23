@@ -350,6 +350,7 @@ pub fn run() {
             commands::list_zip_entries,
             commands::unity_packages,
             commands::prepare_unity_packages,
+            commands::unity_instances,
             commands::launch_unity_packages,
             commands::list_staged_downloads,
             commands::route_staged_download,
