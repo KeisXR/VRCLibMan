@@ -62,6 +62,30 @@ pub fn start_receiver(app: AppHandle) -> Result<(), String> {
         .name("vrclibman-import".into())
         .spawn(move || {
             for mut request in server.incoming_requests() {
+                // AI エージェントのダウンロードは受け取り終わるまで待つので、別のスレッドで答える。
+                // 拡張の受信を止めないため。同時に 1 件だけで、2 件目はすぐ断る。
+                if request.url().split('?').next() == Some("/mcp/download_file") {
+                    if MCP_DOWNLOADING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                        discard_body(&mut request);
+                        let _ = request.respond(mcp_error(
+                            409,
+                            "別のファイルをダウンロードしています。終わってからもう一度お試しください",
+                        ));
+                        continue;
+                    }
+                    let app = app.clone();
+                    let spawned = std::thread::Builder::new()
+                        .name("vrclibman-agent-download".into())
+                        .spawn(move || {
+                            let response = respond(&app, &mut request);
+                            let _ = request.respond(response);
+                            MCP_DOWNLOADING.store(false, std::sync::atomic::Ordering::SeqCst);
+                        });
+                    if spawned.is_err() {
+                        MCP_DOWNLOADING.store(false, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    continue;
+                }
                 let response = respond(&app, &mut request);
                 let _ = request.respond(response);
             }
@@ -85,6 +109,10 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
         origin: origin.as_deref(),
         authorization: authorization.as_deref(),
     };
+    // AI エージェント連携（`VRCLibMan --mcp`）。拡張とは別の認証で、Origin の無い要求だけを受ける。
+    if path.split('?').next().unwrap_or("").starts_with("/mcp/") {
+        return respond_mcp(&view, request, content_length, app);
+    }
     if !view.origin.is_some_and(is_extension_origin) {
         discard_body(request);
         return response_for(
@@ -841,6 +869,124 @@ fn cors_json(
         response = add_cors(response, origin);
     }
     response
+}
+
+/// AI エージェントのダウンロードを受けている間。同時に 1 件だけ。
+static MCP_DOWNLOADING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 鍵 `mcp` で `ImportGuard` を共用する。拡張の Origin と重ならない。
+const MCP_GUARD_KEY: &str = "mcp";
+
+fn plain_json(status: u16, body: String) -> Response<std::io::Cursor<Vec<u8>>> {
+    let mut response = Response::from_string(body).with_status_code(StatusCode(status));
+    for (name, value) in [
+        ("Content-Type", "application/json; charset=utf-8"),
+        ("Cache-Control", "no-store"),
+    ] {
+        if let Ok(header) = Header::from_bytes(name.as_bytes(), value.as_bytes()) {
+            response = response.with_header(header);
+        }
+    }
+    if status == 429
+        && let Ok(header) =
+            Header::from_bytes(b"Retry-After", AUTH_LOCK_SECS.to_string().as_bytes())
+    {
+        response = response.with_header(header);
+    }
+    response
+}
+
+fn mcp_error(status: u16, message: &str) -> Response<std::io::Cursor<Vec<u8>>> {
+    plain_json(status, serde_json::json!({ "error": message }).to_string())
+}
+
+fn respond_mcp(
+    view: &RequestView<'_>,
+    request: &mut Request,
+    content_length: Option<usize>,
+    app: &AppHandle,
+) -> Response<std::io::Cursor<Vec<u8>>> {
+    use crate::mcp_api;
+    let state = app.state::<AppState>();
+    let (enabled, expected) = match state.db.lock() {
+        Ok(connection) => (
+            mcp_api::enabled(&connection).unwrap_or(false),
+            db::setting(&connection, "mcp_token")
+                .ok()
+                .flatten()
+                .unwrap_or_default(),
+        ),
+        Err(_) => {
+            discard_body(request);
+            return mcp_error(500, "データベースをロックできません");
+        }
+    };
+    let now = now_ms();
+    let locked = state
+        .import_guard
+        .lock()
+        .map(|mut guard| guard.is_locked(MCP_GUARD_KEY, now))
+        .unwrap_or(false);
+    let route = match mcp_api::gate(
+        view.method,
+        view.path,
+        view.origin,
+        view.authorization,
+        enabled,
+        &expected,
+        locked,
+    ) {
+        Ok(route) => route,
+        Err((status, message)) => {
+            discard_body(request);
+            if status == 401
+                && let Ok(mut guard) = state.import_guard.lock()
+            {
+                guard.record_failure(MCP_GUARD_KEY, now);
+            }
+            return mcp_error(status, message);
+        }
+    };
+    if let Ok(mut guard) = state.import_guard.lock() {
+        guard.record_success(MCP_GUARD_KEY);
+    }
+    if content_length.is_some_and(|length| length > mcp_api::BODY_LIMIT) {
+        discard_body(request);
+        return mcp_error(413, "指定が大きすぎます");
+    }
+    let text = match read_limited(request.as_reader(), mcp_api::BODY_LIMIT).map(String::from_utf8) {
+        Ok(Ok(text)) => text,
+        Ok(Err(_)) => return mcp_error(400, "指定を読めません"),
+        Err(()) => return mcp_error(413, "指定が大きすぎます"),
+    };
+    let reply = state
+        .db
+        .lock()
+        .map_err(|_| "データベースをロックできません".to_string())
+        .and_then(|connection| mcp_api::handle(&connection, route, &text));
+    // 記録は問い合わせの種類だけ。検索語・商品名・パスは残さない。
+    eprintln!("AI エージェント連携: {}", route.name());
+    match reply {
+        Ok(mcp_api::Reply::Json { status, body }) => plain_json(status, body.to_string()),
+        // パスの確認と zip の目次はファイルを読むので、データベースのロックの外で行う。
+        Ok(mcp_api::Reply::Files(pending)) => {
+            plain_json(200, mcp_api::finish_files(pending).to_string())
+        }
+        // 画面の「ダウンロード」と同じ経路と条件。進み具合はサイドバーのダウンロード一覧にも出る。
+        Ok(mcp_api::Reply::Download(plan)) => {
+            let result = tauri::async_runtime::block_on(crate::browser::download_one_file(
+                app.clone(),
+                plan.booth_id.clone(),
+                plan.variation.clone(),
+                plan.filename.clone(),
+            ));
+            match result {
+                Ok(path) => plain_json(200, mcp_api::downloaded(&plan, &path).to_string()),
+                Err(error) => mcp_error(409, &error),
+            }
+        }
+        Err(error) => mcp_error(500, &error),
+    }
 }
 
 struct RequestView<'a> {

@@ -62,6 +62,9 @@ import type {
   GenreKind,
   GenreProducts,
   UnityStatus,
+  McpStatus,
+  AgentClient,
+  AgentChange,
   UnityPackageList,
   PreparedUnityPackage,
   UnityLaunchResult,
@@ -311,6 +314,13 @@ export const api = {
   unityEditors: () => call<UnityStatus>("unity_editors"),
   /** 空文字で未設定に戻す。Unity 本体でないファイルは Rust 側で拒否する。 */
   setUnityEditor: (path: string) => call<UnityStatus>("set_unity_editor", { path }),
+  mcpStatus: () => call<McpStatus>("mcp_status"),
+  setMcpSettings: (enabled: boolean, includeAdult: boolean, allowDownload: boolean) =>
+    call<McpStatus>("set_mcp_settings", { enabled, includeAdult, allowDownload }),
+  regenerateMcpToken: () => call<void>("regenerate_mcp_token"),
+  agentClients: () => call<AgentClient[]>("agent_clients"),
+  changeAgentConfig: (id: string, add: boolean) => call<AgentChange>("change_agent_config", { id, add }),
+  changeAgentSkill: (id: string, add: boolean) => call<AgentChange>("change_agent_skill", { id, add }),
   catalogInfo: () => call<CatalogInfo>("catalog_info"),
   refreshAvatarCatalog: () => call<CatalogRefresh>("refresh_avatar_catalog"),
   setupStatus: () => call<SetupStatus>("setup_status"),

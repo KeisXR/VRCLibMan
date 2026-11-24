@@ -437,6 +437,8 @@ pub(super) fn ensure_ready(connection: &Connection) -> Result<u32, String> {
         ("library_folder", ""),
         ("builtin_browser", "0"),
         ("browser_force_dark", "0"),
+        ("mcp_enabled", "0"),
+        ("mcp_include_adult", "0"),
         ("browser_auto_register", "1"),
         ("booth_link_target", "external"),
         ("booth_page_interval_ms", "1000"),

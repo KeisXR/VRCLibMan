@@ -858,6 +858,39 @@ export interface UnityEditor {
   source: UnityEditorSource;
 }
 
+/** AI エージェント連携（MCP）の設定。 */
+export interface McpStatus {
+  enabled: boolean;
+  includeAdult: boolean;
+  /** AI エージェントが、利用者の同意を得て 1 ファイルずつダウンロードできる */
+  allowDownload: boolean;
+  /** エージェントの MCP 設定に書く実行ファイル。分からないときは空文字 */
+  command: string;
+}
+
+/** AI エージェントごとの設定と SKILL の状態。 */
+export interface AgentClient {
+  id: string;
+  label: string;
+  /** その PC に入っているらしい */
+  installed: boolean;
+  /** この PC で書いて動きを確かめた */
+  verified: boolean;
+  /** アプリが書ける（false は手動だけ） */
+  automatic: boolean;
+  config: "none" | "current" | "otherPath" | "unreadable" | "manual" | "unknown";
+  skill: "unsupported" | "none" | "current" | "outdated" | "foreign";
+  configPath: string;
+  manual: string;
+  note: string;
+}
+
+export interface AgentChange {
+  label: string;
+  changed: string[];
+  backups: string[];
+}
+
 export interface UnityStatus {
   editors: UnityEditor[];
   /** 保存している既定の Unity。未設定なら空文字 */
