@@ -15,7 +15,7 @@ import {
 } from "../fileBrowser";
 import { useShell } from "../App";
 import { UnityOpenButton } from "./UnityOpenDialog";
-import { boothIdFromPath, isInsideRoot } from "../unityOpen";
+import { boothIdFromPath, isInsideRoot, isUnityLooseName } from "../unityOpen";
 import type { FileKind } from "../fileBrowser";
 import { formatBytes } from "../media";
 import type { DirListing, FileLabel, ZipListing } from "../types";
@@ -313,7 +313,8 @@ function DirView({
               )}
               {kind !== "dir" && kind !== "link" && (
                 <div className="row-actions">
-                  {(kind === "unitypackage" || kind === "zip") && unity.canUnity(path) && (
+                  {(kind === "unitypackage" || kind === "zip" || (kind === "file" && isUnityLooseName(entry.name))) &&
+                    unity.canUnity(path) && (
                     <UnityOpenButton
                       target={{ path, boothId: boothIdFromPath(path) }}
                       notify={unity.notify}

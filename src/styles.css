@@ -1389,6 +1389,8 @@ a.tab { display: inline-flex; align-items: center; gap: 6px; text-decoration: no
 .unity-open-choice { display: flex; gap: 6px; align-items: center; min-width: 0; }
 .unity-open-choice .download-name { min-width: 0; }
 .unity-open-dialog .row-actions { margin-top: var(--space-3); }
+.unity-open-dialog > .unity-open-label { margin: 0 0 4px; }
+.unity-open-destination { margin: 0 0 var(--space-2); padding: 6px 10px; border-radius: var(--radius-sm); background: var(--surface-secondary); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; overflow-wrap: anywhere; user-select: text; }
 /* 「このアセットを更新しますか？」（AssetUpdatePrompt.tsx）。箱は「Unityで開く」と同じ。商品名・ファイル名・バリエーションを縦に積む。 */
 .asset-update-prompt-file { display: grid; gap: 2px; margin: 0 0 var(--space-2); min-width: 0; }
 .asset-update-prompt-file .download-name { overflow-wrap: anywhere; }

@@ -828,23 +828,61 @@ fn unity_cache_root(app: &AppHandle) -> Result<std::path::PathBuf, String> {
         .map_err(|_| "アプリのキャッシュフォルダが見つかりません".to_string())
 }
 
+/// 単体のファイルを Unity パッケージに包むときの、`Assets/VRCLibMan/` の下のフォルダ名。
+/// 商品名はローカルの DB からだけ読む。読めなければ商品 ID。
+fn unity_loose_folder(app: &AppHandle, booth_id: Option<&str>) -> String {
+    let booth_id = booth_id
+        .map(str::trim)
+        .filter(|id| crate::library_files::valid_booth_id(id));
+    let title = booth_id.and_then(|id| {
+        let state = app.state::<AppState>();
+        let connection = db(&state).ok()?;
+        db::product_labels(&connection, &[id.to_string()])
+            .ok()?
+            .remove(id)
+            .map(|label| label.title)
+    });
+    crate::unity_wrap::folder_name(title.as_deref(), booth_id)
+}
+
+fn unity_loose_destination(
+    app: &AppHandle,
+    booth_id: Option<&str>,
+    list: &crate::unity_import::UnityPackageList,
+) -> Result<String, String> {
+    let name = list
+        .packages
+        .first()
+        .map(|item| item.name.as_str())
+        .unwrap_or("");
+    crate::unity_wrap::destination(&unity_loose_folder(app, booth_id), name)
+        .ok_or_else(|| "Unity に入れられないファイルです".to_string())
+}
+
 /// 「Unityで開く」: zip か .unitypackage の中の Unity パッケージを一覧する。展開しない。
+/// mp3・png などの単体のファイルは "loose" として、Unity の中で入る場所を添えて返す。
 #[tauri::command]
 pub async fn unity_packages(
     app: AppHandle,
     path: String,
+    booth_id: Option<String>,
 ) -> Result<crate::unity_import::UnityPackageList, String> {
     let (library, remote) = library_roots(&app)?;
-    tauri::async_runtime::spawn_blocking(move || {
+    let mut list = tauri::async_runtime::spawn_blocking(move || {
         let source = crate::unity_import::allowed_source(&path, &library, &remote)?;
         crate::unity_import::list_packages(&source)
     })
     .await
-    .map_err(|err| format!("Unity パッケージを読めません: {err}"))?
+    .map_err(|err| format!("Unity パッケージを読めません: {err}"))??;
+    if list.kind == "loose" {
+        list.destination = Some(unity_loose_destination(&app, booth_id.as_deref(), &list)?);
+    }
+    Ok(list)
 }
 
 /// 選んだ Unity パッケージを、アプリのキャッシュ `unity-import/<商品ID>/` に取り出す。
-/// 単体の .unitypackage は取り出さず、そのまま返す。メイン画面からだけ受け付ける。
+/// 単体の .unitypackage は取り出さず、そのまま返す。mp3・png などは同じ場所で Unity パッケージに包む。
+/// メイン画面からだけ受け付ける。
 #[tauri::command]
 pub async fn prepare_unity_packages(
     view: tauri::Webview,
@@ -858,9 +896,23 @@ pub async fn prepare_unity_packages(
     }
     let (library, remote) = library_roots(&app)?;
     let cache_root = unity_cache_root(&app)?;
+    let folder = unity_loose_folder(&app, booth_id.as_deref());
     tauri::async_runtime::spawn_blocking(move || {
         let source = crate::unity_import::allowed_source(&path, &library, &remote)?;
         let list = crate::unity_import::list_packages(&source)?;
+        if list.kind == "loose" {
+            // 一覧で見せた場所と同じ場所に入るよう、同じ規則で決める。
+            let name = list
+                .packages
+                .first()
+                .map(|item| item.name.as_str())
+                .unwrap_or("");
+            let place = crate::unity_wrap::destination(&folder, name)
+                .ok_or_else(|| "Unity に入れられないファイルです".to_string())?;
+            let dest = crate::unity_import::cache_folder(&cache_root, booth_id.as_deref());
+            return crate::unity_wrap::wrap_file(&source, &place, &dest)
+                .map(|package| vec![package]);
+        }
         if list.kind == "package" {
             return Ok(list
                 .packages

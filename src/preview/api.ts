@@ -2525,9 +2525,9 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       return { label: agent.label, changed: [agent.configPath], backups: args.add ? [agent.configPath + ".vrclibman-backup"] : [] } as T;
     }
     case "unity_packages":
-      return previewUnityPackages(String(args.path ?? ""), store.settings.libraryFolder, store.settings.remoteLibraryFolder, previewFileSize) as T;
+      return previewUnityPackages(String(args.path ?? ""), store.settings.libraryFolder, store.settings.remoteLibraryFolder, previewFileSize, args.boothId == null ? null : String(args.boothId)) as T;
     case "prepare_unity_packages": {
-      const list = previewUnityPackages(String(args.path ?? ""), store.settings.libraryFolder, store.settings.remoteLibraryFolder, previewFileSize);
+      const list = previewUnityPackages(String(args.path ?? ""), store.settings.libraryFolder, store.settings.remoteLibraryFolder, previewFileSize, args.boothId == null ? null : String(args.boothId));
       const entries = Array.isArray(args.entries) ? args.entries.map(String) : [];
       return previewPrepareUnityPackages(list, entries, args.boothId == null ? null : String(args.boothId)) as T;
     }

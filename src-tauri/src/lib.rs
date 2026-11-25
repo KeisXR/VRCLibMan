@@ -59,6 +59,7 @@ mod sync_meta;
 mod thumb;
 mod unity;
 mod unity_import;
+mod unity_wrap;
 mod updater;
 mod view;
 

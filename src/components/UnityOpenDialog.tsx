@@ -10,6 +10,8 @@ import { errorText } from "../ui";
 import {
   UNITY_MISSING,
   UNITY_NOT_SET,
+  destinationFolder,
+  isUnityLooseName,
   launchedMessage,
   needsUnityTarget,
   onlyEntry,
@@ -22,6 +24,7 @@ import {
 type DialogState =
   | { step: "choose"; list: UnityPackageList; boothId: string | null; checked: Set<string>; mode: UnityLaunchMode; missing: boolean }
   | { step: "setup"; list: UnityPackageList; boothId: string | null; entries: string[]; missing: boolean }
+  | { step: "loose"; list: UnityPackageList; boothId: string | null; entries: string[]; mode: UnityLaunchMode; missing: boolean }
   | { step: "target"; list: UnityPackageList; boothId: string | null; entries: string[]; instances: UnityInstance[]; chosen: string | null }
   | { step: "working"; message: string }
   | { step: "waiting"; prepared: PreparedUnityPackage[]; next: number; mode: UnityLaunchMode; target: UnityTarget | null };
@@ -31,7 +34,7 @@ function targetOf(instance: UnityInstance): UnityTarget {
 }
 
 export interface UnityOpenTarget {
-  /** zip か .unitypackage の絶対パス。ライブラリかリモートライブラリの中のもの。 */
+  /** zip か .unitypackage（または mp3・png など）の絶対パス。ライブラリかリモートライブラリの中のもの。 */
   path: string;
   /** 取り出し先 `unity-import/<商品ID>/` に使う。分からなければ null。 */
   boothId?: string | null;
@@ -53,7 +56,13 @@ export function useUnityOpen({ notify, fail }: { notify: (message: string) => vo
   const running = useRef(false);
 
   const launchFrom = useCallback(
-    async (prepared: PreparedUnityPackage[], start: number, mode: UnityLaunchMode, target: UnityTarget | null) => {
+    async (
+      prepared: PreparedUnityPackage[],
+      start: number,
+      mode: UnityLaunchMode,
+      target: UnityTarget | null,
+      destination?: string,
+    ) => {
       const total = prepared.length;
       setDialog({
         step: "working",
@@ -66,7 +75,11 @@ export function useUnityOpen({ notify, fail }: { notify: (message: string) => vo
         return;
       }
       setDialog(null);
-      notify(launchedMessage(total, mode));
+      notify(
+        destination
+          ? `${launchedMessage(total, mode)}。取り込むと ${destinationFolder(destination)} に入ります`
+          : launchedMessage(total, mode),
+      );
     },
     [notify],
   );
@@ -91,9 +104,17 @@ export function useUnityOpen({ notify, fail }: { notify: (message: string) => vo
             return;
           }
         }
-        setDialog({ step: "working", message: list.kind === "zip" ? "zip から取り出しています" : "Unity に渡しています" });
+        setDialog({
+          step: "working",
+          message:
+            list.kind === "zip"
+              ? "zip から取り出しています"
+              : list.kind === "loose"
+                ? "Unity パッケージにしています"
+                : "Unity に渡しています",
+        });
         const prepared = await api.prepareUnityPackages(list.path, entries, boothId);
-        await launchFrom(prepared, 0, mode, target);
+        await launchFrom(prepared, 0, mode, target, list.kind === "loose" ? list.destination : undefined);
       } catch (err) {
         setDialog(null);
         fail(errorText(err));
@@ -127,7 +148,7 @@ export function useUnityOpen({ notify, fail }: { notify: (message: string) => vo
       let direct: { list: UnityPackageList; entries: string[]; boothId: string | null } | null = null;
       try {
         const [listed, status] = await Promise.all([
-          api.unityPackages(target.path),
+          api.unityPackages(target.path, target.boothId ?? null),
           api.unityEditors().catch(() => null),
         ]);
         const list = target.entry != null ? onlyEntry(listed, target.entry) : listed;
@@ -143,6 +164,8 @@ export function useUnityOpen({ notify, fail }: { notify: (message: string) => vo
           fail("この zip には Unity パッケージ（.unitypackage）がありません");
         } else if (plan.kind === "direct") {
           direct = { list, entries: plan.entries, boothId };
+        } else if (plan.kind === "loose") {
+          setDialog({ step: "loose", list, boothId, entries: plan.entries, mode: ready ? "unity" : "system", missing });
         } else if (plan.kind === "setup") {
           setDialog({ step: "setup", list, boothId, entries: plan.entries, missing });
         } else {
@@ -176,7 +199,8 @@ export function useUnityOpen({ notify, fail }: { notify: (message: string) => vo
         })
       }
       onImport={(entries, mode) => {
-        if (dialog.step === "choose" || dialog.step === "setup") void run(dialog.list, entries, dialog.boothId, mode);
+        if (dialog.step === "choose" || dialog.step === "setup" || dialog.step === "loose")
+          void run(dialog.list, entries, dialog.boothId, mode);
       }}
       onPickTarget={(window) =>
         setDialog((current) => (current?.step === "target" ? { ...current, chosen: window } : current))
@@ -314,6 +338,46 @@ function UnityOpenDialog({
         </div>
       </>
     );
+  } else if (state.step === "loose") {
+    const item = state.list.packages[0]!;
+    const destination = state.list.destination ?? "";
+    body = (
+      <>
+        <h2 id="unity-open-title">Unity に入れる</h2>
+        <ul className="file-list unity-open-list">
+          <li>
+            <span className="download-name">{item.name}</span>
+            <span className="meta">{formatBytes(item.size)}</span>
+          </li>
+        </ul>
+        <p className="meta unity-open-label">Unity の中で入る場所</p>
+        <p className="unity-open-destination" title={destination}>{destination}</p>
+        <p className="meta">
+          Unity パッケージにして Unity に渡します。Unity の Import 画面で確かめてから取り込まれます。
+          同じファイルをもう一度渡しても、同じ場所のものとして扱われ、複製はできません。
+        </p>
+        {state.mode === "system" && <p className="meta warn-text">{state.missing ? UNITY_MISSING : UNITY_NOT_SET}</p>}
+        <div className="row-actions">
+          {state.mode === "unity" ? (
+            <button className="button primary" type="button" onClick={() => onImport(state.entries, "unity")}>
+              Unity に渡す
+            </button>
+          ) : (
+            <>
+              <button className="button primary" type="button" onClick={onSettings}>
+                設定を開く
+              </button>
+              <button className="button" type="button" onClick={() => onImport(state.entries, "system")}>
+                関連付けで開く
+              </button>
+            </>
+          )}
+          <button className="button" type="button" onClick={onClose}>
+            キャンセル
+          </button>
+        </div>
+      </>
+    );
   } else if (state.step === "setup") {
     const item = state.list.packages[0]!;
     body = (
@@ -431,7 +495,11 @@ export function UnityOpenButton({
         className={className}
         type="button"
         disabled={unity.busy}
-        title="zip は展開せず、選んだ Unity パッケージだけを取り出して Unity に渡します"
+        title={
+          isUnityLooseName(target.path)
+            ? "Unity パッケージにして Unity に渡します。入る場所は次の画面で確かめられます"
+            : "zip は展開せず、選んだ Unity パッケージだけを取り出して Unity に渡します"
+        }
         onClick={(event) => {
           event.stopPropagation();
           void unity.open(target);

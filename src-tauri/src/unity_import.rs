@@ -32,7 +32,8 @@ pub(crate) const HANDOFF_TIMEOUT: Duration = Duration::from_secs(20);
 /// 続けて渡すときの間隔。Import 画面が順に出るように少し空ける。
 pub(crate) const HANDOFF_GAP: Duration = Duration::from_millis(1200);
 
-const NOT_PACKAGE: &str = "zip か .unitypackage のファイルを選んでください";
+const NOT_PACKAGE: &str =
+    "zip か .unitypackage、または Unity に入れられるファイル（mp3・png・fbx など）を選んでください";
 const OUTSIDE: &str = "ライブラリ（またはリモートライブラリ）の中のファイルだけを Unity で開けます";
 const NO_EDITOR: &str =
     "既定の Unity が設定されていません。設定の「Unity」で選ぶか、関連付けで開いてください";
@@ -57,11 +58,14 @@ pub(crate) struct UnityPackageEntry {
 pub(crate) struct UnityPackageList {
     /// 解決したパス。
     pub path: String,
-    /// "zip" か "package"。
+    /// "zip" か "package"、単体の mp3・png などは "loose"（Unity パッケージに包んで渡す）。
     pub kind: &'static str,
     pub packages: Vec<UnityPackageEntry>,
     /// zip の項目が多く、一部だけを読んだ。
     pub truncated: bool,
+    /// "loose" のとき、Unity の中で入る場所（`Assets/VRCLibMan/<商品名>/<ファイル名>`）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub destination: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -115,7 +119,10 @@ pub(crate) fn allowed_source(raw: &str, library: &str, remote: &str) -> Result<P
         return Err(NOT_PACKAGE.into());
     }
     let requested = requested_path(raw, "")?;
-    if !has_extension(&requested, "zip") && !has_extension(&requested, "unitypackage") {
+    let loose = requested
+        .file_name()
+        .is_some_and(|name| crate::unity_wrap::is_loose_name(&name.to_string_lossy()));
+    if !has_extension(&requested, "zip") && !has_extension(&requested, "unitypackage") && !loose {
         return Err(NOT_PACKAGE.into());
     }
     let resolved = resolve(&requested)?;
@@ -155,6 +162,25 @@ pub(crate) fn list_packages(path: &Path) -> Result<UnityPackageList, String> {
                 size,
             }],
             truncated: false,
+            destination: None,
+        });
+    }
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if crate::unity_wrap::is_loose_name(&file_name) {
+        let size = std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0);
+        return Ok(UnityPackageList {
+            path: display,
+            kind: "loose",
+            packages: vec![UnityPackageEntry {
+                entry: String::new(),
+                name: file_name,
+                size,
+            }],
+            truncated: false,
+            destination: None,
         });
     }
     let read_from = path.to_path_buf();
@@ -178,6 +204,7 @@ pub(crate) fn list_packages(path: &Path) -> Result<UnityPackageList, String> {
         kind: "zip",
         packages,
         truncated,
+        destination: None,
     })
 }
 
