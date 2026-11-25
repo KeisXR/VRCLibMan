@@ -514,17 +514,40 @@ pub(crate) fn filename_is_number(name: &str) -> bool {
     (4..=12).contains(&name.len()) && name.bytes().all(|byte| byte.is_ascii_digit())
 }
 
+/// BOOTH で配られるアセットの拡張子。パッケージに加え、音声・画像・3D を単体で配る商品がある
+/// （無料の環境音の mp3 が弾かれ、受け取ったのに失敗になっていた）。
+/// HTML・プログラム・説明書の PDF は入れない。拡張の `companion.js`・`download-route.js` と見本も同じ並び。
+pub(crate) const ASSET_EXTENSIONS: &[&str] = &[
+    "unitypackage",
+    "zip",
+    "rar",
+    "7z",
+    "vrm",
+    "fbx",
+    "blend",
+    "mp3",
+    "wav",
+    "ogg",
+    "flac",
+    "m4a",
+    "aac",
+    "png",
+    "jpg",
+    "jpeg",
+    "webp",
+    "psd",
+    "clip",
+];
+
 pub(crate) fn is_packaged_asset(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
-    ["unitypackage", "zip", "rar", "7z", "vrm"]
-        .iter()
-        .any(|ext| {
-            let suffix = format!(".{ext}");
-            match lower.strip_suffix(&suffix) {
-                Some(stem) => !stem.is_empty() && !stem.ends_with(' ') && !stem.ends_with('.'),
-                None => false,
-            }
-        })
+    ASSET_EXTENSIONS.iter().any(|ext| {
+        let suffix = format!(".{ext}");
+        match lower.strip_suffix(&suffix) {
+            Some(stem) => !stem.is_empty() && !stem.ends_with(' ') && !stem.ends_with('.'),
+            None => false,
+        }
+    })
 }
 
 /// Prefer the row's real filename. A number-only row takes the download's suggested name.
@@ -2126,6 +2149,13 @@ mod tests {
         );
         assert!(!is_packaged_asset(".zip"));
         assert!(!is_packaged_asset("note.txt"));
+        assert!(is_packaged_asset("水滴_近く_15分.mp3"));
+        assert!(!is_packaged_asset("setup.exe"));
+        assert!(!is_packaged_asset("login.html"));
+        assert_eq!(
+            choose_download_name("テントで雨キャンプ_15分.mp3", "x.bin"),
+            "テントで雨キャンプ_15分.mp3"
+        );
         assert!(looks_like_login_page(
             b"  <!DOCTYPE html><html><head></head>"
         ));

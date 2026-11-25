@@ -5,7 +5,7 @@
   }
   root.VrcLibManRoute = api;
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
-  const ASSET = /\.(unitypackage|zip|rar|7z|vrm)$/i;
+  const ASSET = /\.(unitypackage|zip|rar|7z|vrm|fbx|blend|mp3|wav|ogg|flac|m4a|aac|png|jpg|jpeg|webp|psd|clip)$/i;
 
   function clean(value) {
     return String(value || "").replace(/\s+/g, " ").trim();
