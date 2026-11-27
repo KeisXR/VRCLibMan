@@ -220,7 +220,9 @@ mod tests {
         add_manual_unity_project(&connection, PROJECT, PATH).unwrap();
         set_unity_project_hidden(&mut connection, PROJECT, PATH, false).unwrap();
         assert!(stored_unity_projects(&connection).unwrap()[0].manual);
-        assert!(link_unity_project_avatar(&mut connection, PROJECT, PATH, "missing", true).is_err());
+        assert!(
+            link_unity_project_avatar(&mut connection, PROJECT, PATH, "missing", true).is_err()
+        );
         link_unity_project_avatar(&mut connection, PROJECT, PATH, "uproj-b", true).unwrap();
         forget_unity_project(&connection, PROJECT).unwrap();
         assert!(linked(&connection).is_empty());
@@ -231,8 +233,14 @@ mod tests {
         let mut connection = connection();
         link_unity_project_avatar(&mut connection, PROJECT, PATH, "uproj-a", true).unwrap();
         link_unity_project_avatar(&mut connection, PROJECT, PATH, "uproj-b", true).unwrap();
-        link_unity_project_avatar(&mut connection, "00000000000000bb", "D:\\Other", "uproj-a", true)
-            .unwrap();
+        link_unity_project_avatar(
+            &mut connection,
+            "00000000000000bb",
+            "D:\\Other",
+            "uproj-a",
+            true,
+        )
+        .unwrap();
         merge_avatars(&mut connection, "uproj-a", "uproj-b").unwrap();
         assert_eq!(linked(&connection), ["uproj-b"]);
         assert_eq!(

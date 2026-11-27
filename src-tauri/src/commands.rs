@@ -972,8 +972,8 @@ fn unity_project_list_blocking(
         .flatten()
     });
     let alcom = alcom_json.as_deref().map(projects::parse_user_projects);
-    let editors = crate::unity::status(&selected, &crate::unity::Sources::for_current_os(), os)
-        .editors;
+    let editors =
+        crate::unity::status(&selected, &crate::unity::Sources::for_current_os(), os).editors;
     let running = projects::running_projects();
     let input = projects::ListInput {
         alcom: alcom.as_deref(),

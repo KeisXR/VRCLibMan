@@ -47,7 +47,8 @@ impl Sources {
             }
         };
         Sources {
-            alcom_settings: data.map(|dir| dir.join("VRChatCreatorCompanion").join("settings.json")),
+            alcom_settings: data
+                .map(|dir| dir.join("VRChatCreatorCompanion").join("settings.json")),
         }
     }
 }
@@ -151,7 +152,10 @@ pub(crate) fn project_id(path: &str, os: Os) -> String {
 }
 
 pub(crate) fn valid_project_id(id: &str) -> bool {
-    id.len() == 16 && id.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    id.len() == 16
+        && id
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 fn strip_bom(text: &str) -> &str {
@@ -407,7 +411,9 @@ pub(crate) fn build_list(
                 path: path.clone(),
                 state,
                 kind: facts.map(|facts| facts.kind).unwrap_or("unknown"),
-                packages: facts.map(|facts| facts.packages.clone()).unwrap_or_default(),
+                packages: facts
+                    .map(|facts| facts.packages.clone())
+                    .unwrap_or_default(),
                 source,
                 hidden: hidden.contains(id.as_str()),
                 avatars: input.links.get(id).cloned().unwrap_or_default(),
@@ -417,7 +423,11 @@ pub(crate) fn build_list(
         })
         .collect();
     // 新しく触ったものから。読めなかったものは後ろ。
-    projects.sort_by(|a, b| b.modified.cmp(&a.modified).then_with(|| a.name.cmp(&b.name)));
+    projects.sort_by(|a, b| {
+        b.modified
+            .cmp(&a.modified)
+            .then_with(|| a.name.cmp(&b.name))
+    });
     projects
 }
 
@@ -433,7 +443,10 @@ pub(crate) fn projects_for_product(
         .into_iter()
         .filter(|project| {
             !project.hidden
-                && (project.avatars.iter().any(|avatar| avatar_ids.contains(&avatar.id))
+                && (project
+                    .avatars
+                    .iter()
+                    .any(|avatar| avatar_ids.contains(&avatar.id))
                     || (world_product && project.kind == "world"))
         })
         .collect()
@@ -489,9 +502,9 @@ pub(crate) fn editor_for_open<'a>(
 
 /// Unity を起動する。Unity 本体は終わらないので待たない。
 pub(crate) fn launch(editor: &Path, project: &Path) -> Result<(), String> {
-    let mut child = project_command(editor, project)
-        .spawn()
-        .map_err(|_| "Unity を起動できませんでした。設定の「Unity」を確かめてください".to_string())?;
+    let mut child = project_command(editor, project).spawn().map_err(|_| {
+        "Unity を起動できませんでした。設定の「Unity」を確かめてください".to_string()
+    })?;
     std::thread::spawn(move || {
         let _ = child.wait();
     });
@@ -590,7 +603,11 @@ mod tests {
         assert_eq!(kind, "avatar");
         assert_eq!(
             packages.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
-            ["com.vrchat.avatars", "com.vrchat.base", "jp.lilxyzw.liltoon"]
+            [
+                "com.vrchat.avatars",
+                "com.vrchat.base",
+                "jp.lilxyzw.liltoon"
+            ]
         );
         assert_eq!(packages[2].version, "2.4.1");
         let (kind, packages) =
@@ -647,7 +664,12 @@ mod tests {
         let manual = make_project(root.path(), "Hand", "2022.3.22f1", None)
             .display()
             .to_string();
-        let alcom = vec![plum_text.clone(), old.display().to_string(), gone.clone(), plum_text.to_uppercase()];
+        let alcom = vec![
+            plum_text.clone(),
+            old.display().to_string(),
+            gone.clone(),
+            plum_text.to_uppercase(),
+        ];
         let os = Os::current();
         let stored = vec![
             StoredProject {
@@ -721,13 +743,21 @@ mod tests {
         };
         let found = candidates(&input);
         let paths: Vec<String> = found.iter().map(|(_, path, _)| path.clone()).collect();
-        let list = build_list(&input, &found, &read_projects(&paths, READ_TIMEOUT, LIST_TIMEOUT));
+        let list = build_list(
+            &input,
+            &found,
+            &read_projects(&paths, READ_TIMEOUT, LIST_TIMEOUT),
+        );
         assert!(list.iter().all(|project| project.running == "maybe"));
         let unknown = ListInput {
             running: None,
             ..input
         };
-        let list = build_list(&unknown, &found, &read_projects(&paths, READ_TIMEOUT, LIST_TIMEOUT));
+        let list = build_list(
+            &unknown,
+            &found,
+            &read_projects(&paths, READ_TIMEOUT, LIST_TIMEOUT),
+        );
         assert!(list.iter().all(|project| project.running == "unknown"));
     }
 
@@ -750,7 +780,10 @@ mod tests {
         };
         let editors = vec![editor("2022.3.6f1"), editor("2022.3.22f1")];
         assert_eq!(
-            editor_for_open(&project, &editors).unwrap().unwrap().version,
+            editor_for_open(&project, &editors)
+                .unwrap()
+                .unwrap()
+                .version,
             "2022.3.22f1"
         );
         let other = vec![editor("2022.3.6f1")];
@@ -796,11 +829,18 @@ mod tests {
                 base("Mixed", "unknown", &[], false),
             ]
         };
-        let names = |found: Vec<UnityProject>| found.into_iter().map(|p| p.name).collect::<Vec<_>>();
+        let names =
+            |found: Vec<UnityProject>| found.into_iter().map(|p| p.name).collect::<Vec<_>>();
         let plum: HashSet<String> = ["plum".to_string()].into();
         assert_eq!(names(projects_for_product(list(), &plum, false)), ["Plum"]);
-        assert_eq!(names(projects_for_product(list(), &HashSet::new(), true)), ["Room"]);
-        assert_eq!(names(projects_for_product(list(), &plum, true)), ["Plum", "Room"]);
+        assert_eq!(
+            names(projects_for_product(list(), &HashSet::new(), true)),
+            ["Room"]
+        );
+        assert_eq!(
+            names(projects_for_product(list(), &plum, true)),
+            ["Plum", "Room"]
+        );
         assert!(projects_for_product(list(), &HashSet::new(), false).is_empty());
     }
 
@@ -810,7 +850,10 @@ mod tests {
             Path::new("C:\\Unity\\Editor\\Unity.exe"),
             Path::new("D:\\My Projects\\Plum & Lime"),
         );
-        let args: Vec<_> = command.get_args().map(|a| a.to_string_lossy().to_string()).collect();
+        let args: Vec<_> = command
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
         assert_eq!(args, ["-projectPath", "D:\\My Projects\\Plum & Lime"]);
         assert_eq!(
             command.get_current_dir(),
@@ -827,7 +870,12 @@ mod tests {
         assert!(validate_new_project(&root.path().display().to_string(), os).is_err());
         assert!(validate_new_project("relative\\path", os).is_err());
         assert!(validate_new_project("", os).is_err());
-        let sneaky = format!("{}{}..{}Plum", project.display(), std::path::MAIN_SEPARATOR, std::path::MAIN_SEPARATOR);
+        let sneaky = format!(
+            "{}{}..{}Plum",
+            project.display(),
+            std::path::MAIN_SEPARATOR,
+            std::path::MAIN_SEPARATOR
+        );
         assert!(validate_new_project(&sneaky, os).is_err());
     }
 
@@ -841,7 +889,8 @@ mod tests {
         let json = std::fs::read_to_string(&path).expect("ALCOM settings not found");
         let alcom = parse_user_projects(&json);
         let os = Os::current();
-        let editors = crate::unity::status("", &crate::unity::Sources::for_current_os(), os).editors;
+        let editors =
+            crate::unity::status("", &crate::unity::Sources::for_current_os(), os).editors;
         let running = running_projects();
         let input = ListInput {
             alcom: Some(&alcom),
@@ -869,7 +918,9 @@ mod tests {
             count(&|p| p.kind == "world"),
             count(&|p| p.kind == "unknown"),
             count(&|p| p.editor_available),
-            list.iter().map(|p| p.running).collect::<std::collections::BTreeSet<_>>(),
+            list.iter()
+                .map(|p| p.running)
+                .collect::<std::collections::BTreeSet<_>>(),
             editors.len(),
             took,
         );
