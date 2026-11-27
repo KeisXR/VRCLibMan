@@ -46,6 +46,7 @@ mod schema;
 mod settings;
 #[cfg(test)]
 mod tests;
+mod unity_projects;
 
 pub(crate) use auto_register::*;
 pub(crate) use classification_edit::*;
@@ -59,6 +60,7 @@ pub(crate) use owned_body::*;
 pub(crate) use queries::*;
 pub(crate) use schema::*;
 pub(crate) use settings::*;
+pub(crate) use unity_projects::*;
 
 pub(crate) fn known_booth_ids(connection: &Connection) -> Result<Vec<String>, String> {
     let mut statement = connection

@@ -71,6 +71,8 @@ import type {
   UnityLaunchMode,
   UnityInstance,
   UnityTarget,
+  UnityProject,
+  UnityProjectList,
 } from "./types";
 
 export type ClassificationFeedbackScope = "other" | "unclassified" | "both";
@@ -360,6 +362,19 @@ export const api = {
   /** 先頭から順に Unity へ渡す。`target` があればその Unity の窓へ。Unity の起動を待つときは途中で止まる。 */
   launchUnityPackages: (paths: string[], mode: UnityLaunchMode, target: UnityTarget | null = null) =>
     call<UnityLaunchResult>("launch_unity_packages", { paths, mode, target }),
+  /** ALCOM / VCC の一覧と、手で足した・結び付けたプロジェクト。フォルダは読むだけ。 */
+  unityProjects: () => call<UnityProjectList>("unity_projects"),
+  /** 商品の対応アバターに結び付けたプロジェクト。 */
+  productUnityProjects: (boothId: string) => call<UnityProject[]>("product_unity_projects", { boothId }),
+  addUnityProject: (path: string) => call<UnityProjectList>("add_unity_project", { path }),
+  /** 手で足したもの・覚えているものだけ消せる。ALCOM の一覧にあるものは隠す。 */
+  removeUnityProject: (projectId: string) => call<UnityProjectList>("remove_unity_project", { projectId }),
+  setUnityProjectHidden: (projectId: string, hidden: boolean) =>
+    call<UnityProjectList>("set_unity_project_hidden", { projectId, hidden }),
+  linkUnityProjectAvatar: (projectId: string, avatarId: string, linked: boolean) =>
+    call<UnityProjectList>("link_unity_project_avatar", { projectId, avatarId, linked }),
+  /** プロジェクトと同じ版の Unity で開く。開いていれば起動しない。 */
+  openUnityProject: (projectId: string) => call<{ alreadyOpen: boolean }>("open_unity_project", { projectId }),
   routeStagedDownload: (path: string) => call<void>("route_staged_download", { path }),
   classificationFeedback: (scope: ClassificationFeedbackScope) =>
     call<string>("classification_feedback", { scope }),

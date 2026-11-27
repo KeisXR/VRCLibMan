@@ -948,6 +948,250 @@ pub fn unity_instances(
     Ok(crate::unity_import::running_instances())
 }
 
+/// Unity プロジェクトの一覧。ALCOM / VCC の一覧と、手で足した・結び付けたものを毎回読み直す。
+/// プロジェクトのフォルダは読むだけ。
+fn unity_project_list_blocking(
+    app: &AppHandle,
+) -> Result<crate::unity_projects::UnityProjectList, String> {
+    use crate::unity_projects as projects;
+    let (stored, links, selected) = {
+        let state = app.state::<AppState>();
+        let connection = db(&state)?;
+        (
+            db::stored_unity_projects(&connection)?,
+            db::unity_project_links(&connection)?,
+            db::unity_editor_path(&connection)?,
+        )
+    };
+    let os = crate::unity::Os::current();
+    let sources = projects::Sources::for_current_os();
+    let alcom_json = sources.alcom_settings.clone().and_then(|path| {
+        crate::library_files::wait_for(projects::READ_TIMEOUT, move || {
+            std::fs::read_to_string(path).ok()
+        })
+        .flatten()
+    });
+    let alcom = alcom_json.as_deref().map(projects::parse_user_projects);
+    let editors = crate::unity::status(&selected, &crate::unity::Sources::for_current_os(), os)
+        .editors;
+    let running = projects::running_projects();
+    let input = projects::ListInput {
+        alcom: alcom.as_deref(),
+        stored: &stored,
+        links: &links,
+        editors: &editors,
+        running: running.as_deref(),
+        os,
+    };
+    let found = projects::candidates(&input);
+    let paths: Vec<String> = found.iter().map(|(_, path, _)| path.clone()).collect();
+    let reads = projects::read_projects(&paths, projects::READ_TIMEOUT, projects::LIST_TIMEOUT);
+    Ok(projects::UnityProjectList {
+        projects: projects::build_list(&input, &found, &reads),
+        alcom_found: alcom.is_some(),
+        alcom_path: sources
+            .alcom_settings
+            .map(|path| path.display().to_string())
+            .unwrap_or_default(),
+    })
+}
+
+fn find_unity_project(
+    app: &AppHandle,
+    project_id: &str,
+) -> Result<crate::unity_projects::UnityProject, String> {
+    if !crate::unity_projects::valid_project_id(project_id) {
+        return Err("プロジェクトが見つかりません".into());
+    }
+    unity_project_list_blocking(app)?
+        .projects
+        .into_iter()
+        .find(|project| project.id == project_id)
+        .ok_or_else(|| "プロジェクトが見つかりません。一覧を読み直してください".into())
+}
+
+fn require_main(view: &tauri::Webview) -> Result<(), String> {
+    if view.label() != "main" {
+        return Err("この画面から Unity のプロジェクトは変更できません".into());
+    }
+    Ok(())
+}
+
+async fn unity_project_task<T: Send + 'static>(
+    app: AppHandle,
+    work: impl FnOnce(&AppHandle) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(move || work(&app))
+        .await
+        .map_err(|err| format!("Unity のプロジェクトを読めません: {err}"))?
+}
+
+#[tauri::command]
+pub async fn unity_projects(
+    app: AppHandle,
+) -> Result<crate::unity_projects::UnityProjectList, String> {
+    unity_project_task(app, unity_project_list_blocking).await
+}
+
+/// 商品を渡せそうなプロジェクト。対応アバターに結び付けたもの、ワールドの商品ならワールドのプロジェクト。
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn product_unity_projects(
+    app: AppHandle,
+    boothId: String,
+) -> Result<Vec<crate::unity_projects::UnityProject>, String> {
+    unity_project_task(app, move |app| {
+        let (avatars, world): (std::collections::HashSet<String>, bool) = {
+            let state = app.state::<AppState>();
+            let connection = db(&state)?;
+            (
+                db::product_avatar_ids(&connection, &boothId)?
+                    .into_iter()
+                    .collect(),
+                db::product_is_world(&connection, &boothId)?,
+            )
+        };
+        if avatars.is_empty() && !world {
+            return Ok(Vec::new());
+        }
+        Ok(crate::unity_projects::projects_for_product(
+            unity_project_list_blocking(app)?.projects,
+            &avatars,
+            world,
+        ))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn add_unity_project(
+    view: tauri::Webview,
+    app: AppHandle,
+    path: String,
+) -> Result<crate::unity_projects::UnityProjectList, String> {
+    require_main(&view)?;
+    unity_project_task(app, move |app| {
+        let os = crate::unity::Os::current();
+        let path = crate::unity_projects::validate_new_project(&path, os)?;
+        let id = crate::unity_projects::project_id(&path, os);
+        {
+            let state = app.state::<AppState>();
+            let connection = db(&state)?;
+            db::add_manual_unity_project(&connection, &id, &path)?;
+        }
+        unity_project_list_blocking(app)
+    })
+    .await
+}
+
+/// 手で足したもの・覚えているものを一覧から消す。ALCOM の一覧にあるものは隠すだけ。
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn remove_unity_project(
+    view: tauri::Webview,
+    app: AppHandle,
+    projectId: String,
+) -> Result<crate::unity_projects::UnityProjectList, String> {
+    require_main(&view)?;
+    unity_project_task(app, move |app| {
+        let project = find_unity_project(app, &projectId)?;
+        if project.source == "alcom" {
+            return Err("ALCOM の一覧にあるプロジェクトは、一覧から隠してください".into());
+        }
+        {
+            let state = app.state::<AppState>();
+            let connection = db(&state)?;
+            db::forget_unity_project(&connection, &project.id)?;
+        }
+        unity_project_list_blocking(app)
+    })
+    .await
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn set_unity_project_hidden(
+    view: tauri::Webview,
+    app: AppHandle,
+    projectId: String,
+    hidden: bool,
+) -> Result<crate::unity_projects::UnityProjectList, String> {
+    require_main(&view)?;
+    unity_project_task(app, move |app| {
+        let project = find_unity_project(app, &projectId)?;
+        {
+            let state = app.state::<AppState>();
+            let mut connection = db(&state)?;
+            db::set_unity_project_hidden(&mut connection, &project.id, &project.path, hidden)?;
+        }
+        unity_project_list_blocking(app)
+    })
+    .await
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn link_unity_project_avatar(
+    view: tauri::Webview,
+    app: AppHandle,
+    projectId: String,
+    avatarId: String,
+    linked: bool,
+) -> Result<crate::unity_projects::UnityProjectList, String> {
+    require_main(&view)?;
+    unity_project_task(app, move |app| {
+        let project = find_unity_project(app, &projectId)?;
+        {
+            let state = app.state::<AppState>();
+            let mut connection = db(&state)?;
+            db::link_unity_project_avatar(
+                &mut connection,
+                &project.id,
+                &project.path,
+                &avatarId,
+                linked,
+            )?;
+        }
+        unity_project_list_blocking(app)
+    })
+    .await
+}
+
+/// プロジェクトの版とちょうど同じ版の Unity で開く。開いていれば起動しない。
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn open_unity_project(
+    view: tauri::Webview,
+    app: AppHandle,
+    projectId: String,
+) -> Result<crate::unity_projects::OpenResult, String> {
+    require_main(&view)?;
+    unity_project_task(app, move |app| {
+        let project = find_unity_project(app, &projectId)?;
+        let selected = {
+            let state = app.state::<AppState>();
+            let connection = db(&state)?;
+            db::unity_editor_path(&connection)?
+        };
+        let os = crate::unity::Os::current();
+        let editors =
+            crate::unity::status(&selected, &crate::unity::Sources::for_current_os(), os).editors;
+        match crate::unity_projects::editor_for_open(&project, &editors)? {
+            None => Ok(crate::unity_projects::OpenResult { already_open: true }),
+            Some(editor) => {
+                crate::unity_projects::launch(
+                    std::path::Path::new(&editor.path),
+                    std::path::Path::new(&project.path),
+                )?;
+                Ok(crate::unity_projects::OpenResult {
+                    already_open: false,
+                })
+            }
+        }
+    })
+    .await
+}
+
 /// 取り出した Unity パッケージを先頭から順に開く。`mode` は "unity"（設定の既定 Unity で
 /// `-openfile`）か "system"（OS の関連付け）。"unity" で `target` があれば、選んだ Unity の窓へ直接渡す。
 /// Unity の起動を待つときは途中で止まり、残りは呼び直す。

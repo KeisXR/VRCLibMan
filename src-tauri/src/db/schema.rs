@@ -3,7 +3,7 @@ use super::*;
 
 /// The `user_version` of a library after every migration below has run. Raise it together with
 /// a new `if version < N` block in `migrate`; tests compare against this.
-pub(crate) const SCHEMA_VERSION: i64 = 15;
+pub(crate) const SCHEMA_VERSION: i64 = 16;
 
 pub(super) const SCHEMA: &str = "
 CREATE TABLE products (
@@ -364,6 +364,15 @@ pub(super) fn migrate(connection: &Connection) -> Result<(), String> {
         tx.execute_batch(crate::asset_updates::TABLES).sql()?;
         crate::asset_updates::move_legacy_watch(&tx)?;
         tx.execute_batch("PRAGMA user_version = 15;").sql()?;
+        tx.commit().sql()?;
+    }
+    // v16 is only the Unity projects the user added, hid, or linked to an avatar. Local paths,
+    // outside the sync export. The ALCOM list itself is read each time and never copied here.
+    if version < 16 {
+        let tx = connection.unchecked_transaction().sql()?;
+        tx.execute_batch(super::unity_projects::UNITY_PROJECT_TABLES)
+            .sql()?;
+        tx.execute_batch("PRAGMA user_version = 16;").sql()?;
         tx.commit().sql()?;
     }
     debug_assert_eq!(

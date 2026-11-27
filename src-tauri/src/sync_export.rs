@@ -617,6 +617,27 @@ mod tests {
     }
 
     #[test]
+    fn unity_projects_stay_on_this_pc() {
+        let mut connection = db::open_memory().unwrap();
+        connection
+            .execute_batch("INSERT INTO avatars (id, display_name) VALUES ('uproj-x', '見本X');")
+            .unwrap();
+        db::add_manual_unity_project(&connection, "00000000000000cc", "D:\\SecretProjects\\Plum")
+            .unwrap();
+        db::link_unity_project_avatar(
+            &mut connection,
+            "00000000000000cc",
+            "D:\\SecretProjects\\Plum",
+            "uproj-x",
+            true,
+        )
+        .unwrap();
+        let text = to_json(&build(&mut connection, "9.9.9").unwrap()).unwrap();
+        assert!(!text.contains("SecretProjects"));
+        assert!(!text.contains("00000000000000cc"));
+    }
+
+    #[test]
     fn export_of_empty_db() {
         let mut connection = db::open_memory().unwrap();
         let file = export(&mut connection);

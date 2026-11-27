@@ -5,13 +5,14 @@ import { openSettingsSection } from "../anchorScroll";
 import { api } from "../api";
 import { useModalFocus } from "../keyboard";
 import { formatBytes } from "../media";
-import type { PreparedUnityPackage, UnityInstance, UnityLaunchMode, UnityPackageList, UnityTarget } from "../types";
+import type { PreparedUnityPackage, UnityInstance, UnityLaunchMode, UnityPackageList, UnityProject, UnityTarget } from "../types";
 import { errorText } from "../ui";
 import {
   UNITY_MISSING,
   UNITY_NOT_SET,
   destinationFolder,
   isUnityLooseName,
+  isUnityNotRunning,
   launchedMessage,
   needsUnityTarget,
   onlyEntry,
@@ -27,6 +28,7 @@ type DialogState =
   | { step: "loose"; list: UnityPackageList; boothId: string | null; entries: string[]; mode: UnityLaunchMode; missing: boolean }
   | { step: "target"; list: UnityPackageList; boothId: string | null; entries: string[]; instances: UnityInstance[]; chosen: string | null }
   | { step: "working"; message: string }
+  | { step: "notRunning"; message: string; projects: UnityProject[] }
   | { step: "waiting"; prepared: PreparedUnityPackage[]; next: number; mode: UnityLaunchMode; target: UnityTarget | null };
 
 function targetOf(instance: UnityInstance): UnityTarget {
@@ -116,8 +118,20 @@ export function useUnityOpen({ notify, fail }: { notify: (message: string) => vo
         const prepared = await api.prepareUnityPackages(list.path, entries, boothId);
         await launchFrom(prepared, 0, mode, target, list.kind === "loose" ? list.destination : undefined);
       } catch (err) {
-        setDialog(null);
-        fail(errorText(err));
+        const message = errorText(err);
+        // Unity が起動していないとき、商品を入れられそうなプロジェクト（対応アバターに結び付けたもの、
+        // ワールドの商品ならワールドのプロジェクト）があれば、それを開く操作を出す。
+        // 開いたあとに自動では渡さない（起動に時間がかかり、いつ受け取れるかを外から確かめられないため）。
+        const projects =
+          boothId && isUnityNotRunning(message)
+            ? (await api.productUnityProjects(boothId).catch(() => [])).filter((project) => project.state === "ok")
+            : [];
+        if (projects.length > 0) {
+          setDialog({ step: "notRunning", message, projects });
+        } else {
+          setDialog(null);
+          fail(message);
+        }
       } finally {
         running.current = false;
       }
@@ -218,6 +232,18 @@ export function useUnityOpen({ notify, fail }: { notify: (message: string) => vo
         setDialog(null);
         openUnitySettings();
       }}
+      onOpenProject={(project) => {
+        setDialog(null);
+        void api.openUnityProject(project.id).then(
+          (result) =>
+            notify(
+              result.alreadyOpen
+                ? `${project.name} はすでに Unity で開いています。開き終えたら、もう一度「Unityで開く」を押してください`
+                : `${project.name} を Unity で開いています。開き終えたら、もう一度「Unityで開く」を押してください`,
+            ),
+          (err: unknown) => fail(errorText(err)),
+        );
+      }}
     />
   ) : null;
 
@@ -233,6 +259,7 @@ function UnityOpenDialog({
   onSendToTarget,
   onResume,
   onSettings,
+  onOpenProject,
 }: {
   state: DialogState;
   onClose: () => void;
@@ -242,6 +269,7 @@ function UnityOpenDialog({
   onSendToTarget: () => void;
   onResume: () => void;
   onSettings: () => void;
+  onOpenProject: (project: UnityProject) => void;
 }) {
   const panel = useRef<HTMLElement>(null);
   const working = state.step === "working";
@@ -270,6 +298,30 @@ function UnityOpenDialog({
       <>
         <h2 id="unity-open-title">Unity で開く</h2>
         <p className="meta" role="status">{state.message}…</p>
+      </>
+    );
+  } else if (state.step === "notRunning") {
+    body = (
+      <>
+        <h2 id="unity-open-title">Unity が起動していません</h2>
+        <p className="meta">
+          Unity でプロジェクトを開いてから渡します。この商品を入れられそうなプロジェクト（アバターに結び付けたもの、ワールドの商品ならワールドのプロジェクト）を、ここから開けます。開き終えたら、もう一度「Unityで開く」を押してください。
+        </p>
+        <ul className="file-list unity-open-list">
+          {state.projects.map((project) => (
+            <li key={project.id}>
+              <span className="download-name" title={project.path}>{project.name}</span>
+              <button className="button primary" type="button" onClick={() => onOpenProject(project)}>
+                {project.running === "open" ? "開いています" : "開く"}
+              </button>
+            </li>
+          ))}
+        </ul>
+        <div className="row-actions">
+          <button className="button" type="button" onClick={onClose}>
+            閉じる
+          </button>
+        </div>
       </>
     );
   } else if (state.step === "target") {

@@ -24,6 +24,7 @@ import {
 } from "../avatarHero";
 import { ExcludeProductButton } from "../components/ProductExclusions";
 import { UnityOpenButton } from "../components/UnityOpenDialog";
+import { AvatarUnityProjects } from "../components/UnityProjects";
 import { isUnityOpenableName } from "../unityOpen";
 import { copyWithConfirm } from "../remoteCopy";
 import { type FileCheckKind, fileCheckKind, fileCheckLabel, freeFilesResultMessage, purchasedFilesResultMessage } from "../freeFiles";
@@ -221,6 +222,7 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
           {primaryOwned ? <AvatarAssetsPanel item={primaryOwned} itemCardProps={itemCardProps} /> : null}
         </>
       )}
+      <AvatarUnityProjects avatarId={detail.id} />
       {(detail.aliases.length > 0 || detail.baseBodyNote) && (
         <details className="generic">
           <summary>アバターの情報</summary>

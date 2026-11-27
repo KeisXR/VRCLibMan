@@ -2952,3 +2952,55 @@ a.chip:hover { color: var(--text); }
 .product-edit-dialog .edit-main .card-title { max-height: 4em; overflow: auto; }
 
 .product-edit-dialog .picker label.picker-loose { color: var(--text-secondary); }
+
+/* Unity プロジェクト（docs/unity-projects.md） */
+.projects-page .page-head .button-row { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.projects-toolbar { margin-bottom: var(--space-4); }
+.projects-toolbar .search { flex: 1; min-width: 200px; }
+.project-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.project-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.project-row.hidden-project { opacity: 0.6; }
+.project-main { flex: 1 1 320px; min-width: 0; display: grid; gap: 4px; }
+.project-title { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+.project-title strong { font-size: 15px; overflow-wrap: anywhere; }
+.project-meta { margin: 0; }
+.project-avatars { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.project-avatar { display: inline-flex; gap: 2px; align-items: center; }
+.project-avatar a { color: inherit; }
+.chip-remove {
+  border: 0;
+  background: transparent;
+  color: var(--faint);
+  padding: 0 2px;
+  border-radius: var(--radius-sm);
+  line-height: 1;
+}
+.chip-remove:hover { color: var(--text); background: var(--hover); }
+.project-avatar-add, .avatar-project-add {
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--surface-secondary);
+  color: var(--text-secondary);
+  padding: 3px 8px;
+  font-size: 12px;
+  /* 長いプロジェクト名の候補で横にはみ出さない。 */
+  max-width: min(100%, 280px);
+  text-overflow: ellipsis;
+}
+.project-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.project-title .badge { margin-left: 0; }
+.badge.project-open { color: var(--good); }
+.projects-source { margin-top: var(--space-4); overflow-wrap: anywhere; }
+.avatar-projects { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin: 0 0 var(--space-4); }
+.avatar-projects-label { color: var(--text-secondary); font-size: 13px; }
+.avatar-project { display: inline-flex; gap: 6px; align-items: center; }

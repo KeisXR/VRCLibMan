@@ -8,6 +8,7 @@ import { ClassificationLogPage } from "./pages/ClassificationLogPage";
 import { AssetUpdateLogPage } from "./pages/AssetUpdateLogPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { WorldsPage } from "./pages/WorldsPage";
+import { ProjectsPage } from "./pages/ProjectsPage";
 import { AssetsPage } from "./pages/AssetsPage";
 import { SearchPage } from "./pages/SearchPage";
 import { PurchasesPage } from "./pages/PurchasesPage";
@@ -55,7 +56,7 @@ import { noticeAction, useBanners } from "./useBanners";
 
 export type { NoticeAction, NotifyOptions } from "./notice";
 
-type Page = "avatars" | "avatar" | "assets" | "worlds" | "search" | "purchases" | "classification-log" | "asset-update-log" | "import" | "settings";
+type Page = "avatars" | "avatar" | "assets" | "worlds" | "projects" | "search" | "purchases" | "classification-log" | "asset-update-log" | "import" | "settings";
 
 interface Route {
   page: Page;
@@ -130,7 +131,7 @@ function parseRoute(hash: string): Route {
   }
   // The former browser page was merged into import and settings; keep old links working.
   if (parts[0] === "browser") return { page: "import" };
-  if (parts[0] === "search" || parts[0] === "import" || parts[0] === "settings") {
+  if (parts[0] === "search" || parts[0] === "import" || parts[0] === "settings" || parts[0] === "projects") {
     return { page: parts[0] };
   }
   return { page: "avatars" };
@@ -334,7 +335,7 @@ export default function App() {
   const density =
     route.page === "settings"
       ? "density-roomy"
-      : route.page === "avatars" || route.page === "avatar" || route.page === "assets" || route.page === "worlds" || route.page === "search" || route.page === "purchases" || route.page === "classification-log" || route.page === "asset-update-log"
+      : route.page === "avatars" || route.page === "avatar" || route.page === "assets" || route.page === "worlds" || route.page === "projects" || route.page === "search" || route.page === "purchases" || route.page === "classification-log" || route.page === "asset-update-log"
         ? "density-compact"
         : "";
   const browseKind = route.page === "assets" ? "asset" : route.page === "worlds" ? "world" : null;
@@ -351,6 +352,7 @@ export default function App() {
     { href: "#/", label: "アバター", icon: "avatars", active: route.page === "avatars" || route.page === "avatar", count: stats?.ownedAvatars ?? 0 },
     { href: "#/assets", label: "アセット", icon: "assets", active: route.page === "assets" },
     { href: "#/worlds", label: "ワールド", icon: "worlds", active: route.page === "worlds" },
+    { href: "#/projects", label: "プロジェクト", icon: "projects", active: route.page === "projects" },
     { href: "#/search", label: "検索", icon: "search", active: route.page === "search" },
     { href: "#/purchases", label: "購入履歴", icon: "purchases", active: route.page === "purchases" },
     { href: pendingAssetUpdates > 0 ? "#/asset-update-log" : "#/classification-log", label: "ログ", icon: "log", active: route.page === "classification-log" || route.page === "asset-update-log" },
@@ -370,6 +372,7 @@ export default function App() {
         )}
         {route.page === "assets" && <AssetsPage />}
         {route.page === "worlds" && <WorldsPage />}
+        {route.page === "projects" && <ProjectsPage />}
         {route.page === "search" && <SearchPage />}
         {route.page === "purchases" && <PurchasesPage view={route.purchaseView ?? "history"} group={route.purchaseGroup} />}
         {(route.page === "classification-log" || route.page === "asset-update-log") && <nav className="tabs" aria-label="記録の種類">
