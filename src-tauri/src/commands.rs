@@ -1465,7 +1465,8 @@ fn instance_project(
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PackageNeedView {
-    /// "vpm"（ALCOM で足すパッケージ）か "product"（ライブラリのほかの商品）。
+    /// "vpm"（ALCOM で足すパッケージ）、"vpmVersion"（入っているが、入っている版にそのファイルが無い）、
+    /// "product"（ライブラリのほかの商品）。
     pub kind: &'static str,
     /// 見せる名前。VPM パッケージは `displayName`（無ければ名前そのもの）、商品は題。
     pub name: String,
@@ -1503,14 +1504,34 @@ pub struct PackageCheckView {
 /// Worlds SDK を足すよう案内してしまうため）。
 const PROJECT_KIND_PACKAGES: &[&str] = &["com.vrchat.avatars", "com.vrchat.worlds"];
 
-/// プロジェクトにその VPM パッケージがあるか。`vpm-manifest.json` か `Packages/<名前>/` で見る（いまの状態）。
+/// `Packages/manifest.json` の `dependencies` にその名前があるか。Unity の Package Manager で入れた
+/// パッケージ（git の URL など）は `vpm-manifest.json` にも `Packages/<名前>/` にも無い。
+fn upm_manifest_lists(json: &str, name: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(json.trim_start_matches('\u{feff}'))
+        .ok()
+        .and_then(|value| {
+            value
+                .get("dependencies")
+                .and_then(|dependencies| dependencies.as_object())
+                .map(|dependencies| dependencies.contains_key(name))
+        })
+        .unwrap_or(false)
+}
+
+/// プロジェクトにそのパッケージがあるか。`vpm-manifest.json`、`Packages/<名前>/`、`Packages/manifest.json` で
+/// 見る（いまの状態）。どれかにあれば「無いもの」に並べない。
 fn project_has_vpm(project: &crate::unity_projects::UnityProject, name: &str) -> bool {
-    project.packages.iter().any(|package| package.name == name)
-        || (crate::unity_index_store::vpm_folder_name(name)
-            && std::path::Path::new(&project.path)
-                .join("Packages")
-                .join(name)
-                .is_dir())
+    if project.packages.iter().any(|package| package.name == name) {
+        return true;
+    }
+    if !crate::unity_index_store::vpm_folder_name(name) {
+        return false;
+    }
+    let packages = std::path::Path::new(&project.path).join("Packages");
+    packages.join(name).is_dir()
+        || std::fs::read_to_string(packages.join("manifest.json"))
+            .map(|json| upm_manifest_lists(&json, name))
+            .unwrap_or(false)
 }
 
 /// 「このプロジェクトに無いもの」に VPM パッケージを並べるか。
@@ -1548,11 +1569,17 @@ pub async fn unity_package_check(
                         }),
                     None => false,
                 };
+                let project_vpm: Vec<(String, String)> = project
+                    .packages
+                    .iter()
+                    .map(|package| (package.name.clone(), package.version.clone()))
+                    .collect();
                 let needs = crate::unity_index_store::package_needs(
                     connection,
                     &project.id,
                     &source,
                     &entries,
+                    &project_vpm,
                 )?
                 .unwrap_or_default();
                 let bundled =
@@ -1585,6 +1612,14 @@ pub async fn unity_package_check(
                         package: Some(name),
                         booth_id: None,
                     }),
+                crate::unity_index_store::NeedOwner::VpmLacking(name) => {
+                    (!PROJECT_KIND_PACKAGES.contains(&name.as_str())).then(|| PackageNeedView {
+                        kind: "vpmVersion",
+                        name: display(&name),
+                        package: Some(name),
+                        booth_id: None,
+                    })
+                }
                 // 除外した・ライブラリに無い商品は言わない。
                 crate::unity_index_store::NeedOwner::Product(booth) => {
                     if boothId.as_deref() == Some(booth.as_str()) {
@@ -3489,6 +3524,16 @@ mod package_check_tests {
         // フォルダ名として歩けない名前は Packages を見ない。
         assert!(reportable_vpm(&p, "../Assets"));
         assert!(reportable_vpm(&p, "com.vrchat.base"));
+        // Unity の Package Manager で入れたもの（Packages/manifest.json）も、あるとする。
+        assert!(reportable_vpm(&p, "net.ureishi.qvpen"));
+        std::fs::write(
+            dir.path().join("Packages").join("manifest.json"),
+            "\u{feff}{\"dependencies\":{\"net.ureishi.qvpen\":\"https://example.invalid/qvpen.git\"}}",
+        )
+        .unwrap();
+        assert!(!reportable_vpm(&p, "net.ureishi.qvpen"));
+        assert!(reportable_vpm(&p, "com.vrchat.base"));
+        assert!(!upm_manifest_lists("broken", "a.b"));
     }
 }
 

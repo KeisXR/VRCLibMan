@@ -248,10 +248,11 @@ test("missing packages and VPM names read as the dialog and the detail page show
         { kind: "vpm", name: "lilToon", package: "jp.lilxyzw.liltoon" },
         { kind: "product", name: "見本の本体", boothId: "1" },
         { kind: "vpm", name: "Modular Avatar", package: "nadena.dev.modular-avatar" },
+        { kind: "vpmVersion", name: "VRCFury", package: "com.vrcfury.vrcfury" },
       ]),
-      { packages: "lilToon、Modular Avatar", products: "「見本の本体」" },
+      { packages: "lilToon、Modular Avatar", versions: "VRCFury", products: "「見本の本体」" },
     );
-    assert.deepEqual(open.missingNeedsText([]), { packages: "", products: "" });
+    assert.deepEqual(open.missingNeedsText([]), { packages: "", versions: "", products: "" });
     assert.equal(projects.vpmPackageLabel("jp.lilxyzw.liltoon", { "jp.lilxyzw.liltoon": "lilToon" }), "lilToon（jp.lilxyzw.liltoon）");
     assert.equal(projects.vpmPackageLabel("com.example.tool", {}), "com.example.tool");
     assert.equal(projects.vpmPackageLabel("com.example.tool", undefined), "com.example.tool");

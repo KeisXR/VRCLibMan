@@ -1038,8 +1038,8 @@ export interface ProductInstallPlace {
 
 /** 渡す先のプロジェクトに足りないもの（Rust の `PackageNeedView`、段階 3） */
 export interface PackageNeed {
-  /** "vpm" は ALCOM で足すパッケージ、"product" はライブラリのほかの商品 */
-  kind: "vpm" | "product";
+  /** "vpm" は ALCOM で足すパッケージ、"vpmVersion" は入っているが入っている版にそのファイルが無い、"product" はライブラリのほかの商品 */
+  kind: "vpm" | "vpmVersion" | "product";
   /** 見せる名前（VPM は displayName、商品は題） */
   name: string;
   /** VPM パッケージの名前（jp.lilxyzw.liltoon） */

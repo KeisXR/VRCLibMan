@@ -152,7 +152,7 @@ pub(crate) fn refresh_index(
     // 進捗は、読むファイルがあるときだけ出す（最初の 1 件を読む前に作る）。
     // 届かないファイル（切れた共有）は `store::refresh` が読まず、索引からも消さない。
     let progress: std::cell::RefCell<Option<ProgressGuard>> = std::cell::RefCell::new(None);
-    let read = store::refresh(
+    let counted = store::refresh_counted(
         connection,
         &sources,
         |done, total| {
@@ -172,16 +172,17 @@ pub(crate) fn refresh_index(
         || busy(app),
     );
     if let Some(progress) = progress.borrow().as_ref() {
-        match &read {
-            Ok(count) => progress.done_with(
+        match &counted {
+            Ok((count, _)) => progress.done_with(
                 *count as u32,
                 format!("Unity パッケージ {count} 件を調べました"),
             ),
             Err(error) => progress.fail(error.clone()),
         }
     }
-    let read = read?;
-    if read > 0 {
+    let (read, removed) = counted?;
+    // 消しただけでも、前に調べた結果は古くなっている（開いている画面に読み直させる）。
+    if read > 0 || removed > 0 {
         let _ = app.emit(CHANGED_EVENT, ());
     }
     Ok(read)

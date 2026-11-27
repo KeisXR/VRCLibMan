@@ -105,10 +105,14 @@ export function isUnityNotRunning(message: string): boolean {
  * 渡す先に足りないもの（段階 3）を文にする部品。VPM パッケージは名前を「、」でつなぎ、
  * ライブラリの商品は題を「」で囲む。どちらも無ければ空文字。
  */
-export function missingNeedsText(needs: readonly PackageNeed[]): { packages: string; products: string } {
+export function missingNeedsText(needs: readonly PackageNeed[]): { packages: string; versions: string; products: string } {
   return {
     packages: needs
       .filter((need) => need.kind === "vpm")
+      .map((need) => need.name)
+      .join("、"),
+    versions: needs
+      .filter((need) => need.kind === "vpmVersion")
       .map((need) => need.name)
       .join("、"),
     products: needs

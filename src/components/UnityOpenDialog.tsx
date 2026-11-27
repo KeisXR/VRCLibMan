@@ -364,6 +364,11 @@ function UnityOpenDialog({
             このプロジェクトに無いもの: {needs.packages}。無いまま取り込むと、マテリアルがピンク色になったり、コンポーネントが「Missing」になったりします。ALCOM で追加してから取り込んでください。
           </p>
         )}
+        {needs.versions && (
+          <p className="note note-strong unity-open-needs">
+            このプロジェクトの {needs.versions} には、このパッケージが使っているファイルがありません。入っている版が違う可能性があります。ALCOM で版を確かめてください。
+          </p>
+        )}
         {needs.products && (
           <p className="note note-strong unity-open-needs">
             {needs.products} のファイルを使っています。このプロジェクトには入っていないので、先に取り込んでください。

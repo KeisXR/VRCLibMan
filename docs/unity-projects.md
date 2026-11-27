@@ -199,9 +199,9 @@ unitypackage は gzip した tar で、中は `<GUID>/asset`・`<GUID>/asset.met
 | `package_refs` | asset の本文が指していた、パッケージの外の GUID（段階 3） |
 | `project_packages` | プロジェクトとパッケージごとの、固有のファイルの数と一致数、いちばん多くを持つ VPM パッケージとその数、全体の一致数、編集されにくい種類の一致数と大きさの一致数 |
 | `project_scans` | 調べた日時・最後まで歩けたか・古いか・歩いた `.meta` の数 |
-| `guid_owners` | 歩いた VPM パッケージの GUID と、その持ち主の名前 |
+| `guid_owners` | 歩いた VPM パッケージの GUID と、その持ち主の名前と版（索引の版 3 から。版が変わるとファイルが増えたり無くなったりするため） |
 | `vpm_scans` | 歩き終えた VPM パッケージの名前と版、`package.json` の `displayName` |
-| `project_missing_refs` | プロジェクトとパッケージごとの、外への参照のうち `Assets` に無かった GUID（段階 3、索引の版 2）。持ち主は見せるときに引く |
+| `project_found_refs` | プロジェクトとパッケージごとの、外への参照のうち `Assets` に**あった** GUID（段階 3）。無かったものは `package_refs` からこれを引く。あったものは少なく、無かったものを残すと行が増えすぎるため。持ち主は見せるときに引く |
 
 新しく読んだ・消したパッケージがあれば、調べた結果を古いとする（`mark_index_changed`）。`guid_owners` と `vpm_scans` はそのまま残す。ライブラリの登録から消えたファイルの行は、次の更新で消す。
 
@@ -300,12 +300,14 @@ GUID は版が変わっても同じなので、GUID だけでは「どの版か�
 
 ### 判定
 
-プロジェクトを調べるとき（`unity_index_store::scan_project`）に、ライブラリのパッケージごとに、外への参照のうち**そのプロジェクトの `Assets` に無い GUID** を `project_missing_refs` に残す。持ち主は「Unityで開く」で確かめるとき（`package_needs`）に引く。あとで別のプロジェクトを調べて持ち主が分かったときも、調べ直さずに言えるため。
+プロジェクトを調べるとき（`unity_index_store::scan_project`）に、ライブラリのパッケージごとに、外への参照のうち**そのプロジェクトの `Assets` にあった GUID** を `project_found_refs` に残す（無かったものは `package_refs` との差）。持ち主は「Unityで開く」で確かめるとき（`package_needs`）に引く。あとで別のプロジェクトを調べて持ち主が分かったときも、調べ直さずに言えるため。
 
-- 持ち主が VPM パッケージ（`guid_owners`）→ 入っているかは、見せるときのプロジェクトの `vpm-manifest.json`（`locked`、無ければ `dependencies`）か `Packages/<名前>/` で決める（`commands::project_has_vpm`）。ALCOM で足したあと、調べ直さずに消えるようにするため。
+- 持ち主が VPM パッケージ（`guid_owners`。版ごとに覚える）→ プロジェクトにそのパッケージが入っていて、入っている版を最後まで歩いたところそのファイルが無ければ、「このプロジェクトの <名前> には、このパッケージが使っているファイルがありません。入っている版が違う可能性があります」と出す（必要な版は言わない。歩いていない版については言わない）。同じファイルを 2 つ以上のパッケージが持つときは、プロジェクトに入っているものを先に見る。入っていなければ、入っているかは、見せるときのプロジェクトの `vpm-manifest.json`（`locked`、無ければ `dependencies`）、`Packages/<名前>/`、`Packages/manifest.json` の `dependencies`（Unity の Package Manager で入れたもの）のどれかで決める（`commands::project_has_vpm`）。ALCOM で足したあと、調べ直さずに消えるようにするため。
 - 持ち主がライブラリのほかの商品（その GUID を `asset` として持つ商品が 1 つだけ）→ その商品のファイルがこのプロジェクトに無いので、足りない。同じ商品のほかのパッケージ（共通パッケージ・別バリエーション）にもある GUID と、2 つ以上の商品にまたがる GUID は言わない。VPM の持ち主がまだ分からない同梱版（lilToon の古い unitypackage など）は、それを同梱した商品として言い、どこかのプロジェクトで持ち主が分かれば VPM パッケージとして言う。
 - 持ち主の分からない参照は数えない。Unity に標準で入っているもの（`0000000000000000f000000000000000` などの形、`is_builtin_guid`）は読み取りの時点で捨てている。
 - 調べていない・古い（索引が変わった、パッケージを渡した）・途中までしか歩けなかったプロジェクトについては言わない（`package_needs` が `None`）。
+- 段階 2 の判定（同梱版と固有のファイル）でも、持ち主はそのプロジェクトに入っている版のものだけを使う。
+- 索引から消しただけ（ライブラリの登録から無くなったファイル）でも、索引が変わった知らせ（`unity-index-changed`）を送る。開いている画面が古い結果を出し続けないため。
 - **プロジェクトの種類を決める VRChat SDK（`com.vrchat.avatars`・`com.vrchat.worlds`）は並べない**（`PROJECT_KIND_PACKAGES`）。足すものではなく、実データで古いアバター用の商品が Worlds SDK の DLL を 1 つだけ指していた。並べるとアバターのプロジェクトに Worlds SDK を足すよう案内してしまう。`com.vrchat.base` は並べる（VRChat のプロジェクトには必ずあるので、出るのは VRChat 以外のプロジェクトだけ）。
 
 言えるのは**有るか無いか**だけ。必要な版（lilToon 1.8 以上、など）は中身から分からないので言わない。
@@ -446,7 +448,7 @@ Unity の中に VRCLibMan の窓を出し、いま開いているプロジェク
 **段階 3**（2026-11-27 に実装。実データで参照の持ち主を確かめてから作った）
 
 1. `real_reference_owners` で、実際のライブラリと全プロジェクトの参照の持ち主を数える。
-2. `project_missing_refs`（索引の版 2）、`package_needs`・`bundled_packages`・`vpm_display_names` とテスト。
+2. `project_found_refs`（索引の版 3）、`package_needs`・`bundled_packages`・`vpm_display_names` とテスト。
 3. `unity_package_check`（`unity_install_check` を置き換え）と、「Unityで開く」の確かめの箱。
 4. プロジェクトの詳細の「入っているパッケージ」、見本、検証記録、AGENTS.md。
 
