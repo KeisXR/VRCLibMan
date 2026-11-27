@@ -1416,12 +1416,7 @@ pub async fn launch_unity_packages(
         if let (Ok(launched), Some(project)) = (&result, receiver)
             && launched.launched > 0
         {
-            let marked = crate::unity_index_jobs::read(&app, |connection| {
-                crate::unity_index_store::mark_project_stale(connection, &project.id)
-            });
-            if marked.is_ok() {
-                let _ = app.emit(crate::unity_index_jobs::CHANGED_EVENT, ());
-            }
+            crate::unity_index_jobs::mark_project_stale(&app, project.id);
         }
         result
     })
@@ -1511,8 +1506,8 @@ pub(crate) fn project_suggestions(
     let contents = crate::unity_index_jobs::read(app, |connection| {
         crate::unity_index_store::project_contents(connection, &project.id)
     })?;
-    // 調べていない・古い結果からは候補を出さない（入っていないと言わない）。
-    if contents.scanned_at.is_none() || contents.stale {
+    // 調べていない・古い・途中までしか歩けなかった結果からは候補を出さない（入っていないと言わない）。
+    if !crate::unity_index_store::absence_known(&contents) {
         return Ok(ProjectSuggestions {
             scanned: false,
             items: Vec::new(),

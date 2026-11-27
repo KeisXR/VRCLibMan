@@ -113,7 +113,8 @@ export function markProjectId(linked: UnityProject[], current: string | null): s
 
 /** 入っているアバター本体のうち、プロジェクトにまだ結び付けていないもの（結び付けの候補）。 */
 export function bodySuggestions(contents: ProjectContents | null, project: UnityProject | null): ProjectProduct[] {
-  if (!contents || !project) return [];
+  // 古い結果からは言わない（調べ直すまで何も言わない）。
+  if (!contents || !project || contents.scannedAt == null || contents.stale) return [];
   const linked = new Set(project.avatars.map((avatar) => avatar.id));
   return contents.products.filter(
     (product) =>

@@ -173,7 +173,12 @@ export function ProjectDetailPage({ id }: { id: string }) {
         ) : null,
       )}
 
-      {sections && contents?.scannedAt != null && (
+      {contents?.scannedAt != null && contents.stale && !scanning && (
+        <p className="note">前に調べたあとにライブラリが変わったか、このプロジェクトに Unity パッケージを渡しました。古い結果は出さないので、「調べ直す」を押してください。</p>
+      )}
+
+      {/* 古い結果からは何も言わない（入っている・入っていないのどちらも）。調べ直すと出る。 */}
+      {sections && contents?.scannedAt != null && !contents.stale && (
         <>
           <ProductSection title="入っている商品" products={sections.installed} empty="ライブラリの商品で、このプロジェクトに入っていると分かったものはありません。" />
           {suggestions.length > 0 && (

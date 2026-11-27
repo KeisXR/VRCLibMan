@@ -254,6 +254,29 @@ pub(crate) fn scan_project(
     Ok(contents)
 }
 
+/// そのプロジェクトへパッケージを渡したので、前に調べた結果を古いとする。索引を書くほかの仕事と同じく
+/// `PASS` を取ってから書く。調べている最中なら調べ終えてから書くので、調べ終わりの書き込みで「古い」が
+/// 消えない。調べ終わるまで「Unityで開く」を待たせないよう、別のスレッドで行う。
+pub(crate) fn mark_project_stale(app: &AppHandle, project_id: String) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let _pass = store::PASS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let marked = index_path(&app)
+            .and_then(|path| store::open(&path))
+            .and_then(|connection| store::mark_project_stale(&connection, &project_id));
+        match marked {
+            Ok(()) => {
+                let _ = app.emit(CHANGED_EVENT, ());
+            }
+            Err(error) => {
+                eprintln!("[unity-index] 渡したプロジェクトの結果を古いとできません: {error}")
+            }
+        }
+    });
+}
+
 /// 前に調べた結果を読む。索引が無ければ空。
 pub(crate) fn read<T>(
     app: &AppHandle,

@@ -186,6 +186,8 @@ test("badges follow one linked project, and installed avatar bodies suggest a li
     // プラムは結び付け済み、ライムはまだ。
     assert.deepEqual(bodySuggestions(contents, project()).map((item) => item.boothId), ["6"]);
     assert.deepEqual(bodySuggestions(null, project()), []);
+    // 古い結果からは言わない。
+    assert.deepEqual(bodySuggestions({ ...contents, stale: true }, project()), []);
   });
 });
 
