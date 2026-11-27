@@ -382,7 +382,7 @@ pub fn run() {
             commands::scan_unity_project,
             commands::unity_project_contents,
             commands::product_unity_installs,
-            commands::unity_install_check,
+            commands::unity_package_check,
             commands::unity_project_suggestions,
             commands::list_staged_downloads,
             commands::route_staged_download,

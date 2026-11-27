@@ -74,6 +74,7 @@ import type {
   UnityProject,
   UnityProjectList,
   ProjectContents,
+  PackageCheck,
   ProductInstallPlace,
   ProjectSuggestions,
 } from "./types";
@@ -404,9 +405,12 @@ export const api = {
   unityProjectContents: (projectId: string) => call<ProjectContents>("unity_project_contents", { projectId }),
   /** 商品が入っていると分かったプロジェクト（調べたものだけ）。 */
   productUnityInstalls: (boothId: string) => call<ProductInstallPlace[]>("product_unity_installs", { boothId }),
-  /** 「Unityで開く」の前の確かめ。渡す先のプロジェクトにもう入っていると分かっていれば返す。 */
-  unityInstallCheck: (boothId: string, target: UnityTarget | null) =>
-    call<ProductInstallPlace | null>("unity_install_check", { boothId, target }),
+  /**
+   * 「Unityで開く」の前の確かめ。渡す先のプロジェクトが決まるとき、もう入っているか、足りないもの、
+   * 要らない同梱版を返す。言うことが無い・渡す先が決まらないときは null。
+   */
+  unityPackageCheck: (path: string, entries: string[], boothId: string | null, target: UnityTarget | null) =>
+    call<PackageCheck | null>("unity_package_check", { path, entries, boothId, target }),
   /** 結び付けたアバターに対応していて、プロジェクトに入っていないと分かった商品。 */
   unityProjectSuggestions: (projectId: string) =>
     call<ProjectSuggestions>("unity_project_suggestions", { projectId }),

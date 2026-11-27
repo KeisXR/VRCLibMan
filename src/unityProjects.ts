@@ -128,3 +128,9 @@ export function linkableProjects(projects: UnityProject[], avatarId: string): Un
     (project) => !project.hidden && project.kind !== "world" && !project.avatars.some((avatar) => avatar.id === avatarId),
   );
 }
+
+/** VPM パッケージの見せ方。読みやすい名前を知っていれば「lilToon（jp.lilxyzw.liltoon）」、知らなければ名前そのもの。 */
+export function vpmPackageLabel(name: string, names: Record<string, string> | undefined): string {
+  const display = names?.[name]?.trim();
+  return display && display !== name ? `${display}（${name}）` : name;
+}

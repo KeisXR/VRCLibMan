@@ -50,6 +50,9 @@ const SAMPLE_MISSING: Record<string, string[]> = {
   a1b2c3d4e5f60001: ["8800130"],
 };
 
+/** 見本の段階 3: Plum-Main に渡すとき Avatar Optimizer が無いと出す商品。 */
+const SAMPLE_NEEDS: string[] = ["8800130"];
+
 /** 見本の「調べた結果」。プロジェクトごとに（商品 ID、判定、パッケージ）。 */
 type SampleRow = [string, InstallVerdict, Omit<PackageInstall, "sourcePath">[]];
 const pkg = (name: string, verdict: InstallVerdict, matched: number, total: number, extra: Partial<PackageInstall> = {}) => ({
@@ -73,14 +76,24 @@ const SAMPLE_CONTENTS: Record<string, SampleRow[]> = {
 /** 調べた日時。調べるまで無い（見本では Plum-Main だけ調べ済み）。 */
 const scannedAt: Record<string, number> = { a1b2c3d4e5f60001: NOW - 1800 };
 
+/** 見本の VPM パッケージの読みやすい名前（どこかのプロジェクトで歩いたもの）。 */
+const PACKAGE_NAMES: Record<string, string> = {
+  "com.vrchat.avatars": "VRChat SDK - Avatars",
+  "com.vrchat.base": "VRChat SDK - Base",
+  "com.vrchat.worlds": "VRChat SDK - Worlds",
+  "jp.lilxyzw.liltoon": "lilToon",
+  "nadena.dev.modular-avatar": "Modular Avatar",
+};
+
 function contents(projectId: string, context: PreviewProjectContext): ProjectContents {
   const at = scannedAt[projectId];
-  if (at === undefined) return { scannedAt: null, complete: false, stale: false, products: [] };
+  if (at === undefined) return { scannedAt: null, complete: false, stale: false, products: [], packageNames: PACKAGE_NAMES };
   const rows = SAMPLE_CONTENTS[projectId] ?? [];
   return {
     scannedAt: at,
     complete: true,
     stale: false,
+    packageNames: PACKAGE_NAMES,
     products: rows.flatMap(([boothId, verdict, packages]) => {
       const product = context.productRef?.(boothId);
       if (!product) return [];
@@ -207,13 +220,23 @@ export function previewUnityProjectDispatch(
         .filter((item): item is ItemView => item !== undefined);
       return { value: { scanned: true, items } };
     }
-    case "unity_install_check": {
-      // 見本: 開いているのは Plum-Main（渡す先が決まるとき）。そこに入っている商品だけを返す。
+    case "unity_package_check": {
+      // 見本: 開いているのは Plum-Main（渡す先が決まるとき）。そこに入っている商品は「入っています」、
+      // SAMPLE_NEEDS の商品は Avatar Optimizer が無い、名前に lilToon を含むパッケージは同梱版とする。
       const boothId = String(args.boothId ?? "");
+      const entries = Array.isArray(args.entries) ? args.entries.map(String) : [];
       const plum = projects.find((item) => item.id === "a1b2c3d4e5f60001");
+      if (!plum || plum.running !== "open") return { value: null };
       const row = (SAMPLE_CONTENTS.a1b2c3d4e5f60001 ?? []).find(([id]) => id === boothId);
-      if (!plum || plum.running !== "open" || !row || row[1] !== "installed") return { value: null };
-      return { value: { projectId: plum.id, name: plum.name, verdict: "installed" } };
+      const installed = Boolean(row && row[1] === "installed");
+      const missing = SAMPLE_NEEDS.includes(boothId)
+        ? [{ kind: "vpm" as const, name: "AAO: Avatar Optimizer", package: "com.anatawa12.avatar-optimizer" }]
+        : [];
+      const bundled = entries
+        .filter((entry) => /liltoon/i.test(entry))
+        .map((entry) => ({ entry, name: "lilToon" }));
+      if (!installed && missing.length === 0 && bundled.length === 0) return { value: null };
+      return { value: { projectId: plum.id, projectName: plum.name, installed, missing, bundled } };
     }
     case "open_unity_project": {
       const project = find(args.projectId);

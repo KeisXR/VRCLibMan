@@ -1026,12 +1026,36 @@ export interface ProjectContents {
   /** 調べたあとに索引が変わった */
   stale: boolean;
   products: ProjectProduct[];
+  /** 歩いた VPM パッケージの読みやすい名前（jp.lilxyzw.liltoon → lilToon） */
+  packageNames: Record<string, string>;
 }
 
 export interface ProductInstallPlace {
   projectId: string;
   name: string;
   verdict: InstallVerdict;
+}
+
+/** 渡す先のプロジェクトに足りないもの（Rust の `PackageNeedView`、段階 3） */
+export interface PackageNeed {
+  /** "vpm" は ALCOM で足すパッケージ、"product" はライブラリのほかの商品 */
+  kind: "vpm" | "product";
+  /** 見せる名前（VPM は displayName、商品は題） */
+  name: string;
+  /** VPM パッケージの名前（jp.lilxyzw.liltoon） */
+  package?: string;
+  boothId?: string;
+}
+
+/** 「Unityで開く」の前の確かめ（Rust の `unity_package_check`）。言うことが無ければ null */
+export interface PackageCheck {
+  projectId: string;
+  projectName: string;
+  /** その商品がもう入っている（前に調べた結果） */
+  installed: boolean;
+  missing: PackageNeed[];
+  /** 選んだもののうち、渡す先に同じ VPM パッケージが入っている同梱版 */
+  bundled: { entry: string; name: string }[];
 }
 
 /** プロジェクトの「まだ入っていない対応アセット」（Rust の `project_suggestions`） */

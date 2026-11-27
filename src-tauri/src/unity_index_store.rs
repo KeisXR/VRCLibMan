@@ -19,7 +19,8 @@ use std::time::{Duration, Instant, SystemTime};
 
 pub(crate) const FILE_NAME: &str = "unity-index.sqlite";
 /// 表の形を変えたら上げる。合わない索引は消して作り直す。
-pub(crate) const INDEX_VERSION: i64 = 1;
+/// 2: 段階 3 の `project_missing_refs` を足した。
+pub(crate) const INDEX_VERSION: i64 = 2;
 /// 共有のファイルの大きさを確かめる時間の上限。
 const STAT_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -80,6 +81,12 @@ CREATE TABLE IF NOT EXISTS vpm_scans (
     version TEXT NOT NULL,
     display_name TEXT,
     PRIMARY KEY (package_name, version)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS project_missing_refs (
+    project_id TEXT NOT NULL,
+    package_id INTEGER NOT NULL REFERENCES packages(id) ON DELETE CASCADE,
+    guid BLOB NOT NULL,
+    PRIMARY KEY (project_id, package_id, guid)
 ) WITHOUT ROWID;
 ";
 
@@ -303,7 +310,7 @@ pub(crate) fn refresh(
 }
 
 /// VPM パッケージの名前として歩いてよい形（`jp.lilxyzw.liltoon` など）。
-fn vpm_folder_name(name: &str) -> bool {
+pub(crate) fn vpm_folder_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 214
         && !name.starts_with('.')
@@ -434,6 +441,23 @@ pub(crate) fn scan_project(
         }
         map
     };
+    // 段階 3: パッケージの外への参照。
+    let refs: HashMap<i64, Vec<Guid>> = {
+        let mut statement = sql(connection.prepare("SELECT package_id, guid FROM package_refs"))?;
+        let rows = sql(statement.query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
+        }))?;
+        let mut map: HashMap<i64, Vec<Guid>> = HashMap::new();
+        for row in rows {
+            let (package_id, guid) = sql(row)?;
+            if let Ok(guid) = <Guid>::try_from(guid.as_slice())
+                && package_booth.contains_key(&package_id)
+            {
+                map.entry(package_id).or_default().push(guid);
+            }
+        }
+        map
+    };
 
     // プロジェクトの Assets を歩く。
     let scan = unity_index::scan_metas(
@@ -488,11 +512,31 @@ pub(crate) fn scan_project(
         }
     }
 
+    // 段階 3: パッケージの外への参照のうち、このプロジェクトの Assets に無いものを残す。持ち主は見せるときに
+    // 引く（`package_needs`）。あとで別のプロジェクトを調べて持ち主が分かったときも、調べ直さずに言えるため。
+    let missing_refs: Vec<(i64, &Guid)> = refs
+        .iter()
+        .flat_map(|(package_id, guids)| guids.iter().map(move |guid| (*package_id, guid)))
+        .filter(|(_, guid)| !scan.found.contains_key(*guid))
+        .collect();
+
     let tx = sql(connection.transaction())?;
     sql(tx.execute(
         "DELETE FROM project_packages WHERE project_id = ?1",
         params![project_id],
     ))?;
+    sql(tx.execute(
+        "DELETE FROM project_missing_refs WHERE project_id = ?1",
+        params![project_id],
+    ))?;
+    {
+        let mut insert = sql(tx.prepare(
+            "INSERT OR IGNORE INTO project_missing_refs (project_id, package_id, guid) VALUES (?1, ?2, ?3)",
+        ))?;
+        for (package_id, guid) in &missing_refs {
+            sql(insert.execute(params![project_id, package_id, guid.as_slice()]))?;
+        }
+    }
     {
         let mut insert = sql(tx.prepare(
             "INSERT INTO project_packages (project_id, package_id, unique_total, unique_matched, vpm_owned, vpm_owner,
@@ -732,6 +776,149 @@ pub(crate) fn mark_project_stale(connection: &Connection, project_id: &str) -> R
     .map(|_| ())
 }
 
+/// 段階 3: パッケージが外に必要としていて、調べたときプロジェクトの Assets に無かったものの持ち主。
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum NeedOwner {
+    /// VPM パッケージの名前（`jp.lilxyzw.liltoon`）。入っているかは見せるときに決める。
+    Vpm(String),
+    /// ライブラリのほかの商品の ID。
+    Product(String),
+}
+
+/// 選んだファイル（zip の中の項目）の索引の行。パスは `same_path` で比べる。
+fn package_ids(
+    connection: &Connection,
+    source: &Path,
+    entries: &[String],
+) -> Result<Vec<(i64, String, i64)>, String> {
+    let mut statement = sql(connection.prepare(
+        "SELECT id, source_path, file_count FROM packages WHERE entry = ?1 AND failed = 0",
+    ))?;
+    let mut found = Vec::new();
+    for entry in entries {
+        let rows = sql(statement.query_map(params![entry], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        }))?;
+        for row in rows {
+            let (id, path, files) = sql(row)?;
+            if crate::library_files::same_path(Path::new(&path), source) {
+                found.push((id, entry.clone(), files));
+            }
+        }
+    }
+    Ok(found)
+}
+
+/// 選んだパッケージが外に必要としていて、このプロジェクトに無かったもの（持ち主ごとの参照の数）。
+/// 調べていない・古い・途中までしか歩けなかったときは `None`（足りないと言わない）。
+pub(crate) fn package_needs(
+    connection: &Connection,
+    project_id: &str,
+    source: &Path,
+    entries: &[String],
+) -> Result<Option<Vec<(NeedOwner, usize)>>, String> {
+    let usable: Option<bool> = sql(connection
+        .query_row(
+            "SELECT complete = 1 AND stale = 0 FROM project_scans WHERE project_id = ?1",
+            params![project_id],
+            |row| row.get(0),
+        )
+        .optional())?;
+    if usable != Some(true) {
+        return Ok(None);
+    }
+    let mut missing = sql(connection.prepare(
+        "SELECT m.guid, p.booth_id FROM project_missing_refs m JOIN packages p ON p.id = m.package_id
+         WHERE m.project_id = ?1 AND m.package_id = ?2",
+    ))?;
+    let mut vpm_owner =
+        sql(connection.prepare("SELECT package_name FROM guid_owners WHERE guid = ?1"))?;
+    let mut holders = sql(connection.prepare(
+        "SELECT DISTINCT p.booth_id FROM package_guids g JOIN packages p ON p.id = g.package_id
+         WHERE g.guid = ?1 AND g.asset_size IS NOT NULL AND p.failed = 0 AND p.booth_id IS NOT NULL",
+    ))?;
+    let mut totals: Vec<(NeedOwner, usize)> = Vec::new();
+    for (package_id, _, _) in package_ids(connection, source, entries)? {
+        let rows: Vec<(Vec<u8>, Option<String>)> = sql(sql(missing
+            .query_map(params![project_id, package_id], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            }))?
+        .collect::<Result<Vec<_>, _>>())?;
+        for (guid, own) in rows {
+            let owner = if let Some(name) = sql(vpm_owner
+                .query_row(params![guid], |row| row.get::<_, String>(0))
+                .optional())?
+            {
+                NeedOwner::Vpm(name)
+            } else {
+                let booths: Vec<String> =
+                    sql(sql(holders.query_map(params![guid], |row| row.get(0)))?
+                        .collect::<Result<Vec<_>, _>>())?;
+                // 持ち主がライブラリの商品 1 つだけで、渡す商品とは別のときだけ。同じ商品のほかのパッケージにも
+                // あるもの、2 つ以上の商品にまたがるもの、持ち主の分からないものは言わない。
+                match booths.as_slice() {
+                    [booth] if Some(booth) != own.as_ref() => NeedOwner::Product(booth.clone()),
+                    _ => continue,
+                }
+            };
+            match totals.iter_mut().find(|(known, _)| *known == owner) {
+                Some((_, count)) => *count += 1,
+                None => totals.push((owner, 1)),
+            }
+        }
+    }
+    totals.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    Ok(Some(totals))
+}
+
+/// 選んだパッケージのうち、同梱版（ファイルの 80% 以上を 1 つの VPM パッケージが持つ）のもの。
+/// 持ち主はどこかのプロジェクトで歩いた VPM パッケージから決まるので、渡す先を調べていなくても言える。
+pub(crate) fn bundled_packages(
+    connection: &Connection,
+    source: &Path,
+    entries: &[String],
+) -> Result<Vec<(String, String)>, String> {
+    let mut statement = sql(connection.prepare(
+        "SELECT o.package_name, COUNT(*) FROM package_guids g JOIN guid_owners o ON o.guid = g.guid
+         WHERE g.package_id = ?1 AND g.asset_size IS NOT NULL
+         GROUP BY o.package_name ORDER BY COUNT(*) DESC, o.package_name LIMIT 1",
+    ))?;
+    let mut found = Vec::new();
+    for (package_id, entry, files) in package_ids(connection, source, entries)? {
+        let top: Option<(String, i64)> = sql(statement
+            .query_row(params![package_id], |row| Ok((row.get(0)?, row.get(1)?)))
+            .optional())?;
+        if let Some((name, owned)) = top
+            && files > 0
+            && owned as f64 >= unity_index::BUNDLED_RATIO * files as f64
+        {
+            found.push((entry, name));
+        }
+    }
+    Ok(found)
+}
+
+/// 歩いた VPM パッケージの読みやすい名前（`package.json` の `displayName`）。
+pub(crate) fn vpm_display_names(
+    connection: &Connection,
+) -> Result<HashMap<String, String>, String> {
+    let mut statement = sql(connection.prepare(
+        "SELECT package_name, display_name FROM vpm_scans WHERE display_name IS NOT NULL AND display_name <> ''
+         ORDER BY package_name, version",
+    ))?;
+    let rows = sql(statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?))))?;
+    let mut names = HashMap::new();
+    for row in rows {
+        let (name, display): (String, String) = sql(row)?;
+        names.insert(name, display);
+    }
+    Ok(names)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -899,6 +1086,164 @@ mod tests {
         // 止められたら次のファイルの前で止める。
         let mut fresh = open_memory();
         assert_eq!(refresh(&mut fresh, &all, |_, _| {}, || true).unwrap(), 0);
+    }
+
+    /// 段階 3: 商品 400（アバター本体）と、それを指す商品 500（衣装。同じ商品の共通パッケージも指す）。
+    fn needs_fixture() -> (Fixture, Vec<Source>) {
+        let f = fixture();
+        std::fs::create_dir_all(f.library.join("400")).unwrap();
+        std::fs::create_dir_all(f.library.join("500")).unwrap();
+        std::fs::write(
+            f.library.join("400").join("Body.unitypackage"),
+            package(&[(guid(80), "Assets/Body/body.fbx", Some(b"fbx"))]),
+        )
+        .unwrap();
+        let prefab = format!(
+            "%YAML 1.1\n m_Script: {{fileID: 1, guid: {}, type: 3}}\n m_Mesh: {{fileID: 2, guid: {}, type: 3}}\n m_Common: {{guid: {}}}\n m_Unknown: {{guid: {}}}\n",
+            guid(70),
+            guid(80),
+            guid(95),
+            guid(99)
+        );
+        std::fs::write(
+            f.library.join("500").join("Cloth.unitypackage"),
+            package(&[(guid(90), "Assets/Cloth/c.prefab", Some(prefab.as_bytes()))]),
+        )
+        .unwrap();
+        std::fs::write(
+            f.library.join("500").join("ClothCommon.unitypackage"),
+            package(&[(guid(95), "Assets/Cloth/common.png", Some(b"png"))]),
+        )
+        .unwrap();
+        let mut all = sources(&f.library);
+        for (id, name) in [
+            ("400", "Body.unitypackage"),
+            ("500", "Cloth.unitypackage"),
+            ("500", "ClothCommon.unitypackage"),
+        ] {
+            all.push(Source {
+                booth_id: id.into(),
+                path: f.library.join(id).join(name),
+            });
+        }
+        (f, all)
+    }
+
+    #[test]
+    fn outside_references_are_counted_by_owner() {
+        let (mut f, all) = needs_fixture();
+        refresh(&mut f.connection, &all, |_, _| {}, || false).unwrap();
+        let cloth = f.library.join("500").join("Cloth.unitypackage");
+        let entries = vec![String::new()];
+        // 調べていないプロジェクトについては言わない。
+        assert_eq!(
+            package_needs(&f.connection, "p1", &cloth, &entries).unwrap(),
+            None
+        );
+        let vpm = vec![("jp.lilxyzw.liltoon".to_string(), "2.4.1".to_string())];
+        scan_project(&mut f.connection, "p1", &f.project, &vpm).unwrap();
+        let lil = NeedOwner::Vpm("jp.lilxyzw.liltoon".into());
+        // 本体（ほかの商品）と lilToon（VPM）。同じ商品の共通パッケージと、持ち主の分からない参照は言わない。
+        assert_eq!(
+            package_needs(&f.connection, "p1", &cloth, &entries).unwrap(),
+            Some(vec![
+                (lil.clone(), 1),
+                (NeedOwner::Product("400".into()), 1)
+            ])
+        );
+        // 衣装 100 のマテリアルは lilToon のシェーダーを指す（Assets に無く、Packages にある）。
+        // 入っているかは見せるときに vpm-manifest.json で決めるので、ここでは持ち主だけを返す。
+        let outfit = f.library.join("100").join("Outfit.unitypackage");
+        assert_eq!(
+            package_needs(&f.connection, "p1", &outfit, &entries).unwrap(),
+            Some(vec![(lil.clone(), 1)])
+        );
+        // 本体を取り込んだあとに調べ直すと、本体は言わない。
+        write_meta(
+            &f.project.join("Assets").join("Body"),
+            "body.fbx",
+            &guid(80),
+            b"fbx",
+        );
+        scan_project(&mut f.connection, "p1", &f.project, &vpm).unwrap();
+        assert_eq!(
+            package_needs(&f.connection, "p1", &cloth, &entries).unwrap(),
+            Some(vec![(lil, 1)])
+        );
+        // 渡したあと（古い結果）と、知らないファイルについては言わない。
+        mark_project_stale(&f.connection, "p1").unwrap();
+        assert_eq!(
+            package_needs(&f.connection, "p1", &cloth, &entries).unwrap(),
+            None
+        );
+        scan_project(&mut f.connection, "p1", &f.project, &vpm).unwrap();
+        assert_eq!(
+            package_needs(
+                &f.connection,
+                "p1",
+                &f.library.join("x.unitypackage"),
+                &entries
+            )
+            .unwrap(),
+            Some(Vec::new())
+        );
+    }
+
+    #[test]
+    fn owners_learned_from_another_project_count_without_rescanning() {
+        let (mut f, all) = needs_fixture();
+        refresh(&mut f.connection, &all, |_, _| {}, || false).unwrap();
+        let outfit = f.library.join("100").join("Outfit.unitypackage");
+        let entries = vec![String::new()];
+        // p1 は lilToon を入れていない（歩かない）ので、VPM の持ち主はまだ分からない。シェーダーを持つのは
+        // ライブラリの商品 200（lilToon の同梱版）だけなので、その商品を言う。
+        scan_project(&mut f.connection, "p1", &f.project, &[]).unwrap();
+        assert_eq!(
+            package_needs(&f.connection, "p1", &outfit, &entries).unwrap(),
+            Some(vec![(NeedOwner::Product("200".into()), 1)])
+        );
+        // 別のプロジェクト p2 で lilToon を歩くと、p1 を調べ直さなくても持ち主が分かる。
+        let vpm = vec![("jp.lilxyzw.liltoon".to_string(), "2.4.1".to_string())];
+        scan_project(&mut f.connection, "p2", &f.project, &vpm).unwrap();
+        assert_eq!(
+            package_needs(&f.connection, "p1", &outfit, &entries).unwrap(),
+            Some(vec![(NeedOwner::Vpm("jp.lilxyzw.liltoon".into()), 1)])
+        );
+    }
+
+    #[test]
+    fn bundled_packages_are_known_from_any_walked_project() {
+        let (mut f, all) = needs_fixture();
+        refresh(&mut f.connection, &all, |_, _| {}, || false).unwrap();
+        let lil_path = f.library.join("200").join("lilToon_1.4.0.unitypackage");
+        let entries = vec![String::new()];
+        // まだどのプロジェクトでも lilToon を歩いていないので、同梱版とは分からない。
+        assert!(
+            bundled_packages(&f.connection, &lil_path, &entries)
+                .unwrap()
+                .is_empty()
+        );
+        let vpm = vec![("jp.lilxyzw.liltoon".to_string(), "2.4.1".to_string())];
+        scan_project(&mut f.connection, "p1", &f.project, &vpm).unwrap();
+        assert_eq!(
+            bundled_packages(&f.connection, &lil_path, &entries).unwrap(),
+            vec![(String::new(), "jp.lilxyzw.liltoon".to_string())]
+        );
+        assert!(
+            bundled_packages(
+                &f.connection,
+                &f.library.join("100").join("Outfit.unitypackage"),
+                &entries
+            )
+            .unwrap()
+            .is_empty()
+        );
+        assert_eq!(
+            vpm_display_names(&f.connection)
+                .unwrap()
+                .get("jp.lilxyzw.liltoon"),
+            Some(&"lilToon".to_string())
+        );
     }
 
     #[test]
@@ -1178,6 +1523,167 @@ mod tests {
                 packages.join("; ")
             );
         }
+    }
+
+    /// 段階 3 の下調べ。`VRCLIBMAN_REAL_LIBRARY` を索引にし、ALCOM の全プロジェクトを調べたうえで、
+    /// パッケージの外への参照の持ち主を数える。商品名・パスは出さない（商品 ID の末尾 4 桁だけ）。
+    #[test]
+    #[ignore]
+    fn real_reference_owners() {
+        let library =
+            PathBuf::from(std::env::var("VRCLIBMAN_REAL_LIBRARY").expect("VRCLIBMAN_REAL_LIBRARY"));
+        let settings = PathBuf::from(std::env::var("LOCALAPPDATA").unwrap())
+            .join("VRChatCreatorCompanion")
+            .join("settings.json");
+        let projects = crate::unity_projects::parse_user_projects(
+            &std::fs::read_to_string(settings).unwrap_or_default(),
+        );
+        let mut found = Vec::new();
+        for entry in walkdir::WalkDir::new(&library)
+            .max_depth(2)
+            .into_iter()
+            .flatten()
+        {
+            let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+            if entry.file_type().is_file()
+                && (name.ends_with(".zip") || name.ends_with(".unitypackage"))
+            {
+                let booth = entry
+                    .path()
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string();
+                found.push(Source {
+                    booth_id: booth,
+                    path: entry.path().to_path_buf(),
+                });
+            }
+        }
+        let dir = std::env::var("VRCLIBMAN_REAL_INDEX_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| tempfile::tempdir().unwrap().keep());
+        let mut connection = open(&dir.join(FILE_NAME)).unwrap();
+        refresh(&mut connection, &found, |_, _| {}, || false).unwrap();
+        let mut manifests: Vec<(usize, HashSet<String>)> = Vec::new();
+        for (index, path) in projects.iter().enumerate() {
+            let path = PathBuf::from(path);
+            let manifest = std::fs::read_to_string(path.join("Packages").join("vpm-manifest.json"))
+                .unwrap_or_default();
+            let (_, packages) = crate::unity_projects::parse_vpm_manifest(&manifest);
+            let names: HashSet<String> = packages.iter().map(|p| p.name.clone()).collect();
+            let vpm: Vec<(String, String)> =
+                packages.into_iter().map(|p| (p.name, p.version)).collect();
+            let started = Instant::now();
+            let _ = scan_project(&mut connection, &format!("p{index}"), &path, &vpm);
+            eprintln!("scanned p{index} in {:?}", started.elapsed());
+            manifests.push((index, names));
+        }
+        let owners: HashMap<Vec<u8>, String> = {
+            let mut s = connection
+                .prepare("SELECT guid, package_name FROM guid_owners")
+                .unwrap();
+            s.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap()
+                .flatten()
+                .collect()
+        };
+        let library_owner: HashMap<Vec<u8>, HashSet<String>> = {
+            let mut s = connection
+                .prepare("SELECT g.guid, p.booth_id FROM package_guids g JOIN packages p ON p.id = g.package_id WHERE g.asset_size IS NOT NULL")
+                .unwrap();
+            let mut map: HashMap<Vec<u8>, HashSet<String>> = HashMap::new();
+            for (guid, booth) in s
+                .query_map([], |r| {
+                    Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, String>(1)?))
+                })
+                .unwrap()
+                .flatten()
+            {
+                map.entry(guid).or_default().insert(booth);
+            }
+            map
+        };
+        let packages: Vec<(i64, String, i64)> = {
+            let mut s = connection
+                .prepare("SELECT id, booth_id, file_count FROM packages WHERE file_count > 0")
+                .unwrap();
+            s.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .unwrap()
+                .flatten()
+                .collect()
+        };
+        let tail = |booth: &str| booth[booth.len().saturating_sub(4)..].to_string();
+        let mut unknown_all: HashMap<String, usize> = HashMap::new();
+        for (id, booth, files) in &packages {
+            let mut s = connection
+                .prepare("SELECT guid FROM package_refs WHERE package_id = ?1")
+                .unwrap();
+            let refs: Vec<Vec<u8>> = s
+                .query_map(params![id], |r| r.get(0))
+                .unwrap()
+                .flatten()
+                .collect();
+            let mut vpm: HashMap<String, usize> = HashMap::new();
+            let mut products: HashMap<String, usize> = HashMap::new();
+            let mut unknown = 0;
+            for guid in &refs {
+                if let Some(owner) = owners.get(guid) {
+                    *vpm.entry(owner.clone()).or_default() += 1;
+                } else if let Some(booths) = library_owner.get(guid) {
+                    let others: Vec<String> = booths
+                        .iter()
+                        .filter(|b| *b != booth)
+                        .map(|b| tail(b))
+                        .collect();
+                    let key = if others.is_empty() {
+                        "self(other package)".to_string()
+                    } else {
+                        others.join("+")
+                    };
+                    *products.entry(key).or_default() += 1;
+                } else {
+                    unknown += 1;
+                    let text: String = guid.iter().map(|b| format!("{b:02x}")).collect();
+                    *unknown_all.entry(text).or_default() += 1;
+                }
+            }
+            let mut vpm: Vec<_> = vpm.into_iter().collect();
+            vpm.sort();
+            let mut products: Vec<_> = products.into_iter().collect();
+            products.sort();
+            // VPM の持ち主のうち、入っていないプロジェクトの数。
+            let lacking: Vec<String> = vpm
+                .iter()
+                .map(|(name, _)| {
+                    let without = manifests
+                        .iter()
+                        .filter(|(_, names)| !names.contains(name))
+                        .count();
+                    format!("{name}:{without}")
+                })
+                .collect();
+            eprintln!(
+                "pkg {} files={files} refs={} vpm={:?} products={:?} unknown={unknown} lacking={:?}",
+                tail(booth),
+                refs.len(),
+                vpm,
+                products,
+                lacking
+            );
+        }
+        let mut unknown_all: Vec<_> = unknown_all.into_iter().collect();
+        unknown_all.sort_by(|a, b| b.1.cmp(&a.1));
+        eprintln!("unknown guids (top 40, by packages):");
+        for (guid, count) in unknown_all.iter().take(40) {
+            eprintln!("  {guid} {count}");
+        }
+        eprintln!(
+            "owners known: {} guids; projects: {}",
+            owners.len(),
+            manifests.len()
+        );
     }
 
     #[test]

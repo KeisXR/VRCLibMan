@@ -5,7 +5,15 @@ import { openSettingsSection } from "../anchorScroll";
 import { api } from "../api";
 import { useModalFocus } from "../keyboard";
 import { formatBytes } from "../media";
-import type { PreparedUnityPackage, UnityInstance, UnityLaunchMode, UnityPackageList, UnityProject, UnityTarget } from "../types";
+import type {
+  PackageCheck,
+  PreparedUnityPackage,
+  UnityInstance,
+  UnityLaunchMode,
+  UnityPackageList,
+  UnityProject,
+  UnityTarget,
+} from "../types";
 import { errorText } from "../ui";
 import {
   UNITY_MISSING,
@@ -14,6 +22,7 @@ import {
   isUnityLooseName,
   isUnityNotRunning,
   launchedMessage,
+  missingNeedsText,
   needsUnityTarget,
   onlyEntry,
   selectedEntries,
@@ -29,7 +38,16 @@ type DialogState =
   | { step: "target"; list: UnityPackageList; boothId: string | null; entries: string[]; instances: UnityInstance[]; chosen: string | null }
   | { step: "working"; message: string }
   | { step: "notRunning"; message: string; projects: UnityProject[] }
-  | { step: "installed"; list: UnityPackageList; boothId: string | null; entries: string[]; target: UnityTarget | null; project: string }
+  | {
+      step: "review";
+      list: UnityPackageList;
+      boothId: string | null;
+      entries: string[];
+      target: UnityTarget | null;
+      check: PackageCheck;
+      /** 渡すもの。同梱版は外して始める。 */
+      keep: Set<string>;
+    }
   | { step: "waiting"; prepared: PreparedUnityPackage[]; next: number; mode: UnityLaunchMode; target: UnityTarget | null };
 
 function targetOf(instance: UnityInstance): UnityTarget {
@@ -108,11 +126,14 @@ export function useUnityOpen({ notify, fail }: { notify: (message: string) => vo
             return;
           }
         }
-        if (mode === "unity" && boothId && !checked) {
-          // 渡す先のプロジェクトに、もう入っていると分かっていれば知らせる（止めはしない）。
-          const installed = await api.unityInstallCheck(boothId, target).catch(() => null);
-          if (installed) {
-            setDialog({ step: "installed", list, boothId, entries, target, project: installed.name });
+        if (mode === "unity" && list.kind !== "loose" && !checked) {
+          // 渡す先のプロジェクトが決まるとき、もう入っている・足りないものがある・要らない同梱版がある、と
+          // 分かっていれば知らせる（止めはしない）。前に調べた結果と、いまの vpm-manifest.json から決まる。
+          const check = await api.unityPackageCheck(list.path, entries, boothId, target).catch(() => null);
+          if (check) {
+            const bundled = new Set(check.bundled.map((item) => item.entry));
+            const keep = new Set(entries.filter((entry) => !bundled.has(entry)));
+            setDialog({ step: "review", list, boothId, entries, target, check, keep });
             return;
           }
         }
@@ -215,11 +236,19 @@ export function useUnityOpen({ notify, fail }: { notify: (message: string) => vo
       onClose={close}
       onToggle={(entry) =>
         setDialog((current) => {
-          if (current?.step !== "choose") return current;
-          const checked = new Set(current.checked);
-          if (checked.has(entry)) checked.delete(entry);
-          else checked.add(entry);
-          return { ...current, checked };
+          if (current?.step === "choose") {
+            const checked = new Set(current.checked);
+            if (checked.has(entry)) checked.delete(entry);
+            else checked.add(entry);
+            return { ...current, checked };
+          }
+          if (current?.step === "review") {
+            const keep = new Set(current.keep);
+            if (keep.has(entry)) keep.delete(entry);
+            else keep.add(entry);
+            return { ...current, keep };
+          }
+          return current;
         })
       }
       onImport={(entries, mode) => {
@@ -242,8 +271,10 @@ export function useUnityOpen({ notify, fail }: { notify: (message: string) => vo
         setDialog(null);
         openUnitySettings();
       }}
-      onSendAgain={() => {
-        if (dialog.step === "installed") void run(dialog.list, dialog.entries, dialog.boothId, "unity", dialog.target, true, true);
+      onSendReviewed={() => {
+        if (dialog.step !== "review") return;
+        const entries = dialog.entries.filter((entry) => dialog.keep.has(entry));
+        void run(dialog.list, entries, dialog.boothId, "unity", dialog.target, true, true);
       }}
       onOpenProject={(project) => {
         setDialog(null);
@@ -273,7 +304,7 @@ function UnityOpenDialog({
   onResume,
   onSettings,
   onOpenProject,
-  onSendAgain,
+  onSendReviewed,
 }: {
   state: DialogState;
   onClose: () => void;
@@ -284,7 +315,7 @@ function UnityOpenDialog({
   onResume: () => void;
   onSettings: () => void;
   onOpenProject: (project: UnityProject) => void;
-  onSendAgain: () => void;
+  onSendReviewed: () => void;
 }) {
   const panel = useRef<HTMLElement>(null);
   const working = state.step === "working";
@@ -315,16 +346,55 @@ function UnityOpenDialog({
         <p className="meta" role="status">{state.message}…</p>
       </>
     );
-  } else if (state.step === "installed") {
+  } else if (state.step === "review") {
+    const { check, entries, keep, list } = state;
+    const bundled = new Map(check.bundled.map((item) => [item.entry, item.name]));
+    const chosen = entries.filter((entry) => keep.has(entry));
+    const needs = missingNeedsText(check.missing);
     body = (
       <>
-        <h2 id="unity-open-title">このプロジェクトには入っています</h2>
-        <p className="meta">
-          {state.project} には、この商品がもう入っています（前に調べた結果）。もう一度渡すと、Unity の Import 画面で同じファイルを上書きするかを選べます。
-        </p>
+        <h2 id="unity-open-title">{check.projectName} に渡す前に</h2>
+        {check.installed && (
+          <p className="meta">
+            この商品は、このプロジェクトにもう入っています（前に調べた結果）。もう一度渡すと、Unity の Import 画面で同じファイルを上書きするかを選べます。
+          </p>
+        )}
+        {needs.packages && (
+          <p className="note note-strong unity-open-needs">
+            このプロジェクトに無いもの: {needs.packages}。無いまま取り込むと、マテリアルがピンク色になったり、コンポーネントが「Missing」になったりします。ALCOM で追加してから取り込んでください。
+          </p>
+        )}
+        {needs.products && (
+          <p className="note note-strong unity-open-needs">
+            {needs.products} のファイルを使っています。このプロジェクトには入っていないので、先に取り込んでください。
+          </p>
+        )}
+        {bundled.size > 0 && (
+          <ul className="file-list unity-open-list" aria-label="渡す Unity パッケージ">
+            {entries.map((entry) => {
+              const item = list.packages.find((pkg) => pkg.entry === entry);
+              const owner = bundled.get(entry);
+              return (
+                <li key={entry} className={owner ? "unity-open-bundled" : undefined}>
+                  <label className="unity-open-choice">
+                    <input type="checkbox" checked={keep.has(entry)} onChange={() => onToggle(entry)} />
+                    <span className="download-name" title={entry || undefined}>{item?.name ?? entry}</span>
+                  </label>
+                  {owner && (
+                    <span className="meta">
+                      このプロジェクトには {owner} が入っています。同じものを重ねて取り込むとシェーダーが壊れることがあるので、取り込む必要はありません。
+                    </span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        <p className="meta">渡すのは止めません。Unity の Import 画面で中身を確かめてから取り込めます。</p>
         <div className="row-actions">
-          <button className="button primary" type="button" onClick={onSendAgain}>
-            もう一度渡す
+          <button className="button primary" type="button" disabled={chosen.length === 0} onClick={onSendReviewed}>
+            {check.installed ? "もう一度渡す" : "渡す"}
+            {entries.length > 1 && chosen.length > 0 ? `（${chosen.length}件）` : ""}
           </button>
           <button className="button" type="button" onClick={onClose}>
             やめる

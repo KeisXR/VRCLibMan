@@ -55,6 +55,7 @@ ZIPS["\\\\nas\\vrclibman\\1000001\\Sample_Outfit_v1.2.zip"] = ZIPS["C:\\Assets\\
 ZIPS["C:\\Assets\\Lime\\eye_base.zip"] = [
   { path: "eye_base/Sample_Eye_Base.unitypackage", dir: false, size: 3 * MB },
   { path: "eye_base/Sample_Eye_Extra.unitypackage", dir: false, size: 1 * MB },
+  { path: "eye_base/lilToon_1.4.0.unitypackage", dir: false, size: 2 * MB },
   { path: "eye_base/readme.txt", dir: false, size: 900 },
 ];
 

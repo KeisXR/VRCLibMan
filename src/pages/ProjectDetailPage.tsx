@@ -15,6 +15,7 @@ import {
   projectSections,
   projectStateNote,
   scannedLabel,
+  vpmPackageLabel,
 } from "../unityProjects";
 
 /** 「まだ入っていない対応アセット」を一度に出す件数。 */
@@ -221,6 +222,21 @@ export function ProjectDetailPage({ id }: { id: string }) {
             </details>
           )}
         </>
+      )}
+
+      {project && project.packages.length > 0 && (
+        <details className="generic project-section project-vpm-packages">
+          <summary>入っているパッケージ（{project.packages.length}）</summary>
+          <p className="meta">ALCOM で入れたパッケージです（vpm-manifest.json）。追加や更新は ALCOM で行ってください。</p>
+          <ul className="project-packages">
+            {project.packages.map((item) => (
+              <li key={item.name} className="meta">
+                {vpmPackageLabel(item.name, contents?.packageNames)}
+                {item.version && ` ${item.version}`}
+              </li>
+            ))}
+          </ul>
+        </details>
       )}
     </section>
   );
