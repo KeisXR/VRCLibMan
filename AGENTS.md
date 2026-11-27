@@ -61,7 +61,7 @@ PC 間の移行は [データ移行](docs/remote-sync.md) に従う。現在は�
 - Tauri のコマンド引数は Rust のパラメータ名と一致させる。複数語は camelCase（`productId`、`fromId`、`intoId`）。構造体は `rename_all = "camelCase"`。
 - `tauri` の feature に `protocol-asset` が必要。`tauri.conf.json` の asset scope は、画面が画像を読む `$APPDATA/thumbs/**`・`$APPDATA/previews/**`・`$APPDATA/hero_images/**` だけにする。Tauri は asset プロトコルを内蔵ブラウザのタブにも登録するので、範囲を広げると外部ページから `library.sqlite` や Linux のログイン状態を読める（[検証記録](docs/verification.md#内蔵ブラウザのタブから-asset-プロトコルで読める範囲2026-11-17)）。画像の保存先を足すときは範囲と `test/link.test.mjs` も足す。
 - メイン画面と操作バーには `tauri.conf.json` の `csp` を付ける。動かすスクリプトはアプリに入っているものだけ（インラインと `eval` は不可）、画像はアプリ自身・asset プロトコル・BOOTH の画像サーバー（`booth.pm`・`pximg.net` とそのサブドメイン）だけ、通信は Tauri の IPC だけ。商品名などの文字がスクリプトとして動く不具合が入っても、設定の変更やファイルを開くコマンドへ届かせないため。保存していないサムネイルの URL は `src/media.ts` の `remoteImageUrl` が同じ範囲に絞る。範囲を変えるときは両方と `test/media.test.mjs` を直す（[検証記録](docs/verification.md#残りの指摘への対応自動整理の判定csp開く種類拡張の保存領域2026-11-17)）。
-- 画面遷移はハッシュ（`#/` `#/avatar/{id}` `#/projects` `#/classification-log` `#/import` `#/settings`）。ルータライブラリは無い。
+- 画面遷移はハッシュ（`#/` `#/avatar/{id}` `#/projects` `#/projects/{id}` `#/classification-log` `#/import` `#/settings`）。ルータライブラリは無い。
 - ジャンル列（アセット・ワールド・アバター詳細）は `ui_genre_collapsed` でアイコンだけの 52px の列に閉じる。アセットとワールドでは一覧を絞り込み、アバター詳細では絞り込まずにジャンルの見出しへスクロールする目次になる（設定画面のカテゴリ一覧と同じ）。ジャンルを足したら `src/components/genreIcons.tsx` にアイコンも足す。詳しくは [デザインガイド](docs/design/README.md#ジャンル列の開閉とアイコン)。
 - ライブラリへの配置（拡張の自動整理、内蔵ブラウザの受け取り）は、名前ごとに置き換えない操作で確保する。Windows は置き換えなしの `MoveFileExW`、ほかは `hard_link`、別のボリュームは `create_new` で作ってコピーし、取られていたら `名前 (n).拡張子` を 9999 まで試す。存在確認と書き込みの間に別の処理が同じ名前を作っても上書きしないため。
 - Windows では、アプリが自分で受け取ったファイル（内蔵ブラウザの「ダウンロード」と、ページが始めたダウンロード）に「ネットから取得した」の印（`Zone.Identifier` の `ZoneId=3`）を付け、別のボリュームへの移動と手動・自動のコピーでは元のファイルの印を写す（`library_files.rs` の `mark_from_internet` と `carry_internet_mark`）。印が無いと、zip から取り出したプログラムを Windows が確認なしで実行するため。自分で付ける印に取得元の URL は書かず、書けないとき（FAT、一部の共有）は無視する（[検証記録](docs/verification.md#windows-での確認とネットから取得したの印2026-11-18)）。
@@ -269,7 +269,7 @@ Windows では、BOOTH の窓を同期コマンドの中で作らない。WebVie
 
 ### Unity プロジェクト
 
-左メニューの「プロジェクト」とアバター詳細の「Unity プロジェクト」の行。設計と振る舞いは [Unity プロジェクト連携](docs/unity-projects.md)（段階 1 を実装、段階 2 以降は未実装の設計）。
+左メニューの「プロジェクト」とアバター詳細の「Unity プロジェクト」の行。設計と振る舞いは [Unity プロジェクト連携](docs/unity-projects.md)（段階 1 と段階 2 の中核を実装、残りは未実装の設計）。
 
 - 一覧は ALCOM / VCC の `settings.json` の `userProjects` を毎回読み、DB に写さない。DB（版 16 の `unity_projects`・`unity_project_avatars`）に残すのは、手で足した・隠した・アバターと結び付けたプロジェクトだけ。写すと ALCOM 側の追加・削除とずれるため。
 - プロジェクトのフォルダには書き込まない。読むのは `ProjectSettings/ProjectVersion.txt`、`Packages/vpm-manifest.json`、`Assets` の更新日時だけ（`unity_projects.rs`）。読み取りは 1 件 2 秒・全体 5 秒で打ち切り、読めないものは「確認できません」として残す。
@@ -277,6 +277,9 @@ Windows では、BOOTH の窓を同期コマンドの中で作らない。WebVie
 - 開いているかは Windows の Unity の窓のタイトルだけで決める。「 - Unity 」より前の見出しがプロジェクト名で始まり（名前の「 - 」で区切らない）、版が同じものを開いているとし、1 つの窓に当てはまるプロジェクトが 2 つ以上あれば決めない（`unity_projects::running_states`）。`Temp/UnityLockfile` は Unity が閉じていても残るので使わない。
 - アバターとの結び付けは本人が決めたものだけで、フォルダ名などから推測しない。アバターの統合で統合先へ移し、アバターの削除で消える。パスと id はデータ移行の ZIP に含めない。
 - 「Unityで開く」で Unity が起動していないときは、商品の対応アバターに結び付けたプロジェクトと、ワールドの商品ならワールドのプロジェクト（`vpm-manifest.json` で決まる種類。結び付けは要らない）を開く操作を出すだけで、開いたあとに自動で渡さない（いつ受け取れるかを外から確かめられないため）。候補の規則は `unity_projects::projects_for_product`。ワールドのプロジェクトはアバターに結び付けない。
+- 導入済みの判定（プロジェクトの詳細 `#/projects/<id>` とプレビューの「プロジェクト」の行）は、unitypackage の GUID とプロジェクトの `Assets` の `.meta` の一致だけで決め、渡した記録を根拠にしない。Import 画面でキャンセルできるため。判定は `unity_index::verdict` の 1 か所（固有のファイルの 80% 以上で導入済み、5% 以上で一部）で、画面・MCP に複製しない。調べていないプロジェクト・途中までしか歩けなかったプロジェクトについて「入っていない」と言わない。
+- 索引は `library.sqlite` と別の `unity-index.sqlite`（アプリのローカルデータ）に置く、作り直せる写しで、移行を書かず版が合わなければ消して作る。データ移行に含めない。unitypackage はディスクへ取り出さずに読み、プロジェクトの GUID の集合は残さない。書くのはワーカー 1 本かプロジェクトを調べるコマンドで、`unity_index_store::PASS` を取ってから。`library.sqlite` のロックは対象を並べるあいだだけ持つ。
+- 商品の zip に同梱された共通パッケージ（lilToon など）は、VPM パッケージが GUID の 80% 以上を持てば「同梱版」とし、商品の判定に数えない。VPM パッケージは名前と版ごとに 1 回だけ歩く（`Packages` を毎回歩くと 20〜40 秒かかるため）。
 
 ### 外部通信と安全境界
 
@@ -484,8 +487,11 @@ Mac の内蔵ブラウザは `data_directory` を使わない。固定の 16 バ
 | `src-tauri/src/unity_wrap.rs` | 「Unityで開く」で mp3・png などを unitypackage に包む。入る場所と GUID |
 | `src-tauri/src/unity_projects.rs` | Unity プロジェクトの一覧（ALCOM の `userProjects`）、1 件の読み取り、版の合う Unity で開く |
 | `src-tauri/src/db/unity_projects.rs` | 手で足した・隠した・結び付けたプロジェクトの行（DB版16） |
+| `src-tauri/src/unity_index.rs` | unitypackage の GUID の読み取り、`.meta` の読み取り、導入済みの判定（`verdict`） |
+| `src-tauri/src/unity_index_store.rs` | 索引 `unity-index.sqlite`、プロジェクトを調べた結果 |
+| `src-tauri/src/unity_index_jobs.rs` | 索引を作るワーカーと、コマンドからの入口 |
 | `docs/unity-projects.md` | Unity プロジェクト連携の設計（段階 1〜4）と計測 |
-| `src/pages/ProjectsPage.tsx` | プロジェクトの画面。見本は `src/preview/unityProjects.ts` |
+| `src/pages/ProjectsPage.tsx` | プロジェクトの一覧。詳細は `ProjectDetailPage.tsx`。見本は `src/preview/unityProjects.ts` |
 | `src-tauri/src/commands.rs` | Tauri コマンド |
 | `src-tauri/src/browser_surface.rs` | 内蔵ブラウザの表示先（右パネルと複数の別窓）とタブの移動 |
 | `src-tauri/src/browser_dark.rs` | 内蔵ブラウザの強制ダークモード。表示用ページだけに CSS を入れる |

@@ -1192,6 +1192,157 @@ pub async fn open_unity_project(
     .await
 }
 
+/// プロジェクトに入っている商品の 1 件（画面用）。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectProductView {
+    pub booth_id: String,
+    pub title: String,
+    pub thumbnail_path: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub category: Option<String>,
+    pub link: Option<crate::purchases::LibraryLink>,
+    pub verdict: crate::unity_index::Verdict,
+    pub packages: Vec<crate::unity_index_store::PackageInstall>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectContentsView {
+    pub scanned_at: Option<i64>,
+    pub complete: bool,
+    pub stale: bool,
+    pub products: Vec<ProjectProductView>,
+}
+
+/// 調べた結果に、ライブラリの題と行き先を付ける。除外した・ライブラリに無い商品は出さない。
+fn project_contents_view(
+    app: &AppHandle,
+    contents: crate::unity_index_store::ProjectContents,
+) -> Result<ProjectContentsView, String> {
+    let ids: Vec<String> = contents
+        .products
+        .iter()
+        .map(|product| product.booth_id.clone())
+        .collect();
+    let refs = {
+        let state = app.state::<AppState>();
+        let connection = db(&state)?;
+        crate::purchases::product_refs(&connection, &ids)?
+    };
+    Ok(ProjectContentsView {
+        scanned_at: contents.scanned_at,
+        complete: contents.complete,
+        stale: contents.stale,
+        products: contents
+            .products
+            .into_iter()
+            .filter_map(|product| {
+                let product_ref = refs.get(&product.booth_id)?.clone();
+                Some(ProjectProductView {
+                    booth_id: product.booth_id,
+                    title: product_ref.title,
+                    thumbnail_path: product_ref.thumbnail_path,
+                    thumbnail_url: product_ref.thumbnail_url,
+                    category: product_ref.category,
+                    link: product_ref.link,
+                    verdict: product.verdict,
+                    packages: product.packages,
+                })
+            })
+            .collect(),
+    })
+}
+
+/// プロジェクトを調べる（docs/unity-projects.md の段階 2）。索引を新しくしてから `Assets` を歩く。読むだけ。
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn scan_unity_project(
+    view: tauri::Webview,
+    app: AppHandle,
+    projectId: String,
+) -> Result<ProjectContentsView, String> {
+    require_main(&view)?;
+    unity_project_task(app, move |app| {
+        let project = find_unity_project(app, &projectId)?;
+        if project.state != "ok" {
+            return Err("プロジェクトのフォルダを読めません".into());
+        }
+        let vpm: Vec<(String, String)> = project
+            .packages
+            .iter()
+            .map(|package| (package.name.clone(), package.version.clone()))
+            .collect();
+        let contents = crate::unity_index_jobs::scan_project(
+            app,
+            &project.id,
+            std::path::Path::new(&project.path),
+            &vpm,
+        )?;
+        project_contents_view(app, contents)
+    })
+    .await
+}
+
+/// 前に調べた結果。調べ直さない。調べていなければ `scannedAt` が無い。
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn unity_project_contents(
+    app: AppHandle,
+    projectId: String,
+) -> Result<ProjectContentsView, String> {
+    unity_project_task(app, move |app| {
+        if !crate::unity_projects::valid_project_id(&projectId) {
+            return Err("プロジェクトが見つかりません".into());
+        }
+        let contents = crate::unity_index_jobs::read(app, |connection| {
+            crate::unity_index_store::project_contents(connection, &projectId)
+        })?;
+        project_contents_view(app, contents)
+    })
+    .await
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductInstallView {
+    pub project_id: String,
+    pub name: String,
+    pub verdict: crate::unity_index::Verdict,
+}
+
+/// 商品が入っていると分かったプロジェクト（調べたものだけ）。
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn product_unity_installs(
+    app: AppHandle,
+    boothId: String,
+) -> Result<Vec<ProductInstallView>, String> {
+    unity_project_task(app, move |app| {
+        let found = crate::unity_index_jobs::read(app, |connection| {
+            crate::unity_index_store::product_projects(connection, &boothId)
+        })?;
+        if found.is_empty() {
+            return Ok(Vec::new());
+        }
+        let projects = unity_project_list_blocking(app)?.projects;
+        Ok(found
+            .into_iter()
+            .filter_map(|(project_id, verdict)| {
+                let project = projects
+                    .iter()
+                    .find(|project| project.id == project_id && !project.hidden)?;
+                Some(ProductInstallView {
+                    project_id,
+                    name: project.name.clone(),
+                    verdict,
+                })
+            })
+            .collect())
+    })
+    .await
+}
+
 /// 取り出した Unity パッケージを先頭から順に開く。`mode` は "unity"（設定の既定 Unity で
 /// `-openfile`）か "system"（OS の関連付け）。"unity" で `target` があれば、選んだ Unity の窓へ直接渡す。
 /// Unity の起動を待つときは途中で止まり、残りは呼び直す。
@@ -2112,6 +2263,7 @@ pub async fn scan_library(
         .map_err(|err| format!("スキャンを実行できません: {err}"))??;
     let mut connection = db(&state)?;
     let report = db::apply_library_scan(&mut connection, &path, &outcome)?;
+    crate::unity_index_jobs::wake(&app);
     progress.done_with(
         report.indexed,
         format!(

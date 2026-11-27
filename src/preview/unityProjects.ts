@@ -1,4 +1,4 @@
-import type { UnityProject, UnityProjectList } from "../types";
+import type { InstallVerdict, PackageInstall, ProjectContents, UnityProject, UnityProjectList } from "../types";
 
 /** 見本の Unity プロジェクト。ALCOM の一覧を真似る。実在のフォルダは見ない。 */
 interface PreviewProject {
@@ -39,6 +39,60 @@ export interface PreviewProjectContext {
   avatarName: (id: string) => string | undefined;
   productAvatarIds: (boothId: string) => string[];
   productIsWorld: (boothId: string) => boolean;
+  /** 見本の商品の題・サムネイル・カテゴリ。無い商品は undefined。 */
+  productRef?: (boothId: string) => { title: string; thumbnailUrl: string | null; category: string | null } | undefined;
+}
+
+/** 見本の「調べた結果」。プロジェクトごとに（商品 ID、判定、パッケージ）。 */
+type SampleRow = [string, InstallVerdict, Omit<PackageInstall, "sourcePath">[]];
+const pkg = (name: string, verdict: InstallVerdict, matched: number, total: number, extra: Partial<PackageInstall> = {}) => ({
+  name,
+  verdict,
+  uniqueMatched: matched,
+  uniqueTotal: total,
+  closest: false,
+  ...extra,
+});
+const SAMPLE_CONTENTS: Record<string, SampleRow[]> = {
+  a1b2c3d4e5f60001: [
+    ["7770415", "installed", [pkg("Plum_v.1.0.1.unitypackage", "installed", 163, 163), pkg("lilToon_1.4.0.unitypackage", "bundled", 0, 350, { bundledWith: "jp.lilxyzw.liltoon" })]],
+    ["8800101", "installed", [pkg("OnePiece_v2.unitypackage", "installed", 40, 42, { closest: true }), pkg("OnePiece_v1.unitypackage", "installed", 38, 42)]],
+    ["8800120", "partial", [pkg("EyeTextures.unitypackage", "partial", 12, 30)]],
+    ["8800130", "unknown", [pkg("SmallItem.unitypackage", "unknown", 0, 0)]],
+    ["8800111", "missing", [pkg("Ribbon.unitypackage", "missing", 0, 8)]],
+  ],
+  a1b2c3d4e5f60003: [["8901001", "installed", [pkg("WorldProp.unitypackage", "installed", 19, 19)]]],
+};
+/** 調べた日時。調べるまで無い（見本では Plum-Main だけ調べ済み）。 */
+const scannedAt: Record<string, number> = { a1b2c3d4e5f60001: NOW - 1800 };
+
+function contents(projectId: string, context: PreviewProjectContext): ProjectContents {
+  const at = scannedAt[projectId];
+  if (at === undefined) return { scannedAt: null, complete: false, stale: false, products: [] };
+  const rows = SAMPLE_CONTENTS[projectId] ?? [];
+  return {
+    scannedAt: at,
+    complete: true,
+    stale: false,
+    products: rows.flatMap(([boothId, verdict, packages]) => {
+      const product = context.productRef?.(boothId);
+      if (!product) return [];
+      const kind = product.category === "world" ? "world" : product.category === "avatar" ? "avatar" : "asset";
+      const avatarId = kind === "avatar" ? (context.productAvatarIds(boothId)[0] ?? null) : null;
+      return [
+        {
+          boothId,
+          title: product.title,
+          thumbnailPath: null,
+          thumbnailUrl: product.thumbnailUrl,
+          category: product.category,
+          link: product.category && (kind !== "avatar" || avatarId) ? { kind, avatarId } : null,
+          verdict,
+          packages: packages.map((item) => ({ ...item, sourcePath: `D:\\Library\\${boothId}\\${item.name}` })),
+        },
+      ];
+    }),
+  };
 }
 
 function view(project: PreviewProject, context: PreviewProjectContext): UnityProject {
@@ -117,6 +171,26 @@ export function previewUnityProjectDispatch(
         project.avatarIds = project.avatarIds.filter((id) => id !== avatarId);
       }
       return { value: list(context) };
+    }
+    case "unity_project_contents":
+      find(args.projectId);
+      return { value: contents(String(args.projectId), context) };
+    case "scan_unity_project": {
+      const project = find(args.projectId);
+      if (project.state !== "ok") throw new Error("プロジェクトのフォルダを読めません");
+      scannedAt[project.id] = Math.floor(Date.now() / 1000);
+      return { value: contents(project.id, context) };
+    }
+    case "product_unity_installs": {
+      const boothId = String(args.boothId ?? "");
+      const places = Object.entries(SAMPLE_CONTENTS).flatMap(([projectId, rows]) => {
+        const project = projects.find((item) => item.id === projectId);
+        const row = rows.find(([id]) => id === boothId);
+        if (!project || project.hidden || scannedAt[projectId] === undefined || !row) return [];
+        if (row[1] !== "installed" && row[1] !== "partial") return [];
+        return [{ projectId, name: project.name, verdict: row[1] }];
+      });
+      return { value: places };
     }
     case "open_unity_project": {
       const project = find(args.projectId);

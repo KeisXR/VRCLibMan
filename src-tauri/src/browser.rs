@@ -1297,6 +1297,7 @@ pub async fn download_one_file(
             report.finish("done", "ライブラリに移しました", Some(&placed));
             browser_log(&app, "ファイルをライブラリへ移しました");
             let _ = app.emit("library-changed", ());
+            crate::unity_index_jobs::wake(&app);
             Ok(placed.display().to_string())
         }
         Err(err) => {

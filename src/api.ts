@@ -73,6 +73,8 @@ import type {
   UnityTarget,
   UnityProject,
   UnityProjectList,
+  ProjectContents,
+  ProductInstallPlace,
 } from "./types";
 
 export type ClassificationFeedbackScope = "other" | "unclassified" | "both";
@@ -182,6 +184,26 @@ export function listenPurchasesChanged(onChange: () => void): Promise<() => void
     return import("./preview/purchases").then((preview) => preview.listenPreviewPurchases(onChange));
   }
   return import("@tauri-apps/api/event").then(({ listen }) => listen("purchases-changed", () => onChange()));
+}
+
+/**
+ * Unity の索引か、プロジェクトを調べた結果が変わった（Rust の `unity_index_jobs::CHANGED_EVENT`）。
+ * 返す関数で聞くのをやめる。見本では何も届かない。
+ */
+export function onUnityIndexChanged(onChange: () => void): () => void {
+  if (!isTauri()) return () => {};
+  let stopped = false;
+  let unlisten: (() => void) | null = null;
+  void import("@tauri-apps/api/event")
+    .then(({ listen }) => listen("unity-index-changed", () => onChange()))
+    .then((stop) => {
+      if (stopped) stop();
+      else unlisten = stop;
+    });
+  return () => {
+    stopped = true;
+    unlisten?.();
+  };
 }
 
 export function listenBoothFile(onStatus: (status: BoothFileStatus) => void): Promise<() => void> {
@@ -375,6 +397,12 @@ export const api = {
     call<UnityProjectList>("link_unity_project_avatar", { projectId, avatarId, linked }),
   /** プロジェクトと同じ版の Unity で開く。開いていれば起動しない。 */
   openUnityProject: (projectId: string) => call<{ alreadyOpen: boolean }>("open_unity_project", { projectId }),
+  /** プロジェクトを調べる。ライブラリの索引を新しくしてから Assets を歩く。読むだけ。 */
+  scanUnityProject: (projectId: string) => call<ProjectContents>("scan_unity_project", { projectId }),
+  /** 前に調べた結果。調べ直さない。 */
+  unityProjectContents: (projectId: string) => call<ProjectContents>("unity_project_contents", { projectId }),
+  /** 商品が入っていると分かったプロジェクト（調べたものだけ）。 */
+  productUnityInstalls: (boothId: string) => call<ProductInstallPlace[]>("product_unity_installs", { boothId }),
   routeStagedDownload: (path: string) => call<void>("route_staged_download", { path }),
   classificationFeedback: (scope: ClassificationFeedbackScope) =>
     call<string>("classification_feedback", { scope }),

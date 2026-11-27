@@ -99,10 +99,76 @@ test("the preview keeps ALCOM projects and lets links change", async () => {
   });
 });
 
+test("project contents are grouped and missing products are not listed", async () => {
+  await withModules(["/src/unityProjects.ts"], async ({ projectSections, projectProductHref, scannedLabel, needsScan }) => {
+    const product = (boothId, verdict, extra = {}) => ({
+      boothId,
+      title: `商品${boothId}`,
+      thumbnailPath: null,
+      thumbnailUrl: null,
+      category: "outfit",
+      link: { kind: "asset", avatarId: null },
+      verdict,
+      packages: [],
+      ...extra,
+    });
+    const sections = projectSections({
+      scannedAt: 1,
+      complete: true,
+      stale: false,
+      products: [product("2", "installed"), product("1", "installed"), product("3", "missing"), product("4", "partial"), product("5", "bundled"), product("6", "unknown")],
+    });
+    assert.deepEqual(sections.installed.map((item) => item.boothId), ["1", "2"]);
+    assert.deepEqual([sections.partial.length, sections.bundled.length, sections.unknown.length], [1, 1, 1]);
+    assert.equal(Object.values(sections).flat().some((item) => item.verdict === "missing"), false);
+    assert.equal(projectProductHref(product("9", "installed")), "#/assets/item/9");
+    assert.equal(projectProductHref(product("9", "installed", { link: { kind: "world", avatarId: null } })), "#/worlds/item/9");
+    assert.equal(projectProductHref(product("9", "installed", { link: { kind: "avatar", avatarId: "plum" } })), "#/avatar/plum");
+    assert.equal(projectProductHref(product("9", "installed", { link: null })), null);
+    const now = Date.UTC(2026, 10, 27, 12);
+    assert.equal(scannedLabel(null, now), "まだ調べていません");
+    assert.equal(scannedLabel(now / 1000 - 300, now), "5 分前に調べました");
+    assert.equal(needsScan(null), true);
+    assert.equal(needsScan({ scannedAt: null, complete: false, stale: false, products: [] }), true);
+    assert.equal(needsScan({ scannedAt: 1, complete: true, stale: true, products: [] }), true);
+    assert.equal(needsScan({ scannedAt: 1, complete: true, stale: false, products: [] }), false);
+  });
+});
+
+test("the preview scans a project once asked and reports where a product is", async () => {
+  await withModules(["/src/preview/unityProjects.ts"], async ({ previewUnityProjectDispatch }) => {
+    const context = {
+      avatarName: (id) => ({ plum: "プラム" })[id],
+      productAvatarIds: () => [],
+      productIsWorld: () => false,
+      productRef: (boothId) => ({ "8901001": { title: "見本のワールド小物", thumbnailUrl: null, category: "world" } })[boothId],
+    };
+    const call = (command, args = {}) => previewUnityProjectDispatch(command, args, context)?.value;
+    const world = "a1b2c3d4e5f60003";
+    assert.equal(call("unity_project_contents", { projectId: world }).scannedAt, null);
+    assert.deepEqual(call("product_unity_installs", { boothId: "8901001" }), []);
+    const scanned = call("scan_unity_project", { projectId: world });
+    assert.equal(scanned.products[0].link.kind, "world");
+    assert.deepEqual(call("product_unity_installs", { boothId: "8901001" }), [{ projectId: world, name: "ChillWorld", verdict: "installed" }]);
+  });
+});
+
+test("the screen listens to the event name the Rust side sends, and drops late scan results", () => {
+  const rust = readFileSync(new URL("../src-tauri/src/unity_index_jobs.rs", import.meta.url), "utf8");
+  const api = readFileSync(new URL("../src/api.ts", import.meta.url), "utf8");
+  const name = rust.match(/CHANGED_EVENT: &str = "([^"]+)"/)?.[1];
+  assert.equal(name, "unity-index-changed");
+  assert.ok(api.includes(`listen("${name}"`));
+  // 調べている間に別のプロジェクトへ移ったとき、前のプロジェクトの結果を表示しない。
+  const page = readFileSync(new URL("../src/pages/ProjectDetailPage.tsx", import.meta.url), "utf8");
+  assert.match(page, /if \(shown\.current === id\) setContents\(value\)/);
+});
+
 test("the sidebar, route and search index know the projects page", () => {
   const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
   assert.match(app, /href: "#\/projects", label: "プロジェクト", icon: "projects"/);
-  assert.match(app, /route\.page === "projects" && <ProjectsPage \/>/);
+  assert.match(app, /route\.page === "projects" && \(route\.id \? <ProjectDetailPage id=\{route\.id\} \/> : <ProjectsPage \/>\)/);
+  assert.match(app, /parts\[0\] === "projects" && parts\[1\]/);
   const index = readFileSync(new URL("../src/appSearchIndex.ts", import.meta.url), "utf8");
   assert.match(index, /key: "nav:projects".*href: "#\/projects"/);
 });

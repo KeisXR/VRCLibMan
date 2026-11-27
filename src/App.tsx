@@ -9,6 +9,7 @@ import { AssetUpdateLogPage } from "./pages/AssetUpdateLogPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { WorldsPage } from "./pages/WorldsPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
+import { ProjectDetailPage } from "./pages/ProjectDetailPage";
 import { AssetsPage } from "./pages/AssetsPage";
 import { SearchPage } from "./pages/SearchPage";
 import { PurchasesPage } from "./pages/PurchasesPage";
@@ -131,6 +132,7 @@ function parseRoute(hash: string): Route {
   }
   // The former browser page was merged into import and settings; keep old links working.
   if (parts[0] === "browser") return { page: "import" };
+  if (parts[0] === "projects" && parts[1]) return { page: "projects", id: decodePart(parts[1]) };
   if (parts[0] === "search" || parts[0] === "import" || parts[0] === "settings" || parts[0] === "projects") {
     return { page: parts[0] };
   }
@@ -372,7 +374,7 @@ export default function App() {
         )}
         {route.page === "assets" && <AssetsPage />}
         {route.page === "worlds" && <WorldsPage />}
-        {route.page === "projects" && <ProjectsPage />}
+        {route.page === "projects" && (route.id ? <ProjectDetailPage id={route.id} /> : <ProjectsPage />)}
         {route.page === "search" && <SearchPage />}
         {route.page === "purchases" && <PurchasesPage view={route.purchaseView ?? "history"} group={route.purchaseGroup} />}
         {(route.page === "classification-log" || route.page === "asset-update-log") && <nav className="tabs" aria-label="記録の種類">
