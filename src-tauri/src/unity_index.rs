@@ -425,7 +425,9 @@ pub(crate) fn scan_metas(root: &Path, deadline: Instant, limit: usize) -> MetaSc
     let mut files = 0;
     let mut complete = true;
     for entry in walkdir::WalkDir::new(root).follow_links(false).into_iter() {
+        // たどれないフォルダ（Unity が書き換えている途中など）があれば、最後まで調べたとは言わない。
         let Ok(entry) = entry else {
+            complete = false;
             continue;
         };
         if !entry.file_type().is_file() {
@@ -441,9 +443,15 @@ pub(crate) fn scan_metas(root: &Path, deadline: Instant, limit: usize) -> MetaSc
             break;
         }
         let mut head = [0u8; 256];
-        let read = std::fs::File::open(entry.path())
-            .and_then(|mut file| file.read(&mut head))
-            .unwrap_or(0);
+        // 読めない .meta があれば、その GUID を見落とすので、最後まで調べたとは言わない。
+        let read = match std::fs::File::open(entry.path()).and_then(|mut file| file.read(&mut head))
+        {
+            Ok(read) => read,
+            Err(_) => {
+                complete = false;
+                continue;
+            }
+        };
         if let Some(guid) = meta_guid(&head[..read]) {
             let asset = entry.path().with_extension("");
             found.insert(guid, asset);
@@ -686,6 +694,9 @@ pub(crate) mod tests {
         assert!(found.ends_with("A.png"));
         let limited = scan_metas(&dir.path().join("Assets"), far(), 1);
         assert!(!limited.complete);
+        // たどれないフォルダ（ここでは消えたフォルダ）があれば、最後まで調べたとは言わない。
+        let missing = scan_metas(&dir.path().join("Gone"), far(), MAX_PROJECT_FILES);
+        assert!(!missing.complete);
     }
 
     #[test]

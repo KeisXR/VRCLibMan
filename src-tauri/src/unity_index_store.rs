@@ -696,6 +696,11 @@ pub(crate) fn product_projects(
     let mut found = Vec::new();
     for project in projects {
         let contents = project_contents(connection, &project)?;
+        // 調べたあとに索引が変わった（パッケージの GUID が変わったかもしれない）結果は使わない。
+        // 調べ直すまで、そのプロジェクトについては何も言わない。
+        if contents.stale {
+            continue;
+        }
         if let Some(product) = contents
             .products
             .iter()
@@ -973,6 +978,10 @@ mod tests {
         assert!(product_projects(&f.connection, "300").unwrap().is_empty());
         mark_project_stale(&f.connection, "p1").unwrap();
         assert!(project_contents(&f.connection, "p1").unwrap().stale);
+        // 古い結果からは、プレビューの行に「入っている」と出さない。調べ直せば戻る。
+        assert!(product_projects(&f.connection, "100").unwrap().is_empty());
+        scan_project(&mut f.connection, "p1", &f.project, &vpm).unwrap();
+        assert_eq!(product_projects(&f.connection, "100").unwrap().len(), 1);
         // 調べていないプロジェクトは空で、「入っていない」とは言わない。
         let none = project_contents(&f.connection, "other").unwrap();
         assert!(none.scanned_at.is_none() && none.products.is_empty());
