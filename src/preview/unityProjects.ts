@@ -1,4 +1,4 @@
-import type { InstallVerdict, PackageInstall, ProjectContents, UnityProject, UnityProjectList } from "../types";
+import type { InstallVerdict, ItemView, PackageInstall, ProjectContents, UnityProject, UnityProjectList } from "../types";
 
 /** 見本の Unity プロジェクト。ALCOM の一覧を真似る。実在のフォルダは見ない。 */
 interface PreviewProject {
@@ -41,7 +41,14 @@ export interface PreviewProjectContext {
   productIsWorld: (boothId: string) => boolean;
   /** 見本の商品の題・サムネイル・カテゴリ。無い商品は undefined。 */
   productRef?: (boothId: string) => { title: string; thumbnailUrl: string | null; category: string | null } | undefined;
+  /** 見本の商品カードの中身。無い商品は undefined。 */
+  itemView?: (boothId: string) => ItemView | undefined;
 }
+
+/** 見本の「まだ入っていない対応アセット」。プロジェクトごとに、入っていないと分かった商品。 */
+const SAMPLE_MISSING: Record<string, string[]> = {
+  a1b2c3d4e5f60001: ["8800130"],
+};
 
 /** 見本の「調べた結果」。プロジェクトごとに（商品 ID、判定、パッケージ）。 */
 type SampleRow = [string, InstallVerdict, Omit<PackageInstall, "sourcePath">[]];
@@ -58,8 +65,8 @@ const SAMPLE_CONTENTS: Record<string, SampleRow[]> = {
     ["7770415", "installed", [pkg("Plum_v.1.0.1.unitypackage", "installed", 163, 163), pkg("lilToon_1.4.0.unitypackage", "bundled", 0, 350, { bundledWith: "jp.lilxyzw.liltoon" })]],
     ["8800101", "installed", [pkg("OnePiece_v2.unitypackage", "installed", 40, 42, { closest: true }), pkg("OnePiece_v1.unitypackage", "installed", 38, 42)]],
     ["8800120", "partial", [pkg("EyeTextures.unitypackage", "partial", 12, 30)]],
-    ["8800130", "unknown", [pkg("SmallItem.unitypackage", "unknown", 0, 0)]],
-    ["8800111", "missing", [pkg("Ribbon.unitypackage", "missing", 0, 8)]],
+    ["8800130", "missing", [pkg("SmallItem.unitypackage", "missing", 0, 8)]],
+    ["8800111", "unknown", [pkg("Ribbon.unitypackage", "unknown", 0, 0)]],
   ],
   a1b2c3d4e5f60003: [["8901001", "installed", [pkg("WorldProp.unitypackage", "installed", 19, 19)]]],
 };
@@ -191,6 +198,22 @@ export function previewUnityProjectDispatch(
         return [{ projectId, name: project.name, verdict: row[1] }];
       });
       return { value: places };
+    }
+    case "unity_project_suggestions": {
+      const project = find(args.projectId);
+      if (scannedAt[project.id] === undefined) return { value: { scanned: false, items: [] } };
+      const items = (SAMPLE_MISSING[project.id] ?? [])
+        .map((boothId) => context.itemView?.(boothId))
+        .filter((item): item is ItemView => item !== undefined);
+      return { value: { scanned: true, items } };
+    }
+    case "unity_install_check": {
+      // 見本: 開いているのは Plum-Main（渡す先が決まるとき）。そこに入っている商品だけを返す。
+      const boothId = String(args.boothId ?? "");
+      const plum = projects.find((item) => item.id === "a1b2c3d4e5f60001");
+      const row = (SAMPLE_CONTENTS.a1b2c3d4e5f60001 ?? []).find(([id]) => id === boothId);
+      if (!plum || plum.running !== "open" || !row || row[1] !== "installed") return { value: null };
+      return { value: { projectId: plum.id, name: plum.name, verdict: "installed" } };
     }
     case "open_unity_project": {
       const project = find(args.projectId);

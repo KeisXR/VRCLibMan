@@ -94,6 +94,33 @@ export function needsScan(contents: ProjectContents | null): boolean {
   return contents == null || contents.scannedAt == null || contents.stale;
 }
 
+/** 商品カードの「導入済み」の印に使う、商品ごとの判定（導入済みと一部だけ）。 */
+export function installMarks(contents: ProjectContents | null): Map<string, "installed" | "partial"> {
+  const marks = new Map<string, "installed" | "partial">();
+  // 調べていない・調べたあとに索引が変わった（古い）結果からは印を出さない。
+  if (!contents || contents.scannedAt == null || contents.stale) return marks;
+  for (const product of contents.products) {
+    if (product.verdict === "installed" || product.verdict === "partial") marks.set(product.boothId, product.verdict);
+  }
+  return marks;
+}
+
+/** 印を出すプロジェクト。選んでいたものが結び付けに残っていればそれ、無ければ最初の 1 つ。 */
+export function markProjectId(linked: UnityProject[], current: string | null): string | null {
+  if (current && linked.some((project) => project.id === current)) return current;
+  return linked[0]?.id ?? null;
+}
+
+/** 入っているアバター本体のうち、プロジェクトにまだ結び付けていないもの（結び付けの候補）。 */
+export function bodySuggestions(contents: ProjectContents | null, project: UnityProject | null): ProjectProduct[] {
+  if (!contents || !project) return [];
+  const linked = new Set(project.avatars.map((avatar) => avatar.id));
+  return contents.products.filter(
+    (product) =>
+      product.verdict === "installed" && product.link?.kind === "avatar" && product.link.avatarId != null && !linked.has(product.link.avatarId),
+  );
+}
+
 /** アバターに結び付けられるプロジェクト（隠しておらず、ワールドのプロジェクトでなく、まだ結び付けていないもの）。 */
 export function linkableProjects(projects: UnityProject[], avatarId: string): UnityProject[] {
   return projects.filter(

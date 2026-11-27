@@ -82,11 +82,41 @@ pub(crate) fn sources(connection: &rusqlite::Connection) -> Result<Vec<Source>, 
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })
         .map_err(|err| format!("索引の対象を読めません: {err}"))?;
+    let mut rows_found = Vec::new();
+    for row in rows {
+        rows_found.push(row.map_err(|err| format!("索引の対象を読めません: {err}"))?);
+    }
+    Ok(pick_sources(rows_found, &roots[0], &roots[1]))
+}
+
+/// ライブラリかリモートの中の zip と unitypackage だけを残す。手元とリモートに同じ商品の同じ名前の
+/// ファイルがあれば、手元のものだけを読む（リモート自動同期で写したものを 2 回読まないため）。
+pub(crate) fn pick_sources(
+    rows: Vec<(String, String)>,
+    library: &str,
+    remote: &str,
+) -> Vec<Source> {
+    let file_key = |booth_id: &str, path: &str| {
+        let name = path.rsplit(['\\', '/']).next().unwrap_or(path);
+        (booth_id.to_string(), path_key(name))
+    };
+    let local: std::collections::HashSet<(String, String)> = rows
+        .iter()
+        .filter(|(_, path)| inside(path, library))
+        .map(|(booth_id, path)| file_key(booth_id, path))
+        .collect();
     let mut found: Vec<Source> = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    for row in rows {
-        let (booth_id, path) = row.map_err(|err| format!("索引の対象を読めません: {err}"))?;
-        if !is_package_source(&path) || !roots.iter().any(|root| inside(&path, root)) {
+    for (booth_id, path) in rows {
+        if !is_package_source(&path) {
+            continue;
+        }
+        let in_library = inside(&path, library);
+        let in_remote = !in_library && inside(&path, remote);
+        if !in_library && !in_remote {
+            continue;
+        }
+        if in_remote && local.contains(&file_key(&booth_id, &path)) {
             continue;
         }
         if seen.insert(path_key(&path)) {
@@ -96,7 +126,7 @@ pub(crate) fn sources(connection: &rusqlite::Connection) -> Result<Vec<Source>, 
             });
         }
     }
-    Ok(found)
+    found
 }
 
 fn busy(app: &AppHandle) -> bool {
@@ -248,6 +278,36 @@ mod tests {
             assert!(!inside("/library/a.zip", "/lib"));
         }
         assert!(!inside("/a/b.zip", ""));
+        let sep = std::path::MAIN_SEPARATOR;
+        let lib = format!("{sep}lib");
+        let remote = format!("{sep}remote");
+        let at =
+            |root: &str, rest: &str| format!("{root}{sep}{}", rest.replace('/', &sep.to_string()));
+        let picked = pick_sources(
+            vec![
+                ("100".into(), at(&lib, "100/Outfit.zip")),
+                ("100".into(), at(&remote, "100/Outfit.zip")),
+                ("100".into(), at(&remote, "100/Extra.unitypackage")),
+                ("200".into(), at(&remote, "200/Outfit.zip")),
+                ("300".into(), at(&lib, "300/readme.txt")),
+                ("400".into(), format!("{sep}elsewhere{sep}a.zip")),
+            ],
+            &lib,
+            &remote,
+        );
+        let names: Vec<String> = picked
+            .iter()
+            .map(|s| s.path.display().to_string())
+            .collect();
+        // 手元にある同じ名前のファイルはリモートから読まない。別の商品の同じ名前は別のファイル。
+        assert_eq!(
+            names,
+            [
+                at(&lib, "100/Outfit.zip"),
+                at(&remote, "100/Extra.unitypackage"),
+                at(&remote, "200/Outfit.zip")
+            ]
+        );
         assert!(
             is_package_source("x.UnityPackage")
                 && is_package_source("x.ZIP")

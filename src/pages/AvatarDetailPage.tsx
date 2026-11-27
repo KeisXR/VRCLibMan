@@ -1,5 +1,5 @@
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { api, openBoothLink, openLocal, revealInFolder } from "../api";
+import { api, onUnityIndexChanged, openBoothLink, openLocal, revealInFolder } from "../api";
 import { useShell } from "../App";
 import { downloadDetail, downloadKey, isDownloadActive, type DownloadEntry } from "../downloads";
 import { useDownloads } from "../useDownloads";
@@ -26,6 +26,7 @@ import { ExcludeProductButton } from "../components/ProductExclusions";
 import { UnityOpenButton } from "../components/UnityOpenDialog";
 import { AvatarUnityProjects } from "../components/UnityProjects";
 import { isUnityOpenableName } from "../unityOpen";
+import { installMarks } from "../unityProjects";
 import { copyWithConfirm } from "../remoteCopy";
 import { type FileCheckKind, fileCheckKind, fileCheckLabel, freeFilesResultMessage, purchasedFilesResultMessage } from "../freeFiles";
 import {
@@ -132,13 +133,40 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
     () => new Map(probedCatalog.map((item) => [item.boothId, item])),
     [probedCatalog],
   );
+  // 商品カードの「導入済み」の印。結び付けたプロジェクトのうち選んだ 1 つについて、前に調べた結果から出す。
+  const [markId, setMarkId] = useState<string | null>(null);
+  const [marks, setMarks] = useState<{ project: string; verdicts: Map<string, "installed" | "partial"> } | null>(null);
+  useEffect(() => {
+    setMarks(null);
+    if (!markId) return;
+    let cancelled = false;
+    const load = () =>
+      Promise.all([api.unityProjectContents(markId), api.unityProjects()]).then(
+        ([contents, list]) => {
+          if (cancelled) return;
+          const name = list.projects.find((project) => project.id === markId)?.name ?? "";
+          setMarks({ project: name, verdicts: installMarks(contents) });
+        },
+        () => undefined,
+      );
+    void load();
+    const stop = onUnityIndexChanged(() => void load());
+    return () => {
+      cancelled = true;
+      stop();
+    };
+  }, [markId]);
   const itemCardProps = useCallback(
-    (item: ItemView) => ({
-      item: probedMap.get(item.boothId) ?? item,
-      remoteProbeStatus: statusFor(item.boothId),
-      onRetryRemoteProbe: () => retryProbe([item.boothId]),
-    }),
-    [probedMap, statusFor, retryProbe],
+    (item: ItemView) => {
+      const verdict = marks?.verdicts.get(item.boothId);
+      return {
+        item: probedMap.get(item.boothId) ?? item,
+        remoteProbeStatus: statusFor(item.boothId),
+        onRetryRemoteProbe: () => retryProbe([item.boothId]),
+        unityInstall: verdict && marks ? { verdict, project: marks.project } : undefined,
+      };
+    },
+    [probedMap, statusFor, retryProbe, marks],
   );
 
   async function merge() {
@@ -222,7 +250,7 @@ export function AvatarDetailPage({ id, fileBoothId }: { id: string; fileBoothId?
           {primaryOwned ? <AvatarAssetsPanel item={primaryOwned} itemCardProps={itemCardProps} /> : null}
         </>
       )}
-      <AvatarUnityProjects avatarId={detail.id} />
+      <AvatarUnityProjects avatarId={detail.id} markId={markId} onMark={setMarkId} />
       {(detail.aliases.length > 0 || detail.baseBodyNote) && (
         <details className="generic">
           <summary>アバターの情報</summary>
@@ -620,6 +648,7 @@ export function ItemCard({
   onSelect,
   hideFiles = false,
   focused = false,
+  unityInstall,
 }: {
   item: ItemView;
   movable?: boolean;
@@ -634,6 +663,8 @@ export function ItemCard({
   hideFiles?: boolean;
   /** ほかの画面（購入履歴など）から開いた商品。枠で示す。 */
   focused?: boolean;
+  /** 選んだ Unity プロジェクトに入っていると分かった商品の印（docs/unity-projects.md の段階 2）。 */
+  unityInstall?: { verdict: "installed" | "partial"; project: string };
 }) {
   const { builtinBrowser, refresh, notify, fail } = useShell();
   const [busy, setBusy] = useState("");
@@ -720,6 +751,11 @@ export function ItemCard({
           {item.unpublished && <span className="badge">非公開</span>}
           {item.isFree && <span className="badge">無料</span>}
           {item.isAdult && <span className="badge adult">R-18</span>}
+          {unityInstall && (
+            <span className="badge project-installed" title={`${unityInstall.project} に入っています`}>
+              {unityInstall.verdict === "installed" ? "導入済み" : "一部導入済み"}
+            </span>
+          )}
           <FileMark
             presence={filePresence(item.downloads, item.localFileCount)}
             onClick={() => document.getElementById(`files-${item.boothId}`)?.scrollIntoView({ block: "nearest" })}

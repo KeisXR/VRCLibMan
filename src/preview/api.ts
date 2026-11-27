@@ -2148,6 +2148,10 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       const product = activeProducts().find((item) => item.boothId === boothId);
       return product ? { title: product.title, thumbnailUrl: product.thumbnailUrl, category: product.category } : undefined;
     },
+    itemView: (boothId) => {
+      const product = activeProducts().find((item) => item.boothId === boothId);
+      return product ? itemView(product, false) : undefined;
+    },
   });
   if (project) return project.value as T;
   switch (command) {

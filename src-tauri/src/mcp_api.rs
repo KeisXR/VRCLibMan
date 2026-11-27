@@ -34,6 +34,8 @@ pub(crate) enum Route {
     DownloadFile,
     /// `tools/list` のために、今使えるツールを返す。
     Capabilities,
+    /// Unity プロジェクトに入っている商品（docs/unity-projects.md の段階 2）。読むだけ。
+    UnityProject,
 }
 
 pub(crate) fn route(path: &str) -> Option<Route> {
@@ -44,6 +46,7 @@ pub(crate) fn route(path: &str) -> Option<Route> {
         "/mcp/product_files" => Some(Route::ProductFiles),
         "/mcp/download_file" => Some(Route::DownloadFile),
         "/mcp/capabilities" => Some(Route::Capabilities),
+        "/mcp/unity_project" => Some(Route::UnityProject),
         _ => None,
     }
 }
@@ -57,6 +60,7 @@ impl Route {
             Route::ProductFiles => "product_files",
             Route::DownloadFile => "download_file",
             Route::Capabilities => "capabilities",
+            Route::UnityProject => "unity_project",
         }
     }
 }
@@ -274,6 +278,9 @@ pub(crate) enum Reply {
     Files(PendingFiles),
     /// 受信口がデータベースのロックを外してから、`browser::download_one_file` で受け取る。
     Download(DownloadPlan),
+    /// 受信口がデータベースのロックを外してから、プロジェクトの一覧と索引を読む（`unity_project_reply`）。
+    /// 値は、エージェントが渡したプロジェクトのフォルダか名前。
+    UnityProject(String),
 }
 
 /// AI エージェントから頼まれた 1 ファイル。
@@ -353,6 +360,12 @@ struct FilesBody {
     booth_id: String,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct UnityProjectBody {
+    project: String,
+}
+
 fn valid_id(id: &str) -> bool {
     (4..=12).contains(&id.len()) && id.bytes().all(|byte| byte.is_ascii_digit())
 }
@@ -364,6 +377,19 @@ pub(crate) fn handle(connection: &Connection, route: Route, body: &str) -> Resul
         Route::Capabilities => Ok(Reply::ok(json!({
             "downloadFile": allow_download(connection)?,
         }))),
+        Route::UnityProject => {
+            let Some(project) = serde_json::from_str::<UnityProjectBody>(body)
+                .ok()
+                .map(|body| body.project.trim().to_string())
+                .filter(|project| !project.is_empty() && project.chars().count() <= 1024)
+            else {
+                return Ok(Reply::error(
+                    400,
+                    "プロジェクトの指定を読めません。プロジェクトのフォルダか名前を渡してください",
+                ));
+            };
+            Ok(Reply::UnityProject(project))
+        }
         Route::DownloadFile => {
             if !allow_download(connection)? {
                 return Ok(Reply::error(
@@ -749,6 +775,75 @@ impl<'a> Facts<'a> {
 
 /// AI エージェントに見せてよい商品だけの写し。R-18 を許していないときは、R-18 の商品とその結び付きを除く。
 /// 一覧の件数や、R-18 の商品だけが指すアバター・R-18 の本体による所持から、見せない商品が漏れないようにするため。
+/// `unity_project` の答え。入っている商品と、結び付けたアバターに対応していて入っていないと分かった商品。
+/// 除外した商品と（設定でオフなら）R-18 の商品は出さない。パスは返さない。
+pub(crate) fn unity_project_reply(
+    connection: &Connection,
+    project: &crate::unity_projects::UnityProject,
+    contents: &crate::unity_index_store::ProjectContents,
+    missing: &[String],
+) -> Result<Value, String> {
+    use crate::unity_index::Verdict;
+    let adult_ok = include_adult(connection)?;
+    let snapshot = visible_snapshot(connection, adult_ok)?;
+    let facts = Facts::new(&snapshot);
+    let verdict_name = |verdict: Verdict| match verdict {
+        Verdict::Installed => "installed",
+        Verdict::Partial => "partial",
+        Verdict::Missing => "missing",
+        Verdict::Unknown => "unknown",
+        Verdict::Bundled => "bundled",
+    };
+    // 古い結果（調べたあとに索引が変わった）からは、入っている商品を言わない（画面のプレビューの行と同じ）。
+    let installed: Vec<Value> = contents
+        .products
+        .iter()
+        .filter(|_| !contents.stale)
+        .filter(|product| matches!(product.verdict, Verdict::Installed | Verdict::Partial))
+        .filter_map(|product| {
+            let found = facts.products.get(product.booth_id.as_str())?;
+            let mut value = facts.item(found);
+            value["installed"] = json!(verdict_name(product.verdict));
+            Some(value)
+        })
+        .collect();
+    let not_installed: Vec<Value> = missing
+        .iter()
+        .filter_map(|id| facts.products.get(id.as_str()))
+        .map(|product| facts.item(product))
+        .collect();
+    let mut value = json!({
+        "project": {
+            "name": project.name,
+            "unityVersion": project.version,
+            "kind": project.kind,
+            "avatars": project.avatars.iter().map(|avatar| avatar.name.clone()).collect::<Vec<_>>(),
+        },
+        "scannedAt": contents.scanned_at,
+        "installed": installed,
+        "notInstalledCompatible": not_installed,
+    });
+    match contents.scanned_at {
+        None => {
+            value["note"] = json!(
+                "このプロジェクトはまだ調べていません。VRCLibMan の「プロジェクト」でこのプロジェクトを開くと調べます。調べるまでは、入っていないとは言えません。"
+            )
+        }
+        Some(_) if contents.stale => {
+            value["note"] = json!(
+                "前に調べたあとにライブラリかプロジェクトが変わったので、入っている商品は返していません。VRCLibMan の「プロジェクト」でこのプロジェクトを開くと調べ直します。"
+            )
+        }
+        Some(_) if !contents.complete => {
+            value["note"] = json!(
+                "プロジェクトが大きいか読めないファイルがあり、途中までしか調べられませんでした。installed に無い商品も、入っていないとは限りません。"
+            )
+        }
+        _ => {}
+    }
+    Ok(value)
+}
+
 fn visible_snapshot(connection: &Connection, adult_ok: bool) -> Result<view::Snapshot, String> {
     let mut snapshot = db::load_snapshot(connection)?;
     if adult_ok {
@@ -1050,7 +1145,112 @@ mod tests {
                 200,
                 json!({ "plan": plan.filename, "variation": plan.variation }),
             ),
+            Reply::UnityProject(project) => (200, json!({ "unityProject": project })),
         }
+    }
+
+    #[test]
+    fn unity_project_reply_hides_adult_and_excluded_products_and_paths() {
+        use crate::unity_index::Verdict;
+        use crate::unity_index_store::{PackageInstall, ProductInstall, ProjectContents};
+        let (_library, _outside, connection) = library();
+        connection
+            .execute_batch(
+                "INSERT INTO products (booth_id, title, category, genre, imported_at, updated_at) VALUES ('8101', '見本の衣装', 'outfit', 'outfit', 't', 't');
+                 INSERT INTO products (booth_id, title, category, genre, is_adult, imported_at, updated_at) VALUES ('8102', '大人の衣装', 'outfit', 'outfit', 1, 't', 't');
+                 INSERT INTO products (booth_id, title, category, genre, imported_at, updated_at) VALUES ('8103', '除外した衣装', 'outfit', 'outfit', 't', 't');
+                 INSERT INTO products (booth_id, title, category, genre, imported_at, updated_at) VALUES ('8104', '入っていない髪', 'hair', 'hair', 't', 't');
+                 INSERT INTO product_exclusions (booth_id, excluded_at) VALUES ('8103', 't');",
+            )
+            .unwrap();
+        let installed = |id: &str, verdict: Verdict| ProductInstall {
+            booth_id: id.into(),
+            verdict,
+            packages: vec![PackageInstall {
+                name: "a.unitypackage".into(),
+                source_path: "C:\\Secret\\Library\\a.zip".into(),
+                verdict,
+                unique_total: 4,
+                unique_matched: 4,
+                bundled_with: None,
+                closest: false,
+            }],
+        };
+        let contents = ProjectContents {
+            scanned_at: Some(1),
+            complete: true,
+            stale: false,
+            products: vec![
+                installed("8101", Verdict::Installed),
+                installed("8102", Verdict::Installed),
+                installed("8103", Verdict::Partial),
+                installed("8104", Verdict::Missing),
+            ],
+        };
+        let project = crate::unity_projects::UnityProject {
+            id: "0".repeat(16),
+            name: "Plum".into(),
+            path: "D:\\SecretProjects\\Plum".into(),
+            state: "ok",
+            version: "2022.3.22f1".into(),
+            kind: "avatar",
+            packages: vec![],
+            source: "alcom",
+            hidden: false,
+            running: "closed",
+            editor_available: true,
+            avatars: vec![],
+            modified: None,
+        };
+        let value =
+            unity_project_reply(&connection, &project, &contents, &["8104".into()]).unwrap();
+        let ids = |key: &str| -> Vec<String> {
+            value[key]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|item| item["boothId"].as_str().unwrap().to_string())
+                .collect()
+        };
+        assert_eq!(ids("installed"), ["8101"]);
+        assert_eq!(value["installed"][0]["installed"], "installed");
+        assert_eq!(ids("notInstalledCompatible"), ["8104"]);
+        assert!(value.get("note").is_none());
+        let text = value.to_string();
+        assert!(!text.contains("Secret"), "パスを返さない");
+        // 調べていなければ、そう伝える。
+        let unscanned = ProjectContents {
+            scanned_at: None,
+            complete: false,
+            stale: false,
+            products: vec![],
+        };
+        let value = unity_project_reply(&connection, &project, &unscanned, &[]).unwrap();
+        assert!(
+            value["note"]
+                .as_str()
+                .unwrap()
+                .contains("まだ調べていません")
+        );
+        // 古い結果からは、入っている商品を返さず、調べ直すよう伝える。
+        let stale = ProjectContents {
+            stale: true,
+            ..contents
+        };
+        let value = unity_project_reply(&connection, &project, &stale, &[]).unwrap();
+        assert!(value["installed"].as_array().unwrap().is_empty());
+        assert!(value["note"].as_str().unwrap().contains("返していません"));
+        // 本文の形を確かめる。
+        assert_eq!(route("/mcp/unity_project"), Some(Route::UnityProject));
+        let (status, _) =
+            json_of(handle(&connection, Route::UnityProject, r#"{"project":""}"#).unwrap());
+        assert_eq!(status, 400);
+        let (_, body) =
+            json_of(handle(&connection, Route::UnityProject, r#"{"project":"Plum"}"#).unwrap());
+        assert_eq!(body["unityProject"], "Plum");
+        let (status, _) =
+            json_of(handle(&connection, Route::UnityProject, r#"{"other":1}"#).unwrap());
+        assert_eq!(status, 400);
     }
 
     #[test]

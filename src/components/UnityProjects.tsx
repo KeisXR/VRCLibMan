@@ -3,7 +3,7 @@ import { api } from "../api";
 import { useShell } from "../App";
 import type { UnityProject, UnityProjectList } from "../types";
 import { errorText } from "../ui";
-import { linkableProjects, projectStateNote } from "../unityProjects";
+import { linkableProjects, markProjectId, projectStateNote } from "../unityProjects";
 
 /** プロジェクトの一覧を読む。変更系の呼び出しは新しい一覧を返すので、それを `apply` で受ける。 */
 export function useUnityProjects() {
@@ -63,14 +63,30 @@ export function useOpenUnityProject() {
   return { open, opening };
 }
 
-/** アバター詳細の「Unity プロジェクト」。結び付けたプロジェクトを開き、結び付けを足し外しする。 */
-export function AvatarUnityProjects({ avatarId }: { avatarId: string }) {
+/**
+ * アバター詳細の「Unity プロジェクト」。結び付けたプロジェクトを開き、結び付けを足し外しする。
+ * 商品カードの「導入済み」の印は、結び付けたプロジェクトのうち 1 つ（`markId`）について出す。
+ * 2 つ以上あるときは、ここで選ぶ（選択は画面の中だけで、保存しない）。
+ */
+export function AvatarUnityProjects({
+  avatarId,
+  markId,
+  onMark,
+}: {
+  avatarId: string;
+  markId: string | null;
+  onMark: (projectId: string | null) => void;
+}) {
   const { fail } = useShell();
   const { list, apply } = useUnityProjects();
   const { open, opening } = useOpenUnityProject();
   const [busy, setBusy] = useState(false);
+  const linked = list ? list.projects.filter((project) => project.avatars.some((avatar) => avatar.id === avatarId)) : [];
+  const wanted = list ? markProjectId(linked, markId) : markId;
+  useEffect(() => {
+    if (wanted !== markId) onMark(wanted);
+  }, [wanted, markId, onMark]);
   if (!list) return null;
-  const linked = list.projects.filter((project) => project.avatars.some((avatar) => avatar.id === avatarId));
   const candidates = linkableProjects(list.projects, avatarId);
   if (linked.length === 0 && candidates.length === 0) return null;
 
@@ -133,6 +149,18 @@ export function AvatarUnityProjects({ avatarId }: { avatarId: string }) {
             </option>
           ))}
         </select>
+      )}
+      {linked.length >= 2 && (
+        <label className="avatar-project-mark">
+          <span className="meta">「導入済み」の印:</span>
+          <select value={wanted ?? ""} onChange={(event) => onMark(event.target.value || null)}>
+            {linked.map((project) => (
+              <option key={project.id} value={project.id}>
+                {project.name}
+              </option>
+            ))}
+          </select>
+        </label>
       )}
     </div>
   );

@@ -46,6 +46,9 @@ Unity を操作している AI エージェント（Claude Code、Cursor、そ�
 | `avatar_assets` | `avatar`（名前・別名・ID）、`genre` | アバター詳細と同じ分け方の見出しと商品 |
 | `download_file` | `boothId`、`filename`、`variation` | 設定「AI エージェントからのダウンロードを許可」（既定オフ）がオンのときだけ `tools/list` に出る。1 ファイルを受け取り、置いた場所と中の Unity パッケージを返す |
 | `product_files` | `boothId` | ファイル名、バリエーション、大きさ、状態（`local` / `remote` / `outsideLibrary` / `notDownloaded`）、`local` と `remote` のときのパス、zip と .unitypackage の中の Unity パッケージ |
+| `unity_project` | `project`（Unity プロジェクトのフォルダか名前） | プロジェクトの名前・版・種類・結び付けたアバター、入っている商品（`installed` に `installed` か `partial`）、結び付けたアバターに対応していて入っていないと分かった商品（`notInstalledCompatible`）、調べた日時（`scannedAt`）。調べていない・古いときは `note`。パスは返さない |
+
+- `unity_project` は VRCLibMan が前に調べた結果を返すだけで、調べ直さない。調べたあとに索引が変わった（古い）ときは、入っている商品を返さず、`note` で調べ直すよう伝える。プロジェクトの一覧（ALCOM の設定）と索引（`unity-index.sqlite`）は、受信口がデータベースのロックを外してから読む。判定の決まりは [Unity プロジェクト連携](unity-projects.md#段階-2-導入済みの判定)。
 
 - 検索は画面の検索と同じ `search::product_ids` を使う。アバターでの絞り込みは `view::panel_avatar_sections`（アバター詳細と同じ規則）。髪は、共通素体では対応に含めない。
 - アバター名の解決は ID、表示名、`resolve::resolve_name` の順。

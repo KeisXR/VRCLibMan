@@ -20,6 +20,7 @@ const MAX_RESPONSE: usize = 8 * 1024 * 1024;
 const INSTRUCTIONS: &str = "VRCLibMan は、利用者が BOOTH で買った VRChat 用のアバター・衣装・髪・ギミックなどの手元のライブラリです。\
 アバターに合うアセットを探すときは、まず list_avatars で所持アバターの名前を確かめ、avatar_assets か search_library(avatar=...) を使ってください。\
 Unity に取り込むファイルは product_files で手元のパスと、zip の中の .unitypackage を確かめてください。\
+いまのプロジェクトに何が入っているかは unity_project で確かめられます（VRCLibMan が前に調べた結果です）。\
 viaBaseBody が true の商品は、共通素体による対応で、そのアバターを名指ししていません。generic は汎用品です。";
 
 /// `--mcp` で起動したときの入口。標準入力が閉じるまで動く。
@@ -192,6 +193,20 @@ fn tools(download: bool) -> Vec<Value> {
                     "boothId": { "type": "string", "description": "BOOTH の商品ID（数字）" }
                 },
                 "required": ["boothId"],
+                "additionalProperties": false
+            },
+            "annotations": read_only,
+        }),
+        json!({
+            "name": "unity_project",
+            "title": "Unity プロジェクトに入っている商品",
+            "description": "Unity プロジェクトに、ライブラリのどの商品が入っているかを返します。project には、いま作業している Unity プロジェクトのフォルダ（Assets の 1 つ上）か名前を渡します。installed は VRCLibMan が前に調べた結果（unitypackage とプロジェクトの .meta の GUID の一致）で、partial は一部だけ見つかったもの。notInstalledCompatible は、プロジェクトに結び付けたアバターに対応していて、入っていないと分かった商品です。ここでは調べ直さないので、scannedAt が無いか note があるときは、利用者に VRCLibMan の「プロジェクト」で調べてもらってください。ALCOM の一覧にあるプロジェクトか、VRCLibMan で足したものだけを扱います。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project": { "type": "string", "description": "Unity プロジェクトのフォルダ（絶対パス）か、フォルダ名" }
+                },
+                "required": ["project"],
                 "additionalProperties": false
             },
             "annotations": read_only,
@@ -457,7 +472,8 @@ mod tests {
                 "search_library",
                 "list_avatars",
                 "avatar_assets",
-                "product_files"
+                "product_files",
+                "unity_project"
             ]
         );
         assert_eq!(replies[2]["error"]["code"], -32601);

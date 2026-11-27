@@ -1034,6 +1034,14 @@ export interface ProductInstallPlace {
   verdict: InstallVerdict;
 }
 
+/** プロジェクトの「まだ入っていない対応アセット」（Rust の `project_suggestions`） */
+export interface ProjectSuggestions {
+  /** 調べたことがある。無ければ候補を出さない */
+  scanned: boolean;
+  /** 結び付けたアバターに対応していて、入っていないと分かった商品。手元にファイルがある順 */
+  items: ItemView[];
+}
+
 export interface AssetUpdateRow {
   revision: number;
   candidateKey?: string | null;
