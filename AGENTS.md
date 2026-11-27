@@ -21,7 +21,7 @@ PC 間の移行は [データ移行](docs/remote-sync.md) に従う。現在は�
 続けて作らないもの:
 
 - Booth 商品の購入、一括または無人の自動ダウンロード
-- Unity プロジェクトへの自動転送（「Unityで開く」は選んだ unitypackage を Unity の Import 画面に渡すだけ）
+- Unity プロジェクトへの自動転送（「Unityで開く」は選んだ unitypackage を Unity の Import 画面に渡すだけ。mp3・png などは unitypackage に包んでから同じ画面に渡す）
 - クラウド同期
 - 複数の AI エージェントをアプリに組み込むこと
 - 言語モデル（Ollama、Apple のオンデバイスモデル、クラウド API）による分類。規則の改善で補う
@@ -253,7 +253,8 @@ Windows では、BOOTH の窓を同期コマンドの中で作らない。WebVie
 ### Unity で開く
 
 - `src-tauri/src/unity_import.rs` とコマンド `unity_packages` / `prepare_unity_packages` / `launch_unity_packages`。画面は `src/components/UnityOpenDialog.tsx`（`useUnityOpen` と `UnityOpenButton`）、純粋な判断は `src/unityOpen.ts`。導線はダウンロード行（`state === "local"`）、商品カードの手元のファイル、右パネルのファイルタブ。
-- 対象はライブラリかリモートライブラリの中の zip と `.unitypackage` だけ（`allowed_source`）。zip は `file_browser::read_zip` で目次を読み、5 秒で打ち切る。展開しない。
+- 対象はライブラリかリモートライブラリの中の zip と `.unitypackage`、それに Unity が取り込める単体のファイル（`unity_wrap::LOOSE_EXTENSIONS`。mp3・wav・ogg・png・jpg・psd・fbx など。画面の `isUnityLooseName` も同じ並び）だけ（`allowed_source`）。zip は `file_browser::read_zip` で目次を読み、5 秒で打ち切る。展開しない。
+- 単体のファイルは `unity_wrap.rs` が `unity-import/<商品ID>/VRCLibMan-<GUID先頭12桁>.unitypackage`（名前は ASCII。Unity 2022.3 は日本語の名前の unitypackage の展開に失敗したため。gzip した tar。中身は `asset`・`asset.meta`・`pathname` の 1 組）に包み、既存の `-openfile` で渡す。入る場所は `Assets/VRCLibMan/<商品名>/<ファイル名>`（商品名はローカル DB から。無ければ商品 ID）で、渡す前にダイアログで見せ、既定の Unity があっても確認なしには渡さない。GUID は入る場所から決め、もう一度渡しても複製を作らない。プロジェクトに直接書き込まず、zip の中の単体ファイルは対象外。
 - 取り出しは選んだ `.unitypackage` だけを `app_cache_dir/unity-import/<商品ID>/` へ。商品 ID は 1〜12 桁の数字、それ以外は `other`。ファイル名は zip 内の最後の名前だけを使い、Windows で使えない文字を置き換え、120 文字まで、同名は「 (2)」を付ける。書き出し先を `canonicalize` して親が取り出し先と同じか確かめる（zip slip）。宣言サイズ 8 GiB まで、`.part` に宣言サイズ + 1 バイトまで書き、宣言と一致したときだけ名前を戻す。zip の圧縮は Deflate だけ有効（`deflate-flate2-zlib-rs`）。
 - キャッシュは起動時に別スレッドで 24 時間より古いファイルと空フォルダを消す。リンクはたどらない。
 - 既定の Unity で渡す前に、設定した Unity のエディタが起動しているかを起動中のプロセスの実行ファイルで確かめ、無ければ渡さずに「プロジェクトを開いてから押す」案内を、別のバージョンだけが起動していればその案内をエラーで返す。エディタが無いと `-openfile` は Unity Hub を開いて正常終了し、渡せなかったことが終了コードに出ないため（[検証記録](docs/verification.md#windows-配布版の実機確認と取り込みが移動前のページで止まる不具合2026-11-14)）。プロセスを列挙できないときは確かめずに渡す。関連付けで開くときは確かめない。
@@ -468,6 +469,7 @@ Mac の内蔵ブラウザは `data_directory` を使わない。固定の 16 バ
 | `src-tauri/src/sync_export.rs` | データ移行の manifest の組み立てと ZIP の保存 |
 | `src-tauri/src/unity.rs` | Unity エディタの検出（Hub の記録と既定のインストール先） |
 | `src-tauri/src/unity_import.rs` | 「Unityで開く」の一覧、取り出し、キャッシュ、`-openfile` での起動 |
+| `src-tauri/src/unity_wrap.rs` | 「Unityで開く」で mp3・png などを unitypackage に包む。入る場所と GUID |
 | `src-tauri/src/commands.rs` | Tauri コマンド |
 | `src-tauri/src/browser_surface.rs` | 内蔵ブラウザの表示先（右パネルと複数の別窓）とタブの移動 |
 | `src-tauri/src/browser_dark.rs` | 内蔵ブラウザの強制ダークモード。表示用ページだけに CSS を入れる |

@@ -4114,6 +4114,7 @@ dependencies = [
  "chrono",
  "dirs 6.0.0",
  "encoding_rs",
+ "flate2",
  "gethostname",
  "getrandom 0.3.4",
  "gtk",

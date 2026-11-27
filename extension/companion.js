@@ -45,7 +45,7 @@
     return !avatar || !row?.avatars?.length || row.avatars.some(a => a.id === avatar);
   }
   function isAsset(filename) {
-    return /\.(zip|unitypackage|rar|7z|vrm)$/i.test(String(filename || ''));
+    return /\.(unitypackage|zip|rar|7z|vrm|fbx|blend|mp3|wav|ogg|flac|m4a|aac|png|jpg|jpeg|webp|psd|clip)$/i.test(String(filename || ''));
   }
   return { boothUrl, downloadId, choose, productById, chips, labels, avatarNames, saved, matches, isAsset };
 });

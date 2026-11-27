@@ -2525,9 +2525,9 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       return { label: agent.label, changed: [agent.configPath], backups: args.add ? [agent.configPath + ".vrclibman-backup"] : [] } as T;
     }
     case "unity_packages":
-      return previewUnityPackages(String(args.path ?? ""), store.settings.libraryFolder, store.settings.remoteLibraryFolder, previewFileSize) as T;
+      return previewUnityPackages(String(args.path ?? ""), store.settings.libraryFolder, store.settings.remoteLibraryFolder, previewFileSize, args.boothId == null ? null : String(args.boothId)) as T;
     case "prepare_unity_packages": {
-      const list = previewUnityPackages(String(args.path ?? ""), store.settings.libraryFolder, store.settings.remoteLibraryFolder, previewFileSize);
+      const list = previewUnityPackages(String(args.path ?? ""), store.settings.libraryFolder, store.settings.remoteLibraryFolder, previewFileSize, args.boothId == null ? null : String(args.boothId));
       const entries = Array.isArray(args.entries) ? args.entries.map(String) : [];
       return previewPrepareUnityPackages(list, entries, args.boothId == null ? null : String(args.boothId)) as T;
     }
@@ -2652,7 +2652,7 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       // 見本では「以前のファイル」を、作者の差し替えで BOOTH から消えたファイルとして扱う。
       if (row.state === "missing" && row.superseded) throw new Error(FILE_GONE_MESSAGE);
       const number = /^\d{4,12}$/.test(filename);
-      if (!number && !/\.(unitypackage|zip|rar|7z|vrm)$/i.test(filename)) {
+      if (!number && !/\.(unitypackage|zip|rar|7z|vrm|fbx|blend|mp3|wav|ogg|flac|m4a|aac|png|jpg|jpeg|webp|psd|clip)$/i.test(filename)) {
         throw new Error("この行にはダウンロード番号がありません。拡張を更新して再インポートしてください");
       }
       await simulatePreviewReceive(boothId, variation, filename, row.sizeBytes || 24 * 1024 * 1024);

@@ -51,6 +51,9 @@ tokio = { version = "1", features = ["rt", "sync", "time"] }
 # in the tree (reqwest, tauri). No other compression methods or crates come in. The data
 # migration export writes its package with the same crate.
 zip = { version = "4.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+# "Unityで開く" wraps a single mp3 / png / fbx into a .unitypackage (a gzipped tar). The same
+# flate2 + zlib-rs that zip already brings in; nothing new is downloaded.
+flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 # Zip entry names without the UTF-8 flag are usually Shift_JIS on Japanese Windows.
 encoding_rs = "0.8"
 # Avatar hero images: validate by decoding and shrink wide ones. Only the accepted formats.

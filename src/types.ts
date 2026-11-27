@@ -911,9 +911,12 @@ export interface UnityPackageEntry {
 
 export interface UnityPackageList {
   path: string;
-  kind: "zip" | "package";
+  /** "loose" は mp3・png などの単体のファイル。Unity パッケージに包んで渡す */
+  kind: "zip" | "package" | "loose";
   packages: UnityPackageEntry[];
   truncated: boolean;
+  /** "loose" のとき、Unity の中で入る場所（Assets/VRCLibMan/<商品名>/<ファイル名>） */
+  destination?: string;
 }
 
 /** Unity に渡すファイル。zip 内のものはアプリのキャッシュ（unity-import/<商品ID>/）に取り出したもの */

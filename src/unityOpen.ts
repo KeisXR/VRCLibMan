@@ -5,8 +5,15 @@ import type { UnityInstance, UnityPackageList, UnityStatus } from "./types";
  * 設定の既定 Unity に `-openfile` で 1 件ずつ渡す（ダブルクリックと同じ仕組み）。
  */
 
+/** Unity パッケージに包んで渡せる単体のファイル。Rust の `unity_wrap::LOOSE_EXTENSIONS` と同じ並び。 */
+const LOOSE = /.\.(mp3|wav|ogg|aif|aiff|png|jpg|jpeg|psd|tga|fbx|blend)$/i;
+
+export function isUnityLooseName(name: string): boolean {
+  return LOOSE.test(name.trim());
+}
+
 export function isUnityOpenableName(name: string): boolean {
-  return /\.(zip|unitypackage)$/i.test(name.trim());
+  return /\.(zip|unitypackage)$/i.test(name.trim()) || isUnityLooseName(name);
 }
 
 /** 設定の既定 Unity が使えるか。 */
@@ -22,10 +29,13 @@ export type UnityOpenPlan =
   /** 2 件以上。選ぶダイアログを出す。 */
   | { kind: "choose" }
   /** 1 件だが既定の Unity が無い。設定への誘導と関連付けで開く案内を出す。 */
-  | { kind: "setup"; entries: string[] };
+  | { kind: "setup"; entries: string[] }
+  /** mp3・png などの単体のファイル。入る場所を見せてから渡す。 */
+  | { kind: "loose"; entries: string[] };
 
-export function unityOpenPlan(list: Pick<UnityPackageList, "packages">, ready: boolean): UnityOpenPlan {
+export function unityOpenPlan(list: Pick<UnityPackageList, "packages"> & { kind?: UnityPackageList["kind"] }, ready: boolean): UnityOpenPlan {
   const count = list.packages.length;
+  if (list.kind === "loose" && count === 1) return { kind: "loose", entries: [list.packages[0]!.entry] };
   if (count === 0) return { kind: "none" };
   if (count >= 2) return { kind: "choose" };
   const entries = [list.packages[0]!.entry];
@@ -66,6 +76,12 @@ export function boothIdFromPath(path: string): string | null {
     if (/^\d{4,12}$/.test(folders[index]!)) return folders[index]!;
   }
   return null;
+}
+
+/** 入る場所のうち、フォルダの部分（`Assets/VRCLibMan/<商品名>/`）。 */
+export function destinationFolder(destination: string): string {
+  const cut = destination.lastIndexOf("/");
+  return cut < 0 ? destination : destination.slice(0, cut + 1);
 }
 
 export function launchedMessage(count: number, mode: "unity" | "system"): string {

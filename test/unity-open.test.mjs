@@ -29,6 +29,17 @@ test("Unityで開く: plan, selection and paths", async () => {
     assert.deepEqual(unity.unityOpenPlan(list(["A.unitypackage"]), false), { kind: "setup", entries: ["pack/A.unitypackage"] });
     assert.deepEqual(unity.unityOpenPlan(list(["A.unitypackage", "B.unitypackage"]), true), { kind: "choose" });
 
+    // mp3・png などは Unity パッケージに包む。既定の Unity の有無にかかわらず、入る場所を見せてから渡す。
+    assert.equal(unity.isUnityOpenableName("雨.mp3"), true);
+    assert.equal(unity.isUnityLooseName("Body.FBX"), true);
+    assert.equal(unity.isUnityLooseName(".mp3"), false);
+    assert.equal(unity.isUnityLooseName("track.flac"), false);
+    assert.equal(unity.isUnityLooseName("a.unitypackage"), false);
+    const loose = { path: "C:/Lib/1234567/雨.mp3", kind: "loose", truncated: false, packages: [{ entry: "", name: "雨.mp3", size: 10 }] };
+    assert.deepEqual(unity.unityOpenPlan(loose, true), { kind: "loose", entries: [""] });
+    assert.deepEqual(unity.unityOpenPlan(loose, false), { kind: "loose", entries: [""] });
+    assert.equal(unity.destinationFolder("Assets/VRCLibMan/環境音/雨.mp3"), "Assets/VRCLibMan/環境音/");
+
     const many = list(["A.unitypackage", "B.unitypackage", "C.unitypackage"]);
     assert.deepEqual(unity.selectedEntries(many, new Set(["pack/C.unitypackage", "pack/A.unitypackage"])), [
       "pack/A.unitypackage",

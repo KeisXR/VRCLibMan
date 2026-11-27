@@ -1,3 +1,4 @@
+import { isUnityLooseName } from "../unityOpen";
 import type { DirListing, FileEntry, FileLabel, PreparedUnityPackage, UnityPackageList, ZipListing } from "../types";
 
 /**
@@ -17,7 +18,7 @@ const FOLDERS: Record<string, FileEntry[]> = {
   "C:\\Assets": [dir("1000001"), dir("1000002"), dir("1000003"), dir("_未整理"), file("readme.txt", 1200)],
   "C:\\Assets\\1000001": [file("Sample_Outfit_v1.2.zip", 48 * MB), file("Sample_Outfit_Manual.pdf", 1.5 * MB)],
   "C:\\Assets\\1000002": [file("Sample_Hair.unitypackage", 12 * MB), file("Sample_Hair_Textures.zip", 8 * MB)],
-  "C:\\Assets\\1000003": [],
+  "C:\\Assets\\1000003": [file("森の環境音_15分.mp3", 21 * MB), file("雨音_10分.wav", 100 * MB)],
   "C:\\Assets\\_未整理": [link("ショートカット"), file("memo.txt", 320)],
   "\\\\nas\\vrclibman": [dir("1000001")],
   "\\\\nas\\vrclibman\\1000001": [file("Sample_Outfit_v1.2.zip", 48 * MB)],
@@ -27,6 +28,12 @@ const FOLDERS: Record<string, FileEntry[]> = {
 const LABELS: Record<string, FileLabel> = {
   "1000001": { title: "サンプル衣装（架空）", adult: false },
   "1000002": { title: "サンプルヘア（架空）", adult: true },
+};
+
+/** Dummy titles used only for where a wrapped file lands in Unity. */
+const UNITY_TITLES: Record<string, string> = {
+  ...Object.fromEntries(Object.entries(LABELS).map(([id, label]) => [id, label.title])),
+  "1000003": "サンプル環境音（架空）",
 };
 
 const ZIPS: Record<string, ZipListing["entries"]> = {
@@ -133,7 +140,7 @@ export function previewListZip(raw: string, library = "", remote = ""): ZipListi
  * .unitypackage files inside the library or the remote library; zip files are listed, not extracted.
  */
 const OUTSIDE = "ライブラリ（またはリモートライブラリ）の中のファイルだけを Unity で開けます";
-const NOT_PACKAGE = "zip か .unitypackage のファイルを選んでください";
+const NOT_PACKAGE = "zip か .unitypackage、または Unity に入れられるファイル（mp3・png・fbx など）を選んでください";
 
 function under(path: string, root: string): boolean {
   const base = clean(root).toLowerCase();
@@ -144,11 +151,35 @@ function baseOf(path: string): string {
   return path.split(/[\\/]/).pop() ?? path;
 }
 
-export function previewUnityPackages(raw: string, library: string, remote: string, sizeOf: (path: string) => number | null): UnityPackageList {
+/** Same rule as `unity_wrap::destination`: Assets/VRCLibMan/<product title or id>/<file name>. */
+function previewDestination(boothId: string | null, name: string): string {
+  const id = boothId && /^\d{4,12}$/.test(boothId) ? boothId : null;
+  const folder = (id && UNITY_TITLES[id]) || id || "その他";
+  return `Assets/VRCLibMan/${folder.replace(/[<>:"/\\|?*]/g, "_")}/${name}`;
+}
+
+export function previewUnityPackages(
+  raw: string,
+  library: string,
+  remote: string,
+  sizeOf: (path: string) => number | null,
+  boothId: string | null = null,
+): UnityPackageList {
   if (!raw.trim()) throw new Error(NOT_PACKAGE);
   const path = requested(raw, "");
-  if (!/\.(zip|unitypackage)$/i.test(path)) throw new Error(NOT_PACKAGE);
+  const loose = isUnityLooseName(baseOf(path));
+  if (!/\.(zip|unitypackage)$/i.test(path) && !loose) throw new Error(NOT_PACKAGE);
   if (!under(path, library) && !under(path, remote)) throw new Error(OUTSIDE);
+  if (loose) {
+    const name = baseOf(path);
+    return {
+      path,
+      kind: "loose",
+      packages: [{ entry: "", name, size: sizeOf(path) ?? 8 * MB }],
+      truncated: false,
+      destination: previewDestination(boothId, name),
+    };
+  }
   if (/\.unitypackage$/i.test(path)) {
     return { path, kind: "package", packages: [{ entry: "", name: baseOf(path), size: sizeOf(path) ?? 8 * MB }], truncated: false };
   }
@@ -166,6 +197,11 @@ export function previewPrepareUnityPackages(
   boothId: string | null,
 ): PreparedUnityPackage[] {
   if (list.kind === "package") return list.packages.map((item) => ({ name: item.name, path: list.path, size: item.size }));
+  if (list.kind === "loose") {
+    const item = list.packages[0]!;
+    const cache = `C:\\Users\\Preview\\AppData\\Local\\app.vrclibman.desktop\\unity-import\\${boothId && /^\d{1,12}$/.test(boothId) ? boothId : "other"}`;
+    return [{ name: item.name, path: `${cache}\\VRCLibMan-preview.unitypackage`, size: item.size }];
+  }
   if (entries.length === 0) throw new Error("取り出す Unity パッケージを選んでください");
   const folder = `C:\\Users\\Preview\\AppData\\Local\\app.vrclibman.desktop\\unity-import\\${boothId && /^\d{1,12}$/.test(boothId) ? boothId : "other"}`;
   return entries.map((entry) => {

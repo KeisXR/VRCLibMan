@@ -347,9 +347,12 @@ export const api = {
   listDirectory: (path: string) => call<DirListing>("list_directory", { path }),
   /** zip の中身を一覧だけ読む。展開しない。 */
   listZipEntries: (path: string) => call<ZipListing>("list_zip_entries", { path }),
-  /** zip か .unitypackage の中の Unity パッケージを一覧する。展開しない。ライブラリ内のファイルだけ。 */
-  unityPackages: (path: string) => call<UnityPackageList>("unity_packages", { path }),
-  /** 選んだものだけをアプリのキャッシュに取り出す。単体の .unitypackage はそのまま返す。 */
+  /** zip か .unitypackage の中の Unity パッケージを一覧する。展開しない。ライブラリ内のファイルだけ。
+   * mp3・png などの単体のファイルは "loose" として、Unity の中で入る場所を添えて返す。 */
+  unityPackages: (path: string, boothId: string | null = null) =>
+    call<UnityPackageList>("unity_packages", { path, boothId }),
+  /** 選んだものだけをアプリのキャッシュに取り出す。単体の .unitypackage はそのまま返す。
+   * mp3・png などはキャッシュで Unity パッケージに包む。 */
   prepareUnityPackages: (path: string, entries: string[], boothId: string | null) =>
     call<PreparedUnityPackage[]>("prepare_unity_packages", { path, entries, boothId }),
   /** 起動中の Unity エディタの窓。2 つ以上あれば渡す先を選ばせる。 */
