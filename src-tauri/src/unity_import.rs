@@ -621,6 +621,9 @@ pub(crate) struct UnityInstance {
     pub version: String,
     /// エディタ本体のパス。読めなければ空。
     pub editor_path: String,
+    /// タイトルの「 - Unity 」より前（`editor_title_heading`）。画面には送らない。
+    #[serde(skip)]
+    pub heading: String,
 }
 
 /// 渡す先として選ばれた Unity の窓。
@@ -651,6 +654,14 @@ pub(crate) fn parse_editor_title(title: &str) -> Option<(String, String, String)
     }
     let scene = parts.next().unwrap_or("").trim().to_string();
     Some((project, scene, version))
+}
+
+/// タイトルの「 - Unity 」より前（`Project - Scene - Platform`）。プロジェクト名にも「 - 」が入り得るので、
+/// 名前を照らすときは区切らずにこれの先頭と比べる（`unity_projects::running_state`）。
+pub(crate) fn editor_title_heading(title: &str) -> Option<String> {
+    let at = title.rfind(" - Unity ")?;
+    let heading = title[..at].trim();
+    (!heading.is_empty()).then(|| heading.to_string())
 }
 
 /// 起動中の Unity のメインの窓を、1 プロセス 1 つずつ並べる。Windows 以外では空。
@@ -695,7 +706,10 @@ pub(crate) fn launch_into_instance(
 
 #[cfg(windows)]
 mod editor_windows {
-    use super::{TARGET_BUSY, TARGET_GONE, UnityInstance, UnityTarget, parse_editor_title};
+    use super::{
+        TARGET_BUSY, TARGET_GONE, UnityInstance, UnityTarget, editor_title_heading,
+        parse_editor_title,
+    };
     use std::ffi::c_void;
     use std::path::Path;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -703,7 +717,7 @@ mod editor_windows {
     use std::time::Duration;
 
     type Hwnd = *mut c_void;
-    type Found = Vec<(usize, u32, (String, String, String))>;
+    type Found = Vec<(usize, u32, (String, String, String), String)>;
     const SMTO_ABORTIFHUNG: u32 = 0x2;
     const WM_COPYDATA: u32 = 0x004A;
     const GW_OWNER: u32 = 4;
@@ -759,7 +773,7 @@ mod editor_windows {
     }
 
     /// Unity のメインの窓か。表示中・持ち主なし・クラス名・タイトルの形で見る。
-    fn main_window(window: Hwnd) -> Option<(String, String, String)> {
+    fn main_window(window: Hwnd) -> Option<((String, String, String), String)> {
         unsafe {
             if IsWindowVisible(window) == 0 || !GetWindow(window, GW_OWNER).is_null() {
                 return None;
@@ -768,17 +782,16 @@ mod editor_windows {
         if text_of(|buffer, size| unsafe { GetClassNameW(window, buffer, size) }) != CLASS {
             return None;
         }
-        parse_editor_title(&text_of(|buffer, size| unsafe {
-            GetWindowTextW(window, buffer, size)
-        }))
+        let title = text_of(|buffer, size| unsafe { GetWindowTextW(window, buffer, size) });
+        Some((parse_editor_title(&title)?, editor_title_heading(&title)?))
     }
 
     extern "system" fn collect(window: Hwnd, param: isize) -> i32 {
         let found = unsafe { &mut *(param as *mut Found) };
-        if let Some(parts) = main_window(window) {
+        if let Some((parts, heading)) = main_window(window) {
             let pid = pid_of(window);
-            if pid != 0 && !found.iter().any(|(_, seen, _)| *seen == pid) {
-                found.push((window as usize, pid, parts));
+            if pid != 0 && !found.iter().any(|(_, seen, _, _)| *seen == pid) {
+                found.push((window as usize, pid, parts, heading));
             }
         }
         1
@@ -789,7 +802,7 @@ mod editor_windows {
         unsafe { EnumWindows(collect, &mut found as *mut Found as isize) };
         found
             .into_iter()
-            .filter_map(|(window, pid, (project, scene, version))| {
+            .filter_map(|(window, pid, (project, scene, version), heading)| {
                 let editor = super::running_editors::image_path(pid);
                 // 実行ファイルが読めて Unity.exe でないものは、同じクラス名の別のアプリなので除く。
                 if editor.as_deref().is_some_and(|path| !is_unity_exe(path)) {
@@ -804,6 +817,7 @@ mod editor_windows {
                     editor_path: editor
                         .map(|path| path.display().to_string())
                         .unwrap_or_default(),
+                    heading,
                 })
             })
             .collect()
@@ -1403,6 +1417,16 @@ mod tests {
         );
         assert_eq!(parse_editor_title("Inspector"), None);
         assert_eq!(parse_editor_title(" - Unity 2022.3.22f1"), None);
+        // プロジェクト名に「 - 」が入っていても、見出しは区切らずに残す。
+        assert_eq!(
+            editor_title_heading(
+                "Avatar - Main - SampleScene - Windows, Mac, Linux - Unity 2022.3.22f1* <DX11>"
+            )
+            .as_deref(),
+            Some("Avatar - Main - SampleScene - Windows, Mac, Linux")
+        );
+        assert_eq!(editor_title_heading(" - Unity 2022.3.22f1"), None);
+        assert_eq!(editor_title_heading("Inspector"), None);
     }
 
     #[test]

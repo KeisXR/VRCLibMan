@@ -75,7 +75,7 @@ ALCOM の一覧は DB に写さず、画面を開くたびに読む（8KB のフ
 
 ### 開いているかの判定
 
-- Windows: `unity_import::running_instances()` の `project`（窓のタイトル）がフォルダ名と一致し、`version` がプロジェクトの版と一致するもの（`running: "open"`）。同じ名前と版のプロジェクトが 2 つ以上あるときはどちらとも決めず、両方 `"maybe"`（「開いているかもしれません」）とする。
+- Windows: `unity_import::running_instances()` の `heading`（窓のタイトルの「 - Unity 」より前、`Project - Scene - Platform`）がフォルダ名で始まり、`version` がプロジェクトの版と一致するもの（`running: "open"`、`running_states`）。フォルダ名にも「 - 」が入り得る（`Avatar - Main`）ので、タイトルを「 - 」で区切った最初の部分とは比べない。1 つの窓に当てはまるプロジェクトが 2 つ以上あるとき（同じ名前と版、`Avatar` と `Avatar - Main`）はどれとも決めず、`"maybe"`（「開いているかもしれません」）とする。
 - `Temp/UnityLockfile` は補助にも使わない（残骸が残るため）。
 - Mac / Linux: 判定しない（「開いているか」を出さない）。
 

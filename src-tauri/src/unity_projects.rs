@@ -292,7 +292,7 @@ pub(crate) struct ListInput<'a> {
     pub stored: &'a [StoredProject],
     pub links: &'a HashMap<String, Vec<ProjectAvatar>>,
     pub editors: &'a [UnityEditor],
-    /// 起動中の Unity の（プロジェクト名、版）。調べられない OS では `None`。
+    /// 起動中の Unity の（窓の見出し `Project - Scene - Platform`、版）。調べられない OS では `None`。
     pub running: Option<&'a [(String, String)]>,
     pub os: Os,
 }
@@ -336,27 +336,46 @@ fn folder_name(path: &str) -> String {
         .to_string()
 }
 
-/// 開いているかの判定。窓のタイトルの名前と版で照らす。同じ名前と版がほかにもあれば決めない。
-fn running_state(
-    name: &str,
-    version: &str,
+/// 窓の見出し（`Project - Scene - Platform`）がこのプロジェクト名で始まるか。
+/// プロジェクト名にも「 - 」が入り得るので、見出しを区切らずに先頭で比べる。
+fn heading_names(heading: &str, name: &str) -> bool {
+    heading == name
+        || heading
+            .strip_prefix(name)
+            .is_some_and(|rest| rest.starts_with(" - "))
+}
+
+/// 開いているかの判定。窓の見出しと版で照らす。1 つの窓に当てはまるプロジェクトが
+/// 2 つ以上あるとき（同じ名前と版、`Avatar` と `Avatar - Main` など）は決めず `maybe` にする。
+/// `projects` は（名前、版）で、結果も同じ並び。
+fn running_states(
+    projects: &[(String, String)],
     running: Option<&[(String, String)]>,
-    duplicates: &HashMap<(String, String), usize>,
-) -> &'static str {
+) -> Vec<&'static str> {
     let Some(running) = running else {
-        return "unknown";
+        return vec!["unknown"; projects.len()];
     };
-    if version.is_empty() {
-        return "closed";
+    let mut states = vec!["closed"; projects.len()];
+    for (heading, version) in running {
+        let matched: Vec<usize> = projects
+            .iter()
+            .enumerate()
+            .filter(|(_, (name, project_version))| {
+                !project_version.is_empty()
+                    && project_version == version
+                    && heading_names(heading, name)
+            })
+            .map(|(index, _)| index)
+            .collect();
+        let state = if matched.len() == 1 { "open" } else { "maybe" };
+        for index in matched {
+            // ほかの窓で「開いている」と決まったものは、そのままにする。
+            if states[index] != "open" {
+                states[index] = state;
+            }
+        }
     }
-    let key = (name.to_string(), version.to_string());
-    if !running.iter().any(|item| *item == key) {
-        "closed"
-    } else if duplicates.get(&key).copied().unwrap_or(0) > 1 {
-        "maybe"
-    } else {
-        "open"
-    }
+    states
 }
 
 /// 版がちょうど同じ Unity。
@@ -382,20 +401,23 @@ pub(crate) fn build_list(
         .filter(|row| row.hidden)
         .map(|row| row.id.as_str())
         .collect();
-    let mut duplicates: HashMap<(String, String), usize> = HashMap::new();
-    for ((_, path, _), read) in candidates.iter().zip(reads) {
-        if let Ok(Some(facts)) = read
-            && !facts.version.is_empty()
-        {
-            *duplicates
-                .entry((folder_name(path), facts.version.clone()))
-                .or_default() += 1;
-        }
-    }
+    let names: Vec<(String, String)> = candidates
+        .iter()
+        .zip(reads)
+        .map(|((_, path, _), read)| {
+            let version = match read {
+                Ok(Some(facts)) => facts.version.clone(),
+                _ => String::new(),
+            };
+            (folder_name(path), version)
+        })
+        .collect();
+    let states = running_states(&names, input.running);
     let mut projects: Vec<UnityProject> = candidates
         .iter()
         .zip(reads)
-        .map(|((id, path, source), read)| {
+        .zip(states)
+        .map(|(((id, path, source), read), running)| {
             let name = folder_name(path);
             let (state, facts) = match read {
                 Ok(Some(facts)) => ("ok", Some(facts)),
@@ -405,7 +427,7 @@ pub(crate) fn build_list(
             let version = facts.map(|facts| facts.version.clone()).unwrap_or_default();
             UnityProject {
                 id: id.clone(),
-                running: running_state(&name, &version, input.running, &duplicates),
+                running,
                 editor_available: matching_editor(input.editors, &version).is_some(),
                 name,
                 path: path.clone(),
@@ -534,7 +556,7 @@ pub(crate) fn validate_new_project(path: &str, os: Os) -> Result<String, String>
     }
 }
 
-/// 起動中の Unity の（プロジェクト名、版）。Windows 以外では `None`。
+/// 起動中の Unity の（窓の見出し `Project - Scene - Platform`、版）。Windows 以外では `None`。
 pub(crate) fn running_projects() -> Option<Vec<(String, String)>> {
     if Os::current() != Os::Windows {
         return None;
@@ -542,7 +564,7 @@ pub(crate) fn running_projects() -> Option<Vec<(String, String)>> {
     Some(
         crate::unity_import::running_instances()
             .into_iter()
-            .map(|instance| (instance.project, instance.version))
+            .map(|instance| (instance.heading, instance.version))
             .collect(),
     )
 }
@@ -846,19 +868,55 @@ mod tests {
 
     #[test]
     fn project_command_passes_the_folder_as_one_argument() {
-        let command = project_command(
-            Path::new("C:\\Unity\\Editor\\Unity.exe"),
-            Path::new("D:\\My Projects\\Plum & Lime"),
-        );
+        // パスは OS の区切りで組み立てる（Windows の書き方では、ほかの OS で親のフォルダが空になる）。
+        let editor_dir = Path::new("Unity").join("Editor");
+        let project = Path::new("My Projects").join("Plum & Lime");
+        let command = project_command(&editor_dir.join("Unity.exe"), &project);
         let args: Vec<_> = command
             .get_args()
             .map(|a| a.to_string_lossy().to_string())
             .collect();
-        assert_eq!(args, ["-projectPath", "D:\\My Projects\\Plum & Lime"]);
         assert_eq!(
-            command.get_current_dir(),
-            Some(Path::new("C:\\Unity\\Editor"))
+            args,
+            ["-projectPath".to_string(), project.display().to_string()]
         );
+        assert_eq!(command.get_current_dir(), Some(editor_dir.as_path()));
+    }
+
+    #[test]
+    fn project_names_with_dashes_match_the_whole_window_heading() {
+        let projects = |names: &[&str]| -> Vec<(String, String)> {
+            names
+                .iter()
+                .map(|name| (name.to_string(), "2022.3.22f1".to_string()))
+                .collect()
+        };
+        let window = |heading: &str| vec![(heading.to_string(), "2022.3.22f1".to_string())];
+        // 「Avatar - Main」を開いている。名前を「 - 」で区切ると「Avatar」になってしまう。
+        let open = window("Avatar - Main - SampleScene - Windows, Mac, Linux");
+        assert_eq!(
+            running_states(&projects(&["Avatar - Main", "Other"]), Some(&open)),
+            ["open", "closed"]
+        );
+        // 「Avatar」と「Avatar - Main」の両方があると、どちらの窓か決められない。
+        assert_eq!(
+            running_states(&projects(&["Avatar", "Avatar - Main"]), Some(&open)),
+            ["maybe", "maybe"]
+        );
+        // 名前の途中で切れているものは当てない。版が違うものも当てない。
+        assert_eq!(
+            running_states(
+                &projects(&["Avatar - Ma", "Avatar"]),
+                Some(&window("Avatar - Main - S - P"))
+            ),
+            ["closed", "open"]
+        );
+        let other_version = vec![("Avatar - S - P".to_string(), "2019.4.31f1".to_string())];
+        assert_eq!(
+            running_states(&projects(&["Avatar"]), Some(&other_version)),
+            ["closed"]
+        );
+        assert_eq!(running_states(&projects(&["Avatar"]), None), ["unknown"]);
     }
 
     #[test]

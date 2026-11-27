@@ -274,7 +274,7 @@ Windows では、BOOTH の窓を同期コマンドの中で作らない。WebVie
 - 一覧は ALCOM / VCC の `settings.json` の `userProjects` を毎回読み、DB に写さない。DB（版 16 の `unity_projects`・`unity_project_avatars`）に残すのは、手で足した・隠した・アバターと結び付けたプロジェクトだけ。写すと ALCOM 側の追加・削除とずれるため。
 - プロジェクトのフォルダには書き込まない。読むのは `ProjectSettings/ProjectVersion.txt`、`Packages/vpm-manifest.json`、`Assets` の更新日時だけ（`unity_projects.rs`）。読み取りは 1 件 2 秒・全体 5 秒で打ち切り、読めないものは「確認できません」として残す。
 - プロジェクトは、`ProjectVersion.txt` とちょうど同じ版の Unity でだけ `-projectPath` で開く。違う版で開くと Unity がプロジェクトを変換し、元に戻せないため。開いていると判定したときは起動しない。コマンドは一覧にあるプロジェクトの id だけを受け、任意のパスを開かない。
-- 開いているかは Windows の Unity の窓のタイトル（名前と版）だけで決め、同じ名前と版が複数あれば決めない。`Temp/UnityLockfile` は Unity が閉じていても残るので使わない。
+- 開いているかは Windows の Unity の窓のタイトルだけで決める。「 - Unity 」より前の見出しがプロジェクト名で始まり（名前の「 - 」で区切らない）、版が同じものを開いているとし、1 つの窓に当てはまるプロジェクトが 2 つ以上あれば決めない（`unity_projects::running_states`）。`Temp/UnityLockfile` は Unity が閉じていても残るので使わない。
 - アバターとの結び付けは本人が決めたものだけで、フォルダ名などから推測しない。アバターの統合で統合先へ移し、アバターの削除で消える。パスと id はデータ移行の ZIP に含めない。
 - 「Unityで開く」で Unity が起動していないときは、商品の対応アバターに結び付けたプロジェクトと、ワールドの商品ならワールドのプロジェクト（`vpm-manifest.json` で決まる種類。結び付けは要らない）を開く操作を出すだけで、開いたあとに自動で渡さない（いつ受け取れるかを外から確かめられないため）。候補の規則は `unity_projects::projects_for_product`。ワールドのプロジェクトはアバターに結び付けない。
 
