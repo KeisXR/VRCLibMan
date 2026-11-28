@@ -3,7 +3,7 @@ import { api } from "../api";
 import { useShell } from "../App";
 import type { UnityProject, UnityProjectList } from "../types";
 import { errorText } from "../ui";
-import { linkableProjects, projectStateNote } from "../unityProjects";
+import { canOpenProject, linkableProjects, projectStateNote } from "../unityProjects";
 
 /** プロジェクトの一覧を読む。変更系の呼び出しは新しい一覧を返すので、それを `apply` で受ける。 */
 export function useUnityProjects() {
@@ -97,7 +97,7 @@ export function AvatarUnityProjects({ avatarId }: { avatarId: string }) {
             <button
               className="button secondary"
               type="button"
-              disabled={project.state !== "ok" || opening === project.id}
+              disabled={!canOpenProject(project) || opening === project.id}
               onClick={() => void open(project)}
             >
               {project.running === "open" ? "開いています" : "開く"}
