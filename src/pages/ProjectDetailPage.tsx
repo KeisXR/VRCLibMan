@@ -196,7 +196,7 @@ export function ProjectDetailPage({ id }: { id: string }) {
             <details className="generic project-section project-suggestions">
               <summary>まだ入っていない対応アセット（{suggestions.length}）</summary>
               <p className="meta">
-                結び付けたアバターに対応していて、このプロジェクトに入っていないと分かった商品です。手元にファイルがあるので、「Unityで開く」で取り込めます。
+                結び付けたアバターに対応していて、このプロジェクトに入っていないと分かった商品です。ライブラリかリモートにファイルがあるので、「Unityで開く」で取り込めます（リモートにだけあるものは「ローカルへコピー」のあと）。
               </p>
               {shownSuggestionItems.map((item) => (
                 <ItemCard
