@@ -92,7 +92,7 @@ export function AvatarUnityProjects({ avatarId }: { avatarId: string }) {
         const note = projectStateNote(project);
         return (
           <span className="avatar-project" key={project.id}>
-            <a href="#/projects" title={project.path}>{project.name}</a>
+            <a href={`#/projects/${encodeURIComponent(project.id)}`} title={project.path}>{project.name}</a>
             {note && project.running !== "open" && <span className="meta">（{note}）</span>}
             <button
               className="button secondary"

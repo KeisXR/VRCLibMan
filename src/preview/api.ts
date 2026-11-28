@@ -2144,6 +2144,10 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
     avatarName: (id) => store.avatars.find((avatar) => avatar.id === id)?.displayName,
     productAvatarIds: (boothId) => store.links.filter((link) => link.productId === boothId).map((link) => link.avatarId),
     productIsWorld: (boothId) => store.products.some((product) => product.boothId === boothId && product.category === "world"),
+    productRef: (boothId) => {
+      const product = activeProducts().find((item) => item.boothId === boothId);
+      return product ? { title: product.title, thumbnailUrl: product.thumbnailUrl, category: product.category } : undefined;
+    },
   });
   if (project) return project.value as T;
   switch (command) {

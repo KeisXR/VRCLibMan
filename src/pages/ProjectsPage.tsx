@@ -147,7 +147,9 @@ function ProjectRow({
     <li className={project.hidden ? "project-row hidden-project" : "project-row"}>
       <div className="project-main">
         <div className="project-title">
-          <strong title={project.path}>{project.name}</strong>
+          <strong title={project.path}>
+            {project.state === "ok" ? <a href={`#/projects/${encodeURIComponent(project.id)}`}>{project.name}</a> : project.name}
+          </strong>
           {project.state === "ok" && <span className="badge">{PROJECT_KIND_LABEL[project.kind]}</span>}
           {project.running === "open" && <span className="badge project-open">開いています</span>}
           {project.source !== "alcom" && <span className="badge">{project.source === "manual" ? "手で追加" : "ALCOM の一覧に無し"}</span>}

@@ -470,15 +470,25 @@ struct Library {
     bodies: HashMap<String, AvatarRef>,
 }
 
+/// 購入履歴が読む商品（買った商品と、もらったギフト）。
+const PURCHASED_SCOPE: &str = "SELECT booth_id FROM purchase_items UNION SELECT booth_id FROM products WHERE received_gift = 1";
+/// ライブラリのすべての商品。
+const ALL_PRODUCTS_SCOPE: &str = "SELECT booth_id FROM products";
+
 fn load_library(connection: &Connection) -> Result<Library, String> {
+    load_library_in(connection, PURCHASED_SCOPE)
+}
+
+/// `scope` は商品 ID を返す固定の副問い合わせ（上の定数だけを渡す）。
+fn load_library_in(connection: &Connection, scope: &str) -> Result<Library, String> {
     let mut products = HashMap::new();
     {
-        let mut statement = sql(connection.prepare(
+        let mut statement = sql(connection.prepare(&format!(
             "SELECT booth_id, title, thumbnail_path, thumbnail_url, is_generic, category,
                     booth_id IN (SELECT booth_id FROM product_exclusions)
              FROM products
-             WHERE booth_id IN (SELECT booth_id FROM purchase_items UNION SELECT booth_id FROM products WHERE received_gift = 1)",
-        ))?;
+             WHERE booth_id IN ({scope})"
+        )))?;
         let rows = sql(statement.query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -499,12 +509,12 @@ fn load_library(connection: &Connection) -> Result<Library, String> {
     }
     let mut links: HashMap<String, Vec<AvatarRef>> = HashMap::new();
     {
-        let mut statement = sql(connection.prepare(
+        let mut statement = sql(connection.prepare(&format!(
             "SELECT pa.product_id, a.id, a.display_name, a.owned
              FROM product_avatars pa JOIN avatars a ON a.id = pa.avatar_id
-             WHERE pa.product_id IN (SELECT booth_id FROM purchase_items UNION SELECT booth_id FROM products WHERE received_gift = 1)
-             ORDER BY pa.product_id, a.display_name, a.id",
-        ))?;
+             WHERE pa.product_id IN ({scope})
+             ORDER BY pa.product_id, a.display_name, a.id"
+        )))?;
         let rows = sql(statement.query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -522,11 +532,11 @@ fn load_library(connection: &Connection) -> Result<Library, String> {
     }
     let mut bodies = HashMap::new();
     {
-        let mut statement = sql(connection.prepare(
+        let mut statement = sql(connection.prepare(&format!(
             "SELECT s.booth_id, a.id, a.display_name, a.owned
              FROM avatar_sources s JOIN avatars a ON a.id = s.avatar_id
-             WHERE s.booth_id IN (SELECT booth_id FROM purchase_items UNION SELECT booth_id FROM products WHERE received_gift = 1)",
-        ))?;
+             WHERE s.booth_id IN ({scope})"
+        )))?;
         let rows = sql(statement.query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -692,6 +702,44 @@ pub struct LibraryLink {
     /// `asset`、`world`、`avatar`。
     pub kind: &'static str,
     pub avatar_id: Option<String>,
+}
+
+/// ほかの画面（Unity プロジェクトの中身）が使う、商品の題・サムネイル・アプリ内の行き先。
+/// 行き先の規則は購入履歴と同じ `library_link`。除外した商品とライブラリに無い商品は入らない。
+#[derive(Clone, Debug)]
+pub(crate) struct ProductRef {
+    pub title: String,
+    pub thumbnail_path: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub category: Option<String>,
+    pub link: Option<LibraryLink>,
+}
+
+pub(crate) fn product_refs(
+    connection: &Connection,
+    booth_ids: &[String],
+) -> Result<HashMap<String, ProductRef>, String> {
+    // 購入履歴に無い商品（無料配布など）も入っているので、ライブラリのすべての商品から引く。
+    let library = load_library_in(connection, ALL_PRODUCTS_SCOPE)?;
+    Ok(booth_ids
+        .iter()
+        .filter_map(|booth_id| {
+            let product = library
+                .products
+                .get(booth_id)
+                .filter(|product| !product.excluded)?;
+            Some((
+                booth_id.clone(),
+                ProductRef {
+                    title: product.title.clone(),
+                    thumbnail_path: product.thumbnail_path.clone(),
+                    thumbnail_url: product.thumbnail_url.clone(),
+                    category: product.category.clone(),
+                    link: library_link(&library, booth_id),
+                },
+            ))
+        })
+        .collect())
 }
 
 /// ライブラリにあり、除外しておらず、分類が決まっている商品だけ。贈っただけの商品はライブラリに無いので出ない。
@@ -1497,6 +1545,34 @@ mod tests {
                 params![booth_id, avatar],
             )
             .unwrap();
+    }
+
+    #[test]
+    fn product_refs_cover_products_outside_the_purchase_history() {
+        let connection = db();
+        product(&connection, "9100", "無料の小物", false);
+        product(&connection, "9101", "除外した小物", false);
+        product(&connection, "9102", "未分類", false);
+        connection
+            .execute_batch(
+                "UPDATE products SET category = 'world' WHERE booth_id = '9100';
+                 UPDATE products SET category = 'outfit' WHERE booth_id = '9101';
+                 INSERT INTO product_exclusions (booth_id, excluded_at) VALUES ('9101', '2026-01-01');",
+            )
+            .unwrap();
+        let refs = product_refs(
+            &connection,
+            &["9100".into(), "9101".into(), "9102".into(), "9999".into()],
+        )
+        .unwrap();
+        assert_eq!(refs["9100"].title, "無料の小物");
+        assert_eq!(
+            refs["9100"].link.as_ref().map(|link| link.kind),
+            Some("world")
+        );
+        // 除外した商品とライブラリに無い商品は入らない。分類の決まっていない商品は行き先が無い。
+        assert!(!refs.contains_key("9101") && !refs.contains_key("9999"));
+        assert!(refs["9102"].link.is_none());
     }
 
     #[test]

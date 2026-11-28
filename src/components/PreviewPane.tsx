@@ -1,12 +1,53 @@
 import { useEffect, useState } from "react";
-import { api, isTauri, openBoothLink } from "../api";
+import { api, isTauri, onUnityIndexChanged, openBoothLink } from "../api";
 import { filePresence, mediaSrc } from "../media";
 import { PREVIEW_SETTLE_MS, shouldRequestLargePreview } from "../previewPane";
 import { GENRE_LABEL } from "../types";
-import type { ItemView } from "../types";
+import type { ItemView, ProductInstallPlace } from "../types";
 import { FileMark } from "../ui";
 
 type Phase = "idle" | "adult" | "settling" | "loading" | "ready" | "fallback";
+
+/**
+ * 商品が入っていると分かった Unity プロジェクト（docs/unity-projects.md の段階 2）。調べたプロジェクトだけで、
+ * 1 つも無ければ行ごと出さない（「入っていない」とは言わない）。
+ */
+function UnityInstalls({ boothId }: { boothId: string }) {
+  const [places, setPlaces] = useState<ProductInstallPlace[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    setPlaces([]);
+    const load = () =>
+      api.productUnityInstalls(boothId).then(
+        (value) => {
+          if (!cancelled) setPlaces(value);
+        },
+        () => {},
+      );
+    void load();
+    // プロジェクトを調べ直したら、行も読み直す。
+    const stop = onUnityIndexChanged(() => void load());
+    return () => {
+      cancelled = true;
+      stop();
+    };
+  }, [boothId]);
+  if (places.length === 0) return null;
+  return (
+    <div>
+      <dt>プロジェクト</dt>
+      <dd className="preview-projects">
+        {places.map((place, index) => (
+          <span key={place.projectId}>
+            {index > 0 && "、"}
+            <a href={`#/projects/${encodeURIComponent(place.projectId)}`}>{place.name}</a>
+            {place.verdict === "partial" && <span className="meta">（一部）</span>}
+          </span>
+        ))}
+      </dd>
+    </div>
+  );
+}
 
 export function useLargePreview(item: ItemView | null, enabled: boolean) {
   const boothId = item?.boothId ?? null;
@@ -179,6 +220,7 @@ export function PreviewPane({
                 <FileMark presence={filePresence(item.downloads, item.localFileCount)} />
               </dd>
             </div>
+            <UnityInstalls boothId={item.boothId} />
           </dl>
           <div className="row-actions">
             <button className="button" type="button" onClick={() => void openBoothLink(item.url)}>

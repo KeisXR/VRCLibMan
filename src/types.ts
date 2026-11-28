@@ -987,6 +987,53 @@ export interface UnityProjectList {
   alcomPath: string;
 }
 
+/**
+ * 導入済みの判定（Rust の `unity_index::verdict`）。installed: 固有のファイルの 80% 以上。
+ * partial: 5% 以上。missing: それ未満。unknown: 固有のファイルが無い。bundled: VPM パッケージの同梱版。
+ */
+export type InstallVerdict = "installed" | "partial" | "missing" | "unknown" | "bundled";
+
+export interface PackageInstall {
+  /** zip の中のパスか、単体のファイル名 */
+  name: string;
+  sourcePath: string;
+  verdict: InstallVerdict;
+  uniqueTotal: number;
+  uniqueMatched: number;
+  /** 同梱版のとき、その持ち主の VPM パッケージ */
+  bundledWith?: string;
+  /** 同じ商品の導入済みのパッケージが 2 つ以上あるとき、大きさがいちばん合うもの */
+  closest: boolean;
+}
+
+export interface ProjectProduct {
+  boothId: string;
+  title: string;
+  thumbnailPath: string | null;
+  thumbnailUrl: string | null;
+  category: string | null;
+  /** アプリの中で開く先（購入履歴と同じ規則）。無ければリンクしない */
+  link: { kind: "asset" | "world" | "avatar"; avatarId: string | null } | null;
+  verdict: InstallVerdict;
+  packages: PackageInstall[];
+}
+
+export interface ProjectContents {
+  /** 調べた日時（UNIX 秒）。まだ調べていなければ null */
+  scannedAt: number | null;
+  /** 最後まで歩けた。途中までのときは「入っていない」と言わない */
+  complete: boolean;
+  /** 調べたあとに索引が変わった */
+  stale: boolean;
+  products: ProjectProduct[];
+}
+
+export interface ProductInstallPlace {
+  projectId: string;
+  name: string;
+  verdict: InstallVerdict;
+}
+
 export interface AssetUpdateRow {
   revision: number;
   candidateKey?: string | null;

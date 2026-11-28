@@ -3004,3 +3004,24 @@ a.chip:hover { color: var(--text); }
 .avatar-projects { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin: 0 0 var(--space-4); }
 .avatar-projects-label { color: var(--text-secondary); font-size: 13px; }
 .avatar-project { display: inline-flex; gap: 6px; align-items: center; }
+.project-title strong a { color: inherit; }
+.project-detail .page-head .button-row { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.project-scan-note { margin: 0 0 var(--space-4); }
+.project-section { margin-top: var(--space-5); }
+.project-section h2 { display: flex; gap: var(--space-2); align-items: baseline; margin: 0 0 var(--space-2); font-size: 16px; font-weight: 650; }
+.project-products { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.project-product {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  padding: var(--space-3);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.project-product-thumb { flex: 0 0 44px; width: 44px; height: 44px; border-radius: 8px; object-fit: cover; background: var(--surface-secondary); }
+.project-product-main { min-width: 0; display: grid; gap: 4px; }
+.project-product-main > a, .project-product-main > span { font-weight: 600; overflow-wrap: anywhere; }
+.project-packages { list-style: none; padding: 0; margin: 0; display: grid; gap: 2px; }
+.project-packages li { overflow-wrap: anywhere; }
+.badge.project-closest { color: var(--good); }

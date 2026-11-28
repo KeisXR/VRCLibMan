@@ -59,6 +59,9 @@ mod sync_meta;
 mod thumb;
 mod unity;
 mod unity_import;
+mod unity_index;
+mod unity_index_jobs;
+mod unity_index_store;
 mod unity_projects;
 mod unity_wrap;
 mod updater;
@@ -216,6 +219,7 @@ pub fn run() {
                 }
             crate::remote_sync::start(app.handle());
             crate::asset_updates::start(app.handle());
+            crate::unity_index_jobs::start(app.handle());
             {
                 // 同梱した拡張を、拡張を使う設定か展開済みのときだけ、決まったフォルダへ用意・更新する。
                 let handle = app.handle().clone();
@@ -375,6 +379,9 @@ pub fn run() {
             commands::set_unity_project_hidden,
             commands::link_unity_project_avatar,
             commands::open_unity_project,
+            commands::scan_unity_project,
+            commands::unity_project_contents,
+            commands::product_unity_installs,
             commands::list_staged_downloads,
             commands::route_staged_download,
         ])
