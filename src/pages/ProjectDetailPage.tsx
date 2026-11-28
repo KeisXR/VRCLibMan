@@ -8,6 +8,7 @@ import { errorText } from "../ui";
 import {
   PROJECT_KIND_LABEL,
   VERDICT_LABEL,
+  canOpenProject,
   needsScan,
   projectProductHref,
   projectSections,
@@ -106,7 +107,7 @@ export function ProjectDetailPage({ id }: { id: string }) {
         </div>
         {project && (
           <div className="button-row">
-            <button className="button primary" type="button" disabled={project.state !== "ok" || opening === project.id} onClick={() => void open(project)}>
+            <button className="button primary" type="button" disabled={!canOpenProject(project) || opening === project.id} onClick={() => void open(project)}>
               {project.running === "open" ? "開いています" : "開く"}
             </button>
             <button className="button secondary" type="button" disabled={scanning || project.state !== "ok"} onClick={() => void scan()}>
