@@ -3,6 +3,7 @@ import { api, onUnityIndexChanged } from "../api";
 import { useShell } from "../App";
 import { useOpenUnityProject, useUnityProjects } from "../components/UnityProjects";
 import { mediaSrc } from "../media";
+import { useRemoteProductProbe } from "../remoteProductProbe";
 import type { ItemView, ProjectContents, ProjectProduct } from "../types";
 import { errorText } from "../ui";
 import { ItemCard } from "./AvatarDetailPage";
@@ -89,6 +90,13 @@ export function ProjectDetailPage({ id }: { id: string }) {
   // 結び付けたアバターに対応していて、入っていないと分かった商品。結果が変わるたびに読み直す。
   const [suggestions, setSuggestions] = useState<ItemView[]>([]);
   const [shownSuggestions, setShownSuggestions] = useState(SUGGESTION_PAGE);
+  // 見せている分だけ、リモートにあるファイルを確かめる（アバター詳細と同じ）。
+  const shownSuggestionItems = useMemo(() => suggestions.slice(0, shownSuggestions), [suggestions, shownSuggestions]);
+  const suggestionProbe = useRemoteProductProbe(shownSuggestionItems);
+  const probedSuggestions = useMemo(
+    () => new Map(suggestionProbe.items.map((item) => [item.boothId, item])),
+    [suggestionProbe.items],
+  );
   const avatarKey = project?.avatars.map((avatar) => avatar.id).join(",") ?? "";
   useEffect(() => {
     setSuggestions([]);
@@ -188,8 +196,13 @@ export function ProjectDetailPage({ id }: { id: string }) {
               <p className="meta">
                 結び付けたアバターに対応していて、このプロジェクトに入っていないと分かった商品です。手元にファイルがあるので、「Unityで開く」で取り込めます。
               </p>
-              {suggestions.slice(0, shownSuggestions).map((item) => (
-                <ItemCard key={item.boothId} item={item} />
+              {shownSuggestionItems.map((item) => (
+                <ItemCard
+                  key={item.boothId}
+                  item={probedSuggestions.get(item.boothId) ?? item}
+                  remoteProbeStatus={suggestionProbe.statusFor(item.boothId)}
+                  onRetryRemoteProbe={() => suggestionProbe.retryProbe([item.boothId])}
+                />
               ))}
               {suggestions.length > shownSuggestions && (
                 <button className="button secondary" type="button" onClick={() => setShownSuggestions((count) => count + SUGGESTION_PAGE)}>
