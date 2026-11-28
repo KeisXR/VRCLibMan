@@ -3,11 +3,14 @@ import { api, onUnityIndexChanged } from "../api";
 import { useShell } from "../App";
 import { useOpenUnityProject, useUnityProjects } from "../components/UnityProjects";
 import { mediaSrc } from "../media";
-import type { ProjectContents, ProjectProduct } from "../types";
+import { useRemoteProductProbe } from "../remoteProductProbe";
+import type { ItemView, ProjectContents, ProjectProduct } from "../types";
 import { errorText } from "../ui";
+import { ItemCard } from "./AvatarDetailPage";
 import {
   PROJECT_KIND_LABEL,
   VERDICT_LABEL,
+  bodySuggestions,
   canOpenProject,
   needsScan,
   projectProductHref,
@@ -16,10 +19,13 @@ import {
   scannedLabel,
 } from "../unityProjects";
 
+/** 「まだ入っていない対応アセット」を一度に出す件数。 */
+const SUGGESTION_PAGE = 30;
+
 /** プロジェクトの詳細（docs/unity-projects.md の段階 2）。入っている商品を GUID の一致で見せる。読むだけ。 */
 export function ProjectDetailPage({ id }: { id: string }) {
   const { fail } = useShell();
-  const { list } = useUnityProjects();
+  const { list, apply } = useUnityProjects();
   const { open, opening } = useOpenUnityProject();
   const project = list?.projects.find((item) => item.id === id) ?? null;
   const [contents, setContents] = useState<ProjectContents | null>(null);
@@ -79,6 +85,42 @@ export function ProjectDetailPage({ id }: { id: string }) {
   }, [contents, project, id, scan]);
 
   const sections = useMemo(() => (contents ? projectSections(contents) : null), [contents]);
+  const bodies = useMemo(() => bodySuggestions(contents, project), [contents, project]);
+
+  // 結び付けたアバターに対応していて、入っていないと分かった商品。結果が変わるたびに読み直す。
+  const [suggestions, setSuggestions] = useState<ItemView[]>([]);
+  const [shownSuggestions, setShownSuggestions] = useState(SUGGESTION_PAGE);
+  // 見せている分だけ、リモートにあるファイルを確かめる（アバター詳細と同じ）。
+  const shownSuggestionItems = useMemo(() => suggestions.slice(0, shownSuggestions), [suggestions, shownSuggestions]);
+  const suggestionProbe = useRemoteProductProbe(shownSuggestionItems);
+  const probedSuggestions = useMemo(
+    () => new Map(suggestionProbe.items.map((item) => [item.boothId, item])),
+    [suggestionProbe.items],
+  );
+  const avatarKey = project?.avatars.map((avatar) => avatar.id).join(",") ?? "";
+  useEffect(() => {
+    setSuggestions([]);
+    setShownSuggestions(SUGGESTION_PAGE);
+    if (!contents || contents.scannedAt == null || !avatarKey) return;
+    let cancelled = false;
+    api.unityProjectSuggestions(id).then(
+      (value) => {
+        if (!cancelled) setSuggestions(value.items);
+      },
+      () => undefined,
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [id, contents, avatarKey]);
+
+  const linkBody = async (avatarId: string) => {
+    try {
+      apply(await api.linkUnityProjectAvatar(id, avatarId, true));
+    } catch (err) {
+      fail(errorText(err));
+    }
+  };
 
   if (list && !project) {
     return (
@@ -129,9 +171,46 @@ export function ProjectDetailPage({ id }: { id: string }) {
         <p className="note note-strong">プロジェクトが大きいか、読めないファイルがあったため、途中までしか調べられませんでした。ここに無い商品も、入っていないとは限りません。</p>
       )}
 
-      {sections && contents?.scannedAt != null && (
+      {bodies.map((product) =>
+        product.link?.avatarId ? (
+          <p className="note project-body-suggestion" key={product.boothId}>
+            <span>このプロジェクトに「{product.title}」が入っています。このアバターと結び付けると、アバター詳細から開けて、対応アセットの印も出ます。</span>
+            <button className="button secondary" type="button" onClick={() => void linkBody(product.link!.avatarId!)}>
+              結び付ける
+            </button>
+          </p>
+        ) : null,
+      )}
+
+      {contents?.scannedAt != null && contents.stale && !scanning && (
+        <p className="note">前に調べたあとにライブラリが変わったか、このプロジェクトに Unity パッケージを渡しました。古い結果は出さないので、「調べ直す」を押してください。</p>
+      )}
+
+      {/* 古い結果からは何も言わない（入っている・入っていないのどちらも）。調べ直すと出る。 */}
+      {sections && contents?.scannedAt != null && !contents.stale && (
         <>
           <ProductSection title="入っている商品" products={sections.installed} empty="ライブラリの商品で、このプロジェクトに入っていると分かったものはありません。" />
+          {suggestions.length > 0 && (
+            <details className="generic project-section project-suggestions">
+              <summary>まだ入っていない対応アセット（{suggestions.length}）</summary>
+              <p className="meta">
+                結び付けたアバターに対応していて、このプロジェクトに入っていないと分かった商品です。手元にファイルがあるので、「Unityで開く」で取り込めます。
+              </p>
+              {shownSuggestionItems.map((item) => (
+                <ItemCard
+                  key={item.boothId}
+                  item={probedSuggestions.get(item.boothId) ?? item}
+                  remoteProbeStatus={suggestionProbe.statusFor(item.boothId)}
+                  onRetryRemoteProbe={() => suggestionProbe.retryProbe([item.boothId])}
+                />
+              ))}
+              {suggestions.length > shownSuggestions && (
+                <button className="button secondary" type="button" onClick={() => setShownSuggestions((count) => count + SUGGESTION_PAGE)}>
+                  さらに表示（残り {suggestions.length - shownSuggestions} 件）
+                </button>
+              )}
+            </details>
+          )}
           {sections.partial.length > 0 && (
             <ProductSection
               title="一部が入っています"

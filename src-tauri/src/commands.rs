@@ -1373,7 +1373,12 @@ pub async fn launch_unity_packages(
             .iter()
             .map(|path| crate::unity_import::allowed_launch_path(path, &cache_root, &library, &remote))
             .collect::<Result<Vec<_>, _>>()?;
-        match (mode, target) {
+        // 渡す先のプロジェクトが分かれば、前に調べた結果を古いとする（取り込まれたかもしれないので）。
+        let receiver = match (mode, target.as_ref()) {
+            (crate::unity_import::LaunchMode::Unity, target) => instance_project(&app, target),
+            _ => None,
+        };
+        let result = match (mode, target) {
             (crate::unity_import::LaunchMode::Unity, Some(target)) => {
                 crate::unity_import::launch_into_instance(
                     &target,
@@ -1407,10 +1412,197 @@ pub async fn launch_unity_packages(
                 }
                 Ok(crate::unity_import::LaunchResult { launched: packages.len(), waiting: false })
             }
+        };
+        if let (Ok(launched), Some(project)) = (&result, receiver)
+            && launched.launched > 0
+        {
+            crate::unity_index_jobs::mark_project_stale(&app, project.id);
         }
+        result
     })
     .await
     .map_err(|err| format!("Unity パッケージを開けません: {err}"))?
+}
+
+/// 渡す先の Unity が開いているプロジェクト。`target` が無ければ、開いている Unity が 1 つのときだけ。
+/// 窓の見出しと版で照らし、当てはまるプロジェクトがちょうど 1 つのときだけ返す（Windows のみ）。
+fn instance_project(
+    app: &AppHandle,
+    target: Option<&crate::unity_import::UnityTarget>,
+) -> Option<crate::unity_projects::UnityProject> {
+    let instances = crate::unity_import::running_instances();
+    let instance = match target {
+        Some(target) => instances
+            .into_iter()
+            .find(|instance| instance.window == target.window && instance.pid == target.pid)?,
+        None => {
+            let mut instances = instances.into_iter();
+            let only = instances.next()?;
+            if instances.next().is_some() {
+                return None;
+            }
+            only
+        }
+    };
+    let projects = unity_project_list_blocking(app).ok()?.projects;
+    let mut matched = projects.into_iter().filter(|project| {
+        project.state == "ok"
+            && !project.version.is_empty()
+            && project.version == instance.version
+            && crate::unity_projects::heading_names(&instance.heading, &project.name)
+    });
+    let project = matched.next()?;
+    matched.next().is_none().then_some(project)
+}
+
+/// 「Unityで開く」の前の確かめ。渡す先のプロジェクトに、その商品がもう入っていると分かっていれば返す。
+/// 調べていないプロジェクトや、渡す先が決まらないときは `None`（止めない）。
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn unity_install_check(
+    view: tauri::Webview,
+    app: AppHandle,
+    boothId: String,
+    target: Option<crate::unity_import::UnityTarget>,
+) -> Result<Option<ProductInstallView>, String> {
+    require_main(&view)?;
+    unity_project_task(app, move |app| {
+        let Some(project) = instance_project(app, target.as_ref()) else {
+            return Ok(None);
+        };
+        let found = crate::unity_index_jobs::read(app, |connection| {
+            crate::unity_index_store::product_projects(connection, &boothId)
+        })?;
+        Ok(found
+            .into_iter()
+            .find(|(id, verdict)| {
+                *id == project.id && *verdict == crate::unity_index::Verdict::Installed
+            })
+            .map(|(project_id, verdict)| ProductInstallView {
+                project_id,
+                name: project.name.clone(),
+                verdict,
+            }))
+    })
+    .await
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectSuggestions {
+    /// 新しい調べた結果がある。調べていない・古いときは偽で、候補を出さない（入っていないと言わない）。
+    pub scanned: bool,
+    /// 結び付けたアバターに対応していて、入っていないと分かった商品。手元にファイルがある順。
+    pub items: Vec<crate::view::ItemView>,
+}
+
+/// 結び付けたアバターに対応していて、このプロジェクトに入っていないと分かった商品。
+/// 対応はアバター詳細と同じ組み立て（`load_avatar`）で、判定は調べた結果（索引にあって入っていない）だけ。
+/// 手元にファイルが無い商品は判定できないので入れない。
+pub(crate) fn project_suggestions(
+    app: &AppHandle,
+    project: &crate::unity_projects::UnityProject,
+) -> Result<ProjectSuggestions, String> {
+    let contents = crate::unity_index_jobs::read(app, |connection| {
+        crate::unity_index_store::project_contents(connection, &project.id)
+    })?;
+    // 調べていない・古い・途中までしか歩けなかった結果からは候補を出さない（入っていないと言わない）。
+    if !crate::unity_index_store::absence_known(&contents) {
+        return Ok(ProjectSuggestions {
+            scanned: false,
+            items: Vec::new(),
+        });
+    }
+    let missing: std::collections::HashSet<&str> = contents
+        .products
+        .iter()
+        .filter(|product| product.verdict == crate::unity_index::Verdict::Missing)
+        .map(|product| product.booth_id.as_str())
+        .collect();
+    let mut seen = std::collections::HashSet::new();
+    let mut items = Vec::new();
+    for avatar in &project.avatars {
+        let Ok(detail) = load_avatar(app, &avatar.id, false) else {
+            continue;
+        };
+        for item in detail
+            .sections
+            .into_iter()
+            .flat_map(|section| section.items)
+        {
+            if missing.contains(item.booth_id.as_str()) && seen.insert(item.booth_id.clone()) {
+                items.push(item);
+            }
+        }
+    }
+    items.sort_by_key(|item| std::cmp::Reverse(item.local_file_count));
+    Ok(ProjectSuggestions {
+        scanned: true,
+        items,
+    })
+}
+
+/// AI エージェントが渡したプロジェクト（フォルダか名前）を一覧から探す。名前は 1 つに決まるときだけ。
+pub(crate) fn agent_project(
+    projects: Vec<crate::unity_projects::UnityProject>,
+    query: &str,
+) -> Result<crate::unity_projects::UnityProject, (u16, String)> {
+    let os = crate::unity::Os::current();
+    let by_path = crate::unity_projects::project_id(query, os);
+    if let Some(project) = projects.iter().find(|project| project.id == by_path) {
+        return Ok(project.clone());
+    }
+    let mut named = projects
+        .into_iter()
+        .filter(|project| project.name == query.trim());
+    match (named.next(), named.next()) {
+        (Some(project), None) => Ok(project),
+        (Some(_), Some(_)) => Err((
+            409,
+            "同じ名前のプロジェクトが 2 つ以上あります。プロジェクトのフォルダを渡してください".into(),
+        )),
+        (None, _) => Err((
+            404,
+            "プロジェクトが見つかりません。ALCOM の一覧にあるプロジェクトか、VRCLibMan の「プロジェクト」で足したものだけを調べられます".into(),
+        )),
+    }
+}
+
+/// MCP の `unity_project`。前に調べた結果を返すだけで、調べ直さない。
+pub(crate) fn agent_unity_project(
+    app: &AppHandle,
+    query: &str,
+) -> Result<serde_json::Value, (u16, String)> {
+    let internal = |error: String| (500, error);
+    let projects = unity_project_list_blocking(app).map_err(internal)?.projects;
+    let project = agent_project(projects, query)?;
+    let contents = crate::unity_index_jobs::read(app, |connection| {
+        crate::unity_index_store::project_contents(connection, &project.id)
+    })
+    .map_err(internal)?;
+    let missing: Vec<String> = project_suggestions(app, &project)
+        .map_err(internal)?
+        .items
+        .into_iter()
+        .map(|item| item.booth_id)
+        .collect();
+    let state = app.state::<AppState>();
+    let connection = db(&state).map_err(internal)?;
+    crate::mcp_api::unity_project_reply(&connection, &project, &contents, &missing)
+        .map_err(internal)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn unity_project_suggestions(
+    app: AppHandle,
+    projectId: String,
+) -> Result<ProjectSuggestions, String> {
+    unity_project_task(app, move |app| {
+        let project = find_unity_project(app, &projectId)?;
+        project_suggestions(app, &project)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -2903,6 +3095,45 @@ pub async fn delete_browser_bookmark(
 }
 
 #[cfg(test)]
+mod agent_project_tests {
+    use super::agent_project;
+    use crate::unity_projects::{UnityProject, project_id};
+
+    fn project(path: &str) -> UnityProject {
+        let os = crate::unity::Os::current();
+        UnityProject {
+            id: project_id(path, os),
+            name: path.rsplit(['\\', '/']).next().unwrap().into(),
+            path: path.into(),
+            state: "ok",
+            version: "2022.3.22f1".into(),
+            kind: "avatar",
+            packages: vec![],
+            source: "alcom",
+            hidden: false,
+            running: "closed",
+            editor_available: true,
+            avatars: vec![],
+            modified: None,
+        }
+    }
+
+    #[test]
+    fn agents_find_projects_by_folder_or_unique_name() {
+        let sep = std::path::MAIN_SEPARATOR;
+        let a = format!("{sep}work{sep}Plum");
+        let b = format!("{sep}old{sep}Plum");
+        let c = format!("{sep}work{sep}Room");
+        let all = || vec![project(&a), project(&b), project(&c)];
+        assert_eq!(agent_project(all(), &a).unwrap().path, a);
+        assert_eq!(agent_project(all(), &format!("{b}{sep}")).unwrap().path, b);
+        assert_eq!(agent_project(all(), "Room").unwrap().path, c);
+        assert_eq!(agent_project(all(), "Plum").unwrap_err().0, 409);
+        assert_eq!(agent_project(all(), "Nothing").unwrap_err().0, 404);
+    }
+}
+
+#[cfg(test)]
 mod browser_action_tests {
     use super::BrowserAction;
 
@@ -3066,11 +3297,14 @@ pub async fn register_existing_import(
     copy: bool,
 ) -> Result<crate::existing_import::Report, String> {
     trusted_updater(&view)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::existing_import::register(&app, Path::new(&path), selections, copy)
+    let report = tauri::async_runtime::spawn_blocking({
+        let app = app.clone();
+        move || crate::existing_import::register(&app, Path::new(&path), selections, copy)
     })
     .await
-    .map_err(|_| "取り込みを実行できません")?
+    .map_err(|_| "取り込みを実行できません")??;
+    crate::unity_index_jobs::wake(&app);
+    Ok(report)
 }
 
 #[cfg(test)]

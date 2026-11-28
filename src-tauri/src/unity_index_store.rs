@@ -412,6 +412,10 @@ pub(crate) fn scan_project(
         }
         sql(tx.commit())?;
     }
+    // 持ち主として使うのは、このプロジェクトに入っている VPM パッケージだけ。ほかのプロジェクトで覚えた
+    // パッケージを持ち主にすると、そのパッケージの無いプロジェクトでも同梱版として判定から外れ、
+    // 固有のファイルからも外れるため（VPM 版が Packages に無ければ、取り込んだものは Assets にある）。
+    let present: HashSet<&str> = vpm_packages.iter().map(|(name, _)| name.as_str()).collect();
     let owners: HashMap<Guid, String> = {
         let mut statement = sql(connection.prepare("SELECT guid, package_name FROM guid_owners"))?;
         let rows = sql(statement.query_map([], |row| {
@@ -423,6 +427,7 @@ pub(crate) fn scan_project(
             // 使うのは、ライブラリのパッケージにある GUID の分だけ。
             if let Ok(guid) = <Guid>::try_from(guid.as_slice())
                 && guids.contains_key(&guid)
+                && present.contains(name.as_str())
             {
                 map.insert(guid, name);
             }
@@ -553,6 +558,11 @@ pub(crate) struct ProjectContents {
     /// 調べたあとに索引が変わった・Unity に渡した。
     pub stale: bool,
     pub products: Vec<ProductInstall>,
+}
+
+/// この結果から「入っていない」と言えるか。調べていない・古い・途中までしか歩けなかったときは言えない。
+pub(crate) fn absence_known(contents: &ProjectContents) -> bool {
+    contents.scanned_at.is_some() && contents.complete && !contents.stale
 }
 
 fn file_label(source_path: &str, entry: &str) -> String {
@@ -889,6 +899,63 @@ mod tests {
         // 止められたら次のファイルの前で止める。
         let mut fresh = open_memory();
         assert_eq!(refresh(&mut fresh, &all, |_, _| {}, || true).unwrap(), 0);
+    }
+
+    #[test]
+    fn vpm_owners_count_only_in_projects_that_have_the_package() {
+        let mut f = fixture();
+        let all = sources(&f.library);
+        refresh(&mut f.connection, &all, |_, _| {}, || false).unwrap();
+        // p1 で lilToon を歩き、持ち主を覚える。
+        let vpm = vec![("jp.lilxyzw.liltoon".to_string(), "2.4.1".to_string())];
+        scan_project(&mut f.connection, "p1", &f.project, &vpm).unwrap();
+        // lilToon の無いプロジェクト p2 に、同梱版を Assets へ取り込んだ。同梱版ではなく、ふつうの
+        // パッケージとして「導入済み」になる。
+        let other = f._dir.path().join("Other");
+        write_meta(
+            &other.join("Assets").join("lilToon"),
+            "lts.shader",
+            &guid(70),
+            b"shader",
+        );
+        write_meta(
+            &other.join("Assets").join("lilToon"),
+            "x.cs",
+            &guid(71),
+            b"cs",
+        );
+        scan_project(&mut f.connection, "p2", &other, &[]).unwrap();
+        let contents = project_contents(&f.connection, "p2").unwrap();
+        let lil = contents
+            .products
+            .iter()
+            .find(|p| p.booth_id == "200")
+            .unwrap();
+        assert_eq!(lil.verdict, Verdict::Installed);
+        assert_eq!(
+            project_contents(&f.connection, "p1")
+                .unwrap()
+                .products
+                .iter()
+                .find(|p| p.booth_id == "200")
+                .unwrap()
+                .verdict,
+            Verdict::Bundled
+        );
+    }
+
+    #[test]
+    fn absence_is_known_only_from_a_fresh_complete_scan() {
+        let contents = |scanned_at: Option<i64>, complete: bool, stale: bool| ProjectContents {
+            scanned_at,
+            complete,
+            stale,
+            products: Vec::new(),
+        };
+        assert!(absence_known(&contents(Some(1), true, false)));
+        assert!(!absence_known(&contents(None, false, false)));
+        assert!(!absence_known(&contents(Some(1), false, false)));
+        assert!(!absence_known(&contents(Some(1), true, true)));
     }
 
     #[test]

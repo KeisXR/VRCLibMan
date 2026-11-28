@@ -29,6 +29,7 @@ type DialogState =
   | { step: "target"; list: UnityPackageList; boothId: string | null; entries: string[]; instances: UnityInstance[]; chosen: string | null }
   | { step: "working"; message: string }
   | { step: "notRunning"; message: string; projects: UnityProject[] }
+  | { step: "installed"; list: UnityPackageList; boothId: string | null; entries: string[]; target: UnityTarget | null; project: string }
   | { step: "waiting"; prepared: PreparedUnityPackage[]; next: number; mode: UnityLaunchMode; target: UnityTarget | null };
 
 function targetOf(instance: UnityInstance): UnityTarget {
@@ -94,6 +95,7 @@ export function useUnityOpen({ notify, fail }: { notify: (message: string) => vo
       mode: UnityLaunchMode,
       target: UnityTarget | null = null,
       asked = false,
+      checked = false,
     ) => {
       if (running.current || entries.length === 0) return;
       running.current = true;
@@ -103,6 +105,14 @@ export function useUnityOpen({ notify, fail }: { notify: (message: string) => vo
           const instances = await api.unityInstances().catch(() => []);
           if (needsUnityTarget(instances)) {
             setDialog({ step: "target", list, boothId, entries, instances, chosen: null });
+            return;
+          }
+        }
+        if (mode === "unity" && boothId && !checked) {
+          // 渡す先のプロジェクトに、もう入っていると分かっていれば知らせる（止めはしない）。
+          const installed = await api.unityInstallCheck(boothId, target).catch(() => null);
+          if (installed) {
+            setDialog({ step: "installed", list, boothId, entries, target, project: installed.name });
             return;
           }
         }
@@ -232,6 +242,9 @@ export function useUnityOpen({ notify, fail }: { notify: (message: string) => vo
         setDialog(null);
         openUnitySettings();
       }}
+      onSendAgain={() => {
+        if (dialog.step === "installed") void run(dialog.list, dialog.entries, dialog.boothId, "unity", dialog.target, true, true);
+      }}
       onOpenProject={(project) => {
         setDialog(null);
         void api.openUnityProject(project.id).then(
@@ -260,6 +273,7 @@ function UnityOpenDialog({
   onResume,
   onSettings,
   onOpenProject,
+  onSendAgain,
 }: {
   state: DialogState;
   onClose: () => void;
@@ -270,6 +284,7 @@ function UnityOpenDialog({
   onResume: () => void;
   onSettings: () => void;
   onOpenProject: (project: UnityProject) => void;
+  onSendAgain: () => void;
 }) {
   const panel = useRef<HTMLElement>(null);
   const working = state.step === "working";
@@ -298,6 +313,23 @@ function UnityOpenDialog({
       <>
         <h2 id="unity-open-title">Unity で開く</h2>
         <p className="meta" role="status">{state.message}…</p>
+      </>
+    );
+  } else if (state.step === "installed") {
+    body = (
+      <>
+        <h2 id="unity-open-title">このプロジェクトには入っています</h2>
+        <p className="meta">
+          {state.project} には、この商品がもう入っています（前に調べた結果）。もう一度渡すと、Unity の Import 画面で同じファイルを上書きするかを選べます。
+        </p>
+        <div className="row-actions">
+          <button className="button primary" type="button" onClick={onSendAgain}>
+            もう一度渡す
+          </button>
+          <button className="button" type="button" onClick={onClose}>
+            やめる
+          </button>
+        </div>
       </>
     );
   } else if (state.step === "notRunning") {

@@ -153,6 +153,64 @@ test("the preview scans a project once asked and reports where a product is", as
   });
 });
 
+test("badges follow one linked project, and installed avatar bodies suggest a link", async () => {
+  await withModules(["/src/unityProjects.ts"], async ({ installMarks, markProjectId, bodySuggestions }) => {
+    const product = (boothId, verdict, link = { kind: "asset", avatarId: null }) => ({
+      boothId, title: `商品${boothId}`, thumbnailPath: null, thumbnailUrl: null, category: "outfit", link, verdict, packages: [],
+    });
+    const contents = {
+      scannedAt: 1,
+      complete: true,
+      stale: false,
+      products: [
+        product("1", "installed"),
+        product("2", "partial"),
+        product("3", "missing"),
+        product("4", "bundled"),
+        product("5", "installed", { kind: "avatar", avatarId: "plum" }),
+        product("6", "installed", { kind: "avatar", avatarId: "lime" }),
+      ],
+    };
+    assert.deepEqual([...installMarks(contents).entries()], [["1", "installed"], ["2", "partial"], ["5", "installed"], ["6", "installed"]]);
+    // 調べていなければ印を出さない（入っていないとは言わない）。
+    assert.equal(installMarks({ ...contents, scannedAt: null }).size, 0);
+    // 調べたあとに索引が変わった（古い）結果からも出さない。
+    assert.equal(installMarks({ ...contents, stale: true }).size, 0);
+    assert.equal(installMarks(null).size, 0);
+    const a = project({ id: "a" });
+    const b = project({ id: "b" });
+    assert.equal(markProjectId([a, b], null), "a");
+    assert.equal(markProjectId([a, b], "b"), "b");
+    assert.equal(markProjectId([a], "b"), "a");
+    assert.equal(markProjectId([], "b"), null);
+    // プラムは結び付け済み、ライムはまだ。
+    assert.deepEqual(bodySuggestions(contents, project()).map((item) => item.boothId), ["6"]);
+    assert.deepEqual(bodySuggestions(null, project()), []);
+    // 古い結果からは言わない。
+    assert.deepEqual(bodySuggestions({ ...contents, stale: true }, project()), []);
+  });
+});
+
+test("the preview suggests missing compatible assets and warns before a second hand-off", async () => {
+  await withModules(["/src/preview/unityProjects.ts"], async ({ previewUnityProjectDispatch }) => {
+    const context = {
+      avatarName: (id) => ({ plum: "プラム" })[id],
+      productAvatarIds: () => [],
+      productIsWorld: () => false,
+      productRef: () => undefined,
+      itemView: (boothId) => ({ boothId, title: `見本${boothId}` }),
+    };
+    const call = (command, args = {}) => previewUnityProjectDispatch(command, args, context)?.value;
+    const suggestions = call("unity_project_suggestions", { projectId: "a1b2c3d4e5f60001" });
+    assert.equal(suggestions.scanned, true);
+    assert.deepEqual(suggestions.items.map((item) => item.boothId), ["8800130"]);
+    // 調べていないプロジェクトには候補を出さない。
+    assert.deepEqual(call("unity_project_suggestions", { projectId: "a1b2c3d4e5f60002" }), { scanned: false, items: [] });
+    assert.equal(call("unity_install_check", { boothId: "7770415", target: null }).name, "Plum-Main");
+    assert.equal(call("unity_install_check", { boothId: "8800120", target: null }), null);
+  });
+});
+
 test("the screen listens to the event name the Rust side sends, and drops late scan results", () => {
   const rust = readFileSync(new URL("../src-tauri/src/unity_index_jobs.rs", import.meta.url), "utf8");
   const api = readFileSync(new URL("../src/api.ts", import.meta.url), "utf8");

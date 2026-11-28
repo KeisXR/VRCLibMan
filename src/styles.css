@@ -3025,3 +3025,16 @@ a.chip:hover { color: var(--text); }
 .project-packages { list-style: none; padding: 0; margin: 0; display: grid; gap: 2px; }
 .project-packages li { overflow-wrap: anywhere; }
 .badge.project-closest { color: var(--good); }
+.badge.project-installed { color: var(--good); }
+.avatar-project-mark { display: inline-flex; gap: 6px; align-items: center; }
+.avatar-project-mark select {
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--surface-secondary);
+  color: var(--text-secondary);
+  padding: 3px 8px;
+  font-size: 12px;
+  max-width: min(100%, 220px);
+}
+.project-suggestions .item { margin-top: var(--space-2); }
+.project-body-suggestion { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }

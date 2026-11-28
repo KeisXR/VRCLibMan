@@ -338,7 +338,7 @@ fn folder_name(path: &str) -> String {
 
 /// 窓の見出し（`Project - Scene - Platform`）がこのプロジェクト名で始まるか。
 /// プロジェクト名にも「 - 」が入り得るので、見出しを区切らずに先頭で比べる。
-fn heading_names(heading: &str, name: &str) -> bool {
+pub(crate) fn heading_names(heading: &str, name: &str) -> bool {
     heading == name
         || heading
             .strip_prefix(name)

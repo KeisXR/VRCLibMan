@@ -15,6 +15,7 @@ VRCLibMan is a desktop app that keeps the user's purchased BOOTH items for VRCha
 | `avatar_assets` | Get everything that fits one avatar, grouped like the app's avatar page (body, per-genre, generic, edition unset). Optional `genre`. |
 | `search_library` | Free-text search (space-separated words are AND) over title, shop, description and genre. Narrow with `avatar`, `kind` (`asset` / `world` / `avatar`), `genre`, `limit`. `query` may be omitted when `avatar` or `genre` is given. |
 | `product_files` | Files of one product: state (`local`, `remote`, `outsideLibrary`, `notDownloaded`), absolute `path`, and the `.unitypackage` entries inside each zip. |
+| `unity_project` | What the Unity project already contains (`project`: the project folder, i.e. the parent of `Assets`, or its folder name). `installed` lists products found in it (`installed: "partial"` when only some files were found); `notInstalledCompatible` lists items for the project's avatars that are known not to be in it. Read-only; it returns VRCLibMan's last check and never rescans. |
 | `download_file` | Only listed when the user turned on 「AI エージェントからのダウンロードを許可」. Downloads **one** `notDownloaded` file of a product the user owns (`boothId`, `filename`, and `variation` when needed), and returns its path and the packages inside. |
 
 ## Reading results
@@ -25,6 +26,7 @@ VRCLibMan is a desktop app that keeps the user's purchased BOOTH items for VRCha
 - `outsideLibrary`: a file exists but outside the library folders, so no path is given.
 - Genres are Japanese labels (衣装, 髪型, アクセサリ, ギミック, シェーダー, …). Answer the user in their language and keep product titles as they are.
 - Products the user excluded, and adult (R-18) products unless the user allowed them in the app, are not visible. Don't claim the user lacks something just because it isn't returned.
+- `unity_project`: if `scannedAt` is missing or a `note` is present, the result may be old or incomplete. Ask the user to open the project in VRCLibMan's 「プロジェクト」 to check it again. A product that isn't in `installed` is not necessarily absent; only `notInstalledCompatible` items are known to be missing. Before importing something, check `installed` so you don't import it twice.
 
 ## Typical flow: "find X for avatar Y and put it in my project"
 

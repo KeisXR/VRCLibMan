@@ -59,6 +59,7 @@ pub(crate) fn parse_guid(text: &[u8]) -> Option<Guid> {
     Some(guid)
 }
 
+#[cfg(test)]
 pub(crate) fn guid_text(guid: &Guid) -> String {
     guid.iter().map(|byte| format!("{byte:02x}")).collect()
 }

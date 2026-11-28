@@ -746,6 +746,7 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
         return match recorded {
             Ok(()) => {
                 let _ = app.emit("library-changed", ());
+                crate::unity_index_jobs::wake(app);
                 crate::arrival_notice::file_added(app, &plan.booth_id);
                 cors_json(
                     origin.as_deref(),
@@ -971,6 +972,13 @@ fn respond_mcp(
         // パスの確認と zip の目次はファイルを読むので、データベースのロックの外で行う。
         Ok(mcp_api::Reply::Files(pending)) => {
             plain_json(200, mcp_api::finish_files(pending).to_string())
+        }
+        // プロジェクトの一覧（ALCOM の設定）と索引は、データベースのロックの外で読む。
+        Ok(mcp_api::Reply::UnityProject(query)) => {
+            match crate::commands::agent_unity_project(app, &query) {
+                Ok(value) => plain_json(200, value.to_string()),
+                Err((status, message)) => mcp_error(status, &message),
+            }
         }
         // 画面の「ダウンロード」と同じ経路と条件。進み具合はサイドバーのダウンロード一覧にも出る。
         Ok(mcp_api::Reply::Download(plan)) => {

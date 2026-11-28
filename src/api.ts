@@ -75,6 +75,7 @@ import type {
   UnityProjectList,
   ProjectContents,
   ProductInstallPlace,
+  ProjectSuggestions,
 } from "./types";
 
 export type ClassificationFeedbackScope = "other" | "unclassified" | "both";
@@ -403,6 +404,12 @@ export const api = {
   unityProjectContents: (projectId: string) => call<ProjectContents>("unity_project_contents", { projectId }),
   /** 商品が入っていると分かったプロジェクト（調べたものだけ）。 */
   productUnityInstalls: (boothId: string) => call<ProductInstallPlace[]>("product_unity_installs", { boothId }),
+  /** 「Unityで開く」の前の確かめ。渡す先のプロジェクトにもう入っていると分かっていれば返す。 */
+  unityInstallCheck: (boothId: string, target: UnityTarget | null) =>
+    call<ProductInstallPlace | null>("unity_install_check", { boothId, target }),
+  /** 結び付けたアバターに対応していて、プロジェクトに入っていないと分かった商品。 */
+  unityProjectSuggestions: (projectId: string) =>
+    call<ProjectSuggestions>("unity_project_suggestions", { projectId }),
   routeStagedDownload: (path: string) => call<void>("route_staged_download", { path }),
   classificationFeedback: (scope: ClassificationFeedbackScope) =>
     call<string>("classification_feedback", { scope }),
