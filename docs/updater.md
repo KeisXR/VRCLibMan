@@ -53,7 +53,7 @@ Windows x64 の NSIS 配布版、Apple Silicon Mac の .app、Linux x86_64 / aar
 
 ## 版を公開する
 
-1. アプリの版を `package.json`、`package-lock.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` で揃えて上げます。`extension/manifest.json` の版も同じ番号に上げます。`scripts/check-release-version.mjs` が 6 か所を照合します。拡張の版は数字だけなので、`-beta` などの接尾辞は付けません。
+1. アプリの版を `package.json`、`package-lock.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` で揃えて上げます。`extension/manifest.json` と Unity のエディタ拡張の `src-tauri/unity-package/app.vrclibman.unity/package.json` の版も同じ番号に上げます。`scripts/check-release-version.mjs` が 7 か所を照合します。拡張の版は数字だけなので、`-beta` などの接尾辞は付けません。
 2. `.github/release-notes/<アプリ版>.md` にその版の利用者向け変更を記載し、main にマージします。版別ファイルがなければリリース本文の生成は失敗します。
 3. main に含まれるコミットへ `v<版>` タグを付けて push します。`.github/workflows/release.yml` が下書き Release を作り、Windows NSIS、Apple Silicon dmg、Linux の両 CPU の AppImage、拡張 zip を載せます。
 4. 全4ターゲットのビルドと最後の `publish complete updater manifest` の成功後に、インストーラ、dmg、更新用 `.app.tar.gz`、両 CPU の `.AppImage`、対応する `.sig`、拡張 zip、`latest.json` と本文を確認します。`latest.json` には `windows-x86_64`、`darwin-aarch64`、`linux-x86_64-appimage`、`linux-aarch64-appimage` が必要です。
