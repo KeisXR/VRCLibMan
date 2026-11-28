@@ -293,13 +293,15 @@ pub(crate) fn refresh(
     progress: impl FnMut(usize, usize),
     stop: impl Fn() -> bool,
 ) -> Result<usize, String> {
-    refresh_counted(connection, sources, progress, stop).map(|(read, _)| read)
+    refresh_counted(connection, sources, &[], progress, stop).map(|(read, _)| read)
 }
 
 /// `refresh` と同じで、（読んだ数、消したファイルの行の数）を返す。どちらかが 0 でなければ索引が変わった。
+/// `keep` は、いま届かないので読まないが、索引から消さないファイル（切れた共有の上のもの）。
 pub(crate) fn refresh_counted(
     connection: &mut Connection,
     sources: &[Source],
+    keep: &[Source],
     mut progress: impl FnMut(usize, usize),
     stop: impl Fn() -> bool,
 ) -> Result<(usize, usize), String> {
@@ -315,7 +317,8 @@ pub(crate) fn refresh_counted(
         store_source(connection, &source, size, modified, result)?;
         read += 1;
     }
-    let removed = forget_missing(connection, sources)?;
+    let kept: Vec<Source> = sources.iter().chain(keep).cloned().collect();
+    let removed = forget_missing(connection, &kept)?;
     if read > 0 || removed > 0 {
         mark_index_changed(connection)?;
     }
@@ -1159,8 +1162,13 @@ mod tests {
         let kept = vec![all[0].clone(), all[2].clone()];
         refresh(&mut counted, &kept, |_, _| {}, || false).unwrap();
         assert_eq!(
-            refresh_counted(&mut counted, &all[..1], |_, _| {}, || false).unwrap(),
+            refresh_counted(&mut counted, &all[..1], &[], |_, _| {}, || false).unwrap(),
             (0, 1)
+        );
+        // 届かないので読まないファイルは、索引から消さない。
+        assert_eq!(
+            refresh_counted(&mut counted, &[], &all[..1], |_, _| {}, || false).unwrap(),
+            (0, 0)
         );
         // 止められたら次のファイルの前で止める。
         let mut fresh = open_memory();

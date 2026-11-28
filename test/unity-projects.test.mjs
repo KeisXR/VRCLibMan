@@ -267,3 +267,14 @@ test("the dialog asks the stage 3 check, and the old install check is gone", () 
   assert.match(lib, /commands::unity_package_check,/);
   assert.doesNotMatch(lib, /unity_install_check/);
 });
+
+test("project rows open the detail page with a 中身を見る button, not by clicking the name", async () => {
+  await withModules(["/src/unityProjects.ts"], ({ projectDetailHref }) => {
+    assert.equal(projectDetailHref("a b"), "#/projects/a%20b");
+  });
+  for (const file of ["../src/pages/ProjectsPage.tsx", "../src/components/UnityProjects.tsx"]) {
+    const source = readFileSync(new URL(file, import.meta.url), "utf8");
+    assert.match(source, /中身を見る/, file);
+    assert.doesNotMatch(source, /href=\{`#\/projects\//, file);
+  }
+});

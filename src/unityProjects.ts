@@ -19,6 +19,11 @@ export function filterProjects(projects: UnityProject[], query: string, showHidd
   });
 }
 
+/** プロジェクトの詳細（中身）の画面。 */
+export function projectDetailHref(projectId: string): string {
+  return `#/projects/${encodeURIComponent(projectId)}`;
+}
+
 /** 一覧の行に添える、いまの状態の短い言葉。無ければ null。 */
 export function projectStateNote(project: UnityProject): string | null {
   if (project.state === "missing") return "フォルダが見つかりません";

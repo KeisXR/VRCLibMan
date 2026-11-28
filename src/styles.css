@@ -3008,7 +3008,6 @@ a.chip:hover { color: var(--text); }
 .avatar-projects { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin: 0 0 var(--space-4); }
 .avatar-projects-label { color: var(--text-secondary); font-size: 13px; }
 .avatar-project { display: inline-flex; gap: 6px; align-items: center; }
-.project-title strong a { color: inherit; }
 .project-detail .page-head .button-row { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .project-scan-note { margin: 0 0 var(--space-4); }
 .project-section { margin-top: var(--space-5); }
