@@ -58,6 +58,7 @@ mod sync_export;
 mod sync_meta;
 mod thumb;
 mod unity;
+mod unity_bridge;
 mod unity_import;
 mod unity_index;
 mod unity_index_jobs;
@@ -168,6 +169,10 @@ pub fn run() {
                     if let Err(error) = mcp_api::sync_token_file(&connection, &directory) {
                         eprintln!("{error}");
                     }
+                    // Unity のエディタ拡張の認証コードも同じく。
+                    if let Err(error) = unity_bridge::sync_token_file(&connection, &directory) {
+                        eprintln!("{error}");
+                    }
                 }
             if let Err(err) = local_import::start_receiver(app.handle().clone())
                 && let Some(state) = app.try_state::<AppState>()
@@ -227,6 +232,21 @@ pub fn run() {
                     let _ = crate::extension_package::refresh_from_settings(&handle);
                 });
             }
+            {
+                // Unity のエディタ拡張も、オンのときだけ同梱の版へそろえる。
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    let on = handle
+                        .try_state::<AppState>()
+                        .and_then(|state| state.db.lock().ok().map(|connection| {
+                            unity_bridge::enabled(&connection).unwrap_or(false)
+                        }))
+                        .unwrap_or(false);
+                    if on {
+                        let _ = unity_bridge::status(&handle, true);
+                    }
+                });
+            }
             if let Ok(cache) = app.path().app_cache_dir() {
                 // 「Unityで開く」で取り出した古いパッケージを消す。名前はログに出さない。
                 std::thread::spawn(move || {
@@ -257,6 +277,9 @@ pub fn run() {
             commands::mcp_status,
             commands::set_mcp_settings,
             commands::regenerate_mcp_token,
+            commands::unity_bridge_status,
+            commands::set_unity_bridge,
+            commands::regenerate_unity_bridge_token,
             commands::agent_clients,
             commands::change_agent_config,
             commands::change_agent_skill,

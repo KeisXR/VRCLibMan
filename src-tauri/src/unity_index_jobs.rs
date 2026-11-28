@@ -44,6 +44,47 @@ fn path_key(path: &str) -> String {
     }
 }
 
+/// 索引のファイル（`source_path`）が、商品のどのファイル行か。記録した場所が同じ行、無ければ
+/// 同じファイル名の行（リモートの `<商品ID>/<名前>` で読んだとき）。同じ名前の行が 2 つ以上
+/// （別のバリエーションに同じ名前）なら決めない。
+pub(crate) fn file_order(
+    rows: &[crate::db::PackageFileRow],
+    booth_id: &str,
+    source_path: &str,
+) -> Option<crate::unity_index::FileOrder> {
+    let key = path_key(source_path);
+    let mine: Vec<&crate::db::PackageFileRow> =
+        rows.iter().filter(|row| row.booth_id == booth_id).collect();
+    let by_path = mine.iter().find(|row| {
+        row.local_path
+            .as_deref()
+            .is_some_and(|path| !path.is_empty() && path_key(path) == key)
+    });
+    let row = match by_path {
+        Some(row) => *row,
+        None => {
+            let name = source_path
+                .rsplit(['\\', '/'])
+                .next()
+                .unwrap_or(source_path);
+            let mut named = mine.iter().filter(|row| row.filename == name);
+            let row = named.next()?;
+            if named.next().is_some() {
+                return None;
+            }
+            *row
+        }
+    };
+    Some(crate::unity_index::FileOrder {
+        variation: row.variation.clone(),
+        downloadable: row
+            .downloadable_id
+            .as_deref()
+            .and_then(|id| id.trim().parse::<u64>().ok()),
+        filename: row.filename.clone(),
+    })
+}
+
 /// `path` が `root` の中にあるか（文字の上だけで比べる。届かない共有に触らない）。
 pub(crate) fn inside(path: &str, root: &str) -> bool {
     let root = path_key(root.trim().trim_end_matches(['\\', '/']));
@@ -469,6 +510,47 @@ mod tests {
     }
 
     #[test]
+    fn index_files_find_their_file_rows() {
+        let row = |variation: &str, filename: &str, id: Option<&str>, path: Option<&str>| {
+            crate::db::PackageFileRow {
+                booth_id: "1100".into(),
+                variation: variation.into(),
+                filename: filename.into(),
+                downloadable_id: id.map(Into::into),
+                local_path: path.map(Into::into),
+            }
+        };
+        let sep = std::path::MAIN_SEPARATOR;
+        let rows = [
+            // 同じ名前を避けて改名して置いたファイル。
+            row(
+                "",
+                "a.zip",
+                Some("10"),
+                Some(&format!("L{sep}1100{sep}a (1).zip")),
+            ),
+            row("", "b.zip", Some("20"), None),
+            row("Airi", "same.zip", Some("30"), None),
+            row("Plum", "same.zip", Some("31"), None),
+            row("", "c.zip", Some("x"), None),
+        ];
+        let order = |path: &str| file_order(&rows, "1100", path);
+        let by_path = order(&format!("L{sep}1100{sep}a (1).zip")).unwrap();
+        assert_eq!(
+            (by_path.filename.as_str(), by_path.downloadable),
+            ("a.zip", Some(10))
+        );
+        let by_name = order(&format!("R{sep}1100{sep}b.zip")).unwrap();
+        assert_eq!(by_name.downloadable, Some(20));
+        // 2 つのバリエーションに同じ名前があれば決めない。
+        assert!(order(&format!("R{sep}1100{sep}same.zip")).is_none());
+        // 番号の読めないファイルは並びが分からない。
+        assert_eq!(order(&format!("R{sep}c.zip")).unwrap().downloadable, None);
+        // ほかの商品の行は見ない。
+        assert!(file_order(&rows, "1200", &format!("R{sep}b.zip")).is_none());
+    }
+
+    #[test]
     fn sources_prefer_the_library_then_find_the_remote_copy() {
         let sep = std::path::MAIN_SEPARATOR;
         let lib = format!("{sep}lib");
@@ -661,5 +743,239 @@ mod tests {
             *reasons.entry(reason).or_default() += 1;
         }
         println!("remote files: {reasons:?}");
+    }
+
+    /// 版と改変の見込みを、この PC のライブラリと ALCOM の全プロジェクトで数える。数だけを出し、
+    /// 商品名・ID・パスは出さない。`VRCLIBMAN_REAL_DB` を指定して
+    /// `cargo test --lib -- --ignored real_version_notes --nocapture` で動かす。索引は一時フォルダ
+    /// （`VRCLIBMAN_REAL_INDEX_DIR` があればそこ）に作る。
+    #[test]
+    #[ignore]
+    fn real_version_notes() {
+        use crate::unity_index::{Verdict, VersionNote};
+        use std::collections::{HashMap, HashSet};
+        let db = std::env::var("VRCLIBMAN_REAL_DB").expect("VRCLIBMAN_REAL_DB");
+        let dir = tempfile::tempdir().unwrap();
+        let copy = dir.path().join("copy.sqlite");
+        rusqlite::Connection::open_with_flags(&db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .unwrap()
+            .execute("VACUUM INTO ?1", [copy.to_string_lossy().to_string()])
+            .unwrap();
+        let library = rusqlite::Connection::open(&copy).unwrap();
+        let candidates = candidates(&library).unwrap();
+        let remote_root = candidates.remote.trim().to_string();
+        let reachable = !remote_root.is_empty()
+            && crate::library_files::probe_path(
+                Path::new(&remote_root),
+                crate::library_files::PROBE_TIMEOUT,
+            ) == crate::library_files::Probe::Present;
+        let picked = pick_sources(&candidates, |path| present(path, &remote_root, reachable));
+        let index_dir = std::env::var("VRCLIBMAN_REAL_INDEX_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| dir.path().to_path_buf());
+        let mut index = store::open(&index_dir.join(store::FILE_NAME)).unwrap();
+        let started = std::time::Instant::now();
+        let (read, _) =
+            store::refresh_counted(&mut index, &picked.read, &picked.keep, |_, _| {}, || false)
+                .unwrap();
+        println!(
+            "indexed {} files (read {read}) in {:?}",
+            picked.read.len(),
+            started.elapsed()
+        );
+        let settings = std::path::PathBuf::from(std::env::var("LOCALAPPDATA").unwrap())
+            .join("VRChatCreatorCompanion")
+            .join("settings.json");
+        let projects = crate::unity_projects::parse_user_projects(
+            &std::fs::read_to_string(settings).unwrap_or_default(),
+        );
+        // 単体のファイルの zip ごとの（ファイル数、名前だけ当たった最大数、名前と大きさが当たった最大数）。
+        let mut loose_diag: std::collections::BTreeMap<i64, (usize, usize, usize)> =
+            Default::default();
+        for (number, path) in projects.iter().enumerate() {
+            let path = std::path::PathBuf::from(path);
+            if !path.join("Assets").is_dir() {
+                continue;
+            }
+            let manifest = std::fs::read_to_string(path.join("Packages").join("vpm-manifest.json"))
+                .unwrap_or_default();
+            let (_, packages) = crate::unity_projects::parse_vpm_manifest(&manifest);
+            let vpm: Vec<(String, String)> =
+                packages.into_iter().map(|p| (p.name, p.version)).collect();
+            let id = format!("p{number}");
+            let started = std::time::Instant::now();
+            if store::scan_project(&mut index, &id, &path, &vpm).is_err() {
+                println!("{id}: could not scan");
+                continue;
+            }
+            let contents = store::project_contents(&index, &id).unwrap();
+            let ids: Vec<String> = contents
+                .products
+                .iter()
+                .map(|p| p.booth_id.clone())
+                .collect();
+            let rows = crate::db::package_file_rows(&library, &ids).unwrap();
+            let (mut present, mut older, mut differs_one, mut differs_many, mut adjusted) =
+                (0, 0, 0, 0, 0);
+            let mut differ_files = Vec::new();
+            let (mut loose_only, mut loose_partial) = (0, 0);
+            let loose_packages = contents
+                .products
+                .iter()
+                .flat_map(|p| p.packages.iter())
+                .filter(|p| p.loose)
+                .count();
+            for product in &contents.products {
+                if !matches!(product.verdict, Verdict::Installed | Verdict::Partial) {
+                    continue;
+                }
+                present += 1;
+                // 単体のファイルの zip だけで入っていると分かった商品と、その中で一部のもの。
+                let by_package = product
+                    .packages
+                    .iter()
+                    .filter(|p| matches!(p.verdict, Verdict::Installed | Verdict::Partial));
+                if by_package.clone().all(|p| p.loose) {
+                    loose_only += 1;
+                    if product.verdict == Verdict::Partial {
+                        loose_partial += 1;
+                    }
+                }
+                let sizes: Vec<_> = product.packages.iter().map(|p| p.sizes.clone()).collect();
+                let report = crate::unity_index::version_report(&sizes, |source| {
+                    file_order(&rows, &product.booth_id, source)
+                });
+                match report.note {
+                    Some(VersionNote::Older { .. }) => older += 1,
+                    Some(VersionNote::Differs { files, versions }) => {
+                        differ_files.push(files);
+                        if versions >= 2 {
+                            differs_many += 1;
+                        } else {
+                            differs_one += 1;
+                        }
+                    }
+                    None => {}
+                }
+                adjusted += usize::from(report.adjusted > 0);
+            }
+            differ_files.sort_unstable();
+            // どの種類のファイルが、手元のどの版とも大きさが違うか（`VRCLIBMAN_REAL_DIFF_EXT` があるとき）。
+            if std::env::var("VRCLIBMAN_REAL_DIFF_EXT").is_ok() {
+                let mut sizes: HashMap<Vec<u8>, (HashSet<i64>, String)> = HashMap::new();
+                let mut statement = index
+                    .prepare("SELECT guid, asset_size, ext FROM package_guids WHERE asset_size IS NOT NULL")
+                    .unwrap();
+                for (guid, size, ext) in statement
+                    .query_map([], |r| {
+                        Ok((
+                            r.get::<_, Vec<u8>>(0)?,
+                            r.get::<_, i64>(1)?,
+                            r.get::<_, String>(2)?,
+                        ))
+                    })
+                    .unwrap()
+                    .flatten()
+                {
+                    let entry = sizes.entry(guid).or_insert_with(|| (HashSet::new(), ext));
+                    entry.0.insert(size);
+                }
+                let scan = crate::unity_index::scan_metas(
+                    &path.join("Assets"),
+                    std::time::Instant::now() + crate::unity_index::PROJECT_TIMEOUT,
+                    crate::unity_index::MAX_PROJECT_FILES,
+                );
+                let mut by_ext: std::collections::BTreeMap<String, (usize, usize)> =
+                    Default::default();
+                for (guid, asset) in &scan.found {
+                    let Some((known, ext)) = sizes.get(guid.as_slice()) else {
+                        continue;
+                    };
+                    let Some(on_disk) = scan.sizes.get(asset) else {
+                        continue;
+                    };
+                    let entry = by_ext.entry(ext.clone()).or_default();
+                    entry.0 += 1;
+                    if !known.contains(&(*on_disk as i64)) {
+                        entry.1 += 1;
+                    }
+                }
+                let differing: Vec<String> = by_ext
+                    .iter()
+                    .filter(|(_, (_, differ))| *differ > 0)
+                    .map(|(ext, (all, differ))| format!("{ext}:{differ}/{all}"))
+                    .collect();
+                println!("{id}: differ by type {differing:?}");
+            }
+            if std::env::var("VRCLIBMAN_REAL_LOOSE_DIAG").is_ok() {
+                let mut files: HashMap<i64, Vec<(String, i64)>> = HashMap::new();
+                let mut statement = index
+                    .prepare("SELECT package_id, name, size FROM package_files")
+                    .unwrap();
+                for (package, name, size) in statement
+                    .query_map([], |r| {
+                        Ok((
+                            r.get::<_, i64>(0)?,
+                            r.get::<_, String>(1)?,
+                            r.get::<_, i64>(2)?,
+                        ))
+                    })
+                    .unwrap()
+                    .flatten()
+                {
+                    files.entry(package).or_default().push((name, size));
+                }
+                let scan = crate::unity_index::scan_metas(
+                    &path.join("Assets"),
+                    std::time::Instant::now() + crate::unity_index::PROJECT_TIMEOUT,
+                    crate::unity_index::MAX_PROJECT_FILES,
+                );
+                let mut on_disk: HashMap<String, HashSet<i64>> = HashMap::new();
+                for (file, size) in &scan.sizes {
+                    on_disk
+                        .entry(crate::unity_index::loose_key(&file.to_string_lossy()))
+                        .or_default()
+                        .insert(*size as i64);
+                }
+                for (package, list) in &files {
+                    let name_hits = list.iter().filter(|(n, _)| on_disk.contains_key(n)).count();
+                    let both = list
+                        .iter()
+                        .filter(|(n, s)| on_disk.get(n).is_some_and(|sizes| sizes.contains(s)))
+                        .count();
+                    // 名前は当たって大きさが当たらないとき、同じ商品が unitypackage で入っているか。
+                    let booth: Option<String> = index
+                        .query_row(
+                            "SELECT booth_id FROM packages WHERE id = ?1",
+                            [package],
+                            |r| r.get(0),
+                        )
+                        .unwrap_or(None);
+                    let same_product_installed = contents.products.iter().any(|p| {
+                        Some(&p.booth_id) == booth.as_ref()
+                            && p.packages
+                                .iter()
+                                .any(|k| !k.loose && k.verdict == Verdict::Installed)
+                    });
+                    if name_hits >= 5 && both == 0 {
+                        println!(
+                            "{id}: loose zip with {name_hits}/{} names but no sizes; same product installed by unitypackage={same_product_installed}",
+                            list.len()
+                        );
+                    }
+                    let entry = loose_diag.entry(*package).or_insert((list.len(), 0, 0));
+                    entry.1 = entry.1.max(name_hits);
+                    entry.2 = entry.2.max(both);
+                }
+            }
+            println!(
+                "{id}: complete={} scan={:?} present={present} older={older} differs(1 version)={differs_one} differs(2+)={differs_many} materials-changed={adjusted} differing files={differ_files:?} loose zips={loose_packages} found by name only={loose_only} (partial {loose_partial})",
+                contents.complete,
+                started.elapsed()
+            );
+        }
+        for (files, names, both) in loose_diag.values() {
+            println!("loose zip: files={files} best name hits={names} best name+size hits={both}");
+        }
     }
 }

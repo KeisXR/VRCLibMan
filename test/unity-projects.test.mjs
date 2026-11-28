@@ -278,3 +278,22 @@ test("project rows open the detail page with a 中身を見る button, not by cl
     assert.doesNotMatch(source, /href=\{`#\/projects\//, file);
   }
 });
+
+test("version notes say older or different only from what Rust decided, and count materials apart", async () => {
+  await withModules(["/src/unityProjects.ts"], ({ versionLines }) => {
+    assert.deepEqual(versionLines({ adjusted: 0 }), { note: null, adjusted: null });
+    const older = versionLines({ version: { kind: "older", newer: "Outfit_v2.zip" }, adjusted: 0 });
+    assert.match(older.note, /古い版/);
+    assert.match(older.note, /Outfit_v2\.zip/);
+    // 手元に版が 1 つだけなら、古い版か改変かを決めつけない。
+    const single = versionLines({ version: { kind: "differs", files: 3, versions: 1 }, adjusted: 0 });
+    assert.match(single.note, /3 個/);
+    assert.match(single.note, /古い版か、改変した可能性/);
+    const many = versionLines({ version: { kind: "differs", files: 1, versions: 2 }, adjusted: 0 });
+    assert.match(many.note, /どの版とも違う/);
+    // マテリアルの違いは改変と言わずに数だけ。
+    const adjusted = versionLines({ adjusted: 4 }).adjusted;
+    assert.match(adjusted, /4 個/);
+    assert.doesNotMatch(adjusted, /改変/);
+  });
+});

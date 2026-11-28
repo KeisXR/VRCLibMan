@@ -1,4 +1,4 @@
-import type { InstallVerdict, ItemView, PackageInstall, ProjectContents, UnityProject, UnityProjectList } from "../types";
+import type { InstallVerdict, ItemView, PackageInstall, ProjectContents, ProjectProduct, UnityProject, UnityProjectList } from "../types";
 
 /** 見本の Unity プロジェクト。ALCOM の一覧を真似る。実在のフォルダは見ない。 */
 interface PreviewProject {
@@ -53,21 +53,32 @@ const SAMPLE_MISSING: Record<string, string[]> = {
 /** 見本の段階 3: Plum-Main に渡すとき Avatar Optimizer が無いと出す商品。 */
 const SAMPLE_NEEDS: string[] = ["8800130"];
 
-/** 見本の「調べた結果」。プロジェクトごとに（商品 ID、判定、パッケージ）。 */
-type SampleRow = [string, InstallVerdict, Omit<PackageInstall, "sourcePath">[]];
+/** 見本の「調べた結果」。プロジェクトごとに（商品 ID、判定、パッケージ、版の見込み）。 */
+type SampleRow = [string, InstallVerdict, Omit<PackageInstall, "sourcePath">[], Pick<ProjectProduct, "version" | "adjusted">?];
 const pkg = (name: string, verdict: InstallVerdict, matched: number, total: number, extra: Partial<PackageInstall> = {}) => ({
   name,
   verdict,
   uniqueMatched: matched,
   uniqueTotal: total,
   closest: false,
+  loose: false,
   ...extra,
 });
 const SAMPLE_CONTENTS: Record<string, SampleRow[]> = {
   a1b2c3d4e5f60001: [
     ["7770415", "installed", [pkg("Plum_v.1.0.1.unitypackage", "installed", 163, 163), pkg("lilToon_1.4.0.unitypackage", "bundled", 0, 350, { bundledWith: "jp.lilxyzw.liltoon" })]],
-    ["8800101", "installed", [pkg("OnePiece_v2.unitypackage", "installed", 40, 42, { closest: true }), pkg("OnePiece_v1.unitypackage", "installed", 38, 42)]],
-    ["8800120", "partial", [pkg("EyeTextures.unitypackage", "partial", 12, 30)]],
+    [
+      "8800101",
+      "installed",
+      [pkg("OnePiece_v2.unitypackage", "installed", 40, 42), pkg("OnePiece_v1.unitypackage", "installed", 38, 42, { closest: true })],
+      { version: { kind: "older", newer: "OnePiece_v2.unitypackage" }, adjusted: 3 },
+    ],
+    [
+      "8800120",
+      "partial",
+      [pkg("EyeTextures.unitypackage", "partial", 12, 30), pkg("EyeTextures_psd.zip", "partial", 4, 10, { loose: true })],
+      { version: { kind: "differs", files: 2, versions: 1 }, adjusted: 0 },
+    ],
     ["8800130", "missing", [pkg("SmallItem.unitypackage", "missing", 0, 8)]],
     ["8800111", "unknown", [pkg("Ribbon.unitypackage", "unknown", 0, 0)]],
   ],
@@ -94,7 +105,7 @@ function contents(projectId: string, context: PreviewProjectContext): ProjectCon
     complete: true,
     stale: false,
     packageNames: PACKAGE_NAMES,
-    products: rows.flatMap(([boothId, verdict, packages]) => {
+    products: rows.flatMap(([boothId, verdict, packages, version]) => {
       const product = context.productRef?.(boothId);
       if (!product) return [];
       const kind = product.category === "world" ? "world" : product.category === "avatar" ? "avatar" : "asset";
@@ -109,6 +120,8 @@ function contents(projectId: string, context: PreviewProjectContext): ProjectCon
           link: product.category && (kind !== "avatar" || avatarId) ? { kind, avatarId } : null,
           verdict,
           packages: packages.map((item) => ({ ...item, sourcePath: `D:\\Library\\${boothId}\\${item.name}` })),
+          adjusted: 0,
+          ...version,
         },
       ];
     }),

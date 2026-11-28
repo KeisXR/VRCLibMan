@@ -63,6 +63,7 @@ import type {
   GenreProducts,
   UnityStatus,
   McpStatus,
+  UnityBridgeStatus,
   AgentClient,
   AgentChange,
   UnityPackageList,
@@ -344,6 +345,9 @@ export const api = {
   setMcpSettings: (enabled: boolean, includeAdult: boolean, allowDownload: boolean) =>
     call<McpStatus>("set_mcp_settings", { enabled, includeAdult, allowDownload }),
   regenerateMcpToken: () => call<void>("regenerate_mcp_token"),
+  unityBridgeStatus: () => call<UnityBridgeStatus>("unity_bridge_status"),
+  setUnityBridge: (enabled: boolean) => call<UnityBridgeStatus>("set_unity_bridge", { enabled }),
+  regenerateUnityBridgeToken: () => call<void>("regenerate_unity_bridge_token"),
   agentClients: () => call<AgentClient[]>("agent_clients"),
   changeAgentConfig: (id: string, add: boolean) => call<AgentChange>("change_agent_config", { id, add }),
   changeAgentSkill: (id: string, add: boolean) => call<AgentChange>("change_agent_skill", { id, add }),

@@ -58,6 +58,28 @@ export const VERDICT_LABEL: Record<InstallVerdict, string> = {
   bundled: "同梱版",
 };
 
+/**
+ * 入っている版の知らせ。判定は Rust（`unity_index::version_report`）で、ここは言い方だけ。
+ * `note` は版について言えること、`adjusted` はマテリアルなどの違い（改変とは言わずに数だけ）。
+ */
+export function versionLines(product: Pick<ProjectProduct, "version" | "adjusted">): { note: string | null; adjusted: string | null } {
+  const version = product.version;
+  let note: string | null = null;
+  if (version?.kind === "older") {
+    note = `古い版が入っています。新しいファイル（${version.newer}）があります`;
+  } else if (version?.kind === "differs") {
+    note =
+      version.versions >= 2
+        ? `手元のどの版とも違うテクスチャ・モデルなどが ${version.files} 個あります。改変したか、手元に無い版です`
+        : `手元のファイルと違うテクスチャ・モデルなどが ${version.files} 個あります。古い版か、改変した可能性があります`;
+  }
+  const adjusted =
+    product.adjusted > 0
+      ? `マテリアル・プレハブなど ${product.adjusted} 個は配布物から変わっています（色や設定の調整、Unity の保存し直しでも変わります）`
+      : null;
+  return { note, adjusted };
+}
+
 /** プロジェクトの詳細の節。入っていないものは並べない（ライブラリ全部が並ぶので）。 */
 export interface ProjectSections {
   installed: ProjectProduct[];

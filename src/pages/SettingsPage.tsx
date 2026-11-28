@@ -14,6 +14,7 @@ import { ClassificationFeedback } from "../components/ClassificationFeedback";
 import { AssetUpdates } from "../components/AssetUpdates";
 import { UnitySettings } from "../components/UnitySettings";
 import { AgentSettings } from "../components/AgentSettings";
+import { UnityBridgeSettings } from "../components/UnityBridgeSettings";
 import { SettingsNav } from "../components/SettingsNav";
 import { SyncExportSettings } from "../components/SyncExportSettings";
 import { RemoteSyncReport } from "../components/RemoteSyncReport";
@@ -204,8 +205,9 @@ export function SettingsPage() {
           </section>
 
           <section className="settings-section" id="settings-unity">
-            <header><h2>Unity</h2><p>unitypackage を開くときに使う Unity と、Unity を操作中の AI エージェントとの連携を設定します。</p></header>
+            <header><h2>Unity</h2><p>unitypackage を開くときに使う Unity、Unity の中の VRCLibMan の窓、Unity を操作中の AI エージェントとの連携を設定します。</p></header>
             <UnitySettings onNotify={notify} onFail={fail} />
+            <UnityBridgeSettings onNotify={notify} onFail={fail} />
             <AgentSettings onNotify={notify} onFail={fail} />
           </section>
 

@@ -278,10 +278,13 @@ Windows では、BOOTH の窓を同期コマンドの中で作らない。WebVie
 - 開いているかは Windows の Unity の窓のタイトルだけで決める。「 - Unity 」より前の見出しがプロジェクト名で始まり（名前の「 - 」で区切らない）、版が同じものを開いているとし、1 つの窓に当てはまるプロジェクトが 2 つ以上あれば決めない（`unity_projects::running_states`）。`Temp/UnityLockfile` は Unity が閉じていても残るので使わない。
 - アバターとの結び付けは本人が決めたものだけで、フォルダ名などから推測しない。アバターの統合で統合先へ移し、アバターの削除で消える。パスと id はデータ移行の ZIP に含めない。
 - 「Unityで開く」で Unity が起動していないときは、商品の対応アバターに結び付けたプロジェクトと、ワールドの商品ならワールドのプロジェクト（`vpm-manifest.json` で決まる種類。結び付けは要らない）を開く操作を出すだけで、開いたあとに自動で渡さない（いつ受け取れるかを外から確かめられないため）。候補の規則は `unity_projects::projects_for_product`。ワールドのプロジェクトはアバターに結び付けない。
-- 導入済みの判定（プロジェクトの詳細 `#/projects/<id>` とプレビューの「プロジェクト」の行）は、unitypackage の GUID とプロジェクトの `Assets` の `.meta` の一致だけで決め、渡した記録を根拠にしない。Import 画面でキャンセルできるため。判定は `unity_index::verdict` の 1 か所（固有のファイルの 80% 以上で導入済み、5% 以上で一部）で、画面・MCP に複製しない。調べていないプロジェクト・途中までしか歩けなかったプロジェクトについて「入っていない」と言わない。
+- 導入済みの判定（プロジェクトの詳細 `#/projects/<id>` とプレビューの「プロジェクト」の行）は、unitypackage の GUID とプロジェクトの `Assets` の `.meta` の一致だけで決め、渡した記録を根拠にしない。Import 画面でキャンセルできるため。unitypackage の無い zip の単体のファイル（png・fbx など）だけは、ファイル名と大きさの両方の一致で数え、名前だけでは照らさない（同じ名前のファイルが別の商品・別のバリエーションにあるため）。判定は `unity_index::verdict` の 1 か所（固有のファイルの 80% 以上で導入済み、5% 以上で一部）で、画面・MCP に複製しない。調べていないプロジェクト・途中までしか歩けなかったプロジェクトについて「入っていない」と言わない。
+- 古い版・改変の知らせは `unity_index::version_report` の 1 か所で、編集されにくい種類（`STABLE_EXTENSIONS`）の大きさだけで版を比べ、ファイルの新旧は同じバリエーションの BOOTH のファイル番号で決める。マテリアル・プレハブの違いは数だけで改変と言わず、版が 1 つしか無いときは古い版か改変かを決めない。lilToon や Unity が保存し直すだけで大きさが変わり、大きさだけでは古い版と改変を見分けられないため（[Unity プロジェクト連携](docs/unity-projects.md#版)）。
 - 索引は `library.sqlite` と別の `unity-index.sqlite`（アプリのローカルデータ）に置く、作り直せる写しで、移行を書かず版が合わなければ消して作る。データ移行に含めない。unitypackage はディスクへ取り出さずに読み、プロジェクトの GUID の集合は残さない。書くのはワーカー 1 本かプロジェクトを調べるコマンドで、`unity_index_store::PASS` を取ってから。`library.sqlite` のロックは対象を並べるあいだだけ持つ。
 - 商品の zip に同梱された共通パッケージ（lilToon など）は、VPM パッケージが GUID の 80% 以上を持てば「同梱版」とし、商品の判定に数えない。VPM パッケージは名前と版ごとに 1 回だけ歩く（`Packages` を毎回歩くと 20〜40 秒かかるため）。
 - 判定を見せるところ（アバター詳細の「導入済み」の印、プロジェクトの詳細の「まだ入っていない対応アセット」、「Unityで開く」の「このプロジェクトには入っています」、MCP の `unity_project`）は、前に調べた結果だけを使い、調べていない・古い（調べたあとに索引が変わった、パッケージを渡した）ときは何も言わない。プレビューの「プロジェクト」の行も同じ（`product_projects`）。「まだ入っていない」に入れるのは、索引にあって入っていないと分かった商品だけ（手元にファイルの無い商品は入れない）。対応はアバター詳細と同じ組み立てから取り、画面に複製しない（`commands::project_suggestions`）。
+- 「Unity の中から使う」（`unity_bridge.rs`、`unity_bridge_enabled` 既定オフ）は受信口の `/unity/*` だけで受け、`/mcp/` と同じく `Origin` のある要求を 403 にし、別のコード（`unity_bridge_token`、オンのときだけアプリデータの `unity-token`）の Bearer で通す。判定・確かめ・取り出しはアプリの `unity_index`・`commands::package_check`・`commands::prepare_packages` を使い、C# の拡張は表示と `AssetDatabase.ImportPackage(path, true)`（Import 画面）だけを持つ。一覧にあるプロジェクトだけを受け、プロジェクトのフォルダに書き込まない。規則を 2 か所に持たず、ウェブページから Unity へ取り込ませないため（[Unity プロジェクト連携](docs/unity-projects.md#段階-4-unity-のエディタ拡張)）。
+- エディタ拡張（`src-tauri/unity-package/app.vrclibman.unity`）はアプリに同梱し、オンのときアプリのローカルデータの `unity-package` へ写す。利用者が ALCOM のユーザーパッケージに足す。版はアプリと同じにし（`check-release-version.mjs` が照合する）、ネットから取らない。ファイルには固定の GUID の `.meta` を付ける（テストが確かめる）。窓のサムネイル（`/unity/thumb`）は、保存済みか、画面と同じく BOOTH の画像サーバーから Cookie なしで取って PNG にし、年齢制限と除外の商品には返さない。
 - 「このプロジェクトには入っています」は知らせるだけで、渡すのを止めない。渡す先のプロジェクトは窓の見出しと版で 1 つに決まるときだけ使う（`commands::instance_project`）。パッケージを渡したら、そのプロジェクトの結果を古いとする。
 - 渡す先に足りないもの（段階 3、`unity_package_check`）は、パッケージの中の参照と、どこかのプロジェクトの `Packages` で見つけた持ち主（`guid_owners`）か、それを持つライブラリの商品 1 つだけから言う。説明文から推測せず、持ち主の分からない参照を不足と言わず、必要な版は言わない（持ち主は版ごとに覚え、入っている版にそのファイルが無いときだけ「版が違う可能性」と言う）。説明文の書き分けを規則で読むと利用者を誤らせるため。パッケージが入っているかは見せるときの `vpm-manifest.json`・`Packages/<名前>/`・`Packages/manifest.json` で決め、種類を決める VRChat SDK（`com.vrchat.avatars`・`com.vrchat.worlds`）は並べない。知らせるだけで渡すのは止めず、同梱版は外して出すだけで本人が選べば渡せる。
 
@@ -494,6 +497,8 @@ Mac の内蔵ブラウザは `data_directory` を使わない。固定の 16 バ
 | `src-tauri/src/unity_index.rs` | unitypackage の GUID の読み取り、`.meta` の読み取り、導入済みの判定（`verdict`） |
 | `src-tauri/src/unity_index_store.rs` | 索引 `unity-index.sqlite`、プロジェクトを調べた結果 |
 | `src-tauri/src/unity_index_jobs.rs` | 索引を作るワーカーと、コマンドからの入口 |
+| `src-tauri/src/unity_bridge.rs` | Unity のエディタ拡張からの問い合わせ（受信口の `/unity/*`）、コード、同梱した拡張の用意 |
+| `src-tauri/unity-package/app.vrclibman.unity` | Unity のエディタ拡張（Tools > VRCLibMan の窓）。アプリに同梱し、ALCOM のユーザーパッケージに足す |
 | `docs/unity-projects.md` | Unity プロジェクト連携の設計（段階 1〜4）と計測 |
 | `src/pages/ProjectsPage.tsx` | プロジェクトの一覧。詳細は `ProjectDetailPage.tsx`。見本は `src/preview/unityProjects.ts` |
 | `src-tauri/src/commands.rs` | Tauri コマンド |

@@ -858,6 +858,16 @@ export interface UnityEditor {
   source: UnityEditorSource;
 }
 
+/** Unity のエディタ拡張（Rust の `unity_bridge::UnityBridgeStatus`）。 */
+export interface UnityBridgeStatus {
+  enabled: boolean;
+  /** ALCOM のユーザーパッケージに足すフォルダ。オフ・用意できないときは空文字 */
+  folder: string;
+  /** 同梱したエディタ拡張の版（アプリと同じ） */
+  version: string;
+  error?: string;
+}
+
 /** AI エージェント連携（MCP）の設定。 */
 export interface McpStatus {
   enabled: boolean;
@@ -1004,6 +1014,8 @@ export interface PackageInstall {
   bundledWith?: string;
   /** 同じ商品の導入済みのパッケージが 2 つ以上あるとき、大きさがいちばん合うもの */
   closest: boolean;
+  /** unitypackage の無い zip の単体のファイル（png・fbx など）を、名前と大きさで照らした */
+  loose: boolean;
 }
 
 export interface ProjectProduct {
@@ -1016,7 +1028,17 @@ export interface ProjectProduct {
   link: { kind: "asset" | "world" | "avatar"; avatarId: string | null } | null;
   verdict: InstallVerdict;
   packages: PackageInstall[];
+  /** 入っている版の見込み（Rust の `unity_index::version_report`）。言えることが無ければ無い */
+  version?: VersionNote;
+  /** マテリアル・プレハブなどで、配布物と大きさの違う数 */
+  adjusted: number;
 }
+
+/**
+ * older: 手元の古いファイルと同じ版で、同じバリエーションに新しいファイルがある。
+ * differs: 手元のどの版とも大きさの違うテクスチャ・モデルなどが files 個ある（versions は比べたファイルの数）。
+ */
+export type VersionNote = { kind: "older"; newer: string } | { kind: "differs"; files: number; versions: number };
 
 export interface ProjectContents {
   /** 調べた日時（UNIX 秒）。まだ調べていなければ null */

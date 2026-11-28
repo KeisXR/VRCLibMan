@@ -41,7 +41,7 @@ fn bundled_dir(app: &AppHandle) -> Option<PathBuf> {
     None
 }
 
-fn license_file(app: &AppHandle) -> Option<PathBuf> {
+pub(crate) fn license_file(app: &AppHandle) -> Option<PathBuf> {
     let bundled = app
         .path()
         .resource_dir()
@@ -152,14 +152,14 @@ fn relative_files(root: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(files)
 }
 
-fn safe_relative(path: &Path) -> bool {
+pub(crate) fn safe_relative(path: &Path) -> bool {
     !path.as_os_str().is_empty()
         && path
             .components()
             .all(|component| matches!(component, Component::Normal(_)))
 }
 
-fn write_replacing(target: &Path, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn write_replacing(target: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = target.parent().ok_or("拡張機能のフォルダに書けません")?;
     std::fs::create_dir_all(parent).map_err(|_| "拡張機能のフォルダを作れません")?;
     let mut temp = tempfile::Builder::new()

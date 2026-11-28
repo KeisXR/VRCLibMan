@@ -807,6 +807,49 @@ pub(crate) fn linked_file_products(
     rows.collect::<Result<Vec<_>, _>>().sql()
 }
 
+/// 商品のファイル行のうち、版の並びに使うもの（Unity プロジェクトの「入っている版」）。
+pub(crate) struct PackageFileRow {
+    pub booth_id: String,
+    pub variation: String,
+    pub filename: String,
+    pub downloadable_id: Option<String>,
+    pub local_path: Option<String>,
+}
+
+pub(crate) fn package_file_rows(
+    connection: &Connection,
+    booth_ids: &[String],
+) -> Result<Vec<PackageFileRow>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT booth_id, variation, filename, downloadable_id, local_path
+               FROM product_files WHERE booth_id = ?1",
+        )
+        .sql()?;
+    let mut found = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for booth_id in booth_ids {
+        if !seen.insert(booth_id) {
+            continue;
+        }
+        let rows = statement
+            .query_map([booth_id], |row| {
+                Ok(PackageFileRow {
+                    booth_id: row.get(0)?,
+                    variation: row.get(1)?,
+                    filename: row.get(2)?,
+                    downloadable_id: row.get(3)?,
+                    local_path: row.get(4)?,
+                })
+            })
+            .sql()?;
+        for row in rows {
+            found.push(row.sql()?);
+        }
+    }
+    Ok(found)
+}
+
 pub(crate) struct SweepReport {
     pub moved: u32,
     pub left: Vec<crate::model::StagedLeftover>,

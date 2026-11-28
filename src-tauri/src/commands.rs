@@ -178,6 +178,59 @@ pub fn regenerate_mcp_token(
     crate::mcp_api::regenerate(&connection, &directory)
 }
 
+/// Unity のエディタ拡張（docs/unity-projects.md の段階 4）の状態。オンなら同梱の版を用意してから返す。
+#[tauri::command(async)]
+pub fn unity_bridge_status(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<crate::unity_bridge::UnityBridgeStatus, String> {
+    let on = {
+        let connection = db(&state)?;
+        crate::unity_bridge::enabled(&connection)?
+    };
+    Ok(crate::unity_bridge::status(&app, on))
+}
+
+/// 「Unity の中から使う」を切り替える。メイン画面からだけ受け付ける。
+#[tauri::command(async)]
+pub fn set_unity_bridge(
+    view: tauri::Webview,
+    app: AppHandle,
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<crate::unity_bridge::UnityBridgeStatus, String> {
+    if view.label() != "main" {
+        return Err("この画面からは変更できません".into());
+    }
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| "アプリのデータフォルダが見つかりません".to_string())?;
+    {
+        let mut connection = db(&state)?;
+        crate::unity_bridge::save(&mut connection, &directory, enabled)?;
+    }
+    Ok(crate::unity_bridge::status(&app, enabled))
+}
+
+/// Unity のエディタ拡張の認証コードを作り直す。メイン画面からだけ受け付ける。
+#[tauri::command(async)]
+pub fn regenerate_unity_bridge_token(
+    view: tauri::Webview,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    if view.label() != "main" {
+        return Err("この画面からは変更できません".into());
+    }
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| "アプリのデータフォルダが見つかりません".to_string())?;
+    let connection = db(&state)?;
+    crate::unity_bridge::regenerate(&connection, &directory)
+}
+
 /// 同梱の SKILL のフォルダ（`agent-skill/vrclibman`）。
 fn bundled_skill(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     let bundled = app
@@ -894,11 +947,25 @@ pub async fn prepare_unity_packages(
     if view.label() != "main" {
         return Err("この画面から Unity パッケージは開けません".into());
     }
-    let (library, remote) = library_roots(&app)?;
-    let cache_root = unity_cache_root(&app)?;
-    let folder = unity_loose_folder(&app, booth_id.as_deref());
     tauri::async_runtime::spawn_blocking(move || {
-        let source = crate::unity_import::allowed_source(&path, &library, &remote)?;
+        prepare_packages(&app, &path, &entries, booth_id.as_deref())
+    })
+    .await
+    .map_err(|err| format!("Unity パッケージを取り出せません: {err}"))?
+}
+
+/// `prepare_unity_packages` の中身。Unity のエディタ拡張（`unity_bridge`）も同じ場所と検査で取り出す。
+pub(crate) fn prepare_packages(
+    app: &AppHandle,
+    path: &str,
+    entries: &[String],
+    booth_id: Option<&str>,
+) -> Result<Vec<crate::unity_import::PreparedPackage>, String> {
+    let (library, remote) = library_roots(app)?;
+    let cache_root = unity_cache_root(app)?;
+    let folder = unity_loose_folder(app, booth_id);
+    {
+        let source = crate::unity_import::allowed_source(path, &library, &remote)?;
         let list = crate::unity_import::list_packages(&source)?;
         if list.kind == "loose" {
             // 一覧で見せた場所と同じ場所に入るよう、同じ規則で決める。
@@ -909,7 +976,7 @@ pub async fn prepare_unity_packages(
                 .unwrap_or("");
             let place = crate::unity_wrap::destination(&folder, name)
                 .ok_or_else(|| "Unity に入れられないファイルです".to_string())?;
-            let dest = crate::unity_import::cache_folder(&cache_root, booth_id.as_deref());
+            let dest = crate::unity_import::cache_folder(&cache_root, booth_id);
             return crate::unity_wrap::wrap_file(&source, &place, &dest)
                 .map(|package| vec![package]);
         }
@@ -924,16 +991,14 @@ pub async fn prepare_unity_packages(
                 })
                 .collect());
         }
-        let dest = crate::unity_import::cache_folder(&cache_root, booth_id.as_deref());
+        let dest = crate::unity_import::cache_folder(&cache_root, booth_id);
         crate::unity_import::extract_packages(
             &source,
-            &entries,
+            entries,
             &dest,
             crate::unity_import::MAX_PACKAGE_BYTES,
         )
-    })
-    .await
-    .map_err(|err| format!("Unity パッケージを取り出せません: {err}"))?
+    }
 }
 
 /// 起動中の Unity エディタの窓（プロジェクトごと）。2 つ以上あれば、画面が渡す先を選ばせる。
@@ -950,7 +1015,7 @@ pub fn unity_instances(
 
 /// Unity プロジェクトの一覧。ALCOM / VCC の一覧と、手で足した・結び付けたものを毎回読み直す。
 /// プロジェクトのフォルダは読むだけ。
-fn unity_project_list_blocking(
+pub(crate) fn unity_project_list_blocking(
     app: &AppHandle,
 ) -> Result<crate::unity_projects::UnityProjectList, String> {
     use crate::unity_projects as projects;
@@ -1204,6 +1269,11 @@ pub struct ProjectProductView {
     pub link: Option<crate::purchases::LibraryLink>,
     pub verdict: crate::unity_index::Verdict,
     pub packages: Vec<crate::unity_index_store::PackageInstall>,
+    /// 入っている版の見込み（古い版・配布物と違う）。言えることが無ければ出さない。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<crate::unity_index::VersionNote>,
+    /// マテリアル・プレハブなどで、配布物と大きさの違う数。
+    pub adjusted: usize,
 }
 
 #[derive(serde::Serialize)]
@@ -1218,7 +1288,7 @@ pub struct ProjectContentsView {
 }
 
 /// 調べた結果に、ライブラリの題と行き先を付ける。除外した・ライブラリに無い商品は出さない。
-fn project_contents_view(
+pub(crate) fn project_contents_view(
     app: &AppHandle,
     contents: crate::unity_index_store::ProjectContents,
 ) -> Result<ProjectContentsView, String> {
@@ -1227,10 +1297,13 @@ fn project_contents_view(
         .iter()
         .map(|product| product.booth_id.clone())
         .collect();
-    let refs = {
+    let (refs, files) = {
         let state = app.state::<AppState>();
         let connection = db(&state)?;
-        crate::purchases::product_refs(&connection, &ids)?
+        (
+            crate::purchases::product_refs(&connection, &ids)?,
+            db::package_file_rows(&connection, &ids)?,
+        )
     };
     let package_names =
         crate::unity_index_jobs::read(app, crate::unity_index_store::vpm_display_names)
@@ -1245,7 +1318,17 @@ fn project_contents_view(
             .into_iter()
             .filter_map(|product| {
                 let product_ref = refs.get(&product.booth_id)?.clone();
+                let sizes: Vec<crate::unity_index::PackageSizes> = product
+                    .packages
+                    .iter()
+                    .map(|package| package.sizes.clone())
+                    .collect();
+                let report = crate::unity_index::version_report(&sizes, |source_path| {
+                    crate::unity_index_jobs::file_order(&files, &product.booth_id, source_path)
+                });
                 Some(ProjectProductView {
+                    version: report.note,
+                    adjusted: report.adjusted,
                     booth_id: product.booth_id,
                     title: product_ref.title,
                     thumbnail_path: product_ref.thumbnail_path,
@@ -1558,7 +1641,25 @@ pub async fn unity_package_check(
         let Some(project) = instance_project(app, target.as_ref()) else {
             return Ok(None);
         };
-        let source = std::path::PathBuf::from(&path);
+        package_check(app, &project, &path, &entries, boothId.as_deref())
+    })
+    .await
+}
+
+/// `unity_package_check` の中身。渡す先のプロジェクトが決まっているとき（Unity のエディタ拡張からも）。
+pub(crate) fn package_check(
+    app: &AppHandle,
+    project: &crate::unity_projects::UnityProject,
+    path: &str,
+    entries: &[String],
+    booth_id: Option<&str>,
+) -> Result<Option<PackageCheckView>, String> {
+    #[allow(non_snake_case)]
+    let boothId = booth_id.map(str::to_string);
+    let entries = entries.to_vec();
+    let project = project.clone();
+    {
+        let source = std::path::PathBuf::from(path);
         let (installed, needs, bundled, names) =
             crate::unity_index_jobs::read(app, |connection| {
                 let installed = match &boothId {
@@ -1653,8 +1754,7 @@ pub async fn unity_package_check(
             missing,
             bundled,
         }))
-    })
-    .await
+    }
 }
 
 #[derive(serde::Serialize)]

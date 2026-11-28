@@ -15,6 +15,7 @@ import {
   projectSections,
   projectStateNote,
   scannedLabel,
+  versionLines,
   vpmPackageLabel,
 } from "../unityProjects";
 
@@ -262,6 +263,7 @@ function ProductList({ products }: { products: ProjectProduct[] }) {
         const href = projectProductHref(product);
         const src = mediaSrc(product.thumbnailPath, product.thumbnailUrl);
         const shown = product.packages.filter((item) => item.verdict !== "missing" || product.verdict === "missing");
+        const version = versionLines(product);
         return (
           <li key={product.boothId} className="project-product">
             {src ? <img className="project-product-thumb" src={src} alt="" loading="lazy" /> : <span className="project-product-thumb" aria-hidden="true" />}
@@ -275,12 +277,14 @@ function ProductList({ products }: { products: ProjectProduct[] }) {
                     {item.verdict === "bundled"
                       ? `${item.bundledWith ?? "VPM パッケージ"} の同梱版`
                       : item.uniqueTotal > 0
-                        ? `${VERDICT_LABEL[item.verdict]}（${item.uniqueMatched} / ${item.uniqueTotal} ファイル）`
+                        ? `${VERDICT_LABEL[item.verdict]}（${item.uniqueMatched} / ${item.uniqueTotal} ファイル${item.loose ? "、名前と大きさで照合" : ""}）`
                         : VERDICT_LABEL[item.verdict]}
                     {item.closest && <span className="badge project-closest">入っている版の見込み</span>}
                   </li>
                 ))}
               </ul>
+              {version.note && <p className="note-strong project-version">{version.note}</p>}
+              {version.adjusted && <p className="meta project-version">{version.adjusted}</p>}
             </div>
           </li>
         );

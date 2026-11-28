@@ -20,7 +20,9 @@ use std::time::{Duration, Instant, SystemTime};
 pub(crate) const FILE_NAME: &str = "unity-index.sqlite";
 /// 表の形を変えたら上げる。合わない索引は消して作り直す。
 /// 2・3: 段階 3 の `project_found_refs` を足し、`guid_owners` を VPM パッケージの版ごとにした。
-pub(crate) const INDEX_VERSION: i64 = 3;
+/// 4: `project_packages` にマテリアルなどの大きさの一致（`other_matched`・`other_same_size`）を足した。
+/// 5: unitypackage の無い zip の単体のファイルを名前と大きさで照らす（`packages.loose`・`package_files`）。
+pub(crate) const INDEX_VERSION: i64 = 5;
 /// 共有のファイルの大きさを確かめる時間の上限。
 const STAT_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -38,8 +40,15 @@ CREATE TABLE IF NOT EXISTS packages (
     file_count INTEGER NOT NULL,
     complete INTEGER NOT NULL,
     failed INTEGER NOT NULL DEFAULT 0,
+    loose INTEGER NOT NULL DEFAULT 0,
     UNIQUE (source_path, entry)
 );
+CREATE TABLE IF NOT EXISTS package_files (
+    package_id INTEGER NOT NULL REFERENCES packages(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    PRIMARY KEY (package_id, name, size)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS package_guids (
     guid BLOB NOT NULL,
     package_id INTEGER NOT NULL REFERENCES packages(id) ON DELETE CASCADE,
@@ -63,6 +72,8 @@ CREATE TABLE IF NOT EXISTS project_packages (
     matched INTEGER NOT NULL,
     stable_matched INTEGER NOT NULL,
     stable_same_size INTEGER NOT NULL,
+    other_matched INTEGER NOT NULL,
+    other_same_size INTEGER NOT NULL,
     PRIMARY KEY (project_id, package_id)
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS project_scans (
@@ -200,12 +211,31 @@ pub(crate) fn store_source(
     size: i64,
     modified: i64,
     read: Result<Vec<unity_index::ReadPackage>, String>,
+    loose: &[unity_index::LooseFile],
 ) -> Result<(), String> {
     let tx = sql(connection.transaction())?;
     let path = path_text(&source.path);
     sql(tx.execute("DELETE FROM packages WHERE source_path = ?1", params![path]))?;
     let packages = match read {
         Ok(packages) if !packages.is_empty() => packages,
+        // unitypackage の無い zip の単体のファイル（png・fbx など）。名前と大きさを残し、ファイル数を付ける。
+        Ok(_) if !loose.is_empty() => {
+            sql(tx.execute(
+                "INSERT INTO packages (source_path, entry, size, modified, booth_id, file_count, complete, failed, loose)
+                 VALUES (?1, '', ?2, ?3, ?4, ?5, 1, 0, 1)",
+                params![path, size, modified, source.booth_id, loose.len() as i64],
+            ))?;
+            let id = tx.last_insert_rowid();
+            {
+                let mut insert = sql(tx.prepare(
+                    "INSERT OR IGNORE INTO package_files (package_id, name, size) VALUES (?1, ?2, ?3)",
+                ))?;
+                for file in loose {
+                    sql(insert.execute(params![id, file.name, file.size as i64]))?;
+                }
+            }
+            return sql(tx.commit());
+        }
         // zip に unitypackage が無い、または読めない。読み直さないよう、印だけ残す。
         other => {
             sql(tx.execute(
@@ -314,7 +344,14 @@ pub(crate) fn refresh_counted(
         }
         progress(read, total);
         let result = unity_index::read_source(&source.path);
-        store_source(connection, &source, size, modified, result)?;
+        // unitypackage が 1 つも無い zip だけ、単体のファイルの目次を読む。
+        let loose = match &result {
+            Ok(packages) if packages.is_empty() && is_zip(&source.path) => {
+                unity_index::loose_files(&source.path).unwrap_or_default()
+            }
+            _ => Vec::new(),
+        };
+        store_source(connection, &source, size, modified, result, &loose)?;
         read += 1;
     }
     let kept: Vec<Source> = sources.iter().chain(keep).cloned().collect();
@@ -323,6 +360,11 @@ pub(crate) fn refresh_counted(
         mark_index_changed(connection)?;
     }
     Ok((read, removed))
+}
+
+fn is_zip(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|ext| ext.to_string_lossy().eq_ignore_ascii_case("zip"))
 }
 
 /// VPM パッケージの名前として歩いてよい形（`jp.lilxyzw.liltoon` など）。
@@ -383,6 +425,26 @@ pub(crate) fn scan_project(
                     size,
                     ext,
                 });
+            }
+        }
+    }
+
+    // 単体のファイル（unitypackage の無い zip）の名前と大きさ。
+    let mut loose: HashMap<(String, i64), Vec<i64>> = HashMap::new();
+    {
+        let mut statement =
+            sql(connection.prepare("SELECT package_id, name, size FROM package_files"))?;
+        let rows = sql(statement.query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        }))?;
+        for row in rows {
+            let (package_id, name, size) = sql(row)?;
+            if package_booth.contains_key(&package_id) {
+                loose.entry((name, size)).or_default().push(package_id);
             }
         }
     }
@@ -506,6 +568,8 @@ pub(crate) fn scan_project(
         matched: usize,
         stable_matched: usize,
         stable_same_size: usize,
+        other_matched: usize,
+        other_same_size: usize,
         owners: HashMap<String, usize>,
     }
     let mut tallies: HashMap<i64, Tally> = package_booth
@@ -535,11 +599,52 @@ pub(crate) fn scan_project(
             if unique {
                 tally.unique_matched += 1;
             }
+            // 大きさは歩いたときのもの。Windows ではファイルを開き直さない。
+            let same = scan
+                .sizes
+                .get(path)
+                .is_some_and(|size| Some(*size as i64) == holder.size);
             if STABLE_EXTENSIONS.contains(&holder.ext.as_str()) {
                 tally.stable_matched += 1;
-                let on_disk = std::fs::metadata(path).map(|meta| meta.len() as i64).ok();
-                if on_disk.is_some() && on_disk == holder.size {
-                    tally.stable_same_size += 1;
+                tally.stable_same_size += usize::from(same);
+            } else {
+                tally.other_matched += 1;
+                tally.other_same_size += usize::from(same);
+            }
+        }
+    }
+
+    // 単体のファイルは、Assets のファイルの名前（フォルダを外して小文字）と大きさで照らす。利用者が置いた
+    // ファイルには新しい GUID が付くため。固有かどうかは GUID と同じく、ほかの商品に同じ名前と大きさの
+    // ファイルが無いか。フォルダは見ない（置く場所は利用者が決める）。
+    if !loose.is_empty() {
+        let on_disk: HashSet<(String, i64)> = scan
+            .sizes
+            .iter()
+            .map(|(path, size)| {
+                (
+                    unity_index::loose_key(&path.to_string_lossy()),
+                    *size as i64,
+                )
+            })
+            .collect();
+        for (key, holders) in &loose {
+            let booths: HashSet<&Option<String>> = holders
+                .iter()
+                .map(|package_id| &package_booth[package_id])
+                .collect();
+            let unique = booths.len() == 1;
+            let found = on_disk.contains(key);
+            for package_id in holders {
+                let tally = tallies.entry(*package_id).or_default();
+                if unique {
+                    tally.unique += 1;
+                }
+                if found {
+                    tally.matched += 1;
+                    if unique {
+                        tally.unique_matched += 1;
+                    }
                 }
             }
         }
@@ -576,7 +681,8 @@ pub(crate) fn scan_project(
     {
         let mut insert = sql(tx.prepare(
             "INSERT INTO project_packages (project_id, package_id, unique_total, unique_matched, vpm_owned, vpm_owner,
-             matched, stable_matched, stable_same_size) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+             matched, stable_matched, stable_same_size, other_matched, other_same_size)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         ))?;
         for (package_id, tally) in &tallies {
             let owner = tally
@@ -592,7 +698,9 @@ pub(crate) fn scan_project(
                 owner.map(|(name, _)| name.clone()),
                 tally.matched as i64,
                 tally.stable_matched as i64,
-                tally.stable_same_size as i64
+                tally.stable_same_size as i64,
+                tally.other_matched as i64,
+                tally.other_same_size as i64
             ]))?;
         }
     }
@@ -618,6 +726,11 @@ pub(crate) struct PackageInstall {
     pub bundled_with: Option<String>,
     /// 同じ商品の導入済みのパッケージが 2 つ以上あるとき、大きさがいちばん合うもの（入っている版の見込み）。
     pub closest: bool,
+    /// unitypackage の無い zip の単体のファイルを、名前と大きさで照らした。
+    pub loose: bool,
+    /// 版と改変の見込みの材料（`unity_index::version_report`）。画面には出さない。
+    #[serde(skip)]
+    pub sizes: unity_index::PackageSizes,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -678,7 +791,8 @@ pub(crate) fn project_contents(
     };
     let mut statement = sql(connection.prepare(
         "SELECT p.booth_id, p.source_path, p.entry, p.file_count, r.unique_total, r.unique_matched,
-                r.vpm_owned, r.vpm_owner, r.stable_matched, r.stable_same_size
+                r.vpm_owned, r.vpm_owner, r.stable_matched, r.stable_same_size,
+                r.other_matched, r.other_same_size, p.loose
          FROM project_packages r JOIN packages p ON p.id = r.package_id
          WHERE r.project_id = ?1 AND p.booth_id IS NOT NULL AND p.failed = 0 AND p.complete = 1
            AND p.file_count > 0
@@ -697,6 +811,9 @@ pub(crate) fn project_contents(
         let owner: Option<String> = row.get(7)?;
         let stable_matched: i64 = row.get(8)?;
         let stable_same: i64 = row.get(9)?;
+        let other_matched: i64 = row.get(10)?;
+        let other_same: i64 = row.get(11)?;
+        let loose: i64 = row.get(12)?;
         let verdict = unity_index::verdict(Counts {
             unique: unique_total as usize,
             unique_matched: unique_matched as usize,
@@ -714,7 +831,7 @@ pub(crate) fn project_contents(
             },
             install: PackageInstall {
                 name: file_label(&source_path, &entry),
-                source_path,
+                source_path: source_path.clone(),
                 verdict,
                 unique_total: unique_total as usize,
                 unique_matched: unique_matched as usize,
@@ -724,6 +841,15 @@ pub(crate) fn project_contents(
                     None
                 },
                 closest: false,
+                loose: loose != 0,
+                sizes: unity_index::PackageSizes {
+                    verdict: Some(verdict),
+                    source_path: source_path.clone(),
+                    stable_matched: stable_matched as usize,
+                    stable_same: stable_same as usize,
+                    other_matched: other_matched as usize,
+                    other_same: other_same as usize,
+                },
             },
         })
     }))?
@@ -1103,6 +1229,77 @@ mod tests {
             path: library.join(id).join(name),
         })
         .collect()
+    }
+
+    fn write_zip(path: &Path, files: &[(&str, &[u8])]) {
+        use std::io::Write;
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        for (name, body) in files {
+            zip.start_file(*name, options).unwrap();
+            zip.write_all(body).unwrap();
+        }
+        zip.finish().unwrap();
+    }
+
+    #[test]
+    fn loose_zips_match_project_files_by_name_and_size() {
+        let mut f = fixture();
+        std::fs::create_dir_all(f.library.join("400")).unwrap();
+        std::fs::create_dir_all(f.library.join("500")).unwrap();
+        // 商品 400: テクスチャだけの配布。商品 500: 同じ名前で中身の違うテクスチャと、400 と同じファイル。
+        write_zip(
+            &f.library.join("400").join("Textures.zip"),
+            &[
+                ("Tex/Eye_A.png", b"eye-a-texture"),
+                ("Tex/Eye_B.png", b"eye-b-texture"),
+                ("Tex/Common.png", b"common"),
+                ("readme.txt", b"hello"),
+            ],
+        );
+        write_zip(
+            &f.library.join("500").join("Other.zip"),
+            &[
+                ("Eye_A.png", b"another eye texture"),
+                ("Common.png", b"common"),
+            ],
+        );
+        let mut all = sources(&f.library);
+        for (id, name) in [("400", "Textures.zip"), ("500", "Other.zip")] {
+            all.push(Source {
+                booth_id: id.into(),
+                path: f.library.join(id).join(name),
+            });
+        }
+        refresh(&mut f.connection, &all, |_, _| {}, || false).unwrap();
+        // 利用者が別の名前のフォルダへ置いた（GUID は新しく付く。大文字小文字も違う）。
+        let mine = f.project.join("Assets").join("MyTextures");
+        write_meta(&mine, "eye_a.PNG", &guid(90), b"eye-a-texture");
+        write_meta(&mine, "Eye_B.png", &guid(91), b"eye-b-texture");
+        write_meta(&mine, "Common.png", &guid(92), b"common");
+        scan_project(&mut f.connection, "p1", &f.project, &[]).unwrap();
+        let contents = project_contents(&f.connection, "p1").unwrap();
+        let product = |id: &str| contents.products.iter().find(|p| p.booth_id == id);
+        let textures = product("400").unwrap();
+        assert_eq!(textures.verdict, Verdict::Installed);
+        let package = &textures.packages[0];
+        assert!(package.loose);
+        assert_eq!(package.name, "Textures.zip");
+        // Common.png は 500 にもあるので固有に数えない。
+        assert_eq!((package.unique_matched, package.unique_total), (2, 2));
+        // 500 の Eye_A.png は大きさが違い、Common.png は固有でない。
+        let other = product("500").unwrap();
+        assert_eq!(other.verdict, Verdict::Missing);
+        assert_eq!(
+            (
+                other.packages[0].unique_matched,
+                other.packages[0].unique_total
+            ),
+            (0, 1)
+        );
+        // unitypackage のパッケージは名前で照らさない。
+        assert!(!product("100").unwrap().packages[0].loose);
     }
 
     #[test]
@@ -1600,6 +1797,55 @@ mod tests {
             .map(|p| p.name.as_str())
             .collect();
         assert_eq!(closest, ["Outfit.unitypackage"]);
+        // マテリアルとプレハブは別に数える（c.mat は書き換えてある、d.prefab は v1 と同じ）。
+        let sizes = |name: &str| {
+            outfit
+                .packages
+                .iter()
+                .find(|p| p.name == name)
+                .map(|p| p.sizes.clone())
+                .unwrap()
+        };
+        let v1 = sizes("Outfit.unitypackage");
+        assert_eq!(
+            (
+                v1.stable_matched,
+                v1.stable_same,
+                v1.other_matched,
+                v1.other_same
+            ),
+            (2, 2, 2, 1)
+        );
+        let v2 = sizes("Outfit_v2.unitypackage");
+        assert_eq!(
+            (
+                v2.stable_matched,
+                v2.stable_same,
+                v2.other_matched,
+                v2.other_same
+            ),
+            (2, 0, 2, 0)
+        );
+        // v2 のほうが後から上がったファイルなら、入っているのは古い版。
+        let all: Vec<unity_index::PackageSizes> =
+            outfit.packages.iter().map(|p| p.sizes.clone()).collect();
+        let report = unity_index::version_report(&all, |path| {
+            let name = path.rsplit(['\\', '/']).next().unwrap().to_string();
+            Some(unity_index::FileOrder {
+                variation: String::new(),
+                downloadable: Some(if name.contains("v2") { 20 } else { 10 }),
+                filename: name,
+            })
+        });
+        assert_eq!(
+            report,
+            unity_index::VersionReport {
+                note: Some(unity_index::VersionNote::Older {
+                    newer: "Outfit_v2.unitypackage".into()
+                }),
+                adjusted: 1,
+            }
+        );
     }
 
     /// この PC のライブラリとプロジェクトを読むだけの確認。索引は一時フォルダに作る。
