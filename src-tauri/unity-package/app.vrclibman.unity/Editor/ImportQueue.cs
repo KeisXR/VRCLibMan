@@ -85,14 +85,19 @@ namespace VRCLibMan.Editor
         }
 
         /// Import 画面が開いているか。確かめられない版の Unity では false。
-        public static bool ImportWindowOpen()
+        static bool ImportWindowOpen()
         {
             return PackageImportWindow != null && Resources.FindObjectsOfTypeAll(PackageImportWindow).Length > 0;
         }
 
-        /// 確かめられないときに、本人が押して次へ進む。
+        /// Import 画面が閉じたかを確かめられない版の Unity か。そのときだけ、窓に「次を開く」を出す。
+        /// 確かめられるときに本人が進めると、閉じたあと取り込んでいる途中で次を開いてしまうため。
+        public static bool NeedsManualAdvance => PackageImportWindow == null;
+
+        /// 確かめられないときに、本人が押して次へ進む。取り込みやスクリプトの読み直しの途中では進めない。
         public static void OpenNext()
         {
+            if (!NeedsManualAdvance || EditorApplication.isCompiling || EditorApplication.isUpdating) return;
             var state = Load();
             if (state == null) return;
             Advance(state);

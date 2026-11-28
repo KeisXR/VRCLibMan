@@ -268,6 +268,19 @@ pub(crate) fn extract_packages(
     dest: &Path,
     max_bytes: u64,
 ) -> Result<Vec<PreparedPackage>, String> {
+    extract_packages_taking(zip_path, entries, dest, max_bytes, &mut Vec::new())
+}
+
+/// `extract_packages` の中身。`taken` は、この取り出しで使った名前。別の zip から同じ `dest` へ
+/// 続けて取り出すとき（Unity のエディタ拡張で複数のファイルを選んだとき）に共有し、
+/// 後の zip の同じ名前のパッケージが前のものを上書きしないようにする。
+pub(crate) fn extract_packages_taking(
+    zip_path: &Path,
+    entries: &[String],
+    dest: &Path,
+    max_bytes: u64,
+    taken: &mut Vec<String>,
+) -> Result<Vec<PreparedPackage>, String> {
     if entries.is_empty() {
         return Err("取り出す Unity パッケージを選んでください".into());
     }
@@ -291,7 +304,6 @@ pub(crate) fn extract_packages(
     let dest = std::fs::canonicalize(dest)
         .map(|path| crate::library_files::without_verbatim_prefix(&path))
         .map_err(|_| "取り出し先のフォルダを作れません".to_string())?;
-    let mut taken = Vec::new();
     let mut prepared = Vec::new();
     for wanted in entries {
         let Some(&index) = index_of.get(wanted.as_str()) else {
@@ -299,7 +311,7 @@ pub(crate) fn extract_packages(
         };
         let name = safe_file_name(wanted)
             .ok_or_else(|| "Unity パッケージ（.unitypackage）だけを取り出せます".to_string())?;
-        let name = unique_name(&mut taken, name);
+        let name = unique_name(taken, name);
         let target = dest.join(&name);
         // 名前は最後の部分だけなので外へは出ないが、念のため確かめる。
         if target.parent() != Some(dest.as_path()) {
@@ -1100,6 +1112,38 @@ mod tests {
                 size: 5
             }]
         );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn packages_from_separate_zips_keep_their_own_files() {
+        let root = temp_root("extract-taken");
+        let first = root.join("a.zip");
+        let second = root.join("b.zip");
+        write_zip(&first, &[("Body.unitypackage", b"first", false)]);
+        write_zip(&second, &[("x/Body.unitypackage", b"second", false)]);
+        let dest = root.join("cache").join("unity-import").join("1000001");
+        let mut taken = Vec::new();
+        let one = extract_packages_taking(
+            &first,
+            &["Body.unitypackage".into()],
+            &dest,
+            MAX_PACKAGE_BYTES,
+            &mut taken,
+        )
+        .unwrap();
+        let two = extract_packages_taking(
+            &second,
+            &["x/Body.unitypackage".into()],
+            &dest,
+            MAX_PACKAGE_BYTES,
+            &mut taken,
+        )
+        .unwrap();
+        assert_ne!(one[0].path, two[0].path);
+        assert_eq!(std::fs::read(&one[0].path).unwrap(), b"first");
+        assert_eq!(std::fs::read(&two[0].path).unwrap(), b"second");
+        assert!(two[0].path.ends_with("Body (2).unitypackage"));
         let _ = std::fs::remove_dir_all(root);
     }
 

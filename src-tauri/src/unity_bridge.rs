@@ -392,12 +392,28 @@ const SEARCH_LIMIT: usize = 50;
 struct PackageBody {
     project: String,
     /// 手元のファイル（`/unity/files` が返したもの）。ライブラリかリモートの中だけ受ける。
+    #[serde(default)]
     path: String,
     #[serde(default)]
     entries: Vec<String>,
+    /// `prepare` で、複数のファイルから続けて取り出すとき（`path` と `entries` の代わり）。
+    /// 1 回で取り出し、別の zip の同じ名前のパッケージが前のものを上書きしないようにする。
+    #[serde(default)]
+    files: Vec<PackageFileBody>,
     #[serde(default)]
     booth_id: Option<String>,
 }
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PackageFileBody {
+    path: String,
+    #[serde(default)]
+    entries: Vec<String>,
+}
+
+/// 1 回の `prepare` で受けるファイルの数の上限。
+const PREPARE_FILES_LIMIT: usize = 100;
 
 fn bad_request(message: &str) -> (u16, String) {
     (400, message.to_string())
@@ -846,13 +862,31 @@ fn handle_json(app: &AppHandle, route: Route, body: &str) -> Result<Value, (u16,
             {
                 return Err(bad_request("商品IDを読めません"));
             }
-            let prepared = crate::commands::prepare_packages(
-                app,
-                &body.path,
-                &body.entries,
-                body.booth_id.as_deref(),
-            )
-            .map_err(|error| (409, error))?;
+            let files: Vec<(String, Vec<String>)> = if body.files.is_empty() {
+                vec![(body.path, body.entries)]
+            } else {
+                body.files
+                    .into_iter()
+                    .map(|file| (file.path, file.entries))
+                    .collect()
+            };
+            if files.len() > PREPARE_FILES_LIMIT {
+                return Err(bad_request("一度に選べるファイルが多すぎます"));
+            }
+            let mut taken = Vec::new();
+            let mut prepared = Vec::new();
+            for (path, entries) in &files {
+                prepared.extend(
+                    crate::commands::prepare_packages_taking(
+                        app,
+                        path,
+                        entries,
+                        body.booth_id.as_deref(),
+                        &mut taken,
+                    )
+                    .map_err(|error| (409, error))?,
+                );
+            }
             // Import 画面で取り込まれたかもしれないので、このプロジェクトの結果を古いとする。
             crate::unity_index_jobs::mark_project_stale(app, project.id.clone());
             Ok(json!({ "packages": prepared }))

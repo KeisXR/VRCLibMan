@@ -280,24 +280,22 @@ namespace VRCLibMan.Editor
             return keys;
         }
 
-        /// 選んだものを含むファイル（一覧の順）と、それぞれへの頼み（JSON）。zip の中のものは名前を並べ、
+        /// 選んだものを含むファイル（一覧の順）。zip の中のものは名前を並べ、
         /// ファイルそのもの（名前が空）はファイルだけを送る。
-        List<KeyValuePair<string, string>> Requests(ICollection<string> keys)
+        List<PackageFile> ChosenFiles(ICollection<string> keys)
         {
-            var requests = new List<KeyValuePair<string, string>>();
+            var chosenFiles = new List<PackageFile>();
             foreach (var file in files?.files ?? new FileItem[0])
             {
                 var chosen = (file.packages ?? new PackageItem[0]).Where(package => keys.Contains(Key(file, package))).ToArray();
                 if (chosen.Length == 0) continue;
-                requests.Add(new KeyValuePair<string, string>(file.path, JsonUtility.ToJson(new PackageRequest
+                chosenFiles.Add(new PackageFile
                 {
-                    project = ProjectFolder(),
                     path = file.path,
                     entries = chosen.Where(package => !string.IsNullOrEmpty(package.entry)).Select(package => package.entry).ToArray(),
-                    boothId = importBoothId,
-                })));
+                });
             }
-            return requests;
+            return chosenFiles;
         }
 
         /// 選んだものを確かめる。ファイルごとの結果を 1 つにまとめ、要らない同梱版は渡すものから外しておく
@@ -306,8 +304,16 @@ namespace VRCLibMan.Editor
         {
             var chosen = AllKeys().Where(selected.Contains).ToList();
             if (chosen.Count == 0) return;
-            var requests = Requests(chosen);
-            RunAll("check", requests.Select(request => request.Value).ToArray(), "このプロジェクトに足りないものを確かめています…", bodies =>
+            // 確かめはファイルごとに頼む（受信口の確かめは 1 つのファイルを見る）。
+            var chosenFiles = ChosenFiles(chosen);
+            var requests = chosenFiles.Select(file => JsonUtility.ToJson(new PackageRequest
+            {
+                project = ProjectFolder(),
+                path = file.path,
+                entries = file.entries,
+                boothId = importBoothId,
+            })).ToArray();
+            RunAll("check", requests, "このプロジェクトに足りないものを確かめています…", bodies =>
             {
                 var merged = new CheckReply { missing = new NeedItem[0], bundled = new BundledItem[0] };
                 var needs = new List<NeedItem>();
@@ -323,7 +329,7 @@ namespace VRCLibMan.Editor
                     }
                     foreach (var bundled in one.bundled ?? new BundledItem[0])
                     {
-                        bundledOwners[Key(requests[i].Key, bundled.entry)] = bundled.name;
+                        bundledOwners[Key(chosenFiles[i].path, bundled.entry)] = bundled.name;
                     }
                 }
                 merged.missing = needs.ToArray();
@@ -338,14 +344,21 @@ namespace VRCLibMan.Editor
         void OpenImport()
         {
             var chosen = reviewed.Where(keep.Contains).ToList();
-            if (chosen.Count == 0) return;
-            RunAll("prepare", Requests(chosen).Select(request => request.Value).ToArray(), "パッケージを用意しています…", bodies =>
+            // 前の Import 画面を順に開いているあいだは取り出さない（同じ名前のパッケージを取り出すと、
+            // 待っているファイルを置き換えるため）。
+            if (chosen.Count == 0 || ImportQueue.Active(out _, out _, out _)) return;
+            // 取り出しは 1 回で頼む（別の zip の同じ名前のパッケージが、前のものを上書きしないように）。
+            var request = new PackageRequest
             {
-                var prepared = new List<PreparedItem>();
-                foreach (var body in bodies)
-                {
-                    prepared.AddRange(JsonUtility.FromJson<PrepareReply>(body)?.packages ?? new PreparedItem[0]);
-                }
+                project = ProjectFolder(),
+                path = "",
+                entries = new string[0],
+                files = ChosenFiles(chosen).ToArray(),
+                boothId = importBoothId,
+            };
+            Run("prepare", request, "パッケージを用意しています…", body =>
+            {
+                var prepared = new List<PreparedItem>(JsonUtility.FromJson<PrepareReply>(body)?.packages ?? new PreparedItem[0]);
                 // Import 画面を 1 件ずつ出す。取り込むかどうかは、それぞれ本人が決める。
                 ImportQueue.Enqueue(prepared.ToArray());
                 CloseImport();
@@ -569,8 +582,9 @@ namespace VRCLibMan.Editor
             using (new EditorGUILayout.HorizontalScope(EditorStyles.helpBox))
             {
                 EditorGUILayout.LabelField("Import 画面を順に開いています（" + position + " / " + total + "）: " + current, EditorStyles.wordWrappedLabel);
-                // Import 画面が閉じたのに進まないとき（閉じたかを確かめられない版の Unity など）だけ、本人が進める。
-                if (!ImportQueue.ImportWindowOpen() && GUILayout.Button("次を開く", GUILayout.Width(80))) ImportQueue.OpenNext();
+                // Import 画面が閉じたかを確かめられない版の Unity でだけ、本人が進める
+                // （確かめられるときは、閉じて取り込みが終わったら自動で進む）。
+                if (ImportQueue.NeedsManualAdvance && GUILayout.Button("次を開く", GUILayout.Width(80))) ImportQueue.OpenNext();
                 if (GUILayout.Button("残りをやめる", GUILayout.Width(90))) ImportQueue.Clear();
             }
         }
@@ -669,10 +683,12 @@ namespace VRCLibMan.Editor
             }
             EditorGUILayout.EndScrollView();
             var count = reviewed.Count(keep.Contains);
-            if (count > 1) EditorGUILayout.LabelField("Import 画面を 1 件ずつ順に開きます。それぞれ中身を確かめてから取り込めます。", EditorStyles.wordWrappedMiniLabel);
+            var queued = ImportQueue.Active(out _, out _, out _);
+            if (queued) EditorGUILayout.LabelField("前に選んだものの Import 画面を開いています。終わってから開けます。", EditorStyles.wordWrappedMiniLabel);
+            else if (count > 1) EditorGUILayout.LabelField("Import 画面を 1 件ずつ順に開きます。それぞれ中身を確かめてから取り込めます。", EditorStyles.wordWrappedMiniLabel);
             using (new EditorGUILayout.HorizontalScope())
             {
-                using (new EditorGUI.DisabledScope(pending != null || count == 0))
+                using (new EditorGUI.DisabledScope(pending != null || count == 0 || queued))
                 {
                     var label = check.installed ? "もう一度 Import 画面を開く" : "Import 画面を開く";
                     if (GUILayout.Button(count > 1 ? label + "（" + count + " 件）" : label)) OpenImport();

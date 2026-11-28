@@ -153,7 +153,16 @@ namespace VRCLibMan.Editor
         public string project;
         public string path;
         public string[] entries;
+        // prepare で、複数のファイルから 1 回で取り出すとき（path と entries の代わり）。
+        public PackageFile[] files = new PackageFile[0];
         public string boothId;
+    }
+
+    [Serializable]
+    internal class PackageFile
+    {
+        public string path;
+        public string[] entries;
     }
 
     [Serializable]
