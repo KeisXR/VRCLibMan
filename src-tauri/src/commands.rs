@@ -961,6 +961,18 @@ pub(crate) fn prepare_packages(
     entries: &[String],
     booth_id: Option<&str>,
 ) -> Result<Vec<crate::unity_import::PreparedPackage>, String> {
+    prepare_packages_taking(app, path, entries, booth_id, &mut Vec::new())
+}
+
+/// `prepare_packages` の中身。`taken` は、続けて取り出すあいだに zip から取り出した名前
+/// （`unity_import::extract_packages_taking`）。複数のファイルを 1 回で取り出すときに共有する。
+pub(crate) fn prepare_packages_taking(
+    app: &AppHandle,
+    path: &str,
+    entries: &[String],
+    booth_id: Option<&str>,
+    taken: &mut Vec<String>,
+) -> Result<Vec<crate::unity_import::PreparedPackage>, String> {
     let (library, remote) = library_roots(app)?;
     let cache_root = unity_cache_root(app)?;
     let folder = unity_loose_folder(app, booth_id);
@@ -992,11 +1004,12 @@ pub(crate) fn prepare_packages(
                 .collect());
         }
         let dest = crate::unity_import::cache_folder(&cache_root, booth_id);
-        crate::unity_import::extract_packages(
+        crate::unity_import::extract_packages_taking(
             &source,
             entries,
             &dest,
             crate::unity_import::MAX_PACKAGE_BYTES,
+            taken,
         )
     }
 }
