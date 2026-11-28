@@ -124,8 +124,8 @@ export function ProjectDetailPage({ id }: { id: string }) {
             : "読み込んでいます…"}
       </p>
       {error && <p className="note note-strong">{error}</p>}
-      {contents && contents.scannedAt != null && !contents.complete && (
-        <p className="note note-strong">プロジェクトが大きいため、途中までしか調べられませんでした。ここに無い商品も、入っていないとは限りません。</p>
+      {contents && contents.scannedAt != null && !contents.complete && !contents.stale && !scanning && (
+        <p className="note note-strong">プロジェクトが大きいか、読めないファイルがあったため、途中までしか調べられませんでした。ここに無い商品も、入っていないとは限りません。</p>
       )}
 
       {sections && contents?.scannedAt != null && (

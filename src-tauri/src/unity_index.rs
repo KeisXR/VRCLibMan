@@ -400,6 +400,18 @@ pub(crate) fn read_source(path: &Path) -> Result<Vec<ReadPackage>, String> {
             index: read,
         });
     }
+    if archive.len() > MAX_ZIP_ENTRIES {
+        // 後ろの項目は読んでいないので、そこにある unitypackage を見落としているかもしれない。
+        // 最後まで読んだとは言わず、「入っていない」の根拠にさせない。
+        if found.is_empty() {
+            return Err("zip の項目が多すぎて、途中までしか読めません".into());
+        }
+        for package in &mut found {
+            if let Ok(index) = &mut package.index {
+                index.complete = false;
+            }
+        }
+    }
     Ok(found)
 }
 
@@ -670,6 +682,35 @@ pub(crate) mod tests {
         assert_eq!(read_source(&single).unwrap()[0].entry, "");
         std::fs::write(dir.path().join("a.txt"), b"x").unwrap();
         assert!(read_source(&dir.path().join("a.txt")).unwrap().is_empty());
+    }
+
+    #[test]
+    fn zips_with_too_many_entries_are_not_read_to_the_end() {
+        let dir = tempfile::tempdir().unwrap();
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        let path = dir.path().join("Many.zip");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+        zip.start_file("Body.unitypackage", options).unwrap();
+        zip.write_all(&package(&[(guid(1), "Assets/A.fbx", Some(b"fbx"))]))
+            .unwrap();
+        for index in 0..MAX_ZIP_ENTRIES {
+            zip.start_file(format!("Textures/{index}.png"), options)
+                .unwrap();
+        }
+        zip.finish().unwrap();
+        let found = read_source(&path).unwrap();
+        assert_eq!(found.len(), 1);
+        assert!(!found[0].index.as_ref().unwrap().complete);
+        // unitypackage が 1 つも見えないまま打ち切ったときは、無いとは言わない。
+        let none = dir.path().join("None.zip");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&none).unwrap());
+        for index in 0..=MAX_ZIP_ENTRIES {
+            zip.start_file(format!("Textures/{index}.png"), options)
+                .unwrap();
+        }
+        zip.finish().unwrap();
+        assert!(read_source(&none).is_err());
     }
 
     #[test]
