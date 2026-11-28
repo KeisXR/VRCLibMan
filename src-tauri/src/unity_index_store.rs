@@ -949,7 +949,10 @@ pub(crate) enum NeedOwner {
     Product(String),
 }
 
-/// 選んだファイル（zip の中の項目）の索引の行。パスは `same_path` で比べる。
+/// 選んだファイル（zip の中の項目）の索引の行。パスはまず `same_path` で文字のまま比べる。
+/// 索引は設定のパスの文字（`Z:\…` やジャンクション）のまま、「Unityで開く」は `canonicalize`
+/// した実体のパス（`\\nas\share\…`）を渡すので、文字で一致しなければ、同じ名前の索引の
+/// ファイルだけを実体（`same_file`）で比べる。届かない共有で待たないよう 1 件 2 秒で打ち切る。
 fn package_ids(
     connection: &Connection,
     source: &Path,
@@ -958,7 +961,7 @@ fn package_ids(
     let mut statement = sql(connection.prepare(
         "SELECT id, source_path, file_count FROM packages WHERE entry = ?1 AND failed = 0",
     ))?;
-    let mut found = Vec::new();
+    let mut rows_found: Vec<(i64, String, i64, String)> = Vec::new();
     for entry in entries {
         let rows = sql(statement.query_map(params![entry], |row| {
             Ok((
@@ -969,13 +972,50 @@ fn package_ids(
         }))?;
         for row in rows {
             let (id, path, files) = sql(row)?;
-            if crate::library_files::same_path(Path::new(&path), source) {
-                found.push((id, entry.clone(), files));
-            }
+            rows_found.push((id, entry.clone(), files, path));
         }
     }
-    Ok(found)
+    let Some(stored) = indexed_source(source, rows_found.iter().map(|row| row.3.as_str())) else {
+        return Ok(Vec::new());
+    };
+    Ok(rows_found
+        .into_iter()
+        .filter(|row| row.3 == stored)
+        .map(|(id, entry, files, _)| (id, entry, files))
+        .collect())
 }
+
+/// 索引のパスのうち、`source` と同じファイルを指すもの。文字で一致するものを先に選び、
+/// 無ければファイル名（大文字小文字を区別しない）が同じものだけを実体で比べる。
+fn indexed_source<'a>(source: &Path, stored: impl Iterator<Item = &'a str>) -> Option<String> {
+    let mut stored: Vec<&str> = stored.collect();
+    stored.sort_unstable();
+    stored.dedup();
+    if let Some(path) = stored
+        .iter()
+        .find(|path| crate::library_files::same_path(Path::new(path), source))
+    {
+        return Some(path.to_string());
+    }
+    let name = source.file_name()?.to_string_lossy().to_lowercase();
+    stored
+        .into_iter()
+        .filter(|path| {
+            Path::new(path)
+                .file_name()
+                .is_some_and(|file| file.to_string_lossy().to_lowercase() == name)
+        })
+        .find(|path| {
+            let (left, right) = (PathBuf::from(path), source.to_path_buf());
+            crate::library_files::wait_for(SAME_FILE_TIMEOUT, move || {
+                same_file::is_same_file(&left, &right).unwrap_or(false)
+            })
+            .unwrap_or(false)
+        })
+        .map(str::to_string)
+}
+
+const SAME_FILE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// 選んだパッケージが外に必要としていて、このプロジェクトに無かったもの（持ち主ごとの参照の数）。
 /// 調べていない・古い・途中までしか歩けなかったときは `None`（足りないと言わない）。
@@ -1599,6 +1639,36 @@ mod tests {
                 .unwrap()
                 .get("jp.lilxyzw.liltoon"),
             Some(&"lilToon".to_string())
+        );
+    }
+
+    #[test]
+    fn a_source_reached_by_another_path_finds_its_index_rows() {
+        // 割り当てたドライブ文字・ジャンクションの代わりに、別のフォルダのハードリンクで
+        // 「索引と違う文字で同じファイル」を作る。
+        let (mut f, all) = needs_fixture();
+        refresh(&mut f.connection, &all, |_, _| {}, || false).unwrap();
+        let vpm = vec![("jp.lilxyzw.liltoon".to_string(), "2.4.1".to_string())];
+        scan_project(&mut f.connection, "p1", &f.project, &vpm).unwrap();
+        let lil_path = f.library.join("200").join("lilToon_1.4.0.unitypackage");
+        let mapped = f.library.with_file_name("mapped");
+        std::fs::create_dir_all(&mapped).unwrap();
+        let linked = mapped.join("LILTOON_1.4.0.unitypackage");
+        std::fs::hard_link(&lil_path, &linked).unwrap();
+        let entries = vec![String::new()];
+        assert_eq!(
+            bundled_packages(&f.connection, &linked, &entries).unwrap(),
+            vec![(String::new(), "jp.lilxyzw.liltoon".to_string())]
+        );
+        // 同じ名前・同じ中身でも、別のファイルは索引の行にしない。
+        let copied = f.library.with_file_name("copied");
+        std::fs::create_dir_all(&copied).unwrap();
+        let copy = copied.join("lilToon_1.4.0.unitypackage");
+        std::fs::copy(&lil_path, &copy).unwrap();
+        assert!(
+            bundled_packages(&f.connection, &copy, &entries)
+                .unwrap()
+                .is_empty()
         );
     }
 
