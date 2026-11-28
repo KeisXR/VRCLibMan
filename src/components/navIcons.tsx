@@ -5,7 +5,7 @@
  */
 import type { ReactNode } from "react";
 
-export type NavIconName = "avatars" | "assets" | "worlds" | "search" | "purchases" | "log" | "import" | "settings";
+export type NavIconName = "avatars" | "assets" | "worlds" | "projects" | "search" | "purchases" | "log" | "import" | "settings";
 
 function Icon({ children, className = "nav-icon" }: { children: ReactNode; className?: string }) {
   return (
@@ -36,6 +36,13 @@ const PATHS: Record<NavIconName, ReactNode> = {
     <>
       <circle cx="12.6" cy="5.4" r="1.9" />
       <path d="M1.8 14.6 6.4 7.4l3.3 5 1.9-2.6 4.6 4.8z" />
+    </>
+  ),
+  // A folder with a small cube inside: a Unity project on this PC.
+  projects: (
+    <>
+      <path d="M2.2 4.4c0-.7.5-1.2 1.2-1.2h3.4l1.6 1.8h6.2c.7 0 1.2.5 1.2 1.2v7.6c0 .7-.5 1.2-1.2 1.2H3.4c-.7 0-1.2-.5-1.2-1.2z" />
+      <path d="M9 7.6 11.4 9v2.6L9 13l-2.4-1.4V9zM6.6 9 9 10.4 11.4 9M9 10.4V13" />
     </>
   ),
   // A magnifier: search the whole library.

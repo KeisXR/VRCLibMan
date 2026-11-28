@@ -96,6 +96,11 @@ export const UNITY_MISSING =
   "設定した Unity が見つかりません。設定の「Unity」で選び直してください。今回は OS の関連付けでも開けます。";
 
 /** 渡す先を選ばせるか。Unity が 2 つ以上開いているときだけ選ぶ。0〜1 つならこれまでどおり渡す。 */
+/** Rust の `EDITOR_NOT_RUNNING`（unity_import.rs）。設定した Unity のエディタが 1 つも開いていない。 */
+export function isUnityNotRunning(message: string): boolean {
+  return message.includes("Unity が起動していません");
+}
+
 export function needsUnityTarget(instances: readonly unknown[]): boolean {
   return instances.length >= 2;
 }

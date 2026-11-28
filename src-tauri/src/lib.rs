@@ -59,6 +59,7 @@ mod sync_meta;
 mod thumb;
 mod unity;
 mod unity_import;
+mod unity_projects;
 mod unity_wrap;
 mod updater;
 mod view;
@@ -367,6 +368,13 @@ pub fn run() {
             commands::prepare_unity_packages,
             commands::unity_instances,
             commands::launch_unity_packages,
+            commands::unity_projects,
+            commands::product_unity_projects,
+            commands::add_unity_project,
+            commands::remove_unity_project,
+            commands::set_unity_project_hidden,
+            commands::link_unity_project_avatar,
+            commands::open_unity_project,
             commands::list_staged_downloads,
             commands::route_staged_download,
         ])

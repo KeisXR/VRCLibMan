@@ -79,6 +79,7 @@ const NAV_ENTRIES: AppSearchEntry[] = [
   { key: "nav:avatars", title: "アバター", path: [SIDEBAR], keywords: ["所持アバター", "アバター一覧"], href: "#/" },
   { key: "nav:assets", title: "アセット", path: [SIDEBAR], keywords: ["アセット一覧", "ジャンル"], href: "#/assets" },
   { key: "nav:worlds", title: "ワールド", path: [SIDEBAR], keywords: ["ワールド一覧", "ジャンル"], href: "#/worlds" },
+  { key: "nav:projects", title: "プロジェクト", path: [SIDEBAR], keywords: ["Unity", "ALCOM", "VCC", "Unity プロジェクト", "プロジェクトを開く"], href: "#/projects" },
   { key: "nav:purchases", title: PURCHASES, path: [SIDEBAR], keywords: ["注文", "買った"], href: "#/purchases" },
   { key: "nav:log", title: LOG, path: [SIDEBAR], keywords: ["記録", "分類記録", "アセット更新記録"], href: "#/classification-log" },
   { key: "nav:import", title: IMPORT, path: [SIDEBAR], keywords: ["読み込み", "取り込み"], href: "#/import" },

@@ -2,6 +2,7 @@ import { previewBrowserState, previewBrowserPanelSnapshot, previewBrowserAction,
 import extensionManifest from "../../extension/manifest.json";
 import { previewListDirectory, previewListZip, previewPrepareUnityPackages, previewUnityPackages } from "./files";
 import { previewPurchaseDispatch, previewPurchaseExport, previewPurchasedIds, previewUnverifiedPurchaseIds } from "./purchases";
+import { previewUnityProjectDispatch } from "./unityProjects";
 import { filePresence } from "../media";
 import { FILE_GONE_MESSAGE } from "../downloads";
 import { GENRE_FREE, GENRE_LABEL, GENRE_UNSET, genresForKind } from "../types";
@@ -2139,6 +2140,12 @@ function assetWatchStatus() {
 
 export async function dispatch<T>(command: string, args: Record<string, unknown>): Promise<T> {
   notePreviewCall(command);
+  const project = previewUnityProjectDispatch(command, args, {
+    avatarName: (id) => store.avatars.find((avatar) => avatar.id === id)?.displayName,
+    productAvatarIds: (boothId) => store.links.filter((link) => link.productId === boothId).map((link) => link.avatarId),
+    productIsWorld: (boothId) => store.products.some((product) => product.boothId === boothId && product.category === "world"),
+  });
+  if (project) return project.value as T;
   switch (command) {
     case "asset_update_status": return assetWatchStatus() as T;
     case "asset_update_history": return [] as T;

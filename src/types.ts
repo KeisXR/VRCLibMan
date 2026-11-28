@@ -956,6 +956,37 @@ export interface UnityTarget {
   pid: number;
 }
 
+/** Unity プロジェクト（docs/unity-projects.md）。フォルダは読むだけ */
+export interface UnityProject {
+  /** パスから決めた 16 桁の 16 進 */
+  id: string;
+  /** フォルダ名 */
+  name: string;
+  path: string;
+  /** missing: プロジェクトのフォルダが無い。timeout: 読めなかった */
+  state: "ok" | "missing" | "timeout";
+  /** 例：2022.3.22f1。読めなければ空文字 */
+  version: string;
+  kind: "avatar" | "world" | "unknown";
+  packages: { name: string; version: string }[];
+  /** alcom: ALCOM / VCC の一覧。manual: 手で足した。linked: 結び付けたときに覚えた */
+  source: "alcom" | "manual" | "linked";
+  hidden: boolean;
+  /** maybe: 同じ名前と版のプロジェクトがほかにもある。unknown: 調べられない OS */
+  running: "open" | "maybe" | "closed" | "unknown";
+  /** プロジェクトと同じ版の Unity が見つかった */
+  editorAvailable: boolean;
+  avatars: { id: string; name: string }[];
+  /** Assets の更新日時（UNIX 秒） */
+  modified: number | null;
+}
+
+export interface UnityProjectList {
+  projects: UnityProject[];
+  alcomFound: boolean;
+  alcomPath: string;
+}
+
 export interface AssetUpdateRow {
   revision: number;
   candidateKey?: string | null;

@@ -259,7 +259,7 @@ pub(crate) fn is_editor_file_name(path: &Path, os: Os) -> bool {
     }
 }
 
-fn dedupe_key(path: &str, os: Os) -> String {
+pub(crate) fn dedupe_key(path: &str, os: Os) -> String {
     let path = path.trim();
     match os {
         Os::Windows => path.replace('/', "\\").to_lowercase(),
