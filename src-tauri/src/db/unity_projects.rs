@@ -91,16 +91,17 @@ fn prune_row(connection: &Connection, id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// 手で足したプロジェクトの行。隠していたものは見せる。1 つの文で書く。
 pub(crate) fn add_manual_unity_project(
-    connection: &Connection,
+    connection: &mut Connection,
     id: &str,
     path: &str,
 ) -> Result<(), String> {
-    ensure_row(connection, id, path)?;
     connection
         .execute(
-            "UPDATE unity_projects SET manual = 1, hidden = 0 WHERE id = ?1",
-            params![id],
+            "INSERT INTO unity_projects (id, path, manual, hidden) VALUES (?1, ?2, 1, 0)
+             ON CONFLICT(id) DO UPDATE SET path = excluded.path, manual = 1, hidden = 0",
+            params![id, path],
         )
         .sql()?;
     Ok(())
@@ -217,7 +218,7 @@ mod tests {
         assert!(stored_unity_projects(&connection).unwrap()[0].hidden);
         set_unity_project_hidden(&mut connection, PROJECT, PATH, false).unwrap();
         assert!(stored_unity_projects(&connection).unwrap().is_empty());
-        add_manual_unity_project(&connection, PROJECT, PATH).unwrap();
+        add_manual_unity_project(&mut connection, PROJECT, PATH).unwrap();
         set_unity_project_hidden(&mut connection, PROJECT, PATH, false).unwrap();
         assert!(stored_unity_projects(&connection).unwrap()[0].manual);
         assert!(
