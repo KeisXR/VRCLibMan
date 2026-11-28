@@ -143,6 +143,7 @@ const SETTING_ENTRIES: AppSearchEntry[] = [
   setting("settings-library", "settings-route-about", "自動整理について詳しく", ["自動整理"]),
   setting("settings-unity", "settings-unity-editor", "既定の Unity", ["Unity のバージョン", "エディタ", "Unityで開く"]),
   setting("settings-unity", "settings-unity-detect", "Unity を探す", ["Unity Hub", "参照", "検出"]),
+  setting("settings-unity", "settings-unity-bridge", "Unity の中から使う", ["エディタ拡張", "Tools", "ALCOM", "ユーザーパッケージ"]),
   setting("settings-unity", "settings-ai-agent", "AI エージェント連携", ["MCP", "Claude Code", "Cursor", "エージェント"]),
   setting("settings-unity", "settings-ai-agent-download", "AI エージェントからのダウンロードを許可", ["MCP", "download_file", "ダウンロード"]),
   setting("settings-unity", "settings-ai-agent-clients", "AI エージェントへの登録", ["MCP の設定", "SKILL", "Codex", "Claude Desktop", "Gemini", "Copilot"]),

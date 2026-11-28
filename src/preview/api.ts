@@ -2053,6 +2053,7 @@ function previewFileSize(path: string): number | null {
 
 /** AI エージェント連携の見本。実際の受信口は無い。 */
 const previewMcp = { enabled: false, includeAdult: false, allowDownload: false, command: "C:\\Program Files\\VRCLibMan\\VRCLibMan.exe" };
+const previewUnityBridge = { enabled: false, folder: "", version: "0.9.2" };
 
 /** AI エージェントの見本。実際のファイルには書かない。 */
 const previewAgents: AgentClient[] = [
@@ -2522,6 +2523,14 @@ export async function dispatch<T>(command: string, args: Record<string, unknown>
       previewMcp.allowDownload = Boolean(args.allowDownload);
       return { ...previewMcp } as T;
     case "regenerate_mcp_token":
+      return undefined as T;
+    case "unity_bridge_status":
+      return { ...previewUnityBridge } as T;
+    case "set_unity_bridge":
+      previewUnityBridge.enabled = Boolean(args.enabled);
+      previewUnityBridge.folder = previewUnityBridge.enabled ? "C:\\Users\\you\\AppData\\Local\\app.vrclibman.desktop\\unity-package\\app.vrclibman.unity" : "";
+      return { ...previewUnityBridge } as T;
+    case "regenerate_unity_bridge_token":
       return undefined as T;
     case "agent_clients":
       return previewAgents.map((agent) => ({ ...agent })) as T;

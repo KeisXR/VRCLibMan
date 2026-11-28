@@ -17,6 +17,8 @@ import {
   projectSections,
   projectStateNote,
   scannedLabel,
+  versionLines,
+  vpmPackageLabel,
 } from "../unityProjects";
 
 /** 「まだ入っていない対応アセット」を一度に出す件数。 */
@@ -194,7 +196,7 @@ export function ProjectDetailPage({ id }: { id: string }) {
             <details className="generic project-section project-suggestions">
               <summary>まだ入っていない対応アセット（{suggestions.length}）</summary>
               <p className="meta">
-                結び付けたアバターに対応していて、このプロジェクトに入っていないと分かった商品です。手元にファイルがあるので、「Unityで開く」で取り込めます。
+                結び付けたアバターに対応していて、このプロジェクトに入っていないと分かった商品です。ライブラリかリモートにファイルがあるので、「Unityで開く」で取り込めます（リモートにだけあるものは「ローカルへコピー」のあと）。
               </p>
               {shownSuggestionItems.map((item) => (
                 <ItemCard
@@ -236,6 +238,21 @@ export function ProjectDetailPage({ id }: { id: string }) {
           )}
         </>
       )}
+
+      {project && project.packages.length > 0 && (
+        <details className="generic project-section project-vpm-packages">
+          <summary>入っているパッケージ（{project.packages.length}）</summary>
+          <p className="meta">ALCOM で入れたパッケージです（vpm-manifest.json）。追加や更新は ALCOM で行ってください。</p>
+          <ul className="project-packages">
+            {project.packages.map((item) => (
+              <li key={item.name} className="meta">
+                {vpmPackageLabel(item.name, contents?.packageNames)}
+                {item.version && ` ${item.version}`}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
     </section>
   );
 }
@@ -260,6 +277,7 @@ function ProductList({ products }: { products: ProjectProduct[] }) {
         const href = projectProductHref(product);
         const src = mediaSrc(product.thumbnailPath, product.thumbnailUrl);
         const shown = product.packages.filter((item) => item.verdict !== "missing" || product.verdict === "missing");
+        const version = versionLines(product);
         return (
           <li key={product.boothId} className="project-product">
             {src ? <img className="project-product-thumb" src={src} alt="" loading="lazy" /> : <span className="project-product-thumb" aria-hidden="true" />}
@@ -273,12 +291,14 @@ function ProductList({ products }: { products: ProjectProduct[] }) {
                     {item.verdict === "bundled"
                       ? `${item.bundledWith ?? "VPM パッケージ"} の同梱版`
                       : item.uniqueTotal > 0
-                        ? `${VERDICT_LABEL[item.verdict]}（${item.uniqueMatched} / ${item.uniqueTotal} ファイル）`
+                        ? `${VERDICT_LABEL[item.verdict]}（${item.uniqueMatched} / ${item.uniqueTotal} ファイル${item.loose ? "、名前と大きさで照合" : ""}）`
                         : VERDICT_LABEL[item.verdict]}
                     {item.closest && <span className="badge project-closest">入っている版の見込み</span>}
                   </li>
                 ))}
               </ul>
+              {version.note && <p className="note-strong project-version">{version.note}</p>}
+              {version.adjusted && <p className="meta project-version">{version.adjusted}</p>}
             </div>
           </li>
         );

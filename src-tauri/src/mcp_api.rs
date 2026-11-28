@@ -113,11 +113,11 @@ pub(crate) fn command_path() -> String {
         .unwrap_or_default()
 }
 
-fn token_ok(value: &str) -> bool {
+pub(crate) fn token_ok(value: &str) -> bool {
     value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-fn generate_token() -> String {
+pub(crate) fn generate_token() -> String {
     let mut buf = [0u8; 16];
     getrandom::fill(&mut buf).expect("OS entropy");
     buf.iter().map(|byte| format!("{byte:02x}")).collect()
@@ -151,7 +151,7 @@ pub(crate) fn sync_token_file(connection: &Connection, data_dir: &Path) -> Resul
         .map_err(|err| format!("AI エージェント連携のファイルを書けません: {err}"))
 }
 
-fn write_private(path: &Path, text: &str) -> std::io::Result<()> {
+pub(crate) fn write_private(path: &Path, text: &str) -> std::io::Result<()> {
     let temp = path.with_extension("tmp");
     {
         use std::io::Write;
@@ -258,7 +258,7 @@ pub(crate) fn gate(
     ))
 }
 
-fn constant_eq(left: &[u8], right: &[u8]) -> bool {
+pub(crate) fn constant_eq(left: &[u8], right: &[u8]) -> bool {
     let mut diff = u8::from(left.len() != right.len());
     for index in 0..left.len().max(right.len()) {
         diff |= left.get(index).copied().unwrap_or(0) ^ right.get(index).copied().unwrap_or(0);
@@ -366,7 +366,7 @@ struct UnityProjectBody {
     project: String,
 }
 
-fn valid_id(id: &str) -> bool {
+pub(crate) fn valid_id(id: &str) -> bool {
     (4..=12).contains(&id.len()) && id.bytes().all(|byte| byte.is_ascii_digit())
 }
 
@@ -493,32 +493,42 @@ pub(crate) fn handle(connection: &Connection, route: Route, body: &str) -> Resul
             else {
                 return Ok(Reply::error(400, "商品IDを読めません"));
             };
-            let snapshot = db::load_snapshot(connection)?;
-            let facts = Facts::new(&snapshot);
-            let Some(product) = facts.products.get(id.as_str()) else {
-                return Ok(Reply::error(404, "この商品はライブラリにありません"));
-            };
-            if !adult_ok && facts.adult.contains(id.as_str()) {
-                return Ok(Reply::error(404, "この商品はライブラリにありません"));
-            }
-            let settings = db::settings(connection)?;
-            let title = product.title.clone();
-            drop(facts);
-            // 場所の判定は画面と同じ `library_files::fill_places`。この商品の行だけを残して渡す。
-            let mut snapshot = snapshot;
-            snapshot.download_rows.retain(|row| row.booth_id == id);
-            snapshot
-                .files
-                .retain(|file| !file.is_dir && file.linked_product_id.as_deref() == Some(&id));
-            Ok(Reply::Files(PendingFiles {
-                booth_id: id,
-                title,
-                library: settings.library_folder,
-                remote: settings.remote_library_folder,
-                snapshot,
-            }))
+            product_files(connection, id, adult_ok)
         }
     }
+}
+
+/// 商品のファイル（`product_files`）。場所を確かめて中の Unity パッケージを並べるのは `finish_files` で、
+/// データベースのロックの外で行う。Unity のエディタ拡張（`unity_bridge`）も使う。
+pub(crate) fn product_files(
+    connection: &Connection,
+    id: String,
+    adult_ok: bool,
+) -> Result<Reply, String> {
+    let snapshot = db::load_snapshot(connection)?;
+    let facts = Facts::new(&snapshot);
+    let Some(product) = facts.products.get(id.as_str()) else {
+        return Ok(Reply::error(404, "この商品はライブラリにありません"));
+    };
+    if !adult_ok && facts.adult.contains(id.as_str()) {
+        return Ok(Reply::error(404, "この商品はライブラリにありません"));
+    }
+    let settings = db::settings(connection)?;
+    let title = product.title.clone();
+    drop(facts);
+    // 場所の判定は画面と同じ `library_files::fill_places`。この商品の行だけを残して渡す。
+    let mut snapshot = snapshot;
+    snapshot.download_rows.retain(|row| row.booth_id == id);
+    snapshot
+        .files
+        .retain(|file| !file.is_dir && file.linked_product_id.as_deref() == Some(&id));
+    Ok(Reply::Files(PendingFiles {
+        booth_id: id,
+        title,
+        library: settings.library_folder,
+        remote: settings.remote_library_folder,
+        snapshot,
+    }))
 }
 
 /// 頼まれた 1 ファイルを、ライブラリのファイル行から 1 つに決める。R-18 と除外した商品は、設定によらず受けない。
@@ -918,6 +928,27 @@ fn find_avatar<'a>(snapshot: &'a view::Snapshot, raw: &str) -> Option<&'a crate:
         .or_else(|| crate::resolve::resolve_name(raw, &snapshot.avatars))
 }
 
+/// Unity のエディタ拡張の検索（`unity_bridge`）。MCP の `search_library` と同じ規則で、言葉と種類だけで探す。
+pub(crate) fn search_library(
+    connection: &Connection,
+    query: &str,
+    kind: Option<&str>,
+    limit: usize,
+    adult_ok: bool,
+) -> Result<Reply, String> {
+    search(
+        connection,
+        SearchBody {
+            query: query.to_string(),
+            kind: kind.map(str::to_string),
+            genre: None,
+            avatar: None,
+            limit: Some(limit),
+        },
+        adult_ok,
+    )
+}
+
 fn search(connection: &Connection, body: SearchBody, adult_ok: bool) -> Result<Reply, String> {
     let snapshot = visible_snapshot(connection, adult_ok)?;
     let facts = Facts::new(&snapshot);
@@ -1174,6 +1205,8 @@ mod tests {
                 unique_matched: 4,
                 bundled_with: None,
                 closest: false,
+                loose: false,
+                sizes: Default::default(),
             }],
         };
         let contents = ProjectContents {

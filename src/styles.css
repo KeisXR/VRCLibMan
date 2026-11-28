@@ -1389,6 +1389,10 @@ a.tab { display: inline-flex; align-items: center; gap: 6px; text-decoration: no
 .unity-open-choice { display: flex; gap: 6px; align-items: center; min-width: 0; }
 .unity-open-choice .download-name { min-width: 0; }
 .unity-open-dialog .row-actions { margin-top: var(--space-3); }
+/* 渡す前の確かめ（段階 3）: 足りないものの段落と、同梱版の理由。理由は長いので名前の下へ折り返す。 */
+.unity-open-dialog > .unity-open-needs { margin: 0 0 var(--space-2); }
+.unity-open-list li.unity-open-bundled { flex-wrap: wrap; }
+.unity-open-list li.unity-open-bundled .meta { flex: 1 1 100%; padding-left: 22px; }
 .unity-open-dialog > .unity-open-label { margin: 0 0 4px; }
 .unity-open-destination { margin: 0 0 var(--space-2); padding: 6px 10px; border-radius: var(--radius-sm); background: var(--surface-secondary); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; overflow-wrap: anywhere; user-select: text; }
 /* 「このアセットを更新しますか？」（AssetUpdatePrompt.tsx）。箱は「Unityで開く」と同じ。商品名・ファイル名・バリエーションを縦に積む。 */
@@ -3004,7 +3008,6 @@ a.chip:hover { color: var(--text); }
 .avatar-projects { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin: 0 0 var(--space-4); }
 .avatar-projects-label { color: var(--text-secondary); font-size: 13px; }
 .avatar-project { display: inline-flex; gap: 6px; align-items: center; }
-.project-title strong a { color: inherit; }
 .project-detail .page-head .button-row { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .project-scan-note { margin: 0 0 var(--space-4); }
 .project-section { margin-top: var(--space-5); }
@@ -3025,6 +3028,7 @@ a.chip:hover { color: var(--text); }
 .project-packages { list-style: none; padding: 0; margin: 0; display: grid; gap: 2px; }
 .project-packages li { overflow-wrap: anywhere; }
 .badge.project-closest { color: var(--good); }
+.project-version { margin: var(--space-1) 0 0; }
 .badge.project-installed { color: var(--good); }
 .avatar-project-mark { display: inline-flex; gap: 6px; align-items: center; }
 .avatar-project-mark select {

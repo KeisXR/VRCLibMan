@@ -4,7 +4,7 @@ import { useShell } from "../App";
 import { useOpenUnityProject, useUnityProjects } from "../components/UnityProjects";
 import type { AvatarCard, UnityProject } from "../types";
 import { errorText } from "../ui";
-import { PROJECT_KIND_LABEL, canOpenProject, filterProjects, modifiedLabel, projectStateNote } from "../unityProjects";
+import { PROJECT_KIND_LABEL, canOpenProject, filterProjects, modifiedLabel, projectDetailHref, projectStateNote } from "../unityProjects";
 
 /** Unity プロジェクトの一覧（docs/unity-projects.md の段階 1）。フォルダは読むだけ。 */
 export function ProjectsPage() {
@@ -147,9 +147,7 @@ function ProjectRow({
     <li className={project.hidden ? "project-row hidden-project" : "project-row"}>
       <div className="project-main">
         <div className="project-title">
-          <strong title={project.path}>
-            {project.state === "ok" ? <a href={`#/projects/${encodeURIComponent(project.id)}`}>{project.name}</a> : project.name}
-          </strong>
+          <strong title={project.path}>{project.name}</strong>
           {project.state === "ok" && <span className="badge">{PROJECT_KIND_LABEL[project.kind]}</span>}
           {project.running === "open" && <span className="badge project-open">開いています</span>}
           {project.source !== "alcom" && <span className="badge">{project.source === "manual" ? "手で追加" : "ALCOM の一覧に無し"}</span>}
@@ -200,6 +198,11 @@ function ProjectRow({
         <button className="button primary" type="button" disabled={!canOpenProject(project) || opening} onClick={onOpen}>
           開く
         </button>
+        {project.state === "ok" && (
+          <button className="button secondary" type="button" onClick={() => (window.location.hash = projectDetailHref(project.id))}>
+            中身を見る
+          </button>
+        )}
         <button className="button secondary" type="button" disabled={project.state === "missing"} onClick={onReveal}>
           フォルダを表示
         </button>

@@ -86,6 +86,36 @@ pub fn start_receiver(app: AppHandle) -> Result<(), String> {
                     }
                     continue;
                 }
+                // Unity のエディタ拡張は、プロジェクトを調べる・パッケージを取り出すあいだ待つので、
+                // 別のスレッドで答える。同時に 1 件だけで、2 件目はすぐ断る。
+                if request.url().starts_with("/unity/") {
+                    // サムネイルはほかの問い合わせ（打つたびの検索）を待たせないよう、別の枠で 1 件ずつ答える。
+                    let busy = if request.url().split('?').next() == Some("/unity/thumb") {
+                        &UNITY_THUMB_BUSY
+                    } else {
+                        &UNITY_BUSY
+                    };
+                    if busy.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                        discard_body(&mut request);
+                        let _ = request.respond(mcp_error(
+                            409,
+                            "VRCLibMan が前の操作を続けています。終わってからもう一度お試しください",
+                        ));
+                        continue;
+                    }
+                    let app = app.clone();
+                    let spawned = std::thread::Builder::new()
+                        .name("vrclibman-unity".into())
+                        .spawn(move || {
+                            let response = respond(&app, &mut request);
+                            let _ = request.respond(response);
+                            busy.store(false, std::sync::atomic::Ordering::SeqCst);
+                        });
+                    if spawned.is_err() {
+                        busy.store(false, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    continue;
+                }
                 let response = respond(&app, &mut request);
                 let _ = request.respond(response);
             }
@@ -112,6 +142,10 @@ fn respond(app: &AppHandle, request: &mut Request) -> Response<std::io::Cursor<V
     // AI エージェント連携（`VRCLibMan --mcp`）。拡張とは別の認証で、Origin の無い要求だけを受ける。
     if path.split('?').next().unwrap_or("").starts_with("/mcp/") {
         return respond_mcp(&view, request, content_length, app);
+    }
+    // Unity のエディタ拡張（docs/unity-projects.md の段階 4）。MCP と同じく、Origin の無い要求だけを受ける。
+    if path.split('?').next().unwrap_or("").starts_with("/unity/") {
+        return respond_unity(&view, request, content_length, app);
     }
     if !view.origin.is_some_and(is_extension_origin) {
         discard_body(request);
@@ -877,6 +911,89 @@ static MCP_DOWNLOADING: std::sync::atomic::AtomicBool = std::sync::atomic::Atomi
 
 /// 鍵 `mcp` で `ImportGuard` を共用する。拡張の Origin と重ならない。
 const MCP_GUARD_KEY: &str = "mcp";
+
+/// Unity のエディタ拡張の問い合わせに答えている間。同時に 1 件だけ。
+static UNITY_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Unity の窓のサムネイルに答えている間。同時に 1 件だけ（ほかの問い合わせとは別）。
+static UNITY_THUMB_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 鍵 `unity` で `ImportGuard` を共用する。
+const UNITY_GUARD_KEY: &str = "unity";
+
+fn respond_unity(
+    view: &RequestView<'_>,
+    request: &mut Request,
+    content_length: Option<usize>,
+    app: &AppHandle,
+) -> Response<std::io::Cursor<Vec<u8>>> {
+    use crate::unity_bridge;
+    let state = app.state::<AppState>();
+    let (enabled, expected) = match state.db.lock() {
+        Ok(connection) => (
+            unity_bridge::enabled(&connection).unwrap_or(false),
+            unity_bridge::stored_token(&connection),
+        ),
+        Err(_) => {
+            discard_body(request);
+            return mcp_error(500, "データベースをロックできません");
+        }
+    };
+    let now = now_ms();
+    let locked = state
+        .import_guard
+        .lock()
+        .map(|mut guard| guard.is_locked(UNITY_GUARD_KEY, now))
+        .unwrap_or(false);
+    let route = match unity_bridge::gate(
+        view.method,
+        view.path,
+        view.origin,
+        view.authorization,
+        enabled,
+        &expected,
+        locked,
+    ) {
+        Ok(route) => route,
+        Err((status, message)) => {
+            discard_body(request);
+            if status == 401
+                && let Ok(mut guard) = state.import_guard.lock()
+            {
+                guard.record_failure(UNITY_GUARD_KEY, now);
+            }
+            return mcp_error(status, message);
+        }
+    };
+    if let Ok(mut guard) = state.import_guard.lock() {
+        guard.record_success(UNITY_GUARD_KEY);
+    }
+    if content_length.is_some_and(|length| length > unity_bridge::BODY_LIMIT) {
+        discard_body(request);
+        return mcp_error(413, "指定が大きすぎます");
+    }
+    let text =
+        match read_limited(request.as_reader(), unity_bridge::BODY_LIMIT).map(String::from_utf8) {
+            Ok(Ok(text)) => text,
+            Ok(Err(_)) => return mcp_error(400, "指定を読めません"),
+            Err(()) => return mcp_error(413, "指定が大きすぎます"),
+        };
+    // 記録は問い合わせの種類だけ。プロジェクト・商品名・パスは残さない。
+    eprintln!("Unity の連携: {}", route.name());
+    match unity_bridge::handle(app, route, &text) {
+        Ok(unity_bridge::BridgeReply::Json(value)) => plain_json(200, value.to_string()),
+        Ok(unity_bridge::BridgeReply::Png(bytes)) => {
+            let mut response = Response::from_data(bytes);
+            for (name, value) in [("Content-Type", "image/png"), ("Cache-Control", "no-store")] {
+                if let Ok(header) = Header::from_bytes(name.as_bytes(), value.as_bytes()) {
+                    response = response.with_header(header);
+                }
+            }
+            response
+        }
+        Err((status, message)) => mcp_error(status, &message),
+    }
+}
 
 fn plain_json(status: u16, body: String) -> Response<std::io::Cursor<Vec<u8>>> {
     let mut response = Response::from_string(body).with_status_code(StatusCode(status));

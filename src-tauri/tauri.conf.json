@@ -43,7 +43,8 @@
       "../LICENSE": "LICENSE",
       "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
       "../extension/": "extension/",
-      "agent-skill/": "agent-skill/"
+      "agent-skill/": "agent-skill/",
+      "unity-package/": "unity-package/"
     },
     "icon": [
       "icons/32x32.png",

@@ -206,8 +206,18 @@ test("the preview suggests missing compatible assets and warns before a second h
     assert.deepEqual(suggestions.items.map((item) => item.boothId), ["8800130"]);
     // 調べていないプロジェクトには候補を出さない。
     assert.deepEqual(call("unity_project_suggestions", { projectId: "a1b2c3d4e5f60002" }), { scanned: false, items: [] });
-    assert.equal(call("unity_install_check", { boothId: "7770415", target: null }).name, "Plum-Main");
-    assert.equal(call("unity_install_check", { boothId: "8800120", target: null }), null);
+    const check = (boothId, entries = [""]) =>
+      call("unity_package_check", { path: "C:\\Assets\\x.zip", entries, boothId, target: null });
+    assert.equal(check("7770415").projectName, "Plum-Main");
+    assert.equal(check("7770415").installed, true);
+    assert.equal(check("8800120"), null);
+    // 段階 3: 足りないもの（見本は Avatar Optimizer）と、要らない同梱版（選んだものだけ）。
+    assert.deepEqual(check("8800130").missing.map((need) => need.package), ["com.anatawa12.avatar-optimizer"]);
+    assert.equal(check("8800130").installed, false);
+    assert.deepEqual(
+      check("8800120", ["eye_base/Sample_Eye_Base.unitypackage", "eye_base/lilToon_1.4.0.unitypackage"]).bundled,
+      [{ entry: "eye_base/lilToon_1.4.0.unitypackage", name: "lilToon" }],
+    );
   });
 });
 
@@ -229,4 +239,61 @@ test("the sidebar, route and search index know the projects page", () => {
   assert.match(app, /parts\[0\] === "projects" && parts\[1\]/);
   const index = readFileSync(new URL("../src/appSearchIndex.ts", import.meta.url), "utf8");
   assert.match(index, /key: "nav:projects".*href: "#\/projects"/);
+});
+
+test("missing packages and VPM names read as the dialog and the detail page show them", async () => {
+  await withModules(["/src/unityOpen.ts", "/src/unityProjects.ts"], async (open, projects) => {
+    assert.deepEqual(
+      open.missingNeedsText([
+        { kind: "vpm", name: "lilToon", package: "jp.lilxyzw.liltoon" },
+        { kind: "product", name: "見本の本体", boothId: "1" },
+        { kind: "vpm", name: "Modular Avatar", package: "nadena.dev.modular-avatar" },
+        { kind: "vpmVersion", name: "VRCFury", package: "com.vrcfury.vrcfury" },
+      ]),
+      { packages: "lilToon、Modular Avatar", versions: "VRCFury", products: "「見本の本体」" },
+    );
+    assert.deepEqual(open.missingNeedsText([]), { packages: "", versions: "", products: "" });
+    assert.equal(projects.vpmPackageLabel("jp.lilxyzw.liltoon", { "jp.lilxyzw.liltoon": "lilToon" }), "lilToon（jp.lilxyzw.liltoon）");
+    assert.equal(projects.vpmPackageLabel("com.example.tool", {}), "com.example.tool");
+    assert.equal(projects.vpmPackageLabel("com.example.tool", undefined), "com.example.tool");
+  });
+});
+
+test("the dialog asks the stage 3 check, and the old install check is gone", () => {
+  const dialog = readFileSync(new URL("../src/components/UnityOpenDialog.tsx", import.meta.url), "utf8");
+  const lib = readFileSync(new URL("../src-tauri/src/lib.rs", import.meta.url), "utf8");
+  assert.match(dialog, /api\.unityPackageCheck\(/);
+  assert.doesNotMatch(dialog, /unityInstallCheck/);
+  assert.match(lib, /commands::unity_package_check,/);
+  assert.doesNotMatch(lib, /unity_install_check/);
+});
+
+test("project rows open the detail page with a 中身を見る button, not by clicking the name", async () => {
+  await withModules(["/src/unityProjects.ts"], ({ projectDetailHref }) => {
+    assert.equal(projectDetailHref("a b"), "#/projects/a%20b");
+  });
+  for (const file of ["../src/pages/ProjectsPage.tsx", "../src/components/UnityProjects.tsx"]) {
+    const source = readFileSync(new URL(file, import.meta.url), "utf8");
+    assert.match(source, /中身を見る/, file);
+    assert.doesNotMatch(source, /href=\{`#\/projects\//, file);
+  }
+});
+
+test("version notes say older or different only from what Rust decided, and count materials apart", async () => {
+  await withModules(["/src/unityProjects.ts"], ({ versionLines }) => {
+    assert.deepEqual(versionLines({ adjusted: 0 }), { note: null, adjusted: null });
+    const older = versionLines({ version: { kind: "older", newer: "Outfit_v2.zip" }, adjusted: 0 });
+    assert.match(older.note, /古い版/);
+    assert.match(older.note, /Outfit_v2\.zip/);
+    // 手元に版が 1 つだけなら、古い版か改変かを決めつけない。
+    const single = versionLines({ version: { kind: "differs", files: 3, versions: 1 }, adjusted: 0 });
+    assert.match(single.note, /3 個/);
+    assert.match(single.note, /古い版か、改変した可能性/);
+    const many = versionLines({ version: { kind: "differs", files: 1, versions: 2 }, adjusted: 0 });
+    assert.match(many.note, /どの版とも違う/);
+    // マテリアルの違いは改変と言わずに数だけ。
+    const adjusted = versionLines({ adjusted: 4 }).adjusted;
+    assert.match(adjusted, /4 個/);
+    assert.doesNotMatch(adjusted, /改変/);
+  });
 });

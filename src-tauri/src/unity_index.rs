@@ -416,6 +416,42 @@ pub(crate) fn read_source(path: &Path) -> Result<Vec<ReadPackage>, String> {
     Ok(found)
 }
 
+/// unitypackage の無い zip の中の、Unity がそのまま取り込める単体のファイル（png・fbx・mp3 など、
+/// `unity_wrap::LOOSE_EXTENSIONS`）。利用者が `Assets` へ置くと GUID は新しく付くので、名前と大きさで照らす。
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct LooseFile {
+    /// ファイル名だけを小文字にしたもの（フォルダは見ない。置く場所は利用者が決めるため）。
+    pub name: String,
+    pub size: u64,
+}
+
+/// 照らすときの名前。フォルダを外し、小文字にする。
+pub(crate) fn loose_key(path: &str) -> String {
+    path.rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(path)
+        .to_lowercase()
+}
+
+/// zip の目次から単体のファイルを読む。展開はしない。名前の文字コードはファイルタブと同じ読み方
+/// （`file_browser::read_zip`）。空のファイルは照らしても意味が無いので入れない。
+pub(crate) fn loose_files(path: &Path) -> Result<Vec<LooseFile>, String> {
+    let (entries, _) = crate::file_browser::read_zip(path.to_path_buf())?;
+    let mut found: Vec<LooseFile> = entries
+        .into_iter()
+        .filter(|entry| {
+            !entry.dir && entry.size > 0 && crate::unity_wrap::is_loose_name(&entry.path)
+        })
+        .map(|entry| LooseFile {
+            name: loose_key(&entry.path),
+            size: entry.size,
+        })
+        .collect();
+    found.sort();
+    found.dedup();
+    Ok(found)
+}
+
 /// `.meta` の先頭から GUID を読む。
 pub(crate) fn meta_guid(head: &[u8]) -> Option<Guid> {
     head.split(|byte| *byte == b'\n').find_map(|line| {
@@ -429,12 +465,16 @@ pub(crate) fn meta_guid(head: &[u8]) -> Option<Guid> {
 /// フォルダの下の `.meta` を歩き、GUID と、その asset のパスを集める。リンクはたどらない。
 pub(crate) struct MetaScan {
     pub found: HashMap<Guid, PathBuf>,
+    /// 歩いたファイル（`.meta` 以外）の大きさ。配布物との大きさの比較に使う。Windows では歩くときに
+    /// 一緒に返ってくるので、ファイルを開き直さない。
+    pub sizes: HashMap<PathBuf, u64>,
     pub files: usize,
     pub complete: bool,
 }
 
 pub(crate) fn scan_metas(root: &Path, deadline: Instant, limit: usize) -> MetaScan {
     let mut found = HashMap::new();
+    let mut sizes = HashMap::new();
     let mut files = 0;
     let mut complete = true;
     for entry in walkdir::WalkDir::new(root).follow_links(false).into_iter() {
@@ -448,6 +488,13 @@ pub(crate) fn scan_metas(root: &Path, deadline: Instant, limit: usize) -> MetaSc
         }
         let name = entry.file_name().to_string_lossy();
         if !name.ends_with(".meta") {
+            if Instant::now() >= deadline {
+                complete = false;
+                break;
+            }
+            if let Ok(meta) = entry.metadata() {
+                sizes.insert(entry.into_path(), meta.len());
+            }
             continue;
         }
         files += 1;
@@ -472,6 +519,7 @@ pub(crate) fn scan_metas(root: &Path, deadline: Instant, limit: usize) -> MetaSc
     }
     MetaScan {
         found,
+        sizes,
         files,
         complete,
     }
@@ -540,6 +588,142 @@ pub(crate) fn product_verdict(verdicts: &[Verdict]) -> Verdict {
         } else {
             Verdict::Bundled
         })
+}
+
+/// 版と改変の判定に使う、プロジェクトでのパッケージ 1 つの数え（`project_packages` の行）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct PackageSizes {
+    pub verdict: Option<Verdict>,
+    /// 手元のファイル（zip か unitypackage）。同じファイルの中の項目は同じ版。
+    pub source_path: String,
+    /// 編集されにくい種類（`STABLE_EXTENSIONS`）で、プロジェクトにあった数と、そのうち大きさが同じ数。
+    pub stable_matched: usize,
+    pub stable_same: usize,
+    /// それ以外（マテリアル・プレハブなど）で、プロジェクトにあった数と、そのうち大きさが同じ数。
+    pub other_matched: usize,
+    pub other_same: usize,
+}
+
+/// 手元のファイルの並び。同じバリエーションの中で、BOOTH のファイル番号が大きいほど後から上がった版。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct FileOrder {
+    pub variation: String,
+    pub downloadable: Option<u64>,
+    /// 画面に出すファイル名。
+    pub filename: String,
+}
+
+/// 入っている版についての知らせ。
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub(crate) enum VersionNote {
+    /// 入っているのは手元の古いファイルと同じ版で、同じバリエーションに新しいファイル（`newer`）がある。
+    #[serde(rename_all = "camelCase")]
+    Older { newer: String },
+    /// 手元のどの版とも大きさの違う、編集されにくい種類のファイルが `files` 個ある。
+    /// 改変したか、手元に無い版。`versions` は比べた手元のファイルの数。
+    #[serde(rename_all = "camelCase")]
+    Differs { files: usize, versions: usize },
+}
+
+/// 版と改変の見込み（docs/unity-projects.md の「版」）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct VersionReport {
+    pub note: Option<VersionNote>,
+    /// 比べた版で、マテリアル・プレハブなどの大きさが違う数。色や設定の調整、Unity の保存し直しでも
+    /// 変わるので、改変とは言わずに数だけ見せる。
+    pub adjusted: usize,
+}
+
+/// 同じ商品のパッケージの大きさの一致から、入っている版を見込む。テクスチャ・モデル・スクリプトなど
+/// 編集されにくい種類だけで版を比べ、マテリアルとプレハブは数えるだけにする（利用者が調整するため）。
+///
+/// - 編集されにくい種類がすべて同じ大きさのパッケージがあり、それが同じバリエーションでいちばん新しい
+///   ファイル（または並びが分からない）なら何も言わない。
+/// - それが古いファイルで、同じバリエーションの新しいファイルも「導入済み」（同じ GUID が入っている）
+///   なら `Older`。新しいファイルを手元で読めていなければ言わない。
+/// - すべて同じ大きさのパッケージが無ければ、導入済みのパッケージのうちいちばん合うものとの違いを `Differs` にする（一部しか当たらないものとは比べない）。
+/// - 編集されにくい種類が 1 つも入っていなければ何も言わない。
+pub(crate) fn version_report(
+    packages: &[PackageSizes],
+    order: impl Fn(&str) -> Option<FileOrder>,
+) -> VersionReport {
+    let candidates: Vec<&PackageSizes> = packages
+        .iter()
+        .filter(|package| {
+            matches!(package.verdict, Some(Verdict::Installed | Verdict::Partial))
+                && package.stable_matched > 0
+        })
+        .collect();
+    if candidates.is_empty() {
+        return VersionReport::default();
+    }
+    let adjusted =
+        |package: &PackageSizes| package.other_matched.saturating_sub(package.other_same);
+    let exact: Vec<&PackageSizes> = candidates
+        .iter()
+        .copied()
+        .filter(|package| package.stable_same == package.stable_matched)
+        .collect();
+    if !exact.is_empty() {
+        // 同じバリエーションの、もっと新しいファイルのうち、このプロジェクトに導入済みで大きさの違うもの。
+        let newer_than = |package: &PackageSizes| -> Option<(u64, String)> {
+            let mine = order(&package.source_path)?;
+            let mine_id = mine.downloadable?;
+            candidates
+                .iter()
+                .filter(|other| {
+                    other.source_path != package.source_path
+                        && other.verdict == Some(Verdict::Installed)
+                        && other.stable_same < other.stable_matched
+                })
+                .filter_map(|other| {
+                    let theirs = order(&other.source_path)?;
+                    let id = theirs.downloadable?;
+                    (theirs.variation == mine.variation && id > mine_id)
+                        .then_some((id, theirs.filename))
+                })
+                .max_by_key(|(id, _)| *id)
+        };
+        // 新しいファイルが無いものがあれば、それが入っている版。
+        if let Some(current) = exact.iter().find(|package| newer_than(package).is_none()) {
+            return VersionReport {
+                note: None,
+                adjusted: adjusted(current),
+            };
+        }
+        let package = exact[0];
+        return VersionReport {
+            note: newer_than(package).map(|(_, newer)| VersionNote::Older { newer }),
+            adjusted: adjusted(package),
+        };
+    }
+    // 違うと言うのは導入済みのパッケージとだけ比べたとき。一部しか当たらないパッケージ（別のアバター向けの
+    // バリエーションで、共通のテクスチャだけ当たる、など）との違いは改変の手がかりにならない。
+    let installed: Vec<&PackageSizes> = candidates
+        .iter()
+        .copied()
+        .filter(|package| package.verdict == Some(Verdict::Installed))
+        .collect();
+    let ratio = |package: &PackageSizes| package.stable_same as f64 / package.stable_matched as f64;
+    let Some(best) = installed
+        .iter()
+        .copied()
+        .max_by(|a, b| ratio(a).total_cmp(&ratio(b)))
+    else {
+        return VersionReport::default();
+    };
+    let versions: HashSet<&str> = installed
+        .iter()
+        .map(|package| package.source_path.as_str())
+        .collect();
+    VersionReport {
+        note: Some(VersionNote::Differs {
+            files: best.stable_matched - best.stable_same,
+            versions: versions.len(),
+        }),
+        adjusted: adjusted(best),
+    }
 }
 
 #[cfg(test)]
@@ -654,6 +838,43 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn loose_zips_list_importable_files_by_name_and_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Textures.zip");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        for (name, body) in [
+            ("Tex/Body_Main.PNG", &b"body-texture"[..]),
+            ("Tex/Sub/Body_Main.png", &b"body-texture"[..]),
+            ("Model/Hair.fbx", &b"fbx"[..]),
+            ("readme.txt", &b"hello"[..]),
+            ("Tex/empty.png", &b""[..]),
+        ] {
+            zip.start_file(name, options).unwrap();
+            zip.write_all(body).unwrap();
+        }
+        zip.add_directory("Tex/Folder.png/", options).unwrap();
+        zip.finish().unwrap();
+        // 名前は小文字のファイル名だけ。大きさは展開後。同じ名前と大きさは 1 つにする。
+        assert_eq!(
+            loose_files(&path).unwrap(),
+            [
+                LooseFile {
+                    name: "body_main.png".into(),
+                    size: 12
+                },
+                LooseFile {
+                    name: "hair.fbx".into(),
+                    size: 3
+                },
+            ]
+        );
+        assert_eq!(loose_key("Assets\\Shop\\Body_Main.PNG"), "body_main.png");
+        assert!(loose_files(&dir.path().join("missing.zip")).is_err());
+    }
+
+    #[test]
     fn zip_sources_read_every_inner_package() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("Shop.zip");
@@ -734,11 +955,140 @@ pub(crate) mod tests {
             .get(&parse_guid(guid(5).as_bytes()).unwrap())
             .unwrap();
         assert!(found.ends_with("A.png"));
+        assert_eq!(scan.sizes.get(found), Some(&1));
         let limited = scan_metas(&dir.path().join("Assets"), far(), 1);
         assert!(!limited.complete);
         // たどれないフォルダ（ここでは消えたフォルダ）があれば、最後まで調べたとは言わない。
         let missing = scan_metas(&dir.path().join("Gone"), far(), MAX_PROJECT_FILES);
         assert!(!missing.complete);
+    }
+
+    fn sizes(
+        path: &str,
+        verdict: Verdict,
+        stable: (usize, usize),
+        other: (usize, usize),
+    ) -> PackageSizes {
+        PackageSizes {
+            verdict: Some(verdict),
+            source_path: path.into(),
+            stable_matched: stable.0,
+            stable_same: stable.1,
+            other_matched: other.0,
+            other_same: other.1,
+        }
+    }
+
+    fn files<'a>(list: &'a [(&'a str, &'a str, u64)]) -> impl Fn(&str) -> Option<FileOrder> + 'a {
+        move |path| {
+            list.iter()
+                .find(|(name, _, _)| *name == path)
+                .map(|(name, variation, id)| FileOrder {
+                    variation: (*variation).into(),
+                    downloadable: Some(*id),
+                    filename: (*name).into(),
+                })
+        }
+    }
+
+    #[test]
+    fn versions_compare_stable_files_only() {
+        use Verdict::*;
+        let order = [
+            ("v1.zip", "", 10),
+            ("v2.zip", "", 20),
+            ("airi.zip", "Airi", 30),
+        ];
+        // 新しい版とすべて同じ大きさ。マテリアルの違いは数えるだけ。
+        let current = version_report(
+            &[
+                sizes("v1.zip", Installed, (10, 6), (5, 5)),
+                sizes("v2.zip", Installed, (10, 10), (5, 2)),
+            ],
+            files(&order),
+        );
+        assert_eq!(
+            current,
+            VersionReport {
+                note: None,
+                adjusted: 3
+            }
+        );
+        // 古い版と同じで、新しい版も同じ GUID が入っている。
+        let older = version_report(
+            &[
+                sizes("v1.zip", Installed, (10, 10), (5, 5)),
+                sizes("v2.zip", Installed, (10, 6), (5, 5)),
+            ],
+            files(&order),
+        );
+        assert_eq!(
+            older.note,
+            Some(VersionNote::Older {
+                newer: "v2.zip".into()
+            })
+        );
+        // 別のバリエーションは版の新旧に数えない。
+        let variation = version_report(
+            &[
+                sizes("v2.zip", Installed, (10, 10), (0, 0)),
+                sizes("airi.zip", Installed, (10, 4), (0, 0)),
+            ],
+            files(&order),
+        );
+        assert_eq!(variation.note, None);
+        // 一部しか入っていない新しいファイル（共通のテクスチャだけ当たる、など）は新しい版と言わない。
+        let partial = version_report(
+            &[
+                sizes("v1.zip", Installed, (10, 10), (0, 0)),
+                sizes("v2.zip", Partial, (3, 1), (0, 0)),
+            ],
+            files(&order),
+        );
+        assert_eq!(partial.note, None);
+        // 並びが分からなければ、古いとは言わない。
+        let unknown = version_report(
+            &[
+                sizes("v1.zip", Installed, (10, 10), (0, 0)),
+                sizes("v2.zip", Installed, (10, 6), (0, 0)),
+            ],
+            |_| None,
+        );
+        assert_eq!(unknown.note, None);
+        // どの版とも違うところがある。いちばん合う版との違いを数える。
+        let differs = version_report(
+            &[
+                sizes("v1.zip", Installed, (10, 6), (4, 1)),
+                sizes("v2.zip", Installed, (10, 8), (4, 3)),
+            ],
+            files(&order),
+        );
+        assert_eq!(
+            differs,
+            VersionReport {
+                note: Some(VersionNote::Differs {
+                    files: 2,
+                    versions: 2
+                }),
+                adjusted: 1
+            }
+        );
+        // 一部しか当たらないパッケージだけなら、違うとは言わない。
+        assert_eq!(
+            version_report(&[sizes("airi.zip", Partial, (3, 1), (2, 0))], files(&order)),
+            VersionReport::default()
+        );
+        // 編集されにくい種類が入っていない・入っていないパッケージだけ・同梱版は比べない。
+        for packages in [
+            [sizes("v1.zip", Installed, (0, 0), (5, 1))],
+            [sizes("v1.zip", Missing, (1, 0), (0, 0))],
+            [sizes("v1.zip", Bundled, (5, 1), (0, 0))],
+        ] {
+            assert_eq!(
+                version_report(&packages, files(&order)),
+                VersionReport::default()
+            );
+        }
     }
 
     #[test]

@@ -35,6 +35,7 @@ const sources = {
   "src-tauri/Cargo.toml": packageSection.match(/^version\s*=\s*"([^"]+)"/m)?.[1],
   "src-tauri/Cargo.lock": lockVersion,
   "extension/manifest.json": readJson("extension/manifest.json").version,
+  "src-tauri/unity-package/app.vrclibman.unity/package.json": readJson("src-tauri/unity-package/app.vrclibman.unity/package.json").version,
 };
 const extensionVersion = sources["extension/manifest.json"];
 

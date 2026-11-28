@@ -1,0 +1,12 @@
+{
+  "name": "app.vrclibman.unity",
+  "displayName": "VRCLibMan",
+  "version": "0.9.2",
+  "unity": "2022.3",
+  "description": "VRCLibMan のライブラリから、このプロジェクトに入っている商品と、まだ入っていない対応アセットを見て、Import 画面で取り込みます。VRCLibMan のアプリが動いていて、設定の「Unity の中から使う」がオンのときだけ使えます。",
+  "author": {
+    "name": "VRCLibMan"
+  },
+  "license": "MPL-2.0",
+  "vpmDependencies": {}
+}

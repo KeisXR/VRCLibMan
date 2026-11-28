@@ -3,7 +3,7 @@ import { api } from "../api";
 import { useShell } from "../App";
 import type { UnityProject, UnityProjectList } from "../types";
 import { errorText } from "../ui";
-import { canOpenProject, linkableProjects, markProjectId, projectStateNote } from "../unityProjects";
+import { canOpenProject, linkableProjects, markProjectId, projectDetailHref, projectStateNote } from "../unityProjects";
 
 /** プロジェクトの一覧を読む。変更系の呼び出しは新しい一覧を返すので、それを `apply` で受ける。 */
 export function useUnityProjects() {
@@ -108,7 +108,7 @@ export function AvatarUnityProjects({
         const note = projectStateNote(project);
         return (
           <span className="avatar-project" key={project.id}>
-            <a href={`#/projects/${encodeURIComponent(project.id)}`} title={project.path}>{project.name}</a>
+            <span className="avatar-project-name" title={project.path}>{project.name}</span>
             {note && project.running !== "open" && <span className="meta">（{note}）</span>}
             <button
               className="button secondary"
@@ -118,6 +118,11 @@ export function AvatarUnityProjects({
             >
               {project.running === "open" ? "開いています" : "開く"}
             </button>
+            {project.state === "ok" && (
+              <button className="button secondary" type="button" onClick={() => (window.location.hash = projectDetailHref(project.id))}>
+                中身を見る
+              </button>
+            )}
             <button
               className="icon-button"
               type="button"

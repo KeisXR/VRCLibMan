@@ -1,4 +1,4 @@
-import type { UnityInstance, UnityPackageList, UnityStatus } from "./types";
+import type { PackageNeed, UnityInstance, UnityPackageList, UnityStatus } from "./types";
 
 /**
  * 「Unityで開く」の純粋な判断。zip は展開せずに一覧し、選んだものだけを取り出して
@@ -99,6 +99,27 @@ export const UNITY_MISSING =
 /** Rust の `EDITOR_NOT_RUNNING`（unity_import.rs）。設定した Unity のエディタが 1 つも開いていない。 */
 export function isUnityNotRunning(message: string): boolean {
   return message.includes("Unity が起動していません");
+}
+
+/**
+ * 渡す先に足りないもの（段階 3）を文にする部品。VPM パッケージは名前を「、」でつなぎ、
+ * ライブラリの商品は題を「」で囲む。どちらも無ければ空文字。
+ */
+export function missingNeedsText(needs: readonly PackageNeed[]): { packages: string; versions: string; products: string } {
+  return {
+    packages: needs
+      .filter((need) => need.kind === "vpm")
+      .map((need) => need.name)
+      .join("、"),
+    versions: needs
+      .filter((need) => need.kind === "vpmVersion")
+      .map((need) => need.name)
+      .join("、"),
+    products: needs
+      .filter((need) => need.kind === "product")
+      .map((need) => `「${need.name}」`)
+      .join("、"),
+  };
 }
 
 export function needsUnityTarget(instances: readonly unknown[]): boolean {

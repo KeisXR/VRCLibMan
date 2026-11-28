@@ -23,6 +23,27 @@ pub async fn download_thumbnail(
     if !booth_id.chars().all(|ch| ch.is_ascii_digit()) {
         return Err("商品IDが不正です".into());
     }
+    let (bytes, extension) = fetch_card_image(client, raw_url).await?;
+    std::fs::create_dir_all(directory)
+        .map_err(|err| format!("サムネイルフォルダを作れません: {err}"))?;
+    for old in ["jpg", "jpeg", "png", "webp", "gif"] {
+        let stale = directory.join(format!("{booth_id}.{old}"));
+        if stale.extension().and_then(|ext| ext.to_str()) != Some(extension) {
+            let _ = std::fs::remove_file(stale);
+        }
+    }
+    let destination = directory.join(format!("{booth_id}.{extension}"));
+    std::fs::write(&destination, &bytes)
+        .map_err(|err| format!("サムネイルを保存できません: {err}"))?;
+    Ok(destination)
+}
+
+/// 一覧用の小さい画像（pximg は 150x150）を取ってくる。Cookie は送らない。保存はしない。
+/// 返すのは中身と拡張子（`jpg`・`png`・`webp` など）。
+pub(crate) async fn fetch_card_image(
+    client: &reqwest::Client,
+    raw_url: &str,
+) -> Result<(Vec<u8>, &'static str), String> {
     let url = card_image_url(raw_url)?;
     let response = client
         .get(url.clone())
@@ -53,18 +74,7 @@ pub async fn download_thumbnail(
         return Err("サムネイルが空です".into());
     }
     let extension = extension_for(content_type.as_deref(), &final_url);
-    std::fs::create_dir_all(directory)
-        .map_err(|err| format!("サムネイルフォルダを作れません: {err}"))?;
-    for old in ["jpg", "jpeg", "png", "webp", "gif"] {
-        let stale = directory.join(format!("{booth_id}.{old}"));
-        if stale.extension().and_then(|ext| ext.to_str()) != Some(extension) {
-            let _ = std::fs::remove_file(stale);
-        }
-    }
-    let destination = directory.join(format!("{booth_id}.{extension}"));
-    std::fs::write(&destination, &bytes)
-        .map_err(|err| format!("サムネイルを保存できません: {err}"))?;
-    Ok(destination)
+    Ok((bytes.to_vec(), extension))
 }
 
 fn card_image_url(raw: &str) -> Result<Url, String> {
