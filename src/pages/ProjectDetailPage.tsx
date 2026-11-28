@@ -10,6 +10,7 @@ import {
   PROJECT_KIND_LABEL,
   VERDICT_LABEL,
   bodySuggestions,
+  canOpenProject,
   needsScan,
   projectProductHref,
   projectSections,
@@ -140,7 +141,7 @@ export function ProjectDetailPage({ id }: { id: string }) {
         </div>
         {project && (
           <div className="button-row">
-            <button className="button primary" type="button" disabled={project.state !== "ok" || opening === project.id} onClick={() => void open(project)}>
+            <button className="button primary" type="button" disabled={!canOpenProject(project) || opening === project.id} onClick={() => void open(project)}>
               {project.running === "open" ? "開いています" : "開く"}
             </button>
             <button className="button secondary" type="button" disabled={scanning || project.state !== "ok"} onClick={() => void scan()}>
@@ -158,8 +159,8 @@ export function ProjectDetailPage({ id }: { id: string }) {
             : "読み込んでいます…"}
       </p>
       {error && <p className="note note-strong">{error}</p>}
-      {contents && contents.scannedAt != null && !contents.complete && (
-        <p className="note note-strong">プロジェクトが大きいため、途中までしか調べられませんでした。ここに無い商品も、入っていないとは限りません。</p>
+      {contents && contents.scannedAt != null && !contents.complete && !contents.stale && !scanning && (
+        <p className="note note-strong">プロジェクトが大きいか、読めないファイルがあったため、途中までしか調べられませんでした。ここに無い商品も、入っていないとは限りません。</p>
       )}
 
       {bodies.map((product) =>

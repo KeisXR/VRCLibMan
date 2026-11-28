@@ -622,8 +622,12 @@ mod tests {
         connection
             .execute_batch("INSERT INTO avatars (id, display_name) VALUES ('uproj-x', '見本X');")
             .unwrap();
-        db::add_manual_unity_project(&connection, "00000000000000cc", "D:\\SecretProjects\\Plum")
-            .unwrap();
+        db::add_manual_unity_project(
+            &mut connection,
+            "00000000000000cc",
+            "D:\\SecretProjects\\Plum",
+        )
+        .unwrap();
         db::link_unity_project_avatar(
             &mut connection,
             "00000000000000cc",

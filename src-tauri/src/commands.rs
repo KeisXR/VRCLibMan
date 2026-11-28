@@ -1076,8 +1076,8 @@ pub async fn add_unity_project(
         let id = crate::unity_projects::project_id(&path, os);
         {
             let state = app.state::<AppState>();
-            let connection = db(&state)?;
-            db::add_manual_unity_project(&connection, &id, &path)?;
+            let mut connection = db(&state)?;
+            db::add_manual_unity_project(&mut connection, &id, &path)?;
         }
         unity_project_list_blocking(app)
     })
